@@ -151,9 +151,9 @@ def create_app(
             )
         if exceeded:
             log.warning("render budget exceeded: %s", body)
-            service.log.append(
-                "user", "render.budget_exceeded", body.get("panel_id"), {"report": body}
-            )
+            panel_id = body.get("panel_id")
+            object_id = panel_id if isinstance(panel_id, str) else None
+            service.log.append("user", "render.budget_exceeded", object_id, {"report": body})
         return JSONResponse({"budget_exceeded": exceeded})
 
     async def events(websocket: WebSocket) -> None:
@@ -177,9 +177,10 @@ def create_app(
         queue = service.log.subscribe()
         # Subscribed first, so nothing is lost between replay and live; dedupe by seq.
         last_sent = since
-        for event in service.log.since(since):
-            await websocket.send_json(event.to_dict())
-            last_sent = event.seq
+        while batch := service.log.since(last_sent):
+            for event in batch:
+                await websocket.send_json(event.to_dict())
+                last_sent = event.seq
 
         async def until_disconnect() -> None:
             while (await websocket.receive())["type"] != "websocket.disconnect":

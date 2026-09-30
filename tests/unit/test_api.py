@@ -245,3 +245,20 @@ def test_websocket_rejects_bad_since(tmp_path):
         c.websocket_connect("/ws?since=abc"),
     ):
         pass
+
+
+def test_websocket_replay_has_no_gap_beyond_one_batch(tmp_path):
+    service = make_service(tmp_path)
+    for _ in range(2500):
+        service.log.append("system", "x", None, {})
+    with TestClient(_app(service)) as c, c.websocket_connect("/ws?since=0") as ws:
+        seqs = [ws.receive_json()["seq"] for _ in range(2500)]
+    assert seqs == list(range(1, 2501))
+
+
+def test_render_report_non_string_panel_id_is_not_a_500(tmp_path):
+    service = make_service(tmp_path)
+    with TestClient(_app(service)) as c:
+        body = {"panel_id": {"x": 1}, "render_ms": 250, "points": 1, "width_px": 400}
+        assert c.post("/api/render-report", json=body).status_code == 200
+    assert service.log.since(0)[-1].object_id is None
