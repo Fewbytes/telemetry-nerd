@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 from pydantic import BaseModel
 
@@ -47,10 +47,10 @@ class ObjectStore:
             (obj.id, kind, anchor, obj.created_at_ms, obj.model_dump_json()),
         )
 
-    def _update(self, obj: BaseModel, deleted: bool = False) -> None:
+    def _update(self, obj: BaseModel) -> None:
         self._db.execute(
             "UPDATE objects SET data = ?, deleted = ? WHERE id = ?",
-            (obj.model_dump_json(), int(deleted), obj.id),
+            (obj.model_dump_json(), int(bool(getattr(obj, "deleted", False))), obj.id),
         )
 
     def _get(self, kind: str, model: type[M], obj_id: str) -> M:
@@ -71,7 +71,7 @@ class ObjectStore:
             args.append(anchor)
         if not include_deleted:
             sql += " AND deleted = 0"
-        sql += " ORDER BY created_at_ms, CAST(substr(id, 2) AS INTEGER)"
+        sql += " ORDER BY created_at_ms, CAST(substr(id, 2) AS INTEGER), rowid"
         return [model.model_validate_json(r[0]) for r in self._db.execute(sql, args)]
 
     # annotations --------------------------------------------------------
@@ -92,7 +92,7 @@ class ObjectStore:
 
     def delete_annotation(self, obj_id: str) -> Annotation:
         a = self.get_annotation(obj_id).model_copy(update={"deleted": True})
-        self._update(a, deleted=True)
+        self._update(a)
         return a
 
     # hypotheses ---------------------------------------------------------
@@ -120,13 +120,19 @@ class ObjectStore:
         self._update(updated)
         return h.status, updated
 
-    def link_evidence(self, obj_id: str, finding_id: str, stance: str) -> Hypothesis:
+    def link_evidence(
+        self, obj_id: str, finding_id: str, stance: Literal["for", "against"]
+    ) -> Hypothesis:
+        if stance not in ("for", "against"):
+            raise ValueError(f"stance must be 'for' or 'against', got {stance!r}")
         h = self.get_hypothesis(obj_id)
         field = "evidence_for" if stance == "for" else "evidence_against"
         ids = getattr(h, field)
         if finding_id in ids:
             return h
-        updated = h.model_copy(update={field: [*ids, finding_id], "updated_at_ms": self._clock()})
+        updated = Hypothesis.model_validate(
+            {**h.model_dump(), field: [*ids, finding_id], "updated_at_ms": self._clock()}
+        )
         self._update(updated)
         return updated
 

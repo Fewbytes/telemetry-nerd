@@ -122,3 +122,43 @@ def test_gap_suggestion_type():
     )
     with pytest.raises(ValidationError):
         GapIn(missing_signal="x", needed_for="y", suggestion={"name": "m", "type": "blob"})
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_rejected(bad):
+    stat = {"kind": "statistic", "dataset": "d", "name": "x", "method": "m"}
+    with pytest.raises(ValidationError):
+        ref.validate_python({**stat, "value": bad, "interval": [0, 1]})
+    with pytest.raises(ValidationError):
+        ref.validate_python({**stat, "value": 1, "interval": [0, bad]})
+    with pytest.raises(ValidationError):
+        ref.validate_python({**stat, "value": 1, "interval": [bad, 2]})
+    with pytest.raises(ValidationError):
+        AnnotationIn(kind="threshold", value=bad)
+    with pytest.raises(ValidationError):
+        AnnotationIn(kind="band", value=1, value_hi=bad)
+
+
+def test_exact_rules():
+    stat = {"kind": "statistic", "dataset": "d", "name": "x", "method": "m"}
+    with pytest.raises(ValidationError, match="contradictory"):
+        ref.validate_python({**stat, "value": 3, "exact": True, "interval": [3, 3]})
+    with pytest.raises(ValidationError, match="integral"):
+        ref.validate_python({**stat, "value": 2.5, "exact": True})
+    ref.validate_python({**stat, "value": 3.0, "exact": True})
+
+
+def test_inputs_reject_server_fields():
+    with pytest.raises(ValidationError):
+        AnnotationIn(kind="event", t_start_ms=1, id="a9")
+    with pytest.raises(ValidationError):
+        AnnotationIn(kind="event", t_start_ms=1, deleted=True)
+    with pytest.raises(ValidationError):
+        FindingIn(claim="c", scope=SCOPE, evidence=[{"kind": "panel", "panel": "p"}], id="f9")
+    with pytest.raises(ValidationError):
+        FindingIn(claim="c", scope=SCOPE, evidence=[{"kind": "panel", "panel": "p"}], deleted=True)
+
+
+def test_unknown_evidence_kind_rejected():
+    with pytest.raises(ValidationError):
+        ref.validate_python({"kind": "vibes", "panel": "p1"})

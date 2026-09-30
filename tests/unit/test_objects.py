@@ -87,3 +87,54 @@ def test_unknown_ids(store):
     for getter in (store.get_annotation, store.get_hypothesis, store.get_finding, store.get_thread):
         with pytest.raises(NotFound):
             getter("zz9")
+
+
+def test_link_evidence_stances(store):
+    h = store.create_hypothesis("x", "claude")
+    assert store.link_evidence(h.id, "f1", "for").evidence_for == ["f1"]
+    got = store.link_evidence(h.id, "f2", "against")
+    assert (got.evidence_for, got.evidence_against) == (["f1"], ["f2"])
+    with pytest.raises(ValueError, match="stance"):
+        store.link_evidence(h.id, "f3", "maybe")
+    assert store.get_hypothesis(h.id).evidence_against == ["f2"]
+
+
+def test_bad_status_and_verdict_raise(store):
+    h = store.create_hypothesis("x", "claude")
+    with pytest.raises(ValueError):
+        store.set_hypothesis_status(h.id, "bogus")
+    assert store.get_hypothesis(h.id).status == "proposed"
+    f = store.create_finding(
+        FindingIn(claim="c", scope=SCOPE, evidence=[{"kind": "panel", "panel": "p1"}]), "claude"
+    )
+    with pytest.raises(ValueError):
+        store.set_verdict(f.id, "maybe", None)
+    assert store.get_finding(f.id).verdict is None
+
+
+def test_finding_with_rich_evidence_survives_reload(tmp_path):
+    path = tmp_path / "w.db"
+    ids = itertools.count(1)
+    s1 = ObjectStore(open_workspace_db(path), lambda p: f"{p}{next(ids)}", clock=lambda: 7)
+    f = s1.create_finding(
+        FindingIn(
+            claim="c",
+            scope=SCOPE,
+            evidence=[
+                {
+                    "kind": "statistic",
+                    "dataset": "d1",
+                    "name": "ratio",
+                    "value": 2.1,
+                    "interval": [1.8, 2.4],
+                    "method": "bootstrap",
+                    "params": {"n": 100},
+                },
+                {"kind": "annotation", "annotation": "a1"},
+            ],
+        ),
+        "claude",
+    )
+    s2 = ObjectStore(open_workspace_db(path), lambda p: "x", clock=lambda: 9)
+    assert s2.get_finding(f.id) == f
+    assert s2.list_findings() == [f]

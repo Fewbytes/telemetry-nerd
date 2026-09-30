@@ -8,6 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from telemetry_nerd.model.time import parse_duration
 
+Finite = Annotated[float, Field(allow_inf_nan=False)]
+
 
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -57,14 +59,18 @@ class StatisticRef(_Strict):
     kind: Literal["statistic"]
     dataset: str
     name: str = Field(min_length=1)
-    value: float
-    interval: tuple[float, float] | None = None
+    value: Finite
+    interval: tuple[Finite, Finite] | None = None
     exact: bool = False
     method: str = Field(min_length=1)
     params: dict = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _uncertainty(self) -> StatisticRef:
+        if self.exact and self.interval is not None:
+            raise ValueError("contradictory: exact=true cannot be combined with an interval")
+        if self.exact and not float(self.value).is_integer():
+            raise ValueError("exact=true is only for integral quantities such as counts")
         if self.interval is None and not self.exact:
             raise ValueError(
                 "no_uncertainty: a statistic needs an interval [lo, hi]; "
@@ -85,8 +91,8 @@ class AnnotationIn(_Strict):
     panel: str | None = None
     t_start_ms: int | None = None
     t_end_ms: int | None = None
-    value: float | None = None
-    value_hi: float | None = None
+    value: Finite | None = None
+    value_hi: Finite | None = None
     label: str = ""
     links: list[str] = Field(default_factory=list)
 
