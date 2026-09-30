@@ -14,3 +14,5 @@ main { max-width: 1200px; margin: 0 auto; padding: 16px; }
 .panel footer { font-size: 12px; color: var(--muted); margin-top: 6px; }
 .error { color: var(--error); }
 .empty { color: var(--muted); }
+.panel .answered { color: var(--muted); font-size: 0.85em; margin-left: 0.5em; }
+.panel button.close { margin-left: auto; background: none; border: none; font-size: 1.2em; cursor: pointer; color: var(--muted); }

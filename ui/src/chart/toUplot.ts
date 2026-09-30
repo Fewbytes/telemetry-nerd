@@ -1,5 +1,5 @@
 import type uPlot from "uplot";
-import type { SeriesData } from "../api";
+import type { SeriesData } from "../lib/api";
 
 // Okabe-Ito: colorblind-safe categorical palette. The series budget (≤5) fits it.
 export const PALETTE = ["#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9"];

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { seriesName, toUplot } from "./toUplot";
-import type { SeriesData } from "../api";
+import type { SeriesData } from "../lib/api";
 
 const s = (id: string, labels: Record<string, string>, ts: number[], v: number[]): SeriesData => ({
   id, labels, ts, avg: v, min: v.map((x) => x - 1), max: v.map((x) => x + 1), count: v.map(() => 4),

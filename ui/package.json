@@ -19,7 +19,9 @@
   "devDependencies": {
     "@playwright/test": "^1.63.0",
     "@types/node": "^24.13.3",
+    "esrap": "^2.4.0",
     "oxlint": "^1.81.0",
+    "svelte-check": "^4.7.6",
     "typescript": "~6.0.2",
     "vite": "^8.3.0",
     "vitest": "^4.1.11"

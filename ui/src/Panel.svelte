@@ -1,26 +1,43 @@
 <script lang="ts">
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
-  import { fetchPanelData, reportRender, type Panel, type PanelData } from "./api";
+  import { closePanel, fetchPanelData, reportRender, type Panel, type PanelData } from "./lib/api";
   import { toUplot } from "./chart/toUplot";
   import { measureFirstDraw } from "./chart/measureDraw";
 
   let { panel }: { panel: Panel } = $props();
 
   let plotEl = $state<HTMLDivElement | null>(null);
-  let data = $state<PanelData | null>(null);
+  let data = $state.raw<PanelData | null>(null);
+  let fetchWidth = $state(0);
   let error = $state<string | null>(null);
   let render = $state<{ ms: number; exceeded: boolean } | null>(null);
 
   const fmtTime = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z");
   const fmtStep = (ms: number) => (ms % 60_000 === 0 ? `${ms / 60_000}m` : `${ms / 1000}s`);
 
-  $effect(() => {
-    const width = Math.round(plotEl?.clientWidth || 800);
+  let requestId = 0;
+  const load = (width: number) => {
+    const id = ++requestId;
+    fetchWidth = width;
     fetchPanelData(panel.id, width)
-      .then((d) => (data = d))
-      .catch((e) => (error = String(e)));
+      .then((d) => { if (id === requestId) data = d; })
+      .catch((e) => { if (id === requestId) error = String(e); });
+  };
+
+  $effect(() => {
+    const el = plotEl;
+    if (!el) return;
+    load(Math.round(el.clientWidth || 800));
+    const ro = new ResizeObserver(() => {
+      const w = Math.round(el.clientWidth);
+      if (w > 0 && Math.abs(w - fetchWidth) / Math.max(fetchWidth, 1) > 0.1) load(w);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
   });
+
+  const close = () => closePanel(panel.id).catch((e) => (error = String(e)));
 
   $effect(() => {
     const el = plotEl;
@@ -35,6 +52,7 @@
         new uPlot(
           {
             width, height: 260, series: model.series, bands: model.bands,
+            tzDate: (ts: number) => uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"),
             scales: { x: { time: true } },
             axes: [{}, { label: unit ?? "value (unit unknown)" }],
             hooks: { draw: [onDraw] },
@@ -61,6 +79,8 @@
   <header>
     <span class="question">Q: {panel.question}</span>
     <span class="status {panel.status}">{panel.status}</span>
+    {#if panel.answered_by}<span class="answered">answered → {panel.answered_by}</span>{/if}
+    <button class="close" type="button" aria-label="Close panel" onclick={close}>×</button>
   </header>
   {#if panel.spec.y.range_mode === "data"}
     <div class="badge">y scaled to data (no reference range yet)</div>

@@ -35,6 +35,9 @@ ui-build:
 ui-test:
     cd ui && npm test
 
+ui-check:
+    cd ui && npx svelte-check --tsconfig ./tsconfig.app.json --fail-on-warnings
+
 ui-dev:
     cd ui && npm run dev
 
