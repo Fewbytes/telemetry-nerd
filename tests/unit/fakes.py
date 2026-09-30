@@ -1,0 +1,62 @@
+import pyarrow as pa
+
+from telemetry_nerd.core.events import EventBus
+from telemetry_nerd.core.service import TelemetryService
+from telemetry_nerd.datasets.cache import SeriesCache
+from telemetry_nerd.datasets.db import open_duckdb
+from telemetry_nerd.datasets.store import DatasetStore
+from telemetry_nerd.model.series import (
+    BUCKET_SCHEMA,
+    SERIES_SCHEMA,
+    FetchResult,
+    labels_json,
+    series_id,
+)
+from telemetry_nerd.model.time import TimeRange
+from telemetry_nerd.workspace.store import WorkspaceStore
+
+NOW = 6_000_000_000
+
+
+class FakeSource:
+    def __init__(self, name="fake", n_series=2, resolution_ms=15_000):
+        self.name = name
+        self.n_series = n_series
+        self.resolution_ms = resolution_ms
+        self.calls = 0
+
+    async def fetch(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
+        self.calls += 1
+        ts = list(range(rng.start_ms, rng.end_ms + 1, step_ms))
+        labels = [{"instance": f"i{k}"} for k in range(self.n_series)]
+        sids = [series_id(self.name, lb) for lb in labels]
+        rows = [(t, sid, float(k + 1)) for k, sid in enumerate(sids) for t in ts]
+        buckets = pa.table(
+            {
+                "ts_ms": [r[0] for r in rows],
+                "series_id": [r[1] for r in rows],
+                "avg": [r[2] for r in rows],
+                "min": [r[2] - 0.5 for r in rows],
+                "max": [r[2] + 0.5 for r in rows],
+                "count": [4] * len(rows),
+            },
+            schema=BUCKET_SCHEMA,
+        )
+        series = pa.table(
+            {"series_id": sids, "labels": [labels_json(lb) for lb in labels]}, schema=SERIES_SCHEMA
+        )
+        return FetchResult(buckets, series)
+
+
+def make_service(tmp_path, source=None, clock=lambda: NOW) -> TelemetryService:
+    source = source or FakeSource()
+    con = open_duckdb(tmp_path / "series.duckdb")
+    workspace = WorkspaceStore(tmp_path / "workspace.db", clock=clock)
+    return TelemetryService(
+        sources={"default": source},
+        cache=SeriesCache(con, clock=clock),
+        datasets=DatasetStore(con, workspace.next_id, clock=clock),
+        workspace=workspace,
+        events=EventBus(),
+        clock=clock,
+    )
