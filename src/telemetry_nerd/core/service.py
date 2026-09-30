@@ -15,7 +15,7 @@ from telemetry_nerd.core.summary import summarize
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.time import TimeRange, now_ms, parse_duration, parse_time
-from telemetry_nerd.sources.base import Source, SourceError
+from telemetry_nerd.sources.base import LimitExceeded, Source, SourceError
 from telemetry_nerd.workspace.store import Panel, WorkspaceStore
 
 _NICE_STEPS = [
@@ -27,6 +27,9 @@ _NICE_STEPS = [
 def auto_step(rng: TimeRange, resolution_ms: int, target_buckets: int = 600) -> int:
     wanted = max((rng.end_ms - rng.start_ms) / target_buckets, resolution_ms)
     return next((s for s in _NICE_STEPS if s >= wanted), _NICE_STEPS[-1])
+
+
+MAX_BUCKETS_PER_QUERY = 50_000
 
 
 class ChartRejected(Exception):
@@ -67,7 +70,18 @@ class TelemetryService:
         now = self.clock()
         rng = TimeRange(parse_time(start, now), parse_time(end, now))
         step_ms = auto_step(rng, src.resolution_ms) if step == "auto" else parse_duration(step)
+        if step_ms <= 0:
+            raise SourceError(
+                f"step must be positive, got {step!r}",
+                hint="use `auto` or a positive duration like 30s, 1m, 5m",
+            )
         rng = rng.align(step_ms)
+        buckets = (rng.end_ms - rng.start_ms) // step_ms + 1
+        if buckets > MAX_BUCKETS_PER_QUERY:
+            raise LimitExceeded(
+                f"{buckets} buckets exceeds {MAX_BUCKETS_PER_QUERY} per query",
+                hint="use a coarser step or a shorter range",
+            )
         result = await self.cache.get(
             src.identity, expr, rng, step_ms, lambda r: src.fetch(expr, r, step_ms)
         )

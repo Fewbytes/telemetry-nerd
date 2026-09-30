@@ -2,7 +2,7 @@ import pytest
 
 from telemetry_nerd.core.service import ChartRejected, auto_step
 from telemetry_nerd.model.time import TimeRange
-from telemetry_nerd.sources.base import SourceError
+from telemetry_nerd.sources.base import LimitExceeded, SourceError
 from tests.unit.fakes import FakeSource, NonFiniteSource, PartialSource, make_service
 
 
@@ -102,3 +102,20 @@ async def test_non_finite_values_flagged(tmp_path):
     svc = make_service(tmp_path, NonFiniteSource())
     out = await svc.query("up", start="now-2h", end="now-1h", step="1m")
     assert "non_finite" in out["summary"]["caveats"]
+
+
+@pytest.mark.parametrize("step", ["0s", "0ms"])
+async def test_zero_step_is_typed_error_with_hint(tmp_path, step):
+    svc = make_service(tmp_path)
+    with pytest.raises(SourceError) as exc:
+        await svc.query("up", start="now-1h", end="now", step=step)
+    assert exc.value.hint
+
+
+async def test_too_many_buckets_is_limit_exceeded_before_any_fetch(tmp_path):
+    src = FakeSource()
+    svc = make_service(tmp_path, src)
+    with pytest.raises(LimitExceeded) as exc:
+        await svc.query("up", start="now-30d", end="now", step="1s")
+    assert "coarser step" in exc.value.hint
+    assert src.calls == 0

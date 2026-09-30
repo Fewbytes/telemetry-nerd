@@ -147,3 +147,21 @@ async def test_partial_flag_survives_the_cache(cache):
     assert (
         await cache.get("src", "up", TimeRange(1_200_000, 1_380_000), STEP, FakeFetcher())
     ).partial == 1
+
+
+async def test_concurrent_chunk_fetches_are_bounded(cache):
+    import asyncio
+
+    active = peak = 0
+
+    async def fetch(rng):
+        nonlocal active, peak
+        active += 1
+        peak = max(peak, active)
+        await asyncio.sleep(0.01)
+        active -= 1
+        return await FakeFetcher()(rng)
+
+    # 30 chunks of SPAN
+    await cache.get("src", "up", TimeRange(0, 30 * SPAN - STEP), STEP, fetch)
+    assert 1 < peak <= 8

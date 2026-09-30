@@ -12,6 +12,8 @@ from telemetry_nerd.datasets.db import fetch_arrow, upsert_series
 from telemetry_nerd.model.series import BUCKET_SCHEMA, SERIES_SCHEMA, FetchResult
 from telemetry_nerd.model.time import TimeRange, now_ms
 
+MAX_CONCURRENT_FETCHES = 8
+
 Fetcher = Callable[[TimeRange], Awaitable[FetchResult]]
 
 
@@ -34,6 +36,8 @@ class SeriesCache:
         self._clock = clock
         # M1: one lock serializes cache access; fine for a single analyst.
         self._lock = asyncio.Lock()
+        # Bound in-flight chunk fetches so one wide query cannot flood the source.
+        self._fetch_slots = asyncio.Semaphore(MAX_CONCURRENT_FETCHES)
 
     @staticmethod
     def query_key(source_identity: str, expr: str, step_ms: int) -> str:
@@ -64,9 +68,12 @@ class SeriesCache:
             missing = [
                 cs for cs in self.chunk_starts(rng, step_ms) if not self._fresh(state.get(cs), now)
             ]
-            results = await asyncio.gather(
-                *(fetch(TimeRange(cs, cs + span - step_ms)) for cs in missing)
-            )
+
+            async def bounded(cs: int) -> FetchResult:
+                async with self._fetch_slots:
+                    return await fetch(TimeRange(cs, cs + span - step_ms))
+
+            results = await asyncio.gather(*(bounded(cs) for cs in missing))
             for cs, result in zip(missing, results, strict=True):
                 immutable = cs + span <= now - self.settle_ms
                 self._store(qkey, cs, cs + span - step_ms, result, now, immutable)
