@@ -28,6 +28,12 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     serve.add_argument("--host")
     serve.add_argument("--port", type=int)
     serve.add_argument("--ui-dir", type=Path)
+    serve.add_argument(
+        "--allowed-host",
+        action="append",
+        default=[],
+        help="extra Host/Origin accepted by the HTTP server (repeatable)",
+    )
     serve.add_argument("--no-mcp", action="store_true", help="HTTP only (development, E2E)")
     return parser.parse_args(argv)
 
@@ -38,6 +44,7 @@ def _settings(args: argparse.Namespace) -> Settings:
         value = getattr(args, attr)
         if value is not None:
             setattr(s, attr, value)
+    s.allowed_hosts = [*s.allowed_hosts, *args.allowed_host]
     return s
 
 
@@ -57,7 +64,7 @@ def _uvicorn_config(app: ASGIApp, settings: Settings) -> uvicorn.Config:
 
 async def _serve(settings: Settings, with_mcp: bool) -> None:
     service = build_service(settings)
-    app = create_app(service, settings.ui_dir)
+    app = create_app(service, settings.ui_dir, allowed_hosts=settings.allowed_hosts)
     server = uvicorn.Server(_uvicorn_config(app, settings))
     async with anyio.create_task_group() as tg:
         tg.start_soon(server.serve)

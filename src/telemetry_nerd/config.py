@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+DEFAULT_ALLOWED_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 _REPO_UI = Path(__file__).resolve().parents[2] / "ui" / "dist"
 
 
@@ -16,6 +17,7 @@ class Settings:
     host: str = "127.0.0.1"
     port: int = 7070
     ui_dir: Path | None = field(default=_REPO_UI)
+    allowed_hosts: list[str] = field(default_factory=lambda: list(DEFAULT_ALLOWED_HOSTS))
 
     @classmethod
     def from_env(cls) -> Settings:
