@@ -7,3 +7,6 @@
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# agentsh local state
+.agentsh/
