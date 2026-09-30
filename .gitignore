@@ -24,3 +24,6 @@ ui/node_modules/
 ui/dist/
 ui/test-results/
 ui/playwright-report/
+
+# stray node tooling caches at repo root
+node_modules/
