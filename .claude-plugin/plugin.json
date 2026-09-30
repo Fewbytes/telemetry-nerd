@@ -1,0 +1,6 @@
+{
+  "name": "telemetry-nerd",
+  "version": "0.1.0",
+  "description": "Evidence-first telemetry analysis workspace for Claude",
+  "author": { "name": "Avishai Ish-Shalom" }
+}

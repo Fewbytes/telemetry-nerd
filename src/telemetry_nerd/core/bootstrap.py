@@ -1,0 +1,29 @@
+from __future__ import annotations
+
+from telemetry_nerd.config import Settings
+from telemetry_nerd.core.events import EventBus
+from telemetry_nerd.core.service import TelemetryService
+from telemetry_nerd.datasets.cache import SeriesCache
+from telemetry_nerd.datasets.db import open_duckdb
+from telemetry_nerd.datasets.store import DatasetStore
+from telemetry_nerd.sources.promql import PromQLSource
+from telemetry_nerd.workspace.store import WorkspaceStore
+
+
+def build_service(settings: Settings) -> TelemetryService:
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    con = open_duckdb(settings.data_dir / "series.duckdb")
+    workspace = WorkspaceStore(settings.data_dir / "workspace.db")
+    source = PromQLSource(
+        "default",
+        settings.source_url,
+        flavor=settings.source_flavor,  # type: ignore[arg-type]
+        resolution_ms=settings.resolution_ms,
+    )
+    return TelemetryService(
+        sources={"default": source},
+        cache=SeriesCache(con),
+        datasets=DatasetStore(con, workspace.next_id),
+        workspace=workspace,
+        events=EventBus(),
+    )
