@@ -13,3 +13,14 @@
 
 # superpowers SDD scratch
 .superpowers/
+# python
+.venv/
+__pycache__/
+*.pyc
+# telemetry-nerd runtime data
+.tn-data/
+# ui
+ui/node_modules/
+ui/dist/
+ui/test-results/
+ui/playwright-report/
