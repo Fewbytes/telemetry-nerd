@@ -12,6 +12,10 @@ class EventBus:
     def __init__(self) -> None:
         self._subscribers: set[asyncio.Queue] = set()
 
+    @property
+    def subscriber_count(self) -> int:
+        return len(self._subscribers)
+
     def subscribe(self) -> asyncio.Queue:
         queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
         self._subscribers.add(queue)

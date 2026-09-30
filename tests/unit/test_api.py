@@ -1,3 +1,5 @@
+import time
+
 import pytest
 from starlette.testclient import TestClient
 
@@ -71,5 +73,57 @@ def test_render_report_budget(client):
 def test_websocket_receives_panel_created(client):
     with client.websocket_connect("/ws") as ws:
         make_panel(client)
-        events = [ws.receive_json(), ws.receive_json()]
-    assert {"type": "panel.created", "panel": "p1"} in events
+        seen = []
+        for _ in range(5):
+            event = ws.receive_json()
+            seen.append(event)
+            if event["type"] == "panel.created":
+                break
+    assert {"type": "panel.created", "panel": "p1"} in seen
+
+
+def test_websocket_disconnect_unsubscribes(tmp_path):
+    service = make_service(tmp_path)
+    with TestClient(create_app(service)) as c:
+        with c.websocket_connect("/ws"):
+            for _ in range(100):
+                if service.events.subscriber_count == 1:
+                    break
+                time.sleep(0.01)
+            assert service.events.subscriber_count == 1
+        for _ in range(200):
+            if service.events.subscriber_count == 0:
+                break
+            time.sleep(0.01)
+        assert service.events.subscriber_count == 0
+
+
+@pytest.mark.parametrize("path", ["/api/query", "/api/show", "/api/render-report"])
+@pytest.mark.parametrize("content", [b"{not json", b"[1, 2]", b'"str"'])
+def test_bad_body_is_400_with_hint(client, path, content):
+    resp = client.post(path, content=content)
+    assert resp.status_code == 400
+    assert resp.json()["hint"]
+
+
+def test_query_requires_expr(client):
+    for body in ({}, {"expr": 5}):
+        resp = client.post("/api/query", json=body)
+        assert resp.status_code == 400
+        assert resp.json()["hint"]
+
+
+def test_show_requires_dataset_and_question(client):
+    for body in ({}, {"dataset": "d1"}, {"question": "q?"}, {"dataset": 1, "question": "q"}):
+        resp = client.post("/api/show", json=body)
+        assert resp.status_code == 400
+        assert resp.json()["hint"]
+
+
+def test_budget_event_nests_report(tmp_path):
+    service = make_service(tmp_path)
+    queue = service.events.subscribe()
+    with TestClient(create_app(service)) as c:
+        body = {"panel_id": "p1", "render_ms": 250, "points": 1, "width_px": 400, "type": "evil"}
+        c.post("/api/render-report", json=body)
+    assert queue.get_nowait() == {"type": "render.budget_exceeded", "report": body}
