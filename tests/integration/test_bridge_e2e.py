@@ -1,0 +1,187 @@
+"""E2E: daemon subprocess + stdio bridge channel round trip (Task 11).
+
+Starts a real `telemetry-nerd serve` subprocess against a testcontainer VictoriaMetrics,
+then spawns `telemetry-nerd bridge` over stdio with TN_CHANNEL=1 using the MCP stdio
+client transport and a notification binding. A user thread event must arrive as a
+`notifications/claude/channel` notification within 5 s; Claude's `reply` through the
+bridge lands in that thread and produces no second notification.
+"""
+
+from __future__ import annotations
+
+import socket
+import subprocess
+import sys
+import time
+from collections.abc import Awaitable, Callable, Iterator
+from pathlib import Path
+from typing import Any
+
+import anyio
+import httpx
+import pytest
+from mcp import Client, StdioServerParameters
+from mcp.client.extension import ClientExtension, NotificationBinding
+from pydantic import BaseModel
+
+from telemetry_nerd.bridge.proxy import CHANNEL_NOTIFICATION
+
+pytestmark = pytest.mark.integration
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+@pytest.fixture
+def daemon_url(tmp_path: Path, vm_url: str) -> Iterator[str]:
+    """A real `telemetry-nerd serve` subprocess on a free port with a throwaway data dir."""
+    port = _free_port()
+    url = f"http://127.0.0.1:{port}"
+    log_path = tmp_path / "daemon.log"
+    with log_path.open("wb") as log:
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "telemetry_nerd.cli",
+                "serve",
+                "--port",
+                str(port),
+                "--data-dir",
+                str(tmp_path / "data"),
+                "--source-url",
+                vm_url,
+            ],
+            cwd=REPO_ROOT,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+        try:
+            deadline = time.monotonic() + 20
+            while True:
+                try:
+                    if httpx.get(f"{url}/api/health", timeout=0.5).status_code == 200:
+                        break
+                except httpx.HTTPError:
+                    pass
+                if proc.poll() is not None:
+                    raise RuntimeError(f"daemon exited early:\n{log_path.read_text()}")
+                if time.monotonic() > deadline:
+                    raise RuntimeError("daemon did not become healthy within 20 s")
+                time.sleep(0.05)
+            yield url
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+
+class _ChannelParams(BaseModel):
+    content: str
+    meta: dict[str, str]
+
+
+class _ChannelCollector(ClientExtension):
+    """Collect `notifications/claude/channel` deliveries.
+
+    The stdio client drops server notifications for methods unknown to the negotiated
+    protocol version unless an extension binding claims the method, so the collector
+    binds it explicitly rather than relying on `message_handler`.
+    """
+
+    identifier = "dev.telemetry-nerd/e2e"
+
+    def __init__(self) -> None:
+        self.events: list[_ChannelParams] = []
+        self.received = anyio.Event()
+
+    async def _on_channel(self, params: _ChannelParams) -> None:
+        self.events.append(params)
+        self.received.set()
+
+    def notifications(self) -> tuple[NotificationBinding[_ChannelParams], ...]:
+        return (
+            NotificationBinding(
+                method=CHANNEL_NOTIFICATION, params_type=_ChannelParams, handler=self._on_channel
+            ),
+        )
+
+
+async def _until(predicate: Callable[[], Awaitable[bool]], timeout_s: float = 10.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if await predicate():
+            return
+        await anyio.sleep(0.05)
+    raise AssertionError(f"condition not met within {timeout_s:.0f}s")
+
+
+async def _get(url: str) -> Any:
+    async with httpx.AsyncClient() as client:
+        r = await client.get(url)
+        r.raise_for_status()
+        return r.json()
+
+
+async def _post(url: str, json: dict) -> Any:
+    async with httpx.AsyncClient() as client:
+        r = await client.post(url, json=json)
+        r.raise_for_status()
+        return r.json()
+
+
+async def test_channel_round_trip_through_stdio_bridge(daemon_url: str) -> None:
+    url = daemon_url
+    collector = _ChannelCollector()
+    bridge = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "telemetry_nerd.cli", "bridge", "--daemon-url", url],
+        env={"TN_CHANNEL": "1"},
+        cwd=REPO_ROOT,
+    )
+    async with Client(bridge, mode="legacy", extensions=[collector]) as client:
+        # The pump heartbeats as soon as its gate opens (TN_CHANNEL=1); the channel
+        # reporting active means delivery is live.
+        async def channel_active() -> bool:
+            return (await _get(f"{url}/api/channel/status?consumer=claude"))["channel_active"]
+
+        await _until(channel_active)
+
+        thread = await _post(f"{url}/api/threads", json={"text": "why the dip?"})
+        tid = thread["id"]
+
+        # The pump claims only when an intentional event crosses its /ws subscription.
+        # If the subscription raced the first message, one nudge message re-triggers
+        # the claim: the first event is still unclaimed and comes back with it.
+        with anyio.move_on_after(1.0):
+            await collector.received.wait()
+        if not collector.received.is_set():
+            await _post(f"{url}/api/threads/{tid}/messages", json={"text": "still there?"})
+        with anyio.fail_after(5.0):
+            await collector.received.wait()
+
+        assert len(collector.events) == 1
+        event = collector.events[0]
+        assert "why the dip?" in event.content
+        assert event.meta["event"] == "thread.message"
+        assert event.meta["thread"] == tid
+
+        # Claude replies through the bridge: the message lands in the thread...
+        res = await client.call_tool("reply", {"thread": tid, "text": "the cache was cold"})
+        assert not res.is_error
+        snapshot = await _get(f"{url}/api/workspace")
+        got = next(t for t in snapshot["threads"] if t["id"] == tid)
+        texts = [m["text"] for m in got["messages"]]
+        assert "the cache was cold" in texts
+        assert any(m["author"] == "claude" for m in got["messages"])
+
+        # ...and a claude-authored event is internal: no second notification.
+        await anyio.sleep(0.5)
+        assert len(collector.events) == 1

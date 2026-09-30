@@ -41,5 +41,10 @@ ui-check:
 ui-dev:
     cd ui && npm run dev
 
-e2e: dev-up ui-build
+# Fresh VictoriaMetrics data each run (dev data is synthetic, so recreating the
+# volume is safe); then build the UI and run Playwright against a throwaway daemon.
+e2e:
+    podman compose -f deploy/dev/compose.yml down -v
+    just dev-up
+    just ui-build
     cd ui && npx playwright install chromium && npx playwright test
