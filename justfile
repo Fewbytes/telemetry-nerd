@@ -25,3 +25,15 @@ seed hours="6":
 
 serve *args:
     uv run telemetry-nerd serve --no-mcp {{args}}
+
+ui-install:
+    cd ui && npm install
+
+ui-build:
+    cd ui && npm run build
+
+ui-test:
+    cd ui && npm test
+
+ui-dev:
+    cd ui && npm run dev
