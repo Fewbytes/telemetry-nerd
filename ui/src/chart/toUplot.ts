@@ -25,8 +25,25 @@ function rgba(hex: string, alpha: number): string {
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
 }
 
-export function toUplot(series: SeriesData[]): UplotModel {
-  const xs = [...new Set(series.flatMap((s) => s.ts))].sort((a, b) => a - b);
+export interface Grid {
+  start: number; // ms
+  end: number; // ms, inclusive
+  step: number; // effective step ms
+}
+
+// Full bucket grid, so holes in the data become nulls (uPlot would otherwise
+// draw a line straight across a missing bucket).
+function gridTimes({ start, end, step }: Grid): number[] {
+  if (!(step > 0) || !(end >= start)) return [];
+  const out: number[] = [];
+  for (let t = Math.ceil(start / step) * step; t <= end; t += step) out.push(t);
+  return out;
+}
+
+export function toUplot(series: SeriesData[], grid?: Grid): UplotModel {
+  const all = new Set<number>(grid ? gridTimes(grid) : []);
+  series.forEach((s) => s.ts.forEach((t) => all.add(t)));
+  const xs = [...all].sort((a, b) => a - b);
   const index = new Map(xs.map((t, i) => [t, i]));
   const data: (number | null)[][] = [xs.map((t) => t / 1000)];
   const uSeries: uPlot.Series[] = [{}];
@@ -36,7 +53,7 @@ export function toUplot(series: SeriesData[]): UplotModel {
     const color = PALETTE[k % PALETTE.length];
     const column = (values: (number | null)[]) => {
       const out: (number | null)[] = Array(xs.length).fill(null);
-      // xs is the union of all s.ts, so every lookup hits
+      // xs contains every s.ts, so every lookup hits
       s.ts.forEach((t, i) => {
         const idx = index.get(t);
         if (idx !== undefined) out[idx] = values[i];

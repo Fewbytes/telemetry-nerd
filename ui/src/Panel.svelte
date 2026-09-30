@@ -3,6 +3,7 @@
   import "uplot/dist/uPlot.min.css";
   import { fetchPanelData, reportRender, type Panel, type PanelData } from "./api";
   import { toUplot } from "./chart/toUplot";
+  import { measureFirstDraw } from "./chart/measureDraw";
 
   let { panel }: { panel: Panel } = $props();
 
@@ -24,22 +25,28 @@
   $effect(() => {
     const el = plotEl;
     if (!data || !el) return;
-    const model = toUplot(data.series);
+    const model = toUplot(data.series, {
+      start: data.dataset.start_ms, end: data.dataset.end_ms, step: data.effective_step_ms,
+    });
     const width = el.clientWidth || 800;
     const unit = data.panel.spec.y.unit;
-    const t0 = performance.now();
-    const plot = new uPlot(
-      {
-        width, height: 260, series: model.series, bands: model.bands,
-        scales: { x: { time: true } },
-        axes: [{}, { label: unit ?? "value (unit unknown)" }],
+    const plot = measureFirstDraw(
+      (onDraw) =>
+        new uPlot(
+          {
+            width, height: 260, series: model.series, bands: model.bands,
+            scales: { x: { time: true } },
+            axes: [{}, { label: unit ?? "value (unit unknown)" }],
+            hooks: { draw: [onDraw] },
+          },
+          model.data, el,
+        ),
+      (ms) => {
+        reportRender({ panel_id: panel.id, render_ms: ms, points: model.points, width_px: width })
+          .then((r) => (render = { ms, exceeded: r.budget_exceeded }))
+          .catch((e) => (error = String(e)));
       },
-      model.data, el,
     );
-    const ms = performance.now() - t0;
-    reportRender({ panel_id: panel.id, render_ms: ms, points: model.points, width_px: width })
-      .then((r) => (render = { ms, exceeded: r.budget_exceeded }))
-      .catch((e) => (error = String(e)));
     return () => plot.destroy();
   });
 </script>
