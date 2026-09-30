@@ -3,18 +3,22 @@
   import "uplot/dist/uPlot.min.css";
   import {
     closePanel, fetchPanelData, reportRender,
-    type Annotation, type Panel, type PanelData,
+    type Annotation, type Panel, type PanelData, type Thread,
   } from "./lib/api";
   import { toUplot } from "./chart/toUplot";
   import { measureFirstDraw } from "./chart/measureDraw";
   import { drawAnnotations, drawOps, readAnnotationColors } from "./chart/annotations";
   import SelectionMenu from "./components/SelectionMenu.svelte";
+  import PanelThread from "./components/PanelThread.svelte";
 
-  let { panel, annotations = [] }: { panel: Panel; annotations?: Annotation[] } = $props();
+  let { panel, annotations = [], threads = [] }: {
+    panel: Panel; annotations?: Annotation[]; threads?: Thread[];
+  } = $props();
 
   const panelAnns = $derived(
     annotations.filter((a) => !a.deleted && (a.panel === null || a.panel === panel.id)),
   );
+  const panelThreads = $derived(threads.filter((t) => t.anchor === panel.id));
 
   // Brush selection: x range in seconds (from uPlot scales) + px position over the plot.
   interface Selection { x0: number; x1: number; left: number; top: number; width: number }
@@ -167,5 +171,12 @@
       {fmtStep(data.effective_step_ms)} · {data.dataset.representation}, min/max envelope
       {#if data.caveats.length > 0}&nbsp;· caveats: {data.caveats.join(", ")}{/if}
     </footer>
+  {/if}
+  {#if panelThreads.length > 0}
+    <div class="threads">
+      {#each panelThreads as thread (thread.id)}
+        <PanelThread {thread} />
+      {/each}
+    </div>
   {/if}
 </section>

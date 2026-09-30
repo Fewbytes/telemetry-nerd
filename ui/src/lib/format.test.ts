@@ -1,0 +1,77 @@
+import { describe, expect, it } from "vitest";
+import type { EvidenceRef, Scope, TimeSpan } from "./api";
+import { fmtTime, refLabel, scopeLine, statLine, type StatisticRef } from "./format";
+
+const span = (startMs: number, endMs: number): TimeSpan => ({ start_ms: startMs, end_ms: endMs });
+const minutes = (h: number, m: number) => Date.UTC(2026, 8, 30, h, m);
+
+const baseScope: Scope = {
+  source: "prometheus",
+  selector: "checkout, pod=~checkout-.*",
+  time_range: span(minutes(14, 0), minutes(14, 30)),
+  step: "30s",
+  aggregation: "p99",
+  baseline_range: null,
+};
+
+const statRef = (over: Partial<StatisticRef>): StatisticRef => ({
+  kind: "statistic",
+  dataset: "d1",
+  name: "p99",
+  value: 2.5,
+  interval: [2.1, 3.2],
+  exact: false,
+  method: "bootstrap",
+  params: {},
+  ...over,
+});
+
+describe("fmtTime", () => {
+  it("formats epoch ms as HH:MM UTC", () => {
+    expect(fmtTime(minutes(14, 5))).toBe("14:05");
+    expect(fmtTime(Date.UTC(2026, 8, 30, 23, 59))).toBe("23:59");
+  });
+});
+
+describe("scopeLine", () => {
+  it("renders selector, UTC range, step and aggregation", () => {
+    expect(scopeLine(baseScope)).toBe(
+      "checkout, pod=~checkout-.* · 14:00–14:30 UTC · 30s step · p99",
+    );
+  });
+
+  it("appends the baseline range when present", () => {
+    const scope: Scope = {
+      ...baseScope,
+      baseline_range: span(minutes(13, 0), minutes(13, 30)),
+    };
+    expect(scopeLine(scope)).toBe(
+      "checkout, pod=~checkout-.* · 14:00–14:30 UTC · 30s step · p99 · vs 13:00–13:30",
+    );
+  });
+});
+
+describe("statLine", () => {
+  it("renders value with interval as [lo, hi] (method)", () => {
+    expect(statLine(statRef({}))).toBe("p99 = 2.5 [2.1, 3.2] (bootstrap)");
+  });
+
+  it("renders exact statistics without an interval", () => {
+    expect(
+      statLine(statRef({ name: "n", value: 42, interval: null, exact: true, method: "count" })),
+    ).toBe("n = 42 (exact, count)");
+  });
+});
+
+describe("refLabel", () => {
+  it("labels panel and annotation refs by kind and id", () => {
+    const panel: EvidenceRef = { kind: "panel", panel: "p3" };
+    const annotation: EvidenceRef = { kind: "annotation", annotation: "a2" };
+    expect(refLabel(panel)).toBe("panel p3");
+    expect(refLabel(annotation)).toBe("annotation a2");
+  });
+
+  it("renders statistic refs through statLine", () => {
+    expect(refLabel(statRef({}))).toBe("p99 = 2.5 [2.1, 3.2] (bootstrap)");
+  });
+});
