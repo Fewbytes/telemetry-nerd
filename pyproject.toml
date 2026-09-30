@@ -35,6 +35,7 @@ addopts = "-m 'not integration'"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+extend-exclude = ["docs"]
 
 [dependency-groups]
 dev = [
