@@ -3,7 +3,7 @@ import pytest
 from telemetry_nerd.core.service import ChartRejected, auto_step
 from telemetry_nerd.model.time import TimeRange
 from telemetry_nerd.sources.base import SourceError
-from tests.unit.fakes import FakeSource, make_service
+from tests.unit.fakes import FakeSource, NonFiniteSource, PartialSource, make_service
 
 
 def test_auto_step_targets_about_600_buckets():
@@ -88,3 +88,17 @@ async def test_cache_is_keyed_on_source_identity_not_name(tmp_path):
     await svc.query("up", start="now-2h", end="now-1h", step="1m")
     assert svc.sources["default"].calls > 0
     assert a.calls == calls_a
+
+
+async def test_partial_fetch_is_flagged_in_summary_and_panel(tmp_path):
+    svc = make_service(tmp_path, PartialSource())
+    out = await svc.query("up", start="now-2h", end="now-1h", step="1m")
+    assert "partial" in out["summary"]["caveats"]
+    panel = svc.show(out["dataset"], "q?").panel
+    assert "partial" in svc.panel_data(panel.id, 800)["caveats"]
+
+
+async def test_non_finite_values_flagged(tmp_path):
+    svc = make_service(tmp_path, NonFiniteSource())
+    out = await svc.query("up", start="now-2h", end="now-1h", step="1m")
+    assert "non_finite" in out["summary"]["caveats"]

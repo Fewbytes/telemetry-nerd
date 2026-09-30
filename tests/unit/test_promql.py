@@ -207,3 +207,98 @@ def test_identity_includes_flavor_url_and_resolution():
     assert a.identity == f"victoriametrics|{BASE}|15000"
     assert a.identity != PromQLSource("vm", "http://other.test").identity
     assert a.identity != PromQLSource("vm", BASE, flavor="prometheus").identity
+
+
+def _vm_responder(rollup_ts, count_ts, values=None):
+    """rollup query -> min/max/avg at rollup_ts; count query -> 4 at count_ts."""
+    values = values or {"min": "1", "max": "5", "avg": "3"}
+
+    def responder(request):
+        if request.url.params["query"].startswith("rollup("):
+            return httpx.Response(
+                200,
+                json=matrix(
+                    [
+                        {
+                            "metric": {"instance": "a", "rollup": f},
+                            "values": [[t, values[f]] for t in rollup_ts],
+                        }
+                        for f in ("min", "max", "avg")
+                    ]
+                ),
+            )
+        return httpx.Response(
+            200,
+            json=matrix([{"metric": {"instance": "a"}, "values": [[t, "4"] for t in count_ts]}]),
+        )
+
+    return responder
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    ("rollup_ts", "count_ts"),
+    [([1700000100, 1700000160], [1700000100]), ([1700000100], [1700000100, 1700000160])],
+)
+async def test_incomplete_cells_are_dropped_and_flagged_partial(rollup_ts, count_ts):
+    respx.get(**ROUTE).mock(side_effect=_vm_responder(rollup_ts, count_ts))
+    res = await PromQLSource("vm", BASE).fetch("up", RNG, 60_000)
+    assert res.buckets.column("ts_ms").to_pylist() == [1_700_000_100_000]
+    assert res.buckets.column("count").to_pylist() == [4]
+    assert res.buckets.column("avg").to_pylist() == [3.0]
+    assert res.partial == 1
+
+
+@respx.mock
+async def test_complete_fetch_is_not_partial():
+    respx.get(**ROUTE).mock(side_effect=_vm_responder([1700000100], [1700000100]))
+    assert (await PromQLSource("vm", BASE).fetch("up", RNG, 60_000)).partial == 0
+
+
+@respx.mock
+@pytest.mark.parametrize("bad", ["NaN", "+Inf", "-Inf"])
+async def test_non_finite_values_become_null_but_count_is_kept(bad):
+    values = {"min": bad, "max": bad, "avg": bad}
+    respx.get(**ROUTE).mock(side_effect=_vm_responder([1700000100], [1700000100], values))
+    res = await PromQLSource("vm", BASE).fetch("up", RNG, 60_000)
+    row = res.buckets.to_pylist()[0]
+    assert (row["avg"], row["min"], row["max"], row["count"]) == (None, None, None, 4)
+    assert res.partial == 0
+
+
+@respx.mock
+@pytest.mark.parametrize("status", [429, 500, 502, 503])
+async def test_http_5xx_and_429_are_unavailable_with_hint(status):
+    respx.get(**ROUTE).mock(return_value=httpx.Response(status, text="overloaded"))
+    with pytest.raises(SourceUnavailable) as exc:
+        await PromQLSource("vm", BASE).fetch("up", RNG, 60_000)
+    assert exc.value.hint
+
+
+@respx.mock
+async def test_non_json_body_is_unavailable_with_hint():
+    respx.get(**ROUTE).mock(return_value=httpx.Response(200, text="<html>proxy error</html>"))
+    with pytest.raises(SourceUnavailable) as exc:
+        await PromQLSource("vm", BASE).fetch("up", RNG, 60_000)
+    assert exc.value.hint
+
+
+@respx.mock
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"status": "success"},
+        {"status": "success", "data": {"resultType": "matrix"}},
+        {"status": "success", "data": {"result": []}},
+        {"status": "success", "data": None},
+        {"status": "success", "data": {"resultType": "matrix", "result": [{"values": []}]}},
+        {"status": "success", "data": {"resultType": "matrix", "result": [{"metric": {}}]}},
+        {"status": "success", "data": {"resultType": "matrix", "result": ["x"]}},
+        [1, 2],
+    ],
+)
+async def test_malformed_success_body_is_source_error_with_hint(body):
+    respx.get(**ROUTE).mock(return_value=httpx.Response(200, json=body))
+    with pytest.raises(SourceError) as exc:
+        await PromQLSource("vm", BASE).fetch("up", RNG, 60_000)
+    assert exc.value.hint

@@ -9,19 +9,27 @@ from pathlib import Path
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse as _JSONResponse
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
 from telemetry_nerd.model.errors import NotFound
+from telemetry_nerd.model.jsonsafe import finite
 from telemetry_nerd.sources.base import SourceError
 
 log = logging.getLogger(__name__)
 
 RENDER_BUDGET_MS = 100
 RENDER_POINTS_PER_PX = 2
+
+
+class JSONResponse(_JSONResponse):
+    """Never emits NaN/Inf (invalid JSON): non-finite floats become null."""
+
+    def render(self, content: object) -> bytes:
+        return super().render(finite(content))
 
 
 def _error(status: int, message: str, **extra) -> JSONResponse:
@@ -61,9 +69,10 @@ def create_app(service: TelemetryService, ui_dir: Path | None = None) -> Starlet
         except ValueError:
             return _error(400, "width must be an integer")
         try:
-            return JSONResponse(service.panel_data(request.path_params["id"], width))
+            out = service.panel_data(request.path_params["id"], width)
         except NotFound as e:
             return _error(404, str(e))
+        return JSONResponse(out)
 
     async def query(request: Request) -> JSONResponse:
         try:
@@ -72,11 +81,12 @@ def create_app(service: TelemetryService, ui_dir: Path | None = None) -> Starlet
             return _error(400, str(e), hint=e.hint)
         args = {k: body[k] for k in ("expr", "start", "end", "step", "source") if k in body}
         try:
-            return JSONResponse(await service.query(**args))
+            out = await service.query(**args)
         except SourceError as e:
             return _error(400, str(e), hint=e.hint)
         except ValueError as e:
             return _error(400, str(e))
+        return JSONResponse(out)
 
     async def show(request: Request) -> JSONResponse:
         try:

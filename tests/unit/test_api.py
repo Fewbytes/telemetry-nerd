@@ -1,10 +1,11 @@
+import json
 import time
 
 import pytest
 from starlette.testclient import TestClient
 
 from telemetry_nerd.api.app import create_app
-from tests.unit.fakes import FakeSource, make_service
+from tests.unit.fakes import FakeSource, NonFiniteSource, make_service
 
 
 @pytest.fixture
@@ -127,3 +128,35 @@ def test_budget_event_nests_report(tmp_path):
         body = {"panel_id": "p1", "render_ms": 250, "points": 1, "width_px": 400, "type": "evil"}
         c.post("/api/render-report", json=body)
     assert queue.get_nowait() == {"type": "render.budget_exceeded", "report": body}
+
+
+def _strict(resp):
+    def boom(c):
+        raise AssertionError(f"non-standard JSON constant {c}")
+
+    return json.loads(resp.text, parse_constant=boom)
+
+
+def test_non_finite_values_still_yield_valid_json(tmp_path):
+    with TestClient(create_app(make_service(tmp_path, NonFiniteSource()))) as c:
+        resp = c.post("/api/query", json={"expr": "up", "start": "now-2h", "end": "now-1h"})
+        assert resp.status_code == 200
+        _strict(resp)
+        panel = c.post("/api/show", json={"dataset": resp.json()["dataset"], "question": "q?"})
+        pid = panel.json()["panel"]["id"]
+        data = c.get(f"/api/panels/{pid}/data?width=200")
+        assert data.status_code == 200
+        body = _strict(data)
+        assert body["series"][0]["avg"][0] is None
+        assert "non_finite" in body["caveats"]
+
+
+def test_serialization_error_is_not_reported_as_400(tmp_path):
+    service = make_service(tmp_path)
+
+    async def bad_query(*a, **k):
+        return {"x": object()}  # not serializable: a server bug, not a client error
+
+    service.query = bad_query  # type: ignore[method-assign]
+    with TestClient(create_app(service), raise_server_exceptions=False) as c:
+        assert c.post("/api/query", json={"expr": "up"}).status_code == 500

@@ -15,6 +15,7 @@ _SCHEMA = [
     """CREATE TABLE IF NOT EXISTS cache_buckets (
         qkey VARCHAR, chunk_start BIGINT, ts_ms BIGINT, series_id VARCHAR,
         avg DOUBLE, min DOUBLE, max DOUBLE, count BIGINT)""",
+    "ALTER TABLE cache_chunks ADD COLUMN IF NOT EXISTS partial BIGINT DEFAULT 0",
     "CREATE TABLE IF NOT EXISTS datasets (id VARCHAR PRIMARY KEY, meta VARCHAR NOT NULL)",
     """CREATE TABLE IF NOT EXISTS dataset_rows (
         dataset_id VARCHAR, ts_ms BIGINT, series_id VARCHAR,

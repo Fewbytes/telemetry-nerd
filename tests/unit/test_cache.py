@@ -131,3 +131,19 @@ async def test_same_name_different_identity_are_separate_entries(cache):
     await cache.get("vm|http://a|15000", "up", rng, STEP, f)
     await cache.get("vm|http://b|15000", "up", rng, STEP, f)
     assert len(f.calls) == 2
+
+
+async def test_partial_flag_survives_the_cache(cache):
+    class Partial(FakeFetcher):
+        async def __call__(self, rng):
+            res = await super().__call__(rng)
+            return FetchResult(res.buckets, res.series, partial=1)
+
+    rng = TimeRange(1_200_000, 2_400_000)  # 3 chunks
+    first = await cache.get("src", "up", rng, STEP, Partial())
+    assert first.partial == 3
+    cached = await cache.get("src", "up", rng, STEP, FakeFetcher())  # all from cache
+    assert cached.partial == 3
+    assert (
+        await cache.get("src", "up", TimeRange(1_200_000, 1_380_000), STEP, FakeFetcher())
+    ).partial == 1

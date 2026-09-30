@@ -23,6 +23,8 @@ def summarize(
         caveats.append("fake_resolution")
     if meta.end_ms > now_ms - settle_ms:
         caveats.append("settling")
+    if meta.partial > 0:
+        caveats.append("partial")
     base = {
         "dataset": meta.id,
         "expr": meta.expr,
@@ -41,10 +43,16 @@ def summarize(
     labels = {r["series_id"]: json.loads(r["labels"]) for r in result.series.to_pylist()}
     # The grid is inclusive of both start and end (query_range and cache reads are BETWEEN).
     expected = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
-    total = pl.col("count").sum()
+    # Non-finite values (null, or NaN from a careless source) carry a count but no value.
+    # They must not bias the mean: weight only buckets that have an avg.
+    df = pl.from_arrow(result.buckets).with_columns(pl.col("avg", "min", "max").fill_nan(None))
+    if df.filter(
+        (pl.col("count") > 0) & pl.any_horizontal(pl.col("avg", "min", "max").is_null())
+    ).height:
+        caveats.append("non_finite")
+    total = pl.col("count").filter(pl.col("avg").is_not_null()).sum()
     per = (
-        pl.from_arrow(result.buckets)
-        .group_by("series_id")
+        df.group_by("series_id")
         .agg(
             pl.col("min").min().alias("min"),
             pl.col("max").max().alias("max"),

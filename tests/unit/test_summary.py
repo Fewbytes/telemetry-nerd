@@ -1,3 +1,5 @@
+import json
+
 import pyarrow as pa
 
 from telemetry_nerd.core.summary import summarize
@@ -90,3 +92,28 @@ def test_fake_resolution_and_settling():
 def test_clean_has_no_caveats():
     rows = [(0, "a", 1.0, 1.0, 1.0, 1)]
     assert run(meta(end=0), result(rows, {"a": "a"}))["caveats"] == []
+
+
+def test_non_finite_buckets_flag_caveat_and_keep_mean_unbiased():
+    nan = float("nan")
+    rows = [
+        (0, "a", 2.0, 2.0, 2.0, 1),
+        (1000, "a", None, None, None, 9),  # adapter nulled a NaN bucket; count kept
+        (2000, "a", nan, nan, nan, 9),  # raw NaN must be treated the same
+    ]
+    out = run(meta(end=2000), result(rows, {"a": "a"}))
+    assert "non_finite" in out["caveats"]
+    assert out["series"][0]["mean"] == 2.0  # not 2*1/19
+    assert out["series"][0]["min"] == 2.0
+    assert json.dumps(out, allow_nan=False)
+
+
+def test_finite_data_has_no_non_finite_caveat():
+    rows = [(0, "a", 1.0, 1.0, 1.0, 1)]
+    assert "non_finite" not in run(meta(end=0), result(rows, {"a": "a"}))["caveats"]
+
+
+def test_partial_meta_flags_caveat():
+    m = DatasetMeta(**{**meta(end=0).to_dict(), "partial": 2})
+    out = run(m, result([(0, "a", 1.0, 1.0, 1.0, 1)], {"a": "a"}))
+    assert "partial" in out["caveats"]

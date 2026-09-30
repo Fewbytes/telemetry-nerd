@@ -70,7 +70,14 @@ class SeriesCache:
             for cs, result in zip(missing, results, strict=True):
                 immutable = cs + span <= now - self.settle_ms
                 self._store(qkey, cs, cs + span - step_ms, result, now, immutable)
-            return self._read(qkey, rng)
+            starts = self.chunk_starts(rng, step_ms)
+            partial = self._con.execute(
+                """SELECT COALESCE(SUM(partial), 0) FROM cache_chunks
+                   WHERE qkey = $q AND chunk_start BETWEEN $a AND $b""",
+                {"q": qkey, "a": starts[0], "b": starts[-1]},
+            ).fetchone()
+            read = self._read(qkey, rng)
+            return FetchResult(read.buckets, read.series, partial=int(partial[0]) if partial else 0)
 
     def _fresh(self, state: tuple[int, bool] | None, now: int) -> bool:
         if state is None:
@@ -99,8 +106,9 @@ class SeriesCache:
                 con.unregister("_tn_in")
             upsert_series(con, result.series)
             con.execute(
-                "INSERT INTO cache_chunks VALUES ($q, $c, $f, $i)",
-                {**params, "f": now, "i": immutable},
+                """INSERT INTO cache_chunks (qkey, chunk_start, fetched_at, immutable, partial)
+                   VALUES ($q, $c, $f, $i, $p)""",
+                {**params, "f": now, "i": immutable, "p": result.partial},
             )
             con.commit()
         except Exception:

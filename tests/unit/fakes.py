@@ -49,6 +49,26 @@ class FakeSource:
         return FetchResult(buckets, series)
 
 
+class NonFiniteSource(FakeSource):
+    """Emits NaN/Inf values (defense in depth: a source adapter that forgot to null them)."""
+
+    async def fetch(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
+        res = await super().fetch(expr, rng, step_ms)
+        b = res.buckets
+        n = b.num_rows
+        cols = {name: b.column(name).to_pylist() for name in b.schema.names}
+        cols["avg"] = [float("nan")] * n
+        cols["min"] = [float("-inf")] * n
+        cols["max"] = [float("inf")] * n
+        return FetchResult(pa.table(cols, schema=BUCKET_SCHEMA), res.series)
+
+
+class PartialSource(FakeSource):
+    async def fetch(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
+        res = await super().fetch(expr, rng, step_ms)
+        return FetchResult(res.buckets, res.series, partial=1)
+
+
 def make_service(tmp_path, source=None, clock=lambda: NOW) -> TelemetryService:
     source = source or FakeSource()
     con = open_duckdb(tmp_path / "series.duckdb")

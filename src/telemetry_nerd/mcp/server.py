@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import json
-
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
 from telemetry_nerd.model.errors import NotFound
+from telemetry_nerd.model.jsonsafe import dumps
 from telemetry_nerd.sources.base import SourceError
 
 INSTRUCTIONS = """\
@@ -23,7 +22,7 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
 
 
 def _dump(obj: dict) -> str:
-    return json.dumps(obj, separators=(",", ":"))
+    return dumps(obj, separators=(",", ":"))
 
 
 def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:

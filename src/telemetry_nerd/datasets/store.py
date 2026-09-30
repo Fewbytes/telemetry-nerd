@@ -25,6 +25,7 @@ class DatasetMeta:
     resolution_ms: int
     representation: str = "bucket_agg"
     created_at_ms: int = 0
+    partial: int = 0  # incomplete source cells dropped while fetching
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -60,6 +61,7 @@ class DatasetStore:
             step_ms=step_ms,
             resolution_ms=resolution_ms,
             created_at_ms=self._clock(),
+            partial=result.partial,
         )
         con = self._con
         con.begin()

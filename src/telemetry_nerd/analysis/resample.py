@@ -19,12 +19,13 @@ def rebucket(buckets: pa.Table, new_step_ms: int) -> pa.Table:
     df = pl.from_arrow(buckets)
     k = new_step_ms
     total = pl.col("count").sum()
+    weight = pl.col("count").filter(pl.col("avg").is_not_null()).sum()  # null avg carries no mean
     out = (
         df.with_columns(((pl.col("ts_ms") + k - 1) // k * k).alias("ts_ms"))
         .group_by(["series_id", "ts_ms"])
         .agg(
-            pl.when(total > 0)
-            .then((pl.col("avg") * pl.col("count")).sum() / total)
+            pl.when(weight > 0)
+            .then((pl.col("avg") * pl.col("count")).sum() / weight)
             .otherwise(None)
             .alias("avg"),
             pl.col("min").min(),

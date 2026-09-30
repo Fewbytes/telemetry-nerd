@@ -1,10 +1,11 @@
+import pytest
 import json
 
 from mcp import Client
 from mcp.types import TextContent
 
 from telemetry_nerd.mcp.server import build_mcp
-from tests.unit.fakes import FakeSource, make_service
+from tests.unit.fakes import FakeSource, NonFiniteSource, make_service
 
 
 def text_of(result) -> str:
@@ -56,3 +57,11 @@ async def test_source_error_includes_hint(tmp_path):
     q = await call(mcp, "query", {"expr": "up", "source": "nope"})
     assert q.is_error
     assert "hint:" in text_of(q)
+
+
+async def test_non_finite_values_yield_strict_json(tmp_path):
+    mcp = build_mcp(make_service(tmp_path, NonFiniteSource()), "http://x")
+    q = await call(mcp, "query", {"expr": "up", "start": "now-2h", "end": "now-1h"})
+    assert not q.is_error
+    out = json.loads(text_of(q), parse_constant=lambda c: pytest.fail(c))
+    assert "non_finite" in out["summary"]["caveats"]
