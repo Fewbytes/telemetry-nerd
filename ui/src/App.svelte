@@ -22,6 +22,6 @@
     <p class="empty">No panels yet. Ask Claude a question about your metrics.</p>
   {/if}
   {#each panels as panel (panel.id)}
-    <PanelView {panel} />
+    <PanelView {panel} annotations={ws.snapshot?.annotations ?? []} />
   {/each}
 </main>

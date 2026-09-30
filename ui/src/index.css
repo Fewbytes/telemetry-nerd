@@ -1,9 +1,11 @@
 :root {
   --bg: #ffffff; --fg: #1a1a1a; --muted: #666; --border: #ddd; --badge: #fff4d6; --error: #b00020;
+  --ann-claude: #8250df; --ann-user: #e69f00;
   font-family: system-ui, sans-serif; color: var(--fg); background: var(--bg);
 }
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #16181d; --fg: #e6e6e6; --muted: #9aa0a6; --border: #333; --badge: #3a3220; --error: #ff6b6b; }
+  :root { --bg: #16181d; --fg: #e6e6e6; --muted: #9aa0a6; --border: #333; --badge: #3a3220; --error: #ff6b6b;
+  --ann-claude: #a371f7; --ann-user: #f0a232; }
 }
 body { margin: 0; background: var(--bg); }
 main { max-width: 1200px; margin: 0 auto; padding: 16px; }
