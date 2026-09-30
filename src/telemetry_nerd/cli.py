@@ -1,4 +1,5 @@
-"""`telemetry-nerd serve`: the daemon (HTTP/WS API, UI, MCP over streamable HTTP at /mcp).
+"""`telemetry-nerd` CLI: `serve` runs the daemon (HTTP/WS API, UI, MCP over streamable
+HTTP at /mcp); `bridge` runs the per-session stdio MCP bridge for Claude Code.
 Logging goes to stderr."""
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from starlette.types import ASGIApp
 
 from telemetry_nerd import daemon
 from telemetry_nerd.api.app import create_app
+from telemetry_nerd.bridge.proxy import run_bridge
 from telemetry_nerd.config import Settings
 from telemetry_nerd.core.bootstrap import build_service
 from telemetry_nerd.mcp.server import build_mcp
@@ -37,6 +39,13 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
         help="extra Host/Origin accepted by the HTTP server (repeatable)",
     )
     serve.add_argument("--no-mcp", action="store_true", help="deprecated no-op")
+    bridge = sub.add_parser(
+        "bridge", help="stdio MCP bridge for Claude Code: daemon tools + channel delivery"
+    )
+    bridge.add_argument("--daemon-url", help="daemon URL (default from settings; skips autostart)")
+    bridge.add_argument(
+        "--no-autostart", action="store_true", help="do not spawn the daemon if it is not running"
+    )
     return parser.parse_args(argv)
 
 
@@ -78,12 +87,33 @@ def _already_running(settings: Settings) -> str | None:
     return None
 
 
+def _bridge_url(args: argparse.Namespace, settings: Settings, log: logging.Logger) -> str:
+    """Resolve the daemon URL for the bridge, spawning one unless told not to."""
+    if args.daemon_url is not None:
+        # An explicit URL points at an existing (often remote) daemon: never spawn.
+        if not daemon.healthy(args.daemon_url):
+            log.error(
+                "daemon not healthy at %s (hint: start it with `telemetry-nerd serve` "
+                "or drop --daemon-url to autostart one)",
+                args.daemon_url,
+            )
+            sys.exit(1)
+        return args.daemon_url
+    if args.no_autostart:
+        return settings.daemon_url
+    try:
+        return daemon.ensure_daemon(settings)
+    except RuntimeError as e:
+        log.error("cannot start telemetry-nerd daemon: %s", e)
+        sys.exit(1)
+
+
 def main(argv: list[str] | None = None) -> None:
     _configure_logging()
     args = _parse(argv)
+    log = logging.getLogger(__name__)
     if args.command == "serve":
         settings = _settings(args)
-        log = logging.getLogger(__name__)
         if args.no_mcp:
             log.warning("--no-mcp is deprecated and ignored: serve is daemon-only since M2")
         if running := _already_running(settings):
@@ -101,6 +131,10 @@ def main(argv: list[str] | None = None) -> None:
             anyio.run(_serve, settings)
         finally:
             daemon.remove_state(settings.data_dir, pid)
+    elif args.command == "bridge":
+        url = _bridge_url(args, Settings.from_env(), log)
+        log.info("bridge: daemon at %s", url)
+        anyio.run(run_bridge, url)
 
 
 if __name__ == "__main__":
