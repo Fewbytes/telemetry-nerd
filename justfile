@@ -24,7 +24,7 @@ seed hours="6":
     uv run python scripts/seed_synthetic.py --url http://127.0.0.1:8428 --hours {{hours}}
 
 serve *args:
-    uv run telemetry-nerd serve --no-mcp {{args}}
+    uv run telemetry-nerd serve {{args}}
 
 ui-install:
     cd ui && npm install

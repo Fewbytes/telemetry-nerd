@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from collections.abc import Awaitable, Callable, Sequence
@@ -10,6 +11,8 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, ValidationError
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -131,6 +134,7 @@ def create_app(
     service: TelemetryService,
     ui_dir: Path | None = None,
     allowed_hosts: Sequence[str] = DEFAULT_ALLOWED_HOSTS,
+    mcp: MCPServer | None = None,
 ) -> Starlette:
     hosts = frozenset(h.strip("[]").lower() for h in allowed_hosts)
 
@@ -384,7 +388,27 @@ def create_app(
     ]
     if ui_dir is not None and (ui_dir / "index.html").exists():
         routes.append(Mount("/", app=StaticFiles(directory=ui_dir, html=True)))
+    lifespan = None
+    if mcp is not None:
+        names = [h.strip("[]") for h in allowed_hosts]
+        bracket = lambda h: f"[{h}]" if ":" in h else h
+        mcp_app = mcp.streamable_http_app(
+            streamable_http_path="/mcp",
+            transport_security=TransportSecuritySettings(
+                allowed_hosts=[f"{bracket(h)}:*" for h in names] + [bracket(h) for h in names],
+                allowed_origins=[f"http://{bracket(h)}:*" for h in names]
+                + [f"http://{bracket(h)}" for h in names],
+            ),
+        )
+        routes[:0] = list(mcp_app.routes)  # before the static catch-all mount
+
+        @contextlib.asynccontextmanager
+        async def lifespan(app: Starlette):
+            async with mcp.session_manager.run():
+                yield
+
     return Starlette(
         routes=routes,
+        lifespan=lifespan,
         middleware=[Middleware(TrustedHostMiddleware, allowed_hosts=list(allowed_hosts))],
     )

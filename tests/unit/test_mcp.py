@@ -65,3 +65,142 @@ async def test_non_finite_values_yield_strict_json(tmp_path):
     assert not q.is_error
     out = json.loads(text_of(q), parse_constant=lambda c: pytest.fail(c))
     assert "non_finite" in out["summary"]["caveats"]
+
+
+SCOPE = {
+    "source": "default",
+    "selector": "up",
+    "start": "now-2h",
+    "end": "now-1h",
+    "step": "1m",
+    "aggregation": "avg",
+}
+
+
+async def _finding_setup(tmp_path):
+    svc = make_service(tmp_path)
+    mcp = build_mcp(svc, "http://x")
+    await call(mcp, "query", {"expr": "up", "start": "now-2h", "end": "now-1h"})
+    return svc, mcp
+
+
+async def test_annotate_accepts_relative_time(tmp_path):
+    svc = make_service(tmp_path)
+    mcp = build_mcp(svc, "http://x")
+    r = await call(mcp, "annotate", {"kind": "event", "at": "now-5m", "label": "deploy"})
+    assert not r.is_error, text_of(r)
+    a = json.loads(text_of(r))["annotation"]
+    assert a["label"] == "deploy"
+    assert a["t_start_ms"] is not None
+    ev = svc.log.since(0)[-1]
+    assert ev.actor == "claude" and ev.type == "annotation.created"
+
+
+async def test_annotate_invalid_is_tool_error(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    r = await call(mcp, "annotate", {"kind": "event"})
+    assert r.is_error
+    assert "t_start_ms" in text_of(r)
+
+
+async def test_hypothesis_create_and_update(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    h = json.loads(text_of(await call(mcp, "hypothesis_create", {"statement": "cache cold"})))
+    assert h["hypothesis"] == "h1"
+    u = await call(mcp, "hypothesis_update", {"hypothesis": "h1", "status": "refuted"})
+    assert json.loads(text_of(u)) == {"hypothesis": "h1", "status": "refuted"}
+    bad = await call(mcp, "hypothesis_update", {"hypothesis": "h99", "status": "refuted"})
+    assert bad.is_error
+
+
+async def test_finding_create_valid(tmp_path):
+    _, mcp = await _finding_setup(tmp_path)
+    r = await call(
+        mcp,
+        "finding_create",
+        {
+            "claim": "up is flat",
+            "scope": SCOPE,
+            "evidence": [
+                {
+                    "kind": "statistic",
+                    "dataset": "d1",
+                    "name": "mean",
+                    "value": 1.0,
+                    "method": "m",
+                    "interval": [0.9, 1.1],
+                }
+            ],
+        },
+    )
+    assert not r.is_error, text_of(r)
+    out = json.loads(text_of(r))
+    assert out["finding"] == "f1"
+    assert out["url"] == "http://x/#/finding/f1"
+
+
+async def test_finding_missing_scope_field_names_path(tmp_path):
+    _, mcp = await _finding_setup(tmp_path)
+    scope = {k: v for k, v in SCOPE.items() if k != "aggregation"}
+    r = await call(
+        mcp,
+        "finding_create",
+        {"claim": "c", "scope": scope, "evidence": [{"kind": "panel", "panel": "p1"}]},
+    )
+    assert r.is_error
+    assert "aggregation" in text_of(r)
+
+
+async def test_finding_statistic_without_interval_mentions_rule(tmp_path):
+    _, mcp = await _finding_setup(tmp_path)
+    r = await call(
+        mcp,
+        "finding_create",
+        {
+            "claim": "c",
+            "scope": SCOPE,
+            "evidence": [
+                {"kind": "statistic", "dataset": "d1", "name": "mean", "value": 1.0, "method": "m"}
+            ],
+        },
+    )
+    assert r.is_error
+    assert "no_uncertainty" in text_of(r)
+
+
+async def test_gap_create(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    r = await call(
+        mcp,
+        "gap_create",
+        {
+            "missing_signal": "queue depth",
+            "needed_for": "saturation",
+            "suggestion": {"name": "queue_depth", "type": "gauge"},
+        },
+    )
+    assert not r.is_error, text_of(r)
+    assert json.loads(text_of(r))["gap"] == "g1"
+
+
+async def test_reply_and_workspace_get_open_threads(tmp_path):
+    svc = make_service(tmp_path)
+    mcp = build_mcp(svc, "http://x")
+    t = svc.ws.ask("why slow?", "user")
+    before = json.loads(text_of(await call(mcp, "workspace_get", {})))
+    assert [x["id"] for x in before["open_threads"]] == [t.id]
+    r = await call(mcp, "reply", {"thread": t.id, "text": "checking"})
+    assert not r.is_error, text_of(r)
+    assert json.loads(text_of(r))["message"]
+    after = json.loads(text_of(await call(mcp, "workspace_get", {})))
+    assert after["open_threads"] == []
+
+
+async def test_workspace_activity_and_reply_unknown_thread(tmp_path):
+    svc = make_service(tmp_path)
+    mcp = build_mcp(svc, "http://x")
+    svc.ws.ask("q", "user")
+    a = json.loads(text_of(await call(mcp, "workspace_activity", {"since": 0})))
+    assert a["events"]
+    bad = await call(mcp, "reply", {"thread": "t99", "text": "x"})
+    assert bad.is_error

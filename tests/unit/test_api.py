@@ -262,3 +262,23 @@ def test_render_report_non_string_panel_id_is_not_a_500(tmp_path):
         body = {"panel_id": {"x": 1}, "render_ms": 250, "points": 1, "width_px": 400}
         assert c.post("/api/render-report", json=body).status_code == 200
     assert service.log.since(0)[-1].object_id is None
+
+
+async def test_mcp_over_streamable_http(live_daemon):
+    import json
+
+    from mcp import Client
+
+    live_daemon.service.ws.ask("hello?", "user")
+    async with Client(live_daemon.mcp_url) as client:
+        r = await client.call_tool("workspace_get", {})
+    assert not r.is_error
+    brief = json.loads(r.content[0].text)  # type: ignore[union-attr]
+    assert len(brief["open_threads"]) == 1
+
+
+def test_mcp_rejects_foreign_host(live_daemon):
+    import httpx
+
+    r = httpx.post(f"{live_daemon.mcp_url}", headers={"Host": "evil.example"}, json={})
+    assert r.status_code in (400, 421)

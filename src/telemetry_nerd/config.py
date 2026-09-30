@@ -5,6 +5,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 DEFAULT_ALLOWED_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+
+
+def default_data_dir() -> Path:
+    if env := os.environ.get("TN_DATA_DIR"):
+        return Path(env)
+    if xdg := os.environ.get("XDG_DATA_HOME"):
+        return Path(xdg) / "telemetry-nerd"
+    return Path.home() / ".local" / "share" / "telemetry-nerd"
+
+
 _REPO_UI = Path(__file__).resolve().parents[2] / "ui" / "dist"
 
 
@@ -22,7 +32,7 @@ class Settings:
     @classmethod
     def from_env(cls) -> Settings:
         s = cls()
-        s.data_dir = Path(os.environ.get("TN_DATA_DIR", s.data_dir))
+        s.data_dir = default_data_dir()
         s.source_url = os.environ.get("TN_SOURCE_URL", s.source_url)
         s.source_flavor = os.environ.get("TN_SOURCE_FLAVOR", s.source_flavor)
         raw_port = os.environ.get("TN_PORT")
@@ -36,3 +46,7 @@ class Settings:
     @property
     def ui_url(self) -> str:
         return f"http://{self.host}:{self.port}"
+
+    @property
+    def daemon_url(self) -> str:
+        return self.ui_url
