@@ -142,7 +142,7 @@
   <header>
     <span class="question">Q: {panel.question}</span>
     <span class="status {panel.status}">{panel.status}</span>
-    {#if panel.answered_by}<span class="answered">answered → {panel.answered_by}</span>{/if}
+    {#if panel.answered_by}<span class="answered-by">answered → {panel.answered_by}</span>{/if}
     <button class="close" type="button" aria-label="Close panel" onclick={close}>×</button>
   </header>
   {#if panel.spec.y.range_mode === "data"}
