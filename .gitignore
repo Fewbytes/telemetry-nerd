@@ -27,3 +27,6 @@ ui/playwright-report/
 
 # stray node tooling caches at repo root
 node_modules/
+
+# claude code local settings
+.claude/settings.local.json
