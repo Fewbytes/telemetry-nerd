@@ -10,3 +10,6 @@
 
 # agentsh local state
 .agentsh/
+
+# superpowers SDD scratch
+.superpowers/
