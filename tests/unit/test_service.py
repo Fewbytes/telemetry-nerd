@@ -44,12 +44,13 @@ async def test_unknown_source_has_hint(tmp_path):
 async def test_show_creates_panel_and_publishes_event(tmp_path):
     svc = make_service(tmp_path)
     ds = (await svc.query("up", start="now-2h", end="now-1h"))["dataset"]
-    q = svc.events.subscribe()  # after query, so dataset.created is not in the queue
+    q = svc.log.subscribe()  # after query, so dataset.created is not in the queue
     res = svc.show(ds, "Are both instances stable?")
     assert res.panel.id == "p1"
     assert res.panel.dataset_ids == [ds]
     assert [i.rule for i in res.issues] == ["units"]
-    assert q.get_nowait() == {"type": "panel.created", "panel": "p1"}
+    ev = q.get_nowait()
+    assert (ev["type"], ev["object_id"], ev["actor"]) == ("panel.created", "p1", "claude")
 
 
 async def test_show_rejects_spaghetti(tmp_path):

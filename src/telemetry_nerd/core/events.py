@@ -1,17 +1,97 @@
-"""In-memory pub/sub. M2 replaces this with the persisted event log."""
+"""Append-only event log (spec §2.3) with live fan-out and channel claim cursors."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import sqlite3
+from collections.abc import Callable
+from dataclasses import asdict, dataclass
+from typing import Literal, get_args
+
+from telemetry_nerd.model.jsonsafe import finite
+from telemetry_nerd.model.time import now_ms
 
 log = logging.getLogger(__name__)
 
+Actor = Literal["claude", "user", "system"]
+Klass = Literal["intentional", "ambient", "internal"]
+_ACTORS = frozenset(get_args(Actor))
 
-class EventBus:
-    def __init__(self) -> None:
+INTENTIONAL_TYPES = frozenset(
+    {"thread.message", "finding.verdict", "hypothesis.status_changed", "annotation.created"}
+)
+AMBIENT_TYPES = frozenset({"panel.created", "panel.closed", "focus.changed"})
+
+
+def classify(actor: str, type: str) -> Klass:
+    """Only human actions reach Claude; Claude's own actions never echo back."""
+    if actor != "user":
+        return "internal"
+    if type in INTENTIONAL_TYPES:
+        return "intentional"
+    if type in AMBIENT_TYPES:
+        return "ambient"
+    return "internal"
+
+
+@dataclass(frozen=True)
+class Event:
+    seq: int
+    ts_ms: int
+    actor: str
+    type: str
+    object_id: str | None
+    klass: str
+    payload: dict
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+_COLS = "seq, ts_ms, actor, type, object_id, klass, payload"
+
+
+def _event(row: tuple) -> Event:
+    return Event(row[0], row[1], row[2], row[3], row[4], row[5], json.loads(row[6]))
+
+
+class EventLog:
+    def __init__(self, con: sqlite3.Connection, clock: Callable[[], int] = now_ms) -> None:
+        self._db = con
+        self._clock = clock
         self._subscribers: set[asyncio.Queue] = set()
 
+    def append(
+        self, actor: str, type: str, object_id: str | None = None, payload: dict | None = None
+    ) -> Event:
+        if actor not in _ACTORS:
+            raise ValueError(f"unknown actor {actor!r}; expected one of {sorted(_ACTORS)}")
+        body = finite(payload or {})
+        klass = classify(actor, type)
+        ts = self._clock()
+        cur = self._db.execute(
+            "INSERT INTO events (ts_ms, actor, type, object_id, klass, payload) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (ts, actor, type, object_id, klass, json.dumps(body)),
+        )
+        event = Event(cur.lastrowid, ts, actor, type, object_id, klass, body)
+        self._fan_out(event.to_dict())
+        return event
+
+    def since(self, seq: int, limit: int = 1000) -> list[Event]:
+        rows = self._db.execute(
+            f"SELECT {_COLS} FROM events WHERE seq > ? ORDER BY seq LIMIT ?", (seq, limit)
+        ).fetchall()
+        return [_event(r) for r in rows]
+
+    @property
+    def last_seq(self) -> int:
+        (seq,) = self._db.execute("SELECT COALESCE(MAX(seq), 0) FROM events").fetchone()
+        return seq
+
+    # live fan-out -------------------------------------------------------
     @property
     def subscriber_count(self) -> int:
         return len(self._subscribers)
@@ -24,9 +104,50 @@ class EventBus:
     def unsubscribe(self, queue: asyncio.Queue) -> None:
         self._subscribers.discard(queue)
 
-    def publish(self, event: dict) -> None:
+    def _fan_out(self, event: dict) -> None:
         for queue in list(self._subscribers):
             try:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
-                log.warning("event subscriber queue full; dropping %s", event.get("type"))
+                log.warning("event subscriber queue full; dropping seq %s", event["seq"])
+
+    # channel delivery ---------------------------------------------------
+    def claim(self, consumer: str) -> tuple[list[Event], list[Event]]:
+        db = self._db
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            db.execute("INSERT OR IGNORE INTO consumers (name) VALUES (?)", (consumer,))
+            (cursor,) = db.execute(
+                "SELECT cursor FROM consumers WHERE name = ?", (consumer,)
+            ).fetchone()
+            events = [
+                _event(r)
+                for r in db.execute(
+                    f"SELECT {_COLS} FROM events WHERE seq > ? AND klass != 'internal' "
+                    "ORDER BY seq",
+                    (cursor,),
+                ).fetchall()
+            ]
+            intentional = [e for e in events if e.klass == "intentional"]
+            if not intentional:
+                db.execute("COMMIT")
+                return [], []
+            db.execute("UPDATE consumers SET cursor = ? WHERE name = ?", (events[-1].seq, consumer))
+            db.execute("COMMIT")
+        except Exception:
+            db.execute("ROLLBACK")
+            raise
+        return intentional, [e for e in events if e.klass == "ambient"]
+
+    def heartbeat(self, consumer: str) -> None:
+        self._db.execute(
+            "INSERT INTO consumers (name, heartbeat_ms) VALUES (?, ?) "
+            "ON CONFLICT (name) DO UPDATE SET heartbeat_ms = excluded.heartbeat_ms",
+            (consumer, self._clock()),
+        )
+
+    def channel_active(self, consumer: str, within_ms: int = 60_000) -> bool:
+        row = self._db.execute(
+            "SELECT heartbeat_ms FROM consumers WHERE name = ?", (consumer,)
+        ).fetchone()
+        return row is not None and row[0] is not None and self._clock() - row[0] < within_ms

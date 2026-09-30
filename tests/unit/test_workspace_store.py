@@ -43,3 +43,29 @@ def test_list_panels_newest_first(ws):
 def test_unknown_panel(ws):
     with pytest.raises(NotFound):
         ws.get_panel("p9")
+
+
+def test_answered_and_closed(ws):
+    p = ws.create_panel("q", {}, [])
+    assert ws.set_answered(p.id, "f1").status == "answered"
+    assert ws.get_panel(p.id).answered_by == "f1"
+    ws.close_panel(p.id)
+    assert ws.list_panels() == []
+    assert [x.id for x in ws.list_panels(include_closed=True)] == [p.id]
+
+
+def test_existing_db_is_migrated(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    con = sqlite3.connect(path)
+    con.executescript(
+        "CREATE TABLE panels (id TEXT PRIMARY KEY, question TEXT NOT NULL, status TEXT NOT NULL "
+        "DEFAULT 'open', spec TEXT NOT NULL, dataset_ids TEXT NOT NULL, created_at_ms INTEGER NOT NULL);"
+        "INSERT INTO panels VALUES ('p1','q','open','{}','[]',1);"
+    )
+    con.close()
+    from telemetry_nerd.workspace.store import WorkspaceStore
+
+    p = WorkspaceStore(path).get_panel("p1")
+    assert p.answered_by is None and p.closed is False

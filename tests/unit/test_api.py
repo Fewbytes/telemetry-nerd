@@ -90,7 +90,7 @@ def test_websocket_receives_panel_created(client):
             seen.append(event)
             if event["type"] == "panel.created":
                 break
-    assert {"type": "panel.created", "panel": "p1"} in seen
+    assert any(e["type"] == "panel.created" and e["object_id"] == "p1" for e in seen)
 
 
 def test_websocket_disconnect_unsubscribes(tmp_path):
@@ -98,15 +98,15 @@ def test_websocket_disconnect_unsubscribes(tmp_path):
     with TestClient(_app(service)) as c:
         with c.websocket_connect("/ws"):
             for _ in range(100):
-                if service.events.subscriber_count == 1:
+                if service.log.subscriber_count == 1:
                     break
                 time.sleep(0.01)
-            assert service.events.subscriber_count == 1
+            assert service.log.subscriber_count == 1
         for _ in range(200):
-            if service.events.subscriber_count == 0:
+            if service.log.subscriber_count == 0:
                 break
             time.sleep(0.01)
-        assert service.events.subscriber_count == 0
+        assert service.log.subscriber_count == 0
 
 
 @pytest.mark.parametrize("path", ["/api/query", "/api/show", "/api/render-report"])
@@ -133,11 +133,13 @@ def test_show_requires_dataset_and_question(client):
 
 def test_budget_event_nests_report(tmp_path):
     service = make_service(tmp_path)
-    queue = service.events.subscribe()
+    queue = service.log.subscribe()
     with TestClient(_app(service)) as c:
         body = {"panel_id": "p1", "render_ms": 250, "points": 1, "width_px": 400, "type": "evil"}
         c.post("/api/render-report", json=body)
-    assert queue.get_nowait() == {"type": "render.budget_exceeded", "report": body}
+    ev = queue.get_nowait()
+    assert (ev["type"], ev["object_id"], ev["actor"]) == ("render.budget_exceeded", "p1", "user")
+    assert ev["payload"] == {"report": body}
 
 
 def _strict(resp):
@@ -222,4 +224,24 @@ def test_websocket_accepts_local_origin_and_no_origin(client, origin):
     with client.websocket_connect("/ws", headers={"origin": origin}):
         pass
     with client.websocket_connect("/ws"):
+        pass
+
+
+def test_websocket_since_replays_then_streams_live(tmp_path):
+    service = make_service(tmp_path)
+    service.log.append("system", "a", None, {})
+    service.log.append("system", "b", None, {})
+    with TestClient(_app(service)) as c, c.websocket_connect("/ws?since=1") as ws:
+        assert ws.receive_json()["seq"] == 2
+        service.log.append("system", "c", None, {})
+        assert ws.receive_json()["seq"] == 3
+
+
+def test_websocket_rejects_bad_since(tmp_path):
+    service = make_service(tmp_path)
+    with (
+        TestClient(_app(service)) as c,
+        pytest.raises(WebSocketDisconnect),
+        c.websocket_connect("/ws?since=abc"),
+    ):
         pass

@@ -18,7 +18,11 @@ export interface PanelData {
   panel: Panel; dataset: DatasetMeta; effective_step_ms: number;
   series: SeriesData[]; caveats: string[];
 }
-export type WorkspaceEvent = { type: string } & Record<string, unknown>;
+export interface WorkspaceEvent {
+  seq: number; ts_ms: number; actor: "claude" | "user" | "system"; type: string;
+  object_id: string | null; klass: "intentional" | "ambient" | "internal";
+  payload: Record<string, unknown>;
+}
 
 async function json<T>(resp: Response): Promise<T> {
   if (!resp.ok) throw new Error(`${resp.status} ${await resp.text()}`);

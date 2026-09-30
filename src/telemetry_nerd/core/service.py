@@ -10,7 +10,7 @@ import polars as pl
 
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.charts.spec import ValidationIssue, auto_spec, validate
-from telemetry_nerd.core.events import EventBus
+from telemetry_nerd.core.events import Actor, EventLog
 from telemetry_nerd.core.summary import summarize
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import DatasetStore
@@ -50,7 +50,7 @@ class TelemetryService:
     cache: SeriesCache
     datasets: DatasetStore
     workspace: WorkspaceStore
-    events: EventBus
+    log: EventLog
     clock: Callable[[], int] = now_ms
 
     async def query(
@@ -60,6 +60,7 @@ class TelemetryService:
         end: str = "now",
         step: str = "auto",
         source: str = "default",
+        actor: Actor = "claude",
     ) -> dict:
         src = self.sources.get(source)
         if src is None:
@@ -94,10 +95,10 @@ class TelemetryService:
             result=result,
         )
         summary = summarize(meta, result, now_ms=now, settle_ms=self.cache.settle_ms)
-        self.events.publish({"type": "dataset.created", "dataset": meta.id})
+        self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
         return {"dataset": meta.id, "summary": summary}
 
-    def show(self, dataset_id: str, question: str) -> ShowResult:
+    def show(self, dataset_id: str, question: str, actor: Actor = "claude") -> ShowResult:
         _, result = self.datasets.get(dataset_id)
         spec = auto_spec(dataset_id)
         issues = validate(spec, {dataset_id: result.series.num_rows})
@@ -105,7 +106,7 @@ class TelemetryService:
         if errors:
             raise ChartRejected(errors)
         panel = self.workspace.create_panel(question, spec.model_dump(), [dataset_id])
-        self.events.publish({"type": "panel.created", "panel": panel.id})
+        self.log.append(actor, "panel.created", panel.id, {"question": panel.question})
         return ShowResult(panel, [i for i in issues if i.severity == "warning"])
 
     def panel_data(self, panel_id: str, width_px: int) -> dict:

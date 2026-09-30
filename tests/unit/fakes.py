@@ -1,6 +1,6 @@
 import pyarrow as pa
 
-from telemetry_nerd.core.events import EventBus
+from telemetry_nerd.core.events import EventLog
 from telemetry_nerd.core.service import TelemetryService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.db import open_duckdb
@@ -13,6 +13,7 @@ from telemetry_nerd.model.series import (
     series_id,
 )
 from telemetry_nerd.model.time import TimeRange
+from telemetry_nerd.workspace.db import open_workspace_db
 from telemetry_nerd.workspace.store import WorkspaceStore
 
 NOW = 6_000_000_000
@@ -72,12 +73,13 @@ class PartialSource(FakeSource):
 def make_service(tmp_path, source=None, clock=lambda: NOW) -> TelemetryService:
     source = source or FakeSource()
     con = open_duckdb(tmp_path / "series.duckdb")
-    workspace = WorkspaceStore(tmp_path / "workspace.db", clock=clock)
+    wcon = open_workspace_db(tmp_path / "workspace.db")
+    workspace = WorkspaceStore(wcon, clock=clock)
     return TelemetryService(
         sources={"default": source},
         cache=SeriesCache(con, clock=clock),
         datasets=DatasetStore(con, workspace.next_id, clock=clock),
         workspace=workspace,
-        events=EventBus(),
+        log=EventLog(wcon, clock=clock),
         clock=clock,
     )

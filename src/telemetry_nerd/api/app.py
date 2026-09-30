@@ -109,7 +109,7 @@ def create_app(
             return _error(e.status, str(e), hint=e.hint)
         args = {k: body[k] for k in ("expr", "start", "end", "step", "source") if k in body}
         try:
-            out = await service.query(**args)
+            out = await service.query(**args, actor="user")
         except SourceError as e:
             return _error(400, str(e), hint=e.hint)
         except ValueError as e:
@@ -122,7 +122,7 @@ def create_app(
         except _BadRequest as e:
             return _error(e.status, str(e), hint=e.hint)
         try:
-            res = service.show(body["dataset"], body["question"])
+            res = service.show(body["dataset"], body["question"], actor="user")
         except ChartRejected as e:
             return _error(422, "chart rejected", issues=[i.model_dump() for i in e.issues])
         except NotFound as e:
@@ -151,7 +151,9 @@ def create_app(
             )
         if exceeded:
             log.warning("render budget exceeded: %s", body)
-            service.events.publish({"type": "render.budget_exceeded", "report": body})
+            service.log.append(
+                "user", "render.budget_exceeded", body.get("panel_id"), {"report": body}
+            )
         return JSONResponse({"budget_exceeded": exceeded})
 
     async def events(websocket: WebSocket) -> None:
@@ -160,8 +162,24 @@ def create_app(
         if origin is not None and not origin_allowed(origin):
             await websocket.close(code=1008)
             return
+        raw_since = websocket.query_params.get("since")
+        if raw_since is None:
+            since = service.log.last_seq
+        else:
+            try:
+                since = int(raw_since)
+            except ValueError:
+                since = -1
+            if since < 0:
+                await websocket.close(code=1008)
+                return
         await websocket.accept()
-        queue = service.events.subscribe()
+        queue = service.log.subscribe()
+        # Subscribed first, so nothing is lost between replay and live; dedupe by seq.
+        last_sent = since
+        for event in service.log.since(since):
+            await websocket.send_json(event.to_dict())
+            last_sent = event.seq
 
         async def until_disconnect() -> None:
             while (await websocket.receive())["type"] != "websocket.disconnect":
@@ -173,7 +191,10 @@ def create_app(
                 getter = asyncio.ensure_future(queue.get())
                 done, _ = await asyncio.wait({reader, getter}, return_when=asyncio.FIRST_COMPLETED)
                 if getter in done:
-                    await websocket.send_json(getter.result())
+                    event = getter.result()
+                    if event["seq"] > last_sent:
+                        await websocket.send_json(event)
+                        last_sent = event["seq"]
                 else:
                     getter.cancel()
                     break
@@ -181,7 +202,7 @@ def create_app(
             pass
         finally:
             reader.cancel()
-            service.events.unsubscribe(queue)
+            service.log.unsubscribe(queue)
 
     routes = [
         Route("/api/panels", list_panels),

@@ -10,18 +10,9 @@ from pathlib import Path
 
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.time import now_ms
+from telemetry_nerd.workspace.db import open_workspace_db
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS counters (prefix TEXT PRIMARY KEY, n INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS panels (
-    id TEXT PRIMARY KEY,
-    question TEXT NOT NULL CHECK (length(trim(question)) > 0),
-    status TEXT NOT NULL DEFAULT 'open',
-    spec TEXT NOT NULL,
-    dataset_ids TEXT NOT NULL,
-    created_at_ms INTEGER NOT NULL
-);
-"""
+_PANEL_COLS = "id, question, status, spec, dataset_ids, created_at_ms, answered_by, closed"
 
 
 @dataclass(frozen=True)
@@ -32,16 +23,23 @@ class Panel:
     spec: dict
     dataset_ids: list[str]
     created_at_ms: int
+    answered_by: str | None = None
+    closed: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
 class WorkspaceStore:
-    def __init__(self, path: str | Path, clock: Callable[[], int] = now_ms) -> None:
-        self._db = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
-        self._db.executescript(_SCHEMA)
+    def __init__(
+        self, db: str | Path | sqlite3.Connection, clock: Callable[[], int] = now_ms
+    ) -> None:
+        self._db = db if isinstance(db, sqlite3.Connection) else open_workspace_db(db)
         self._clock = clock
+
+    @property
+    def connection(self) -> sqlite3.Connection:
+        return self._db
 
     def next_id(self, prefix: str) -> str:
         (n,) = self._db.execute(
@@ -63,7 +61,8 @@ class WorkspaceStore:
             created_at_ms=self._clock(),
         )
         self._db.execute(
-            "INSERT INTO panels VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO panels (id, question, status, spec, dataset_ids, created_at_ms) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (
                 panel.id,
                 panel.question,
@@ -76,17 +75,43 @@ class WorkspaceStore:
         return panel
 
     def get_panel(self, panel_id: str) -> Panel:
-        row = self._db.execute("SELECT * FROM panels WHERE id = ?", (panel_id,)).fetchone()
+        row = self._db.execute(
+            f"SELECT {_PANEL_COLS} FROM panels WHERE id = ?", (panel_id,)
+        ).fetchone()
         if row is None:
             raise NotFound(f"panel {panel_id} not found")
         return self._panel(row)
 
-    def list_panels(self) -> list[Panel]:
+    def list_panels(self, include_closed: bool = False) -> list[Panel]:
+        where = "" if include_closed else "WHERE closed = 0"
         rows = self._db.execute(
-            "SELECT * FROM panels ORDER BY created_at_ms DESC, CAST(substr(id, 2) AS INTEGER) DESC"
+            f"SELECT {_PANEL_COLS} FROM panels {where} "
+            "ORDER BY created_at_ms DESC, CAST(substr(id, 2) AS INTEGER) DESC"
         ).fetchall()
         return [self._panel(r) for r in rows]
 
+    def set_answered(self, panel_id: str, finding_id: str) -> Panel:
+        self.get_panel(panel_id)
+        self._db.execute(
+            "UPDATE panels SET status = 'answered', answered_by = ? WHERE id = ?",
+            (finding_id, panel_id),
+        )
+        return self.get_panel(panel_id)
+
+    def close_panel(self, panel_id: str) -> Panel:
+        self.get_panel(panel_id)
+        self._db.execute("UPDATE panels SET closed = 1 WHERE id = ?", (panel_id,))
+        return self.get_panel(panel_id)
+
     @staticmethod
     def _panel(row: tuple) -> Panel:
-        return Panel(row[0], row[1], row[2], json.loads(row[3]), json.loads(row[4]), row[5])
+        return Panel(
+            row[0],
+            row[1],
+            row[2],
+            json.loads(row[3]),
+            json.loads(row[4]),
+            row[5],
+            row[6],
+            bool(row[7]),
+        )
