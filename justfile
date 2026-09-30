@@ -37,3 +37,6 @@ ui-test:
 
 ui-dev:
     cd ui && npm run dev
+
+e2e: dev-up ui-build
+    cd ui && npx playwright install chromium && npx playwright test
