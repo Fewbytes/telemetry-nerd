@@ -35,8 +35,12 @@ export function toUplot(series: SeriesData[]): UplotModel {
   series.forEach((s, k) => {
     const color = PALETTE[k % PALETTE.length];
     const column = (values: (number | null)[]) => {
-      const out: (number | null)[] = new Array(xs.length).fill(null);
-      s.ts.forEach((t, i) => { out[index.get(t)!] = values[i]; });
+      const out: (number | null)[] = Array(xs.length).fill(null);
+      // xs is the union of all s.ts, so every lookup hits
+      s.ts.forEach((t, i) => {
+        const idx = index.get(t);
+        if (idx !== undefined) out[idx] = values[i];
+      });
       return out;
     };
     const avgIdx = data.length;

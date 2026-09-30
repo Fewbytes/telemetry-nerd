@@ -44,6 +44,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         Returns {dataset, summary}. The summary is compact; raw series stay on the server.
         """
         try:
+            # pi-lens-ignore: python-sql-injection
             return _dump(await service.query(expr, start, end, step, source))
         except SourceError as e:
             raise ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e)) from e

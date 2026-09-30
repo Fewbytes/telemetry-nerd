@@ -68,7 +68,7 @@ containers.
  └───────┬──────────────────────────▲──────────────────────┘
          │ WS: workspace events     │ HTTP: tn.query/put (Arrow IPC)
          ▼                          │
-   Browser UI (TS/React/uPlot)   Sandbox container (IPython + tn lib)
+   Browser UI (TS/Svelte/uPlot)  Sandbox container (IPython + tn lib)
 ```
 
 ### 2.1 Storage
@@ -410,7 +410,7 @@ at explicit user request, and render as a caveat on the panel.
 ### 6.5 Rendering
 
 - **uPlot** for time series and XY; small custom canvas renderers for heatmaps (and later
-  funnel, spectrogram). React + TypeScript shell.
+  funnel, spectrogram). Svelte + TypeScript shell.
 - **Pixel-aware level of detail:** server sends about one bucket per pixel using
   min/max-preserving aggregation (M4-style). Zoom requests finer steps progressively
   (coarse first, refined when ready).
@@ -563,6 +563,6 @@ hardening for remote deployment (`--network none` + Unix-socket broker).
 - **Server:** Python ≥3.12, uv, asyncio; MCP Python SDK; Starlette/FastAPI for HTTP/WS;
   DuckDB, SQLite, pyarrow, polars; numpy, scipy, statsmodels, ruptures, pint;
   jupyter_client; docker SDK.
-- **UI:** TypeScript, React, uPlot, custom canvas renderers.
+- **UI:** TypeScript, Svelte 5, uPlot, custom canvas renderers.
 - **Tooling:** just, pytest + hypothesis, testcontainers, Playwright; beads for issue
   tracking.
