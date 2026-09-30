@@ -39,6 +39,7 @@ def summarize(
             "caveats": ["empty", *caveats],
         }
     labels = {r["series_id"]: json.loads(r["labels"]) for r in result.series.to_pylist()}
+    # The grid is inclusive of both start and end (query_range and cache reads are BETWEEN).
     expected = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
     total = pl.col("count").sum()
     per = (
@@ -53,7 +54,9 @@ def summarize(
             .alias("mean"),
             (pl.col("count") > 0).sum().alias("with_data"),
         )
-        .with_columns((pl.lit(expected) - pl.col("with_data")).alias("gaps"))
+        .with_columns(
+            pl.max_horizontal(pl.lit(expected) - pl.col("with_data"), pl.lit(0)).alias("gaps")
+        )
         .sort("max", descending=True, nulls_last=True)
     )
     if per["gaps"].sum() > 0:
