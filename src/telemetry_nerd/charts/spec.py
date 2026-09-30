@@ -39,20 +39,32 @@ def auto_spec(dataset_id: str) -> ChartSpec:
 
 def validate(spec: ChartSpec, series_counts: dict[str, int]) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
+    datasets: list[str] = []
     for layer in spec.layers:
-        n = series_counts.get(layer.data, 0)
-        if layer.mark == "line+envelope" and n > LINE_SERIES_BUDGET:
-            issues.append(
-                ValidationIssue(
-                    rule="series_budget",
-                    severity="error",
-                    message=(
-                        f"{layer.data} has {n} series; line charts allow at most "
-                        f"{LINE_SERIES_BUDGET}; aggregate across series (e.g. sum by / avg by "
-                        "a coarser label) or filter to the series that answer the question."
-                    ),
+        if layer.data not in series_counts:
+            if not any(i.rule == "unknown_dataset" and layer.data in i.message for i in issues):
+                issues.append(
+                    ValidationIssue(
+                        rule="unknown_dataset",
+                        severity="error",
+                        message=f"dataset {layer.data} is not known; cannot count its series",
+                    )
                 )
+        elif layer.mark == "line+envelope" and layer.data not in datasets:
+            datasets.append(layer.data)
+    total = sum(series_counts[d] for d in datasets)
+    if total > LINE_SERIES_BUDGET:
+        issues.append(
+            ValidationIssue(
+                rule="series_budget",
+                severity="error",
+                message=(
+                    f"chart has {total} line series across {', '.join(datasets)}; line charts "
+                    f"allow at most {LINE_SERIES_BUDGET}; aggregate across series (e.g. sum by / "
+                    "avg by a coarser label) or filter to the series that answer the question."
+                ),
             )
+        )
     if spec.y.unit is None:
         issues.append(
             ValidationIssue(

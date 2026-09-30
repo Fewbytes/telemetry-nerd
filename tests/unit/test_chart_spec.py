@@ -37,3 +37,25 @@ def test_known_unit_no_issues():
     spec = auto_spec("d1")
     spec.y.unit = "s"
     assert validate(spec, {"d1": 2}) == []
+
+
+def test_budget_is_per_chart_across_datasets():
+    spec = ChartSpec(
+        layers=[Layer(mark="line+envelope", data="a"), Layer(mark="line+envelope", data="b")]
+    )
+    issues = validate(spec, {"a": 3, "b": 3})
+    assert [i.rule for i in issues if i.severity == "error"] == ["series_budget"]
+
+
+def test_same_dataset_in_two_layers_counted_once():
+    spec = ChartSpec(
+        layers=[Layer(mark="line+envelope", data="a"), Layer(mark="line+envelope", data="a")]
+    )
+    assert [i for i in validate(spec, {"a": 3}) if i.severity == "error"] == []
+
+
+def test_unknown_dataset_is_an_error():
+    issues = validate(auto_spec("nope"), {})
+    errors = [i for i in issues if i.severity == "error"]
+    assert [i.rule for i in errors] == ["unknown_dataset"]
+    assert "nope" in errors[0].message
