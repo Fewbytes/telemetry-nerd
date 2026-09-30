@@ -1,5 +1,7 @@
 """`telemetry-nerd` CLI: `serve` runs the daemon (HTTP/WS API, UI, MCP over streamable
-HTTP at /mcp); `bridge` runs the per-session stdio MCP bridge for Claude Code.
+HTTP at /mcp); `bridge` runs the per-session stdio MCP bridge for Claude Code;
+`ensure` (SessionStart hook) and `pending` (UserPromptSubmit hook) are the plugin
+hooks — they are the only commands allowed to print hook output to stdout.
 Logging goes to stderr."""
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ import sys
 from pathlib import Path
 
 import anyio
+import httpx
 import uvicorn
 from starlette.types import ASGIApp
 
@@ -46,6 +49,13 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     bridge.add_argument(
         "--no-autostart", action="store_true", help="do not spawn the daemon if it is not running"
     )
+    sub.add_parser(
+        "ensure", help="hook: make sure the daemon is running and print the workspace URL"
+    )
+    pending = sub.add_parser(
+        "pending", help="hook: print pending user workspace events when no channel is live"
+    )
+    pending.add_argument("--consumer", default="claude")
     return parser.parse_args(argv)
 
 
@@ -108,6 +118,61 @@ def _bridge_url(args: argparse.Namespace, settings: Settings, log: logging.Logge
         sys.exit(1)
 
 
+_HOOK_HTTP_TIMEOUT_S = 1.0
+"""Hooks must finish well under the 2 s budget even when the daemon is wedged."""
+
+
+def _daemon_url(settings: Settings) -> str | None:
+    """State-file URL first (mirrors ensure_daemon), then the default; None if none healthy."""
+    state = daemon.read_state(settings.data_dir)
+    urls = [state["url"]] if state is not None else []
+    if settings.daemon_url not in urls:
+        urls.append(settings.daemon_url)
+    for url in urls:
+        if daemon.healthy(url):
+            return url
+    return None
+
+
+def _cmd_ensure(settings: Settings) -> None:
+    try:
+        url = daemon.ensure_daemon(settings)
+    except RuntimeError as e:
+        # SessionStart stdout becomes session context; a missing daemon must not
+        # fail the session, so report and exit 0.
+        print(f"Telemetry Nerd daemon not running: {e}")
+        return
+    print(f"Telemetry Nerd workspace: {url}")
+
+
+def _cmd_pending(settings: Settings, consumer: str) -> None:
+    url = _daemon_url(settings)
+    if url is None:
+        return
+    try:
+        r = httpx.get(
+            f"{url}/api/channel/status",
+            params={"consumer": consumer},
+            timeout=_HOOK_HTTP_TIMEOUT_S,
+        )
+        if r.status_code != 200 or r.json().get("channel_active"):
+            # Active channel (fresh heartbeat): the bridge is delivering.
+            return
+        r = httpx.post(
+            f"{url}/api/channel/claim",
+            json={"consumer": consumer},
+            timeout=_HOOK_HTTP_TIMEOUT_S,
+        )
+        data = r.json()
+    except (httpx.HTTPError, ValueError):
+        return
+    content = data.get("content")
+    if not content:
+        return
+    seqs = ",".join(str(s) for s in data.get("seqs") or ())
+    print(f'<telemetry-nerd-ui-events seqs="{seqs}">\n{content}\n</telemetry-nerd-ui-events>')
+
+
 def main(argv: list[str] | None = None) -> None:
     _configure_logging()
     args = _parse(argv)
@@ -135,6 +200,10 @@ def main(argv: list[str] | None = None) -> None:
         url = _bridge_url(args, Settings.from_env(), log)
         log.info("bridge: daemon at %s", url)
         anyio.run(run_bridge, url)
+    elif args.command == "ensure":
+        _cmd_ensure(Settings.from_env())
+    elif args.command == "pending":
+        _cmd_pending(Settings.from_env(), args.consumer)
 
 
 if __name__ == "__main__":
