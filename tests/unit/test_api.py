@@ -3,15 +3,25 @@ import time
 
 import pytest
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from telemetry_nerd.api.app import create_app
 from tests.unit.fakes import FakeSource, NonFiniteSource, make_service
 
 
+def _app(service, **kw):
+    """TestClient's Host is `testserver`; it is not an allowed host by default."""
+    kw.setdefault("allowed_hosts", ["testserver", "127.0.0.1", "localhost", "[::1]"])
+    return create_app(service, **kw)
+
+
 @pytest.fixture
 def client(tmp_path):
-    with TestClient(create_app(make_service(tmp_path))) as c:
+    with TestClient(_app(make_service(tmp_path))) as c:
         yield c
+
+
+JSON = {"content-type": "application/json"}
 
 
 def make_panel(client, question="Is it stable?"):
@@ -47,7 +57,7 @@ def test_unknown_source_is_400_with_hint(client):
 
 
 def test_rejected_chart_is_422(tmp_path):
-    with TestClient(create_app(make_service(tmp_path, FakeSource(n_series=9)))) as c:
+    with TestClient(_app(make_service(tmp_path, FakeSource(n_series=9)))) as c:
         resp = make_panel(c)
         assert resp.status_code == 422
         assert resp.json()["issues"][0]["rule"] == "series_budget"
@@ -85,7 +95,7 @@ def test_websocket_receives_panel_created(client):
 
 def test_websocket_disconnect_unsubscribes(tmp_path):
     service = make_service(tmp_path)
-    with TestClient(create_app(service)) as c:
+    with TestClient(_app(service)) as c:
         with c.websocket_connect("/ws"):
             for _ in range(100):
                 if service.events.subscriber_count == 1:
@@ -102,7 +112,7 @@ def test_websocket_disconnect_unsubscribes(tmp_path):
 @pytest.mark.parametrize("path", ["/api/query", "/api/show", "/api/render-report"])
 @pytest.mark.parametrize("content", [b"{not json", b"[1, 2]", b'"str"'])
 def test_bad_body_is_400_with_hint(client, path, content):
-    resp = client.post(path, content=content)
+    resp = client.post(path, content=content, headers=JSON)
     assert resp.status_code == 400
     assert resp.json()["hint"]
 
@@ -124,7 +134,7 @@ def test_show_requires_dataset_and_question(client):
 def test_budget_event_nests_report(tmp_path):
     service = make_service(tmp_path)
     queue = service.events.subscribe()
-    with TestClient(create_app(service)) as c:
+    with TestClient(_app(service)) as c:
         body = {"panel_id": "p1", "render_ms": 250, "points": 1, "width_px": 400, "type": "evil"}
         c.post("/api/render-report", json=body)
     assert queue.get_nowait() == {"type": "render.budget_exceeded", "report": body}
@@ -138,7 +148,7 @@ def _strict(resp):
 
 
 def test_non_finite_values_still_yield_valid_json(tmp_path):
-    with TestClient(create_app(make_service(tmp_path, NonFiniteSource()))) as c:
+    with TestClient(_app(make_service(tmp_path, NonFiniteSource()))) as c:
         resp = c.post("/api/query", json={"expr": "up", "start": "now-2h", "end": "now-1h"})
         assert resp.status_code == 200
         _strict(resp)
@@ -158,5 +168,58 @@ def test_serialization_error_is_not_reported_as_400(tmp_path):
         return {"x": object()}  # not serializable: a server bug, not a client error
 
     service.query = bad_query  # type: ignore[method-assign]
-    with TestClient(create_app(service), raise_server_exceptions=False) as c:
+    with TestClient(_app(service), raise_server_exceptions=False) as c:
         assert c.post("/api/query", json={"expr": "up"}).status_code == 500
+
+
+def test_default_allowed_hosts_reject_foreign_host_header(tmp_path):
+    service = make_service(tmp_path)
+    with TestClient(create_app(service), base_url="http://evil.example") as c:
+        resp = c.get("/api/panels")
+        assert resp.status_code == 400
+    for host in ("127.0.0.1:7070", "localhost:7070", "[::1]:7070"):
+        with TestClient(create_app(service), base_url=f"http://{host}") as c:
+            assert c.get("/api/panels").status_code == 200, host
+
+
+def test_dns_rebinding_host_is_rejected_even_with_custom_list(tmp_path):
+    service = make_service(tmp_path)
+    with TestClient(_app(service), base_url="http://rebind.evil:7070") as c:
+        assert c.get("/api/panels").status_code == 400
+
+
+@pytest.mark.parametrize("path", ["/api/query", "/api/show", "/api/render-report"])
+@pytest.mark.parametrize("ctype", ["text/plain", "application/x-www-form-urlencoded", None])
+def test_post_requires_json_content_type(client, path, ctype):
+    headers = {"content-type": ctype} if ctype else {}
+    resp = client.post(path, content=b'{"expr": "up"}', headers=headers)
+    assert resp.status_code == 415
+    assert "application/json" in resp.json()["hint"]
+
+
+def test_json_content_type_with_charset_is_accepted(client):
+    resp = client.post(
+        "/api/query",
+        content=b'{"expr": "up", "start": "now-2h", "end": "now-1h"}',
+        headers={"content-type": "application/json; charset=utf-8"},
+    )
+    assert resp.status_code == 200
+
+
+def test_websocket_rejects_foreign_origin(client):
+    with (
+        pytest.raises(WebSocketDisconnect) as exc,
+        client.websocket_connect("/ws", headers={"origin": "http://evil.example"}),
+    ):
+        pass
+    assert exc.value.code == 1008
+
+
+@pytest.mark.parametrize(
+    "origin", ["http://localhost:7070", "http://127.0.0.1:7070", "http://[::1]:7070"]
+)
+def test_websocket_accepts_local_origin_and_no_origin(client, origin):
+    with client.websocket_connect("/ws", headers={"origin": origin}):
+        pass
+    with client.websocket_connect("/ws"):
+        pass

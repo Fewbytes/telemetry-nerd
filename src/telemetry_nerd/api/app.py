@@ -5,9 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Sequence
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from starlette.applications import Starlette
+from starlette.middleware import Middleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse as _JSONResponse
 from starlette.routing import Mount, Route, WebSocketRoute
@@ -36,14 +40,25 @@ def _error(status: int, message: str, **extra) -> JSONResponse:
     return JSONResponse({"error": message, **extra}, status_code=status)
 
 
+DEFAULT_ALLOWED_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+
+
 class _BadRequest(Exception):
-    def __init__(self, message: str, hint: str) -> None:
+    def __init__(self, message: str, hint: str, status: int = 400) -> None:
         super().__init__(message)
         self.hint = hint
+        self.status = status
 
 
 async def _body(request: Request, **required: type) -> dict:
     """Parse a JSON object body; require the named keys with the given types."""
+    # Requiring JSON keeps "simple" cross-site form posts (text/plain, urlencoded) out.
+    if request.headers.get("content-type", "").split(";")[0].strip().lower() != "application/json":
+        raise _BadRequest(
+            "unsupported content type",
+            "send the body with Content-Type: application/json",
+            status=415,
+        )
     try:
         body = await request.json()
     except (json.JSONDecodeError, UnicodeDecodeError) as e:
@@ -59,7 +74,20 @@ async def _body(request: Request, **required: type) -> dict:
     return body
 
 
-def create_app(service: TelemetryService, ui_dir: Path | None = None) -> Starlette:
+def create_app(
+    service: TelemetryService,
+    ui_dir: Path | None = None,
+    allowed_hosts: Sequence[str] = DEFAULT_ALLOWED_HOSTS,
+) -> Starlette:
+    hosts = frozenset(h.strip("[]").lower() for h in allowed_hosts)
+
+    def origin_allowed(origin: str) -> bool:
+        try:
+            host = urlsplit(origin).hostname
+        except ValueError:
+            return False
+        return host is not None and host.lower() in hosts
+
     async def list_panels(request: Request) -> JSONResponse:
         return JSONResponse([p.to_dict() for p in service.workspace.list_panels()])
 
@@ -78,7 +106,7 @@ def create_app(service: TelemetryService, ui_dir: Path | None = None) -> Starlet
         try:
             body = await _body(request, expr=str)
         except _BadRequest as e:
-            return _error(400, str(e), hint=e.hint)
+            return _error(e.status, str(e), hint=e.hint)
         args = {k: body[k] for k in ("expr", "start", "end", "step", "source") if k in body}
         try:
             out = await service.query(**args)
@@ -92,7 +120,7 @@ def create_app(service: TelemetryService, ui_dir: Path | None = None) -> Starlet
         try:
             body = await _body(request, dataset=str, question=str)
         except _BadRequest as e:
-            return _error(400, str(e), hint=e.hint)
+            return _error(e.status, str(e), hint=e.hint)
         try:
             res = service.show(body["dataset"], body["question"])
         except ChartRejected as e:
@@ -109,7 +137,7 @@ def create_app(service: TelemetryService, ui_dir: Path | None = None) -> Starlet
         try:
             body = await _body(request)
         except _BadRequest as e:
-            return _error(400, str(e), hint=e.hint)
+            return _error(e.status, str(e), hint=e.hint)
         try:
             exceeded = (
                 body["render_ms"] > RENDER_BUDGET_MS
@@ -127,6 +155,11 @@ def create_app(service: TelemetryService, ui_dir: Path | None = None) -> Starlet
         return JSONResponse({"budget_exceeded": exceeded})
 
     async def events(websocket: WebSocket) -> None:
+        # Browsers do not apply the same-origin policy to WebSockets: check Origin ourselves.
+        origin = websocket.headers.get("origin")
+        if origin is not None and not origin_allowed(origin):
+            await websocket.close(code=1008)
+            return
         await websocket.accept()
         queue = service.events.subscribe()
 
@@ -160,4 +193,7 @@ def create_app(service: TelemetryService, ui_dir: Path | None = None) -> Starlet
     ]
     if ui_dir is not None and (ui_dir / "index.html").exists():
         routes.append(Mount("/", app=StaticFiles(directory=ui_dir, html=True)))
-    return Starlette(routes=routes)
+    return Starlette(
+        routes=routes,
+        middleware=[Middleware(TrustedHostMiddleware, allowed_hosts=list(allowed_hosts))],
+    )
