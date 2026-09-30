@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "telemetry_nerd",
+  "project_id": "5ec5e4e7-4f7a-42b9-8ca1-ac6d8c558681"
+}
