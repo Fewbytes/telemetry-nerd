@@ -1,6 +1,6 @@
-import pytest
 import json
 
+import pytest
 from mcp import Client
 from mcp.types import TextContent
 
