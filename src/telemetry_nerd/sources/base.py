@@ -34,6 +34,7 @@ class Limits:
 
 class Source(Protocol):
     name: str
+    identity: str  # stable id of what this source reads (flavor, endpoint, resolution)
     resolution_ms: int
 
     async def fetch(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult: ...

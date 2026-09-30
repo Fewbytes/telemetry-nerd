@@ -200,3 +200,10 @@ async def test_connection_failure_is_unavailable():
     with pytest.raises(SourceUnavailable) as exc:
         await PromQLSource("vm", BASE).fetch("up", RNG, 60_000)
     assert exc.value.hint
+
+
+def test_identity_includes_flavor_url_and_resolution():
+    a = PromQLSource("vm", BASE)
+    assert a.identity == f"victoriametrics|{BASE}|15000"
+    assert a.identity != PromQLSource("vm", "http://other.test").identity
+    assert a.identity != PromQLSource("vm", BASE, flavor="prometheus").identity

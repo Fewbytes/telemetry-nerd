@@ -36,9 +36,11 @@ class SeriesCache:
         self._lock = asyncio.Lock()
 
     @staticmethod
-    def query_key(source: str, expr: str, step_ms: int) -> str:
-        normalized = " ".join(expr.split()).replace("( ", "(").replace(" )", ")")
-        return hashlib.sha256(f"{source}\0{normalized}\0{step_ms}".encode()).hexdigest()[:16]
+    def query_key(source_identity: str, expr: str, step_ms: int) -> str:
+        # Exact expression text: whitespace inside quoted label values is significant.
+        return hashlib.sha256(f"{source_identity}\0{expr.strip()}\0{step_ms}".encode()).hexdigest()[
+            :16
+        ]
 
     def chunk_starts(self, rng: TimeRange, step_ms: int) -> list[int]:
         span = step_ms * self.chunk_buckets
@@ -46,9 +48,9 @@ class SeriesCache:
         return list(range(first, rng.end_ms + 1, span))
 
     async def get(
-        self, source: str, expr: str, rng: TimeRange, step_ms: int, fetch: Fetcher
+        self, source_identity: str, expr: str, rng: TimeRange, step_ms: int, fetch: Fetcher
     ) -> FetchResult:
-        qkey = self.query_key(source, expr, step_ms)
+        qkey = self.query_key(source_identity, expr, step_ms)
         span = step_ms * self.chunk_buckets
         async with self._lock:
             now = self._clock()

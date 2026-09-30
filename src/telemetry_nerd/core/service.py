@@ -69,7 +69,7 @@ class TelemetryService:
         step_ms = auto_step(rng, src.resolution_ms) if step == "auto" else parse_duration(step)
         rng = rng.align(step_ms)
         result = await self.cache.get(
-            src.name, expr, rng, step_ms, lambda r: src.fetch(expr, r, step_ms)
+            src.identity, expr, rng, step_ms, lambda r: src.fetch(expr, r, step_ms)
         )
         meta = self.datasets.put(
             source=src.name,

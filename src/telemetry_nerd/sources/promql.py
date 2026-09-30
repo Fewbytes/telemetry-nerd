@@ -47,6 +47,10 @@ class PromQLSource:
         self.limits = limits
         self._client = client or httpx.AsyncClient()
 
+    @property
+    def identity(self) -> str:
+        return f"{self.flavor}|{self.base_url}|{self.resolution_ms}"
+
     def _window(self, expr: str, step_ms: int) -> str:
         window = format_duration(step_ms)
         if is_selector(expr):

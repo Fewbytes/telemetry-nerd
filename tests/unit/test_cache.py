@@ -117,8 +117,17 @@ async def test_step_and_expr_are_separate_keys(cache):
     assert len(f.calls) == 2
 
 
-def test_query_key_normalizes_whitespace():
-    assert SeriesCache.query_key("s", "sum( up )", 60_000) == SeriesCache.query_key(
-        "s", "sum(  up\n)", 60_000
-    )
-    assert SeriesCache.query_key("s", "up", 60_000) != SeriesCache.query_key("s", "up", 30_000)
+def test_query_key_is_exact_modulo_outer_whitespace():
+    key = SeriesCache.query_key
+    assert key("s", "  up\n", 60_000) == key("s", "up", 60_000)
+    assert key("s", "up", 60_000) != key("s", "up", 30_000)
+    # whitespace inside quoted label values is significant
+    assert key("s", '{a="x  y"}', 60_000) != key("s", '{a="x y"}', 60_000)
+
+
+async def test_same_name_different_identity_are_separate_entries(cache):
+    f = FakeFetcher()
+    rng = TimeRange(1_200_000, 1_380_000)
+    await cache.get("vm|http://a|15000", "up", rng, STEP, f)
+    await cache.get("vm|http://b|15000", "up", rng, STEP, f)
+    assert len(f.calls) == 2

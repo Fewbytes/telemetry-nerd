@@ -77,3 +77,14 @@ async def test_panel_data_respects_width(tmp_path):
     assert data["effective_step_ms"] > 15_000
     assert sorted(s["labels"]["instance"] for s in data["series"]) == ["i0", "i1"]
     assert data["dataset"]["expr"] == "up"
+
+
+async def test_cache_is_keyed_on_source_identity_not_name(tmp_path):
+    a = FakeSource(name="same", identity="id-a")
+    svc = make_service(tmp_path, a)
+    await svc.query("up", start="now-2h", end="now-1h", step="1m")
+    calls_a = a.calls
+    svc.sources["default"] = FakeSource(name="same", identity="id-b")
+    await svc.query("up", start="now-2h", end="now-1h", step="1m")
+    assert svc.sources["default"].calls > 0
+    assert a.calls == calls_a

@@ -19,8 +19,9 @@ NOW = 6_000_000_000
 
 
 class FakeSource:
-    def __init__(self, name="fake", n_series=2, resolution_ms=15_000):
+    def __init__(self, name="fake", n_series=2, resolution_ms=15_000, identity=None):
         self.name = name
+        self.identity = identity or f"fake|{name}|{resolution_ms}"
         self.n_series = n_series
         self.resolution_ms = resolution_ms
         self.calls = 0
