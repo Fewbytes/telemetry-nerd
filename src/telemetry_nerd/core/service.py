@@ -107,8 +107,9 @@ class TelemetryService:
         errors = [i for i in issues if i.severity == "error"]
         if errors:
             raise ChartRejected(errors)
-        panel = self.workspace.create_panel(question, spec.model_dump(), [dataset_id])
-        self.log.append(actor, "panel.created", panel.id, {"question": panel.question})
+        with self.log.transaction():
+            panel = self.workspace.create_panel(question, spec.model_dump(), [dataset_id])
+            self.log.append(actor, "panel.created", panel.id, {"question": panel.question})
         return ShowResult(panel, [i for i in issues if i.severity == "warning"])
 
     def panel_data(self, panel_id: str, width_px: int) -> dict:

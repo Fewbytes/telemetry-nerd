@@ -55,8 +55,8 @@ def format_channel(intentional: list[Event], ambient: list[Event]) -> tuple[str,
         "seqs": ",".join(str(e.seq) for e in intentional),
     }
     anchor = first.payload.get("anchor") or first.payload.get("panel")
-    if anchor:
-        meta["panel"] = str(anchor)
+    if isinstance(anchor, str) and anchor.startswith("p"):
+        meta["panel"] = anchor
     if first.type == "thread.message":
         meta["thread"] = str(first.payload["thread"])
     return "\n".join(lines), meta

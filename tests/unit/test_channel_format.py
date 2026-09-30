@@ -67,3 +67,18 @@ def test_format_channel_meta_and_ambient_digest():
     assert content.splitlines()[0] == 'user asked in t9 about p3: "look here"'
     assert "ambient: user opened p4 (by pod?); user closed p2" in content
     assert all(k.replace("_", "").isalnum() for k in meta)
+
+
+def test_meta_panel_only_for_panel_anchor():
+    _, meta = format_channel(
+        [
+            ev(
+                1,
+                "thread.message",
+                "t1",
+                {"thread": "t1", "text": "x", "anchor": "f2", "selection": None},
+            )
+        ],
+        [],
+    )
+    assert "panel" not in meta

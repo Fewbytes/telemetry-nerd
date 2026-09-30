@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import functools
+import inspect
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from telemetry_nerd.channel.format import describe_event
-from telemetry_nerd.core.events import Actor, EventLog
+from telemetry_nerd.core.events import Actor, EventLog, check_actor
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.workspace.models import (
@@ -32,6 +35,20 @@ from telemetry_nerd.workspace.store import Panel, WorkspaceStore
 BRIEF_BUDGET_BYTES = 4096
 
 
+def atomic[F: Callable](fn: F) -> F:
+    """Validate `actor`, then run the store writes and their event(s) in one transaction."""
+    sig = inspect.signature(fn)
+
+    @functools.wraps(fn)
+    def wrapper(self, *args, **kwargs):
+        actor = sig.bind(self, *args, **kwargs).arguments["actor"]
+        check_actor(actor)
+        with self.log.transaction():
+            return fn(self, *args, **kwargs)
+
+    return wrapper  # type: ignore[return-value]
+
+
 @dataclass
 class WorkspaceService:
     workspace: WorkspaceStore
@@ -40,6 +57,7 @@ class WorkspaceService:
     log: EventLog
 
     # annotations --------------------------------------------------------
+    @atomic
     def annotate(self, data: AnnotationIn, actor: Actor) -> Annotation:
         if data.panel is not None:
             self.workspace.get_panel(data.panel)
@@ -52,17 +70,20 @@ class WorkspaceService:
         )
         return a
 
+    @atomic
     def delete_annotation(self, annotation_id: str, actor: Actor) -> Annotation:
         a = self.objects.delete_annotation(annotation_id)
         self.log.append(actor, "annotation.deleted", a.id, {})
         return a
 
     # hypotheses ---------------------------------------------------------
+    @atomic
     def hypothesis_create(self, statement: str, actor: Actor) -> Hypothesis:
         h = self.objects.create_hypothesis(statement, actor)
         self.log.append(actor, "hypothesis.created", h.id, {"statement": h.statement})
         return h
 
+    @atomic
     def hypothesis_update(
         self, hypothesis_id: str, status: HypothesisStatus, actor: Actor, note: str | None = None
     ) -> Hypothesis:
@@ -73,6 +94,7 @@ class WorkspaceService:
         return h
 
     # findings -----------------------------------------------------------
+    @atomic
     def finding_create(self, data: FindingIn, actor: Actor) -> Finding:
         for ref in data.evidence:
             match ref:
@@ -106,6 +128,7 @@ class WorkspaceService:
             self.log.append(actor, "panel.answered", data.answers_panel, {"finding": f.id})
         return f
 
+    @atomic
     def finding_verdict(
         self, finding_id: str, verdict: Verdict, actor: Actor, comment: str | None = None
     ) -> Finding:
@@ -119,6 +142,7 @@ class WorkspaceService:
         return f
 
     # gaps ---------------------------------------------------------------
+    @atomic
     def gap_create(self, data: GapIn, actor: Actor) -> Gap:
         g = self.objects.create_gap(data, actor)
         self.log.append(
@@ -130,6 +154,7 @@ class WorkspaceService:
         return g
 
     # threads ------------------------------------------------------------
+    @atomic
     def ask(
         self,
         text: str,
@@ -139,13 +164,14 @@ class WorkspaceService:
     ) -> Thread:
         if not text.strip():
             raise ValueError("message text must not be empty")
-        if anchor is not None and anchor.startswith("p"):
-            self.workspace.get_panel(anchor)
+        if anchor is not None:
+            self._check_anchor(anchor)
         t = self.objects.create_thread(anchor, selection, actor)
         m = self.objects.add_message(t.id, text, actor)
         self._message_event(t.id, m, actor, anchor, selection)
         return self.objects.get_thread(t.id)
 
+    @atomic
     def post_message(self, thread_id: str, text: str, actor: Actor) -> Message:
         if not text.strip():
             raise ValueError("message text must not be empty")
@@ -153,6 +179,25 @@ class WorkspaceService:
         m = self.objects.add_message(thread_id, text, actor)
         self._message_event(thread_id, m, actor, t.anchor, t.selection)
         return m
+
+    def _get_gap(self, gap_id: str) -> Gap:
+        for g in self.objects.list_gaps():
+            if g.id == gap_id:
+                return g
+        raise NotFound(f"gap {gap_id} not found")
+
+    def _check_anchor(self, anchor: str) -> None:
+        checks = {
+            "p": self.workspace.get_panel,
+            "a": self.objects.get_annotation,
+            "h": self.objects.get_hypothesis,
+            "f": self.objects.get_finding,
+            "g": self._get_gap,
+        }
+        check = checks.get(anchor[:1])
+        if check is None or not anchor[1:].isdigit():
+            raise ValueError(f"invalid anchor {anchor!r}; expected a p*/a*/h*/f*/g* object id")
+        check(anchor)
 
     def _message_event(
         self, thread_id: str, m: Message, actor: Actor, anchor: str | None, sel: TimeSpan | None
@@ -171,11 +216,13 @@ class WorkspaceService:
         )
 
     # panels / focus -----------------------------------------------------
+    @atomic
     def close_panel(self, panel_id: str, actor: Actor) -> Panel:
         p = self.workspace.close_panel(panel_id)
         self.log.append(actor, "panel.closed", p.id, {})
         return p
 
+    @atomic
     def set_focus(self, span: TimeSpan, actor: Actor) -> None:
         self.log.append(
             actor, "focus.changed", None, {"start_ms": span.start_ms, "end_ms": span.end_ms}
@@ -240,16 +287,21 @@ class WorkspaceService:
     def activity(self, since: int | None = None, limit: int = 50) -> dict:
         start = self.log.last_seq - limit if since is None else since
         events = self.log.since(max(0, start), limit=limit)
+        rows = [
+            {
+                "seq": e.seq,
+                "actor": e.actor,
+                "type": e.type,
+                "object_id": e.object_id,
+                "summary": describe_event(e),
+            }
+            for e in events
+        ]
+        last = self.log.last_seq
+        next_since = rows[-1]["seq"] if rows else start
         return {
-            "events": [
-                {
-                    "seq": e.seq,
-                    "actor": e.actor,
-                    "type": e.type,
-                    "object_id": e.object_id,
-                    "summary": describe_event(e),
-                }
-                for e in events
-            ],
-            "last_seq": self.log.last_seq,
+            "events": rows,
+            "last_seq": last,
+            "next_since": next_since,
+            "truncated": next_since < last,
         }

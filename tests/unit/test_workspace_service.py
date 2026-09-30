@@ -243,3 +243,99 @@ def test_activity_since(svc, panel):
         assert set(row) == {"seq", "actor", "type", "object_id", "summary"}
         assert row["summary"] == describe_event(e)
     assert len(svc.ws.activity(limit=1)["events"]) == 1
+
+
+def _rows(svc):
+    return svc.ws.workspace.connection.execute("SELECT COUNT(*) FROM objects").fetchone()[0]
+
+
+def test_failure_after_first_write_rolls_back_everything(svc, panel, monkeypatch):
+    f = svc.ws.finding_create(finding_in(svc), "claude")
+    objects_before, seq_before = _rows(svc), svc.log.last_seq
+    q = svc.log.subscribe()
+
+    def boom(*a, **k):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(svc.ws.workspace, "set_answered", boom)
+    with pytest.raises(RuntimeError):
+        svc.ws.finding_create(finding_in(svc, answers_panel=panel.id), "claude")
+    assert _rows(svc) == objects_before
+    assert svc.log.last_seq == seq_before
+    assert q.empty()
+    assert svc.ws.workspace.get_panel(panel.id).status == "open"
+
+    monkeypatch.undo()
+    monkeypatch.setattr(svc.ws.objects, "link_evidence", boom)
+    h = svc.ws.hypothesis_create("h", "claude")
+    q.get_nowait()
+    seq, rows = svc.log.last_seq, _rows(svc)
+    with pytest.raises(RuntimeError):
+        svc.ws.finding_create(finding_in(svc, hypothesis=h.id, stance="for"), "claude")
+    assert (svc.log.last_seq, _rows(svc)) == (seq, rows)
+    assert f.id  # earlier finding untouched
+    assert q.empty()
+
+
+def test_subscriber_gets_events_only_after_commit(svc, panel):
+    q = svc.log.subscribe()
+    with svc.log.transaction():
+        svc.log.append("claude", "x.y", None, {})
+        assert q.empty()
+    assert q.get_nowait()["type"] == "x.y"
+    with pytest.raises(ValueError), svc.log.transaction():
+        svc.log.append("claude", "x.z", None, {})
+        raise ValueError
+    assert q.empty()
+    svc.ws.hypothesis_create("h", "claude")
+    assert q.get_nowait()["type"] == "hypothesis.created"
+
+
+def test_claim_still_works_after_transactions(svc, panel):
+    svc.ws.ask("hi", "user")
+    intentional, _ = svc.log.claim("c")
+    assert [e.type for e in intentional] == ["thread.message"]
+
+
+def test_bad_actor_writes_nothing(svc, panel):
+    seq, rows = svc.log.last_seq, _rows(svc)
+    with pytest.raises(ValueError, match="actor"):
+        svc.ws.hypothesis_create("h", "mallory")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="actor"):
+        svc.ws.ask("hi", actor="mallory")  # type: ignore[arg-type]
+    assert (svc.log.last_seq, _rows(svc)) == (seq, rows)
+
+
+def test_ask_anchor_validation(svc, panel):
+    a = svc.ws.annotate(AnnotationIn(kind="note", panel=panel.id, label="n"), "user")
+    h = svc.ws.hypothesis_create("h", "claude")
+    f = svc.ws.finding_create(finding_in(svc), "claude")
+    g = svc.ws.gap_create(
+        GapIn(missing_signal="s", needed_for="n", suggestion={"name": "m", "type": "gauge"}),
+        "claude",
+    )
+    for anchor in (a.id, h.id, f.id, g.id, panel.id):
+        assert svc.ws.ask("q", "user", anchor=anchor).anchor == anchor
+    seq = svc.log.last_seq
+    for bad in ("nonsense", "x1", "", "t1", "p"):
+        with pytest.raises(ValueError):
+            svc.ws.ask("q", "user", anchor=bad)
+    for missing in ("a99", "h99", "f99", "g99", "p99"):
+        with pytest.raises(NotFound):
+            svc.ws.ask("q", "user", anchor=missing)
+    assert svc.log.last_seq == seq
+
+
+def test_activity_cursor_and_truncation(svc, panel):
+    start = svc.log.last_seq
+    for i in range(5):
+        svc.ws.hypothesis_create(f"h{i}", "claude")
+    out = svc.ws.activity(since=start, limit=2)
+    assert len(out["events"]) == 2 and out["truncated"] is True
+    assert out["next_since"] == out["events"][-1]["seq"] == start + 2
+    out2 = svc.ws.activity(since=out["next_since"], limit=50)
+    assert [e["seq"] for e in out2["events"]] == [start + 3, start + 4, start + 5]
+    assert out2["truncated"] is False and out2["next_since"] == out2["last_seq"]
+    empty = svc.ws.activity(since=out2["last_seq"])
+    assert empty["events"] == [] and empty["next_since"] == out2["last_seq"]
+    assert empty["truncated"] is False

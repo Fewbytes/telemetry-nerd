@@ -6,7 +6,8 @@ import asyncio
 import json
 import logging
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from typing import Literal, get_args
 
@@ -23,6 +24,11 @@ INTENTIONAL_TYPES = frozenset(
     {"thread.message", "finding.verdict", "hypothesis.status_changed", "annotation.created"}
 )
 AMBIENT_TYPES = frozenset({"panel.created", "panel.closed", "focus.changed"})
+
+
+def check_actor(actor: str) -> None:
+    if actor not in _ACTORS:
+        raise ValueError(f"unknown actor {actor!r}; expected one of {sorted(_ACTORS)}")
 
 
 def classify(actor: str, type: str) -> Klass:
@@ -62,12 +68,41 @@ class EventLog:
         self._db = con
         self._clock = clock
         self._subscribers: set[asyncio.Queue] = set()
+        self._depth = 0
+        self._pending: list[dict] = []
+
+    @contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Run store writes and their events atomically; fan-out happens only after COMMIT.
+
+        Re-entrant: nested calls join the outermost transaction."""
+        if self._depth:
+            self._depth += 1
+            try:
+                yield
+            finally:
+                self._depth -= 1
+            return
+        self._db.execute("BEGIN IMMEDIATE")
+        self._depth = 1
+        self._pending = []
+        try:
+            yield
+            self._db.execute("COMMIT")
+        except BaseException:
+            self._db.execute("ROLLBACK")
+            self._pending = []
+            raise
+        finally:
+            self._depth = 0
+        pending, self._pending = self._pending, []
+        for event in pending:
+            self._fan_out(event)
 
     def append(
         self, actor: str, type: str, object_id: str | None = None, payload: dict | None = None
     ) -> Event:
-        if actor not in _ACTORS:
-            raise ValueError(f"unknown actor {actor!r}; expected one of {sorted(_ACTORS)}")
+        check_actor(actor)
         body = finite(payload or {})
         klass = classify(actor, type)
         ts = self._clock()
@@ -77,7 +112,10 @@ class EventLog:
             (ts, actor, type, object_id, klass, json.dumps(body)),
         )
         event = Event(cur.lastrowid, ts, actor, type, object_id, klass, body)
-        self._fan_out(event.to_dict())
+        if self._depth:
+            self._pending.append(event.to_dict())
+        else:
+            self._fan_out(event.to_dict())
         return event
 
     def since(self, seq: int, limit: int = 1000) -> list[Event]:
