@@ -10,6 +10,7 @@ from pathlib import Path
 
 import anyio
 import uvicorn
+from starlette.types import ASGIApp
 
 from telemetry_nerd.api.app import create_app
 from telemetry_nerd.config import Settings
@@ -40,12 +41,24 @@ def _settings(args: argparse.Namespace) -> Settings:
     return s
 
 
+def _configure_logging() -> None:
+    # stdout belongs to MCP. Log to stderr, and keep httpx's per-request INFO lines
+    # (which include query URLs) out of the log.
+    logging.basicConfig(stream=sys.stderr, level=logging.INFO, force=True)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+def _uvicorn_config(app: ASGIApp, settings: Settings) -> uvicorn.Config:
+    # The access log writes to stdout, which would corrupt the MCP stdio stream.
+    return uvicorn.Config(
+        app, host=settings.host, port=settings.port, log_level="warning", access_log=False
+    )
+
+
 async def _serve(settings: Settings, with_mcp: bool) -> None:
     service = build_service(settings)
     app = create_app(service, settings.ui_dir)
-    server = uvicorn.Server(
-        uvicorn.Config(app, host=settings.host, port=settings.port, log_level="warning")
-    )
+    server = uvicorn.Server(_uvicorn_config(app, settings))
     async with anyio.create_task_group() as tg:
         tg.start_soon(server.serve)
         if with_mcp:
@@ -54,7 +67,7 @@ async def _serve(settings: Settings, with_mcp: bool) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
-    logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+    _configure_logging()
     args = _parse(argv)
     if args.command == "serve":
         settings = _settings(args)
