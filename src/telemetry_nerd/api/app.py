@@ -1,0 +1,102 @@
+"""HTTP + WebSocket API for the UI, the sandbox (M5) and future front doors."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Mount, Route, WebSocketRoute
+from starlette.staticfiles import StaticFiles
+from starlette.websockets import WebSocket, WebSocketDisconnect
+
+from telemetry_nerd.core.service import ChartRejected, TelemetryService
+from telemetry_nerd.model.errors import NotFound
+from telemetry_nerd.sources.base import SourceError
+
+log = logging.getLogger(__name__)
+
+RENDER_BUDGET_MS = 100
+RENDER_POINTS_PER_PX = 2
+
+
+def _error(status: int, message: str, **extra) -> JSONResponse:
+    return JSONResponse({"error": message, **extra}, status_code=status)
+
+
+def create_app(service: TelemetryService, ui_dir: Path | None = None) -> Starlette:
+    async def list_panels(request: Request) -> JSONResponse:
+        return JSONResponse([p.to_dict() for p in service.workspace.list_panels()])
+
+    async def panel_data(request: Request) -> JSONResponse:
+        try:
+            width = min(4000, max(50, int(request.query_params.get("width", "800"))))
+        except ValueError:
+            return _error(400, "width must be an integer")
+        try:
+            return JSONResponse(service.panel_data(request.path_params["id"], width))
+        except NotFound as e:
+            return _error(404, str(e))
+
+    async def query(request: Request) -> JSONResponse:
+        body = await request.json()
+        args = {k: body[k] for k in ("expr", "start", "end", "step", "source") if k in body}
+        try:
+            return JSONResponse(await service.query(**args))
+        except SourceError as e:
+            return _error(400, str(e), hint=e.hint)
+        except ValueError as e:
+            return _error(400, str(e))
+
+    async def show(request: Request) -> JSONResponse:
+        body = await request.json()
+        try:
+            res = service.show(body.get("dataset", ""), body.get("question", ""))
+        except ChartRejected as e:
+            return _error(422, "chart rejected", issues=[i.model_dump() for i in e.issues])
+        except NotFound as e:
+            return _error(404, str(e))
+        except ValueError as e:
+            return _error(400, str(e))
+        return JSONResponse(
+            {"panel": res.panel.to_dict(), "issues": [i.model_dump() for i in res.issues]}
+        )
+
+    async def render_report(request: Request) -> JSONResponse:
+        body = await request.json()
+        try:
+            exceeded = (
+                body["render_ms"] > RENDER_BUDGET_MS
+                or body["points"] > RENDER_POINTS_PER_PX * body["width_px"]
+            )
+        except (KeyError, TypeError):
+            return _error(400, "render_ms, points and width_px are required numbers")
+        if exceeded:
+            log.warning("render budget exceeded: %s", body)
+            service.events.publish({"type": "render.budget_exceeded", **body})
+        return JSONResponse({"budget_exceeded": exceeded})
+
+    async def events(websocket: WebSocket) -> None:
+        await websocket.accept()
+        queue = service.events.subscribe()
+        try:
+            while True:
+                await websocket.send_json(await queue.get())
+        except WebSocketDisconnect:
+            pass
+        finally:
+            service.events.unsubscribe(queue)
+
+    routes = [
+        Route("/api/panels", list_panels),
+        Route("/api/panels/{id}/data", panel_data),
+        Route("/api/query", query, methods=["POST"]),
+        Route("/api/show", show, methods=["POST"]),
+        Route("/api/render-report", render_report, methods=["POST"]),
+        WebSocketRoute("/ws", events),
+    ]
+    if ui_dir is not None and (ui_dir / "index.html").exists():
+        routes.append(Mount("/", app=StaticFiles(directory=ui_dir, html=True)))
+    return Starlette(routes=routes)
