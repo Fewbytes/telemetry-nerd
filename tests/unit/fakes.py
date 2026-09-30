@@ -2,6 +2,7 @@ import pyarrow as pa
 
 from telemetry_nerd.core.events import EventLog
 from telemetry_nerd.core.service import TelemetryService
+from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.db import open_duckdb
 from telemetry_nerd.datasets.store import DatasetStore
@@ -14,6 +15,7 @@ from telemetry_nerd.model.series import (
 )
 from telemetry_nerd.model.time import TimeRange
 from telemetry_nerd.workspace.db import open_workspace_db
+from telemetry_nerd.workspace.objects import ObjectStore
 from telemetry_nerd.workspace.store import WorkspaceStore
 
 NOW = 6_000_000_000
@@ -75,11 +77,15 @@ def make_service(tmp_path, source=None, clock=lambda: NOW) -> TelemetryService:
     con = open_duckdb(tmp_path / "series.duckdb")
     wcon = open_workspace_db(tmp_path / "workspace.db")
     workspace = WorkspaceStore(wcon, clock=clock)
+    datasets = DatasetStore(con, workspace.next_id, clock=clock)
+    log = EventLog(wcon, clock=clock)
+    objects = ObjectStore(wcon, workspace.next_id, clock=clock)
     return TelemetryService(
         sources={"default": source},
         cache=SeriesCache(con, clock=clock),
-        datasets=DatasetStore(con, workspace.next_id, clock=clock),
+        datasets=datasets,
         workspace=workspace,
-        log=EventLog(wcon, clock=clock),
+        log=log,
+        ws=WorkspaceService(workspace, objects, datasets, log),
         clock=clock,
     )

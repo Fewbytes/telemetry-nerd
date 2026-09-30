@@ -86,6 +86,14 @@ class DatasetStore:
             raise
         return meta
 
+    def exists(self, dataset_id: str) -> bool:
+        return (
+            self._con.execute(
+                "SELECT 1 FROM datasets WHERE id = $id", {"id": dataset_id}
+            ).fetchone()
+            is not None
+        )
+
     def get(self, dataset_id: str) -> tuple[DatasetMeta, FetchResult]:
         row = self._con.execute(
             "SELECT meta FROM datasets WHERE id = $id", {"id": dataset_id}

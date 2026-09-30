@@ -12,6 +12,7 @@ from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.charts.spec import ValidationIssue, auto_spec, validate
 from telemetry_nerd.core.events import Actor, EventLog
 from telemetry_nerd.core.summary import summarize
+from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.time import TimeRange, now_ms, parse_duration, parse_time
@@ -51,6 +52,7 @@ class TelemetryService:
     datasets: DatasetStore
     workspace: WorkspaceStore
     log: EventLog
+    ws: WorkspaceService
     clock: Callable[[], int] = now_ms
 
     async def query(
