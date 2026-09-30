@@ -108,6 +108,53 @@ async def test_fetch_pivots_rollup_and_count_into_buckets():
 
 
 @respx.mock
+async def test_fetch_merges_when_vm_keeps_metric_name():
+    """MetricsQL rollup() returns __name__ but count_over_time() drops it;
+    both must land on the same series so buckets carry all four fields."""
+
+    def responder(request):
+        if request.url.params["query"].startswith("rollup("):
+            return httpx.Response(
+                200,
+                json=matrix(
+                    [
+                        {
+                            "metric": {"__name__": "up", "instance": "a", "rollup": "avg"},
+                            "values": [[1700000100, "3"]],
+                        },
+                        {
+                            "metric": {"__name__": "up", "instance": "a", "rollup": "min"},
+                            "values": [[1700000100, "1"]],
+                        },
+                        {
+                            "metric": {"__name__": "up", "instance": "a", "rollup": "max"},
+                            "values": [[1700000100, "5"]],
+                        },
+                    ]
+                ),
+            )
+        return httpx.Response(
+            200,
+            json=matrix([{"metric": {"instance": "a"}, "values": [[1700000100, "4"]]}]),
+        )
+
+    respx.get(**ROUTE).mock(side_effect=responder)
+    res = await PromQLSource("vm", BASE).fetch("up", RNG, 60_000)
+    sid = series_id("vm", {"instance": "a"})
+    assert res.buckets.to_pylist() == [
+        {
+            "ts_ms": 1_700_000_100_000,
+            "series_id": sid,
+            "avg": 3.0,
+            "min": 1.0,
+            "max": 5.0,
+            "count": 4,
+        }
+    ]
+    assert res.series.to_pylist() == [{"series_id": sid, "labels": '{"instance":"a"}'}]
+
+
+@respx.mock
 async def test_fetch_sends_step_and_nocache():
     route = respx.get(**ROUTE).mock(return_value=httpx.Response(200, json=matrix([])))
     await PromQLSource("vm", BASE).fetch("up", RNG, 60_000)
@@ -126,14 +173,14 @@ async def test_series_limit_is_explicit_error():
     src = PromQLSource("vm", BASE, limits=Limits(max_series=2))
     with pytest.raises(LimitExceeded) as exc:
         await src.fetch("up", RNG, 60_000)
-    assert "narrow" in exc.value.hint
+    assert exc.value.hint and "narrow" in exc.value.hint
 
 
 async def test_too_many_steps_rejected_before_request():
     src = PromQLSource("vm", BASE)
     with pytest.raises(LimitExceeded) as exc:
         await src.fetch("up", TimeRange(0, 20_000 * 1_000), 1_000)
-    assert "coarser step" in exc.value.hint
+    assert exc.value.hint and "coarser step" in exc.value.hint
 
 
 @respx.mock

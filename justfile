@@ -13,3 +13,12 @@ lint:
 
 fmt:
     uv run ruff format . && uv run ruff check --fix .
+
+dev-up:
+    podman compose -f deploy/dev/compose.yml up -d
+
+dev-down:
+    podman compose -f deploy/dev/compose.yml down
+
+seed hours="6":
+    uv run python scripts/seed_synthetic.py --url http://127.0.0.1:8428 --hours {{hours}}

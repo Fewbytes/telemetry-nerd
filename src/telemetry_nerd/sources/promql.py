@@ -76,12 +76,25 @@ class PromQLSource:
             for item in result:
                 labels = dict(item["metric"])
                 field = labels.pop("rollup", None) if query_field == "rollup" else query_field
+                # VictoriaMetrics semantics: MetricsQL rollup() keeps __name__ (plus the
+                # rollup label) while *_over_time() drops it, per Prometheus function
+                # rules. Series identity is the label set without __name__: the metric
+                # name is the expression being queried, and keeping it would split
+                # avg/min/max and count of the same series across different buckets.
+                labels.pop("__name__", None)
                 if field not in _FIELDS:
                     continue
                 sid = series_id(self.name, labels)
                 labels_by_sid[sid] = labels
-                for ts, value in item["values"]:
-                    cells.setdefault((sid, round(float(ts) * 1000)), {})[field] = float(value)
+                for sample in item["values"]:
+                    try:
+                        ts, value = float(sample[0]), float(sample[1])
+                    except (IndexError, TypeError, ValueError) as e:
+                        raise SourceError(
+                            f"malformed sample {sample!r} in query result",
+                            hint="retry the query; if it persists, check the source version",
+                        ) from e
+                    cells.setdefault((sid, round(ts * 1000)), {})[field] = value
         if len(labels_by_sid) > self.limits.max_series:
             raise LimitExceeded(
                 f"query returned {len(labels_by_sid)} series (limit {self.limits.max_series})",
@@ -100,7 +113,9 @@ class PromQLSource:
                 "avg": [cells[k].get("avg") for k in keys],
                 "min": [cells[k].get("min") for k in keys],
                 "max": [cells[k].get("max") for k in keys],
-                "count": [int(cells[k]["count"]) if "count" in cells[k] else None for k in keys],
+                # counts are integral by construction (count_over_time); round() is a
+                # no-op cast float -> int that cannot raise on malformed data
+                "count": [round(cells[k]["count"]) for k in keys if "count" in cells[k]],
             },
             schema=BUCKET_SCHEMA,
         )

@@ -1,0 +1,13 @@
+services:
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.137.0
+    command:
+      - -retentionPeriod=100y
+      - -search.latencyOffset=0s
+      - -dedup.minScrapeInterval=1ms
+    ports:
+      - "8428:8428"
+    volumes:
+      - vmdata:/victoria-metrics-data
+volumes:
+  vmdata: {}
