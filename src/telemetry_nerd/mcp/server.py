@@ -6,14 +6,14 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.jsonsafe import dumps
 from telemetry_nerd.model.time import parse_time
 from telemetry_nerd.sources.base import SourceError
-from telemetry_nerd.workspace.models import AnnotationIn, FindingIn, GapIn
+from telemetry_nerd.workspace.models import AnnotationIn, FindingIn, GapIn, HypothesisStatus
 
 INSTRUCTIONS = """\
 Telemetry Nerd: an evidence-first telemetry workspace shared with the user's browser.
@@ -144,10 +144,6 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         """Change a hypothesis status (open, supported, refuted, ...). Refuted ones stay visible.
         Returns {hypothesis, status}."""
         try:
-            from pydantic import TypeAdapter
-
-            from telemetry_nerd.workspace.models import HypothesisStatus
-
             st = TypeAdapter(HypothesisStatus).validate_python(status)
             h = ws.hypothesis_update(hypothesis, st, "claude", note=note)
             return _dump({"hypothesis": h.id, "status": h.status})

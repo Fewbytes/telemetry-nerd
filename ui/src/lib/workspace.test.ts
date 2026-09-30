@@ -27,10 +27,14 @@ describe("subscribe", () => {
   afterEach(() => vi.unstubAllGlobals());
   it("builds /ws?since=<lastSeq> and re-reads since on reconnect", () => {
     const urls: string[] = [];
+    const sockets: FakeWS[] = [];
     class FakeWS {
       onmessage: ((m: { data: string }) => void) | null = null;
       onclose: (() => void) | null = null;
-      constructor(url: string) { urls.push(url); }
+      constructor(url: string) {
+        urls.push(url);
+        sockets.push(this);
+      }
       close() {}
     }
     vi.useFakeTimers();
@@ -40,6 +44,10 @@ describe("subscribe", () => {
     const stop = subscribe(() => {}, () => seq);
     expect(urls[0]).toBe("ws://h:1/ws?since=12");
     seq = 20;
+    // reconnect path: onclose schedules a new connect() which re-reads sinceRef
+    sockets[0].onclose!();
+    vi.advanceTimersByTime(1000);
+    expect(urls[1]).toBe("ws://h:1/ws?since=20");
     stop();
     vi.useRealTimers();
   });

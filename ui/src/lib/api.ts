@@ -102,7 +102,6 @@ export const postJSON = <T>(path: string, body: unknown = {}) =>
 
 export const fetchWorkspace = () => fetch("/api/workspace").then((r) => json<Snapshot>(r));
 export const closePanel = (id: string) => postJSON<unknown>(`/api/panels/${id}/close`);
-export const fetchPanels = () => fetch("/api/panels").then((r) => json<Panel[]>(r));
 
 export const fetchPanelData = (id: string, width: number) =>
   fetch(`/api/panels/${id}/data?width=${width}`).then((r) => json<PanelData>(r));

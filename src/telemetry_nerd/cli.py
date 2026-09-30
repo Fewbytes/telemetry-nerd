@@ -84,6 +84,8 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "serve":
         settings = _settings(args)
         log = logging.getLogger(__name__)
+        if args.no_mcp:
+            log.warning("--no-mcp is deprecated and ignored: serve is daemon-only since M2")
         if running := _already_running(settings):
             print(
                 f"telemetry-nerd daemon already running at {running} for {settings.data_dir}",

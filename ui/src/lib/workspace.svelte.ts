@@ -18,8 +18,11 @@ export function createWorkspace() {
   const load = () =>
     fetchWorkspace()
       .then((s) => {
-        snapshot = s;
-        error = null;
+        // concurrent loads can return out of order; never apply a stale snapshot
+        if (s.last_seq >= lastSeq) {
+          snapshot = s;
+          error = null;
+        }
         lastSeq = Math.max(lastSeq, s.last_seq);
       })
       .catch((e) => (error = String(e)));

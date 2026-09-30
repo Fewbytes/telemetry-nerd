@@ -11,7 +11,7 @@ from pathlib import Path
 
 import httpx
 
-from telemetry_nerd.config import Settings
+from telemetry_nerd.config import DEFAULT_ALLOWED_HOSTS, Settings
 
 
 def state_path(data_dir: Path) -> Path:
@@ -46,7 +46,7 @@ def remove_state(data_dir: Path, pid: int | None = None) -> None:
 def healthy(url: str, timeout: float = 1.0) -> bool:
     try:
         r = httpx.get(f"{url}/api/health", timeout=timeout)
-        return r.status_code == 200 and r.json().get("ok") is True
+        return r.status_code == 200 and bool(r.json().get("ok"))
     except (httpx.HTTPError, ValueError):
         return False
 
@@ -76,14 +76,20 @@ def ensure_daemon(settings: Settings, wait_s: float = 15.0) -> str:
         "--port",
         str(settings.port),
     ]
-    with open(settings.data_dir / "daemon.log", "ab") as log:
-        subprocess.Popen(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=log,
-            stderr=log,
-            start_new_session=True,
-        )
+    if settings.ui_dir is not None:
+        cmd += ["--ui-dir", str(settings.ui_dir)]
+    cmd += [f"--allowed-host={h}" for h in settings.allowed_hosts if h not in DEFAULT_ALLOWED_HOSTS]
+    try:
+        with open(settings.data_dir / "daemon.log", "ab") as log:
+            subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=log,
+                stderr=log,
+                start_new_session=True,
+            )
+    except OSError as e:
+        raise RuntimeError(f"cannot write daemon log in {settings.data_dir}: {e}") from e
     deadline = time.monotonic() + wait_s
     while time.monotonic() < deadline:
         if healthy(url):
