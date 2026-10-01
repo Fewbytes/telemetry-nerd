@@ -183,6 +183,8 @@ def create_app(
             out = service.panel_data(request.path_params["id"], width)
         except NotFound as e:
             return _error(404, str(e))
+        except ValueError as e:  # e.g. a spectrum panel whose series no longer qualifies
+            return _error(400, str(e))
         return JSONResponse(out)
 
     async def query(request: Request) -> JSONResponse:
