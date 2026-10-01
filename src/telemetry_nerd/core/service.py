@@ -28,12 +28,23 @@ from telemetry_nerd.analysis.exprkind import (
     min_samples,
 )
 from telemetry_nerd.analysis.fraction import fraction_over, wilson
+from telemetry_nerd.analysis.marginal import (
+    SAMPLE_N_MIN,
+    histogram_of,
+    pooled_window,
+    sample_bins,
+    step_values,
+)
 from telemetry_nerd.analysis.quantile import attach_counts
 from telemetry_nerd.analysis.quantiles import column_quantiles
+from telemetry_nerd.analysis.reference import reference_window
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.charts.spec import (
     WINDOW_MARKS,
+    ChartSpec,
     Layer,
+    Marginal,
+    Reference,
     ValidationIssue,
     Window,
     auto_spec,
@@ -437,6 +448,157 @@ class TelemetryService:
             out.append(res)
         return {"dataset": dataset_id, "x": x, "series": out}
 
+    async def ensure_reference(self, panel_id: str, mode: str, actor: Actor) -> Reference:
+        p = self.workspace.get_panel(panel_id)
+        spec = ChartSpec.model_validate(p.spec)
+        if any(layer.mark != "line+envelope" for layer in spec.layers):
+            raise ValueError(
+                f"marginals and indexed views apply to time-series panels; {p.id} is not one"
+            )
+        if (ref := spec.references.get(mode)) is not None:
+            return ref
+        meta = self.datasets.meta(p.dataset_ids[0])
+        rw = reference_window(meta.start_ms, meta.end_ms, meta.step_ms, mode)
+        common = {"source": meta.source, "actor": actor}
+        series = (
+            await self.query(
+                meta.expr,
+                start=str(rw.start_ms),
+                end=str(rw.end_ms),
+                step=format_duration(meta.step_ms),
+                **common,
+            )
+        )["dataset"]
+        dist = dist_cur = None
+        if meta.histogram:
+            h, src = meta.histogram, self._source(meta.source)
+            dstep = format_duration(max(meta.step_ms, 2 * src.resolution_ms))
+            dist_cur = (
+                await self.query_distribution(
+                    h["selector"],
+                    h["by"],
+                    start=str(meta.start_ms),
+                    end=str(meta.end_ms),
+                    step=dstep,
+                    **common,
+                )
+            )["dataset"]
+            dist = (
+                await self.query_distribution(
+                    h["selector"],
+                    h["by"],
+                    start=str(rw.start_ms),
+                    end=str(rw.end_ms),
+                    step=dstep,
+                    **common,
+                )
+            )["dataset"]
+        return Reference(
+            mode=mode,
+            label=rw.label,
+            start_ms=rw.start_ms,
+            end_ms=rw.end_ms,  # type: ignore[arg-type]
+            shift_ms=rw.shift_ms,
+            series=series,
+            dist=dist,
+            dist_current=dist_cur,
+        )
+
+    async def set_marginal(
+        self, panel_id: str, reference: str | None, actor: Actor, reason: str | None = None
+    ) -> dict:
+        if reference is None:
+            self.ws.set_marginal(panel_id, None, None, actor)
+            return {"panel": panel_id, "marginal": None}
+        ref = await self.ensure_reference(panel_id, reference, actor)
+        p = self.ws.set_marginal(
+            panel_id, Marginal(reference=ref.mode, author=actor, reason=reason), ref, actor
+        )  # type: ignore[arg-type]
+        m = self._marginal(ChartSpec.model_validate(p.spec), self.datasets.meta(p.dataset_ids[0]))
+        assert m is not None
+        now, prev = m["windows"]
+        return {
+            "panel": p.id,
+            "basis": m["basis"],
+            "what": m["what"],
+            "reference": ref.label,
+            "n": {"now": now["n"], "reference": prev["n"]},
+            "datasets": [ref.series, ref.dist],
+        }
+
+    def _marginal(self, spec: ChartSpec, meta) -> dict | None:
+        m = spec.marginal
+        ref = spec.references.get(m.reference) if m else None
+        if m is None or ref is None:
+            return None
+        head = {
+            "reference": {
+                "mode": ref.mode,
+                "label": ref.label,
+                "start_ms": ref.start_ms,
+                "end_ms": ref.end_ms,
+            },
+            "author": m.author,
+            "reason": m.reason,
+        }
+        if ref.dist and ref.dist_current:
+            wins = []
+            for did, label in ((ref.dist_current, "now"), (ref.dist, ref.label)):
+                dm, dist = self.datasets.get_distribution(did)
+                w = pooled_window(pl.from_arrow(dist.rows), pl.from_arrow(dist.columns), dm.step_ms,
+                                  dm.start_ms - dm.step_ms, dm.end_ms)  # fmt: skip
+                wins.append(
+                    {
+                        "label": label,
+                        "start_ms": dm.start_ms,
+                        "end_ms": dm.end_ms,
+                        "n": 0.0,
+                        "columns": 0,
+                        "lo": [],
+                        "hi": [],
+                        "c": [],
+                        **(w or {}),
+                    }
+                )
+            k = max(w.get("series", 1) for w in wins)
+            what = f"observations (requests) of {meta.histogram['selector']}" + (
+                f", {k} series summed" if k > 1 else ""
+            )
+            return {
+                "basis": "distribution",
+                "what": what,
+                "n_min": DIST_N_MIN,
+                "windows": wins,
+                "excluded": [0, 0],
+                **head,
+            }
+        _, cur = self.datasets.get(meta.id)
+        rmeta, rres = self.datasets.get(ref.series)
+        cv, cx, k = step_values(cur.buckets, meta.representation, meta.n_min)
+        rv, rx, _ = step_values(rres.buckets, rmeta.representation, rmeta.n_min)
+        edges = sample_bins(cv, rv)
+        lo, hi = [a for a, _ in edges], [b for _, b in edges]
+        step = format_duration(meta.step_ms)
+        kind = (
+            f"p{meta.quantile * 100:g} values per {step} step (n ≥ {meta.n_min} only): "
+            "a distribution of percentile values, not of requests"
+            if meta.representation == "quantile"
+            else f"per-step values ({step} means of scrape samples): scrape samples, not requests"
+        )
+        what = kind + (f"; {k} series pooled" if k > 1 else "")
+        wins = [{"label": label, "start_ms": s, "end_ms": e, "n": float(len(v)), "columns": len(v),
+                 "lo": lo, "hi": hi, "c": histogram_of(v, edges)}
+                for label, s, e, v in (("now", meta.start_ms, meta.end_ms, cv),
+                                       (ref.label, ref.start_ms, ref.end_ms, rv))]  # fmt: skip
+        return {
+            "basis": "samples",
+            "what": what,
+            "n_min": SAMPLE_N_MIN,
+            "windows": wins,
+            "excluded": [cx, rx],
+            **head,
+        }
+
     @staticmethod
     def _refuse_reserved(name: str) -> None:
         if name in RESERVED_NAMES:
@@ -563,6 +725,7 @@ class TelemetryService:
         caveats = self._time_summary(meta, result, self.clock())["caveats"]
         return {
             "kind": "time",
+            "marginal": self._marginal(ChartSpec.model_validate(panel.spec), meta),
             "panel": panel.to_dict(),
             "dataset": meta.to_dict(),
             "effective_step_ms": effective_step,

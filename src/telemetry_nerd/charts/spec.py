@@ -51,9 +51,28 @@ class YAxis(BaseModel):
     selected: YView | None = None  # the user's pick; None = auto
 
 
+class Reference(BaseModel):
+    mode: Literal["previous", "week"]
+    label: str
+    start_ms: int
+    end_ms: int
+    shift_ms: int
+    series: str  # time dataset over the reference window (same expr, step, source)
+    dist: str | None = None  # distribution over the reference window (histogram-backed panels)
+    dist_current: str | None = None  # distribution over the panel window
+
+
+class Marginal(BaseModel):
+    reference: Literal["previous", "week"]
+    author: Literal["claude", "user"] = "user"
+    reason: str | None = Field(default=None, max_length=160)
+
+
 class ChartSpec(BaseModel):
     layers: list[Layer] = Field(min_length=1)
     y: YAxis = Field(default_factory=YAxis)
+    references: dict[str, Reference] = Field(default_factory=dict)
+    marginal: Marginal | None = None
 
 
 class ValidationIssue(BaseModel):

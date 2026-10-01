@@ -44,6 +44,11 @@ def describe_event(e: Event) -> str:
         case "panel.y_view_suggested":
             v = p["view"]
             return f'{who} suggested y-view {v["id"]} "{v["label"]}" on {e.object_id}: {v.get("reason", "")}'
+        case "panel.marginal_set":
+            if not p.get("reference"):
+                return f"{who} turned off the marginal histogram on {e.object_id}"
+            why = f": {p['reason']}" if p.get("reason") else ""
+            return f"{who} showed {e.object_id} marginal vs {p['label']}{why}"
         case "panel.closed":
             return f"{who} closed {e.object_id}"
         case "catalog.claimed":

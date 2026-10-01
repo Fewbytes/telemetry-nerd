@@ -30,7 +30,13 @@ INTENTIONAL_TYPES = frozenset(
     }
 )
 AMBIENT_TYPES = frozenset(
-    {"panel.created", "panel.closed", "focus.changed", "panel.y_view_selected"}
+    {
+        "panel.created",
+        "panel.closed",
+        "focus.changed",
+        "panel.y_view_selected",
+        "panel.marginal_set",
+    }
 )
 
 

@@ -22,7 +22,7 @@ from telemetry_nerd.catalog.packs import PackIndex, builtin_packs
 from telemetry_nerd.catalog.rules import Facts, derive_claims, facts_from_claims, facts_from_name
 from telemetry_nerd.catalog.store import CatalogStore
 from telemetry_nerd.channel.format import describe_event
-from telemetry_nerd.charts.spec import ChartSpec
+from telemetry_nerd.charts.spec import ChartSpec, Marginal, Reference
 from telemetry_nerd.charts.yview import (
     BUILTIN_LABELS,
     MAX_SUGGESTIONS,
@@ -491,6 +491,27 @@ class WorkspaceService:
         )
         return p
 
+    @atomic
+    def set_marginal(
+        self, panel_id: str, marginal: Marginal | None, reference: Reference | None, actor: Actor
+    ) -> Panel:
+        p, spec = self._time_spec(panel_id)
+        if reference is not None:
+            spec.references[reference.mode] = reference
+        spec.marginal = marginal
+        p = self.workspace.set_spec(p.id, spec.model_dump())
+        self.log.append(
+            actor,
+            "panel.marginal_set",
+            p.id,
+            {
+                "reference": marginal.reference if marginal else None,
+                "label": reference.label if (marginal and reference) else None,
+                "reason": marginal.reason if marginal else None,
+            },
+        )
+        return p
+
     def brief(self) -> dict:
         """Compact state for Claude: newest first, truncated to BRIEF_BUDGET_BYTES."""
         hyps = [
@@ -513,6 +534,12 @@ class WorkspaceService:
                 "status": p.status,
                 **(
                     {"y_view": sel["label"]} if (sel := p.spec.get("y", {}).get("selected")) else {}
+                ),
+                **(
+                    {"marginal": ref["label"]}
+                    if (mg := p.spec.get("marginal"))
+                    and (ref := p.spec.get("references", {}).get(mg["reference"]))
+                    else {}
                 ),
             }
             for p in self.workspace.list_panels()
