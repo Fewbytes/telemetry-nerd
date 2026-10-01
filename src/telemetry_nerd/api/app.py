@@ -461,6 +461,21 @@ def create_app(
             hi=body.get("hi"),
         ).to_dict()
 
+    async def panel_marginal(request: Request) -> JSONResponse:
+        body = await request.json() if await request.body() else {}
+        ref = body.get("reference")
+        if ref is not None and not isinstance(ref, str):
+            return _error(400, "reference must be previous, week or null")
+        try:
+            await service.set_marginal(request.path_params["id"], ref, "user")
+        except NotFound as e:
+            return _error(404, str(e))
+        except SourceError as e:
+            return _error(400, str(e), hint=e.hint)
+        except ValueError as e:
+            return _error(400, str(e))
+        return JSONResponse(service.workspace.get_panel(request.path_params["id"]).to_dict())
+
     @_api
     async def list_sources(request: Request) -> object:
         return {"sources": service.source_list()}
@@ -596,6 +611,7 @@ def create_app(
         Route("/api/channel/sessions", channel_sessions),
         Route("/api/panels", list_panels),
         Route("/api/panels/{id}/y-view", panel_y_view, methods=["POST"]),
+        Route("/api/panels/{id}/marginal", panel_marginal, methods=["POST"]),
         Route("/api/panels/{id}/data", panel_data),
         Route("/api/query", query, methods=["POST"]),
         Route("/api/query-distribution", query_distribution, methods=["POST"]),

@@ -153,6 +153,8 @@ def make_service(
     log = EventLog(wcon, clock=clock)
     objects = ObjectStore(wcon, workspace.next_id, clock=clock)
     sources = SourceRegistry(wcon, factory, clock=clock)
+    if source.name == "fake":
+        source.name = "default"  # dataset.source is looked up by registry name, as in production
     sources.attach("default", source)
     return TelemetryService(
         sources=sources,

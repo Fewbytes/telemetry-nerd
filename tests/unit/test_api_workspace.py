@@ -272,3 +272,19 @@ def test_select_y_view_route(client):
     assert client.post(f"/api/panels/{pid}/y-view", json={"mode": "meaningful"}).status_code == 400
     assert client.post(f"/api/panels/{pid}/y-view", json={"mode": 3}).status_code == 400
     assert client.post("/api/panels/p99/y-view", json={"mode": "zero"}).status_code == 404
+
+
+def test_marginal_route(client):
+    pid = _seed_panel(client)
+    r = client.post(f"/api/panels/{pid}/marginal", json={"reference": "previous"})
+    assert r.status_code == 200 and r.json()["spec"]["marginal"]["reference"] == "previous"
+    assert (
+        client.post(f"/api/panels/{pid}/marginal", json={"reference": "profile"}).status_code == 400
+    )
+    assert (
+        client.post(f"/api/panels/{pid}/marginal", json={"reference": None}).json()["spec"][
+            "marginal"
+        ]
+        is None
+    )
+    assert client.post("/api/panels/p99/marginal", json={"reference": "week"}).status_code == 404

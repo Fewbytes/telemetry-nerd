@@ -30,6 +30,8 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   it as the question the graph answers. Share the returned URL with the user.
 - When one outlier or a faded low-n bucket squashes a panel's y range, `suggest_y_view` (e.g.
   mode=meaningful) with a one-line reason; do not re-query to hide data.
+- To ask "is now different from before?" about a time panel, `show_marginal(panel,
+  reference=previous|week)`; cite n for both windows and whether it is requests or per-step samples.
 - Report caveats from summaries (gaps, settling, fake_resolution) when you describe data.
 - NEVER present a percentile without its sample count. A quantile over n samples is
   meaningless unless n >= ~10/(1-q) per bucket: p50 ~20, p95 ~200, p99 ~1000, p99.9 ~10000.
@@ -339,6 +341,25 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             saved, warnings = ws.suggest_y_view(panel, v, "claude", replace=replace)
             return _dump({"panel": panel, "view": saved.id, "warnings": warnings})
         except (ValidationError, NotFound, ValueError) as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
+    async def show_marginal(
+        panel: str, reference: str = "previous", reason: str = "", off: bool = False
+    ) -> str:
+        """Show a marginal histogram beside a time-series panel: the current window's value
+        distribution vs a reference window, on the panel's own y scale. reference: previous
+        (window of equal length just before) or week (same window 7 days earlier).
+        Histogram-backed panels compare OBSERVATIONS (requests); plain series compare
+        per-step values (scrape samples, NOT requests): say which when you cite it, with n.
+        reason: one line shown to the user. off=true hides it. Returns {basis, what, n, datasets}:
+        the reference datasets are normal handles (e.g. fraction_over on the distribution one)."""
+        try:
+            out = await service.set_marginal(
+                panel, None if off else reference, "claude", reason=reason or None
+            )
+            return _dump(out)
+        except (ValidationError, NotFound, ValueError, SourceError) as e:
             raise _fail(e) from e
 
     @mcp.tool()

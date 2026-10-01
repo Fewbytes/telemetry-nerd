@@ -271,3 +271,24 @@ async def test_suggest_y_view(tmp_path):
         {"panel": pid, "mode": "log", "label": "log", "reason": "r", "lo": 1, "hi": 2},
     )
     assert log.is_error and "band" in text_of(log)
+
+
+async def test_show_marginal(tmp_path):
+    svc = make_service(tmp_path)
+    mcp = build_mcp(svc, "http://127.0.0.1:7070")
+    ds = json.loads(
+        text_of(await call(mcp, "query", {"expr": "up", "start": "now-2h", "end": "now-1h"}))
+    )["dataset"]
+    pid = json.loads(text_of(await call(mcp, "show", {"dataset": ds, "question": "Up?"})))["panel"]
+    out = json.loads(
+        text_of(
+            await call(
+                mcp,
+                "show_marginal",
+                {"panel": pid, "reference": "previous", "reason": "did the level shift?"},
+            )
+        )
+    )
+    assert out["basis"] == "samples" and out["n"]["now"] > 0 and "not requests" in out["what"]
+    bad = await call(mcp, "show_marginal", {"panel": pid, "reference": "profile", "reason": "r"})
+    assert bad.is_error and "2as.7" in text_of(bad)
