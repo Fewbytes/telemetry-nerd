@@ -86,7 +86,8 @@
 
   $effect(() => {
     const el = plotEl;
-    if (!data || !el) return;
+    const d = data;
+    if (!d || d.kind !== "time" || !el) return;
     void annKey; // tracked: rebuild the plot when the annotation set changes
     const anns = untrack(() => panelAnns);
     const mode = theme.effective; // tracked: rebuild the plot when the theme flips
@@ -94,12 +95,12 @@
     const { stroke, grid } = plotColors(el, mode);
     const dpr = window.devicePixelRatio || 1;
     const model = toUplot(
-      data.series,
-      { start: data.dataset.start_ms, end: data.dataset.end_ms, step: data.effective_step_ms },
-      { quantile: data.dataset.representation === "quantile", nMin: data.dataset.n_min ?? null },
+      d.series,
+      { start: d.dataset.start_ms, end: d.dataset.end_ms, step: d.effective_step_ms },
+      { quantile: d.dataset.representation === "quantile", nMin: d.dataset.n_min ?? null },
     );
     const width = el.clientWidth || 800;
-    const unit = data.panel.spec.y.unit;
+    const unit = d.panel.spec.y.unit;
     const up = measureFirstDraw(
       (onDraw) =>
         new uPlot(

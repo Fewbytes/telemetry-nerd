@@ -1,5 +1,8 @@
 export interface ChartSpec {
-  layers: { mark: string; data: string }[];
+  layers: {
+    mark: string; data: string;
+    windows?: { start_ms: number; end_ms: number; label: string }[]; color?: "count" | "density";
+  }[];
   y: { range_mode: "data" | "reference" | "semantic"; unit: string | null; label: string | null };
 }
 export interface Panel {
@@ -15,11 +18,32 @@ export interface DatasetMeta {
   id: string; source: string; expr: string; start_ms: number; end_ms: number;
   step_ms: number; resolution_ms: number; representation: string;
   quantile?: number | null; n_min?: number | null;
+  scheme?: BucketSchemeInfo | null; histogram?: { selector: string; by: string[] } | null;
+  source_caveats?: string[];
 }
-export interface PanelData {
-  panel: Panel; dataset: DatasetMeta; effective_step_ms: number;
-  series: SeriesData[]; caveats: string[];
+/** Distribution cells. lo === null means -Inf, hi === null means +Inf (JSON has no Infinity). */
+export interface HeatCells { ts: number[]; lo: (number | null)[]; hi: (number | null)[]; c: number[] }
+export interface HeatSeries {
+  id: string; labels: Record<string, string>;
+  ts: number[]; n: number[]; cover: number[]; cells: HeatCells;
 }
+export interface WindowHist {
+  label: string; start_ms: number; end_ms: number; n: number; columns: number;
+  lo: (number | null)[]; hi: (number | null)[]; c: number[];
+}
+export interface BucketSchemeInfo {
+  kind: string; edges: number[]; schema: number | null; per_decade: number | null; description: string;
+}
+interface PanelDataBase { panel: Panel; dataset: DatasetMeta; caveats: string[] }
+export interface TimePanelData extends PanelDataBase { kind: "time"; effective_step_ms: number; series: SeriesData[] }
+export interface HeatmapPanelData extends PanelDataBase {
+  kind: "heatmap"; effective_step_ms: number; value_merge: number; facet_height_px: number; series: HeatSeries[];
+}
+export interface HistogramPanelData extends PanelDataBase {
+  kind: "histogram"; mark: "histogram" | "ecdf"; effective_step_ms: number; value_merge: number;
+  series: { id: string; labels: Record<string, string>; windows: WindowHist[] }[];
+}
+export type PanelData = TimePanelData | HeatmapPanelData | HistogramPanelData;
 export interface WorkspaceEvent {
   seq: number; ts_ms: number; actor: "claude" | "user" | "system"; type: string;
   object_id: string | null; klass: "intentional" | "ambient" | "internal";
