@@ -141,6 +141,12 @@
             // brush = x-only selection; we open a menu instead of zooming
             cursor: { drag: { setScale: false, x: true, y: false } },
             hooks: {
+              ready: [
+                (u: uPlot) => {
+                  const rows = u.root.querySelectorAll(".u-legend .u-series");
+                  model.legendHidden.forEach((i) => rows[i]?.classList.add("tn-hidden"));
+                },
+              ],
               draw: [
                 onDraw,
                 (u: uPlot) => {

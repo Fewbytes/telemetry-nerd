@@ -66,3 +66,19 @@ describe("toUplot quantile mode", () => {
     expect(m.data[1]).toEqual([1]);
   });
 });
+
+describe("toUplot legend", () => {
+  it("hides envelope edges from the legend and shows them on the value row", () => {
+    const m = toUplot([s("a", { i: "a" }, [1000, 2000], [1, 2])]);
+    expect(m.legendHidden).toEqual([2, 3]); // min, max of the only series
+    const value = m.series[1].value as (u: unknown, v: number | null, si: number, i: number | null) => string;
+    expect(value(null, 1, 1, 0)).toBe("1 [0–2]");
+    expect(value(null, null, 1, null)).toBe("--");
+  });
+  it("hides the faded low-n twin in quantile mode", () => {
+    const q: SeriesData = {
+      id: "a", labels: {}, ts: [1000], avg: [1], min: [1], max: [1], count: [1],
+    };
+    expect(toUplot([q], undefined, { quantile: true, nMin: 200 }).legendHidden).toEqual([2]);
+  });
+});

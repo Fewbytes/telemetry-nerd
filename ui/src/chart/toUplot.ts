@@ -8,6 +8,8 @@ export interface UplotModel {
   data: uPlot.AlignedData;
   series: uPlot.Series[];
   bands: uPlot.Band[];
+  /** series indices whose legend row is hidden (envelope edges, faded low-n twins) */
+  legendHidden: number[];
   points: number;
 }
 
@@ -24,6 +26,8 @@ function rgba(hex: string, alpha: number): string {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
 }
+
+const fmt = (v: number): string => String(Number(v.toPrecision(4)));
 
 export interface Grid {
   start: number; // ms
@@ -53,6 +57,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
   const data: (number | null)[][] = [xs.map((t) => t / 1000)];
   const uSeries: uPlot.Series[] = [{}];
   const bands: uPlot.Band[] = [];
+  const legendHidden: number[] = [];
 
   series.forEach((s, k) => {
     const color = PALETTE[k % PALETTE.length];
@@ -76,6 +81,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
       if (nMin !== null) {
         const low = s.avg.map((v, i) => ((s.count[i] ?? 0) < nMin ? v : null));
         data.push(column(low));
+        legendHidden.push(uSeries.length);
         uSeries.push({
           label: `${name} (n<${nMin}, not meaningful)`,
           stroke: rgba(color, 0.35),
@@ -88,13 +94,20 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
     }
     const avgIdx = data.length;
     data.push(column(s.avg), column(s.min), column(s.max));
+    // one legend row per series: the value plus its envelope, instead of separate min/max rows
+    const withEnvelope = (_u: uPlot, v: number | null, _si: number, i: number | null) => {
+      if (v == null || i == null) return "--";
+      const lo = data[avgIdx + 1][i], hi = data[avgIdx + 2][i];
+      return lo == null || hi == null ? fmt(v) : `${fmt(v)} [${fmt(lo)}–${fmt(hi)}]`;
+    };
+    legendHidden.push(avgIdx + 1, avgIdx + 2);
     uSeries.push(
-      { label: name, stroke: color, width: 1.5, spanGaps: false },
+      { label: name, stroke: color, width: 1.5, spanGaps: false, value: withEnvelope },
       { label: `${name} min`, stroke: rgba(color, 0.35), width: 0.5, spanGaps: false, points: { show: false } },
       { label: `${name} max`, stroke: rgba(color, 0.35), width: 0.5, spanGaps: false, points: { show: false } },
     );
     bands.push({ series: [avgIdx + 2, avgIdx + 1], fill: rgba(color, 0.15) });
   });
 
-  return { data: data as uPlot.AlignedData, series: uSeries, bands, points: xs.length * series.length };
+  return { data: data as uPlot.AlignedData, series: uSeries, bands, legendHidden, points: xs.length * series.length };
 }

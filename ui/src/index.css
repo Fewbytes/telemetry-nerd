@@ -186,3 +186,4 @@ ul.gaps { list-style: none; margin: 0; padding: 0; }
 .panel .legend { font-size: 11px; color: var(--muted); margin-top: 4px; }
 .panel .heat-controls button { font-size: 11px; padding: 0 6px; border: 1px solid var(--border); background: none; color: var(--muted); border-radius: 4px; cursor: pointer; }
 .panel .heat-controls button.on { color: var(--fg); border-color: var(--fg); }
+.tn-hidden { display: none !important; }
