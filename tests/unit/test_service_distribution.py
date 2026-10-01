@@ -196,3 +196,33 @@ async def test_unmerged_windows_have_no_source_copy(tmp_path):
         windows=[Window(start_ms=meta.start_ms, end_ms=meta.end_ms)],
     )
     assert "source" not in svc.panel_data(res.panel.id, 600)["series"][0]["windows"][0]
+
+
+async def test_fraction_over_is_exact_at_edges_and_bounded_inside(tmp_path):
+    svc = make_service(tmp_path)  # per column: i0 90/9/1 (n=100), i1 180/18/2 (n=200)
+    out = await svc.query_distribution(
+        "lat_bucket", by=["instance"], start="now-2h", end="now-1h", step="1m"
+    )
+    [row] = svc.fraction_over(out["dataset"], 1.0)["series"]  # merged: 3 of 300 above 1.0
+    assert row["exact"] and row["fraction"] == pytest.approx(0.01)
+    assert row["ci95"][0] < 0.01 < row["ci95"][1]
+    inside = svc.fraction_over(out["dataset"], 0.5)["series"][0]
+    assert not inside["exact"] and inside["inside_bucket"] == [0.1, 1.0]
+    lo, hi = inside["fraction"]
+    assert lo == pytest.approx(0.01) and hi == pytest.approx(0.1)  # 3 above, +27 inside (0.1, 1]
+    assert (
+        inside["evidence"]["kind"] == "statistic" and inside["evidence"]["name"] == "fraction_over"
+    )
+    each = svc.fraction_over(out["dataset"], 1.0, by_series=True)
+    assert len(each["series"]) == 2
+    meta = svc.datasets.meta(out["dataset"])
+    start = str(meta.start_ms + 60_000)
+    short = svc.fraction_over(out["dataset"], 1.0, start=start, end=str(meta.start_ms + 180_000))
+    assert short["series"][0]["steps"] == 2 and short["series"][0]["n"] == 600
+
+
+async def test_fraction_over_refuses_a_bad_window(tmp_path):
+    svc = make_service(tmp_path)
+    out = await svc.query_distribution("lat_bucket", start="now-2h", end="now-1h", step="1m")
+    with pytest.raises(ValueError, match="after"):
+        svc.fraction_over(out["dataset"], 1.0, start="now-1h", end="now-2h")

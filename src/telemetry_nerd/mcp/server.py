@@ -47,6 +47,8 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   For "p95 over time" when a histogram exists, prefer `query_distribution` +
   `show(mark="percentiles", quantiles=[0.5, 0.95])` over `histogram_quantile`: each step shows
   the bucket holding q, only where n is enough. For tails use `show(mark="ccdf", windows=[...])`.
+- "What fraction was slower than X?" is `fraction_over` on a distribution dataset: exact at
+  bucket edges, bounded inside a bucket; cite its `evidence` statistic.
 - Write $__rate_interval as the rate window for quantiles so each value covers one display step.
 - Never look at latency alone: show it with throughput, and with concurrency when relevant
   (Little's law: mean concurrency L = throughput λ x mean latency W; W from
@@ -147,6 +149,29 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         except SourceError as e:
             raise ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e)) from e
         except ValueError as e:
+            raise ToolError(str(e)) from e
+
+    @mcp.tool()
+    def fraction_over(
+        dataset: str,
+        x: float,
+        start: str | None = None,
+        end: str | None = None,
+        by_series: bool = False,
+    ) -> str:
+        """What fraction of observations exceeded x? From a distribution dataset (query_distribution).
+
+        x in the metric's unit (e.g. 0.25 for 250 ms). start/end: optional window (default the
+        whole dataset); it snaps outward to whole steps. Counts are merged across series by
+        summing (additive) unless by_series=true.
+        Exact when x is a source bucket edge; otherwise `fraction` is [min, max] bounded by the
+        bucket containing x (`inside_bucket`), never interpolated. `ci95` is the Wilson interval
+        for sampling noise. n is the number of observations; `low_count` means too few to trust.
+        Each series carries an `evidence` statistic you can pass to finding_create as is.
+        """
+        try:
+            return _dump(service.fraction_over(dataset, x, start, end, by_series))
+        except (NotFound, ValueError) as e:
             raise ToolError(str(e)) from e
 
     def _source_error(e: SourceError) -> ToolError:

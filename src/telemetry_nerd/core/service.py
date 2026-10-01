@@ -27,6 +27,7 @@ from telemetry_nerd.analysis.exprkind import (
     looks_like_histogram,
     min_samples,
 )
+from telemetry_nerd.analysis.fraction import fraction_over, wilson
 from telemetry_nerd.analysis.quantile import attach_counts
 from telemetry_nerd.analysis.quantiles import column_quantiles
 from telemetry_nerd.analysis.resample import lod
@@ -94,6 +95,14 @@ def _align_within_limit(rng: TimeRange, step_ms: int, noun: str) -> TimeRange:
             hint="use a coarser step or a shorter range",
         )
     return rng
+
+
+def _edge_text(v: float) -> float | str:
+    return ("+Inf" if v > 0 else "-Inf") if math.isinf(v) else v
+
+
+def _round_sig(v: float) -> float:
+    return float(f"{v:.4g}")
 
 
 def _empty_window(w: dict) -> dict:
@@ -364,6 +373,69 @@ class TelemetryService:
         return self.show(
             meta.id, question, actor=actor, unit=unit, mark="histogram", windows=windows
         ).panel
+
+    def fraction_over(
+        self,
+        dataset_id: str,
+        x: float,
+        start: str | None = None,
+        end: str | None = None,
+        by_series: bool = False,
+    ) -> dict:
+        """P(X > x) over a window of a distribution dataset: exact at source bucket edges,
+        else bounded by the bucket containing x (never interpolated), with a Wilson 95%
+        interval for the sampling noise. Series are merged by summing counts (additive)
+        unless `by_series`."""
+        meta, dist = self.datasets.get_distribution(dataset_id)
+        now = self.clock()
+        w0 = meta.start_ms - meta.step_ms if start is None else parse_time(start, now)
+        w1 = meta.end_ms if end is None else parse_time(end, now)
+        if w1 <= w0:
+            raise ValueError("window end must be after its start")
+        rows = pl.from_arrow(dist.rows)
+        cols = pl.from_arrow(dist.columns)
+        labels = _series_labels(dist.series)
+        if not by_series:
+            rows = rows.with_columns(pl.lit("all").alias("series_id"))
+            cols = (  # one column per step: counts are additive across series
+                cols.group_by("ts_ms")
+                .agg(pl.col("n").sum())
+                .with_columns(pl.lit("all").alias("series_id"))
+            )
+            labels = {"all": {}}
+        hists = window_histogram(rows, cols, meta.step_ms, w0, w1)
+        n_min = meta.n_min or 0
+        out = []
+        for sid, lb in labels.items():
+            h = hists.get(sid)
+            r = fraction_over(h["lo"], h["hi"], h["c"], x) if h else None
+            if r is None:
+                out.append({"labels": lb, "n": 0, "fraction": None, "caveats": ["no_data"]})
+                continue
+            lo_ci, hi_ci = wilson(r.above, r.n)[0], wilson(r.above + r.inside, r.n)[1]
+            value = r.lo if r.exact else (r.lo + r.hi) / 2
+            res = {
+                "labels": lb,
+                "window": [iso(h["start_ms"]), iso(h["end_ms"])],
+                "steps": h["columns"],
+                "n": _round_sig(r.n),
+                "exact": r.exact,
+                "fraction": _round_sig(r.lo) if r.exact else [_round_sig(r.lo), _round_sig(r.hi)],
+                "count_over": _round_sig(r.above) if r.exact else [_round_sig(r.above), _round_sig(r.above + r.inside)],
+                "ci95": [_round_sig(lo_ci), _round_sig(hi_ci)],
+                "caveats": ["low_count"] if r.n < n_min else [],
+                # ready for finding_create: the interval covers bucket bound and sampling noise
+                "evidence": {
+                    "kind": "statistic", "dataset": dataset_id, "name": "fraction_over",
+                    "value": value, "interval": [lo_ci, hi_ci], "exact": False,
+                    "method": "bucket counts + Wilson 95%",
+                    "params": {"x": x, "n": r.n, "exact_at_edge": r.exact},
+                },
+            }  # fmt: skip
+            if not r.exact and r.bucket is not None:
+                res["inside_bucket"] = [_edge_text(r.bucket[0]), _edge_text(r.bucket[1])]
+            out.append(res)
+        return {"dataset": dataset_id, "x": x, "series": out}
 
     @staticmethod
     def _refuse_reserved(name: str) -> None:
