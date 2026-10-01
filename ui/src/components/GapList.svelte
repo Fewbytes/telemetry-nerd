@@ -9,7 +9,7 @@
 
 <ul class="gaps">
   {#each gaps as gap (gap.id)}
-    <li class="gap">
+    <li class="gap" id="gap-{gap.id}">
       <div class="missing">{gap.missing_signal}</div>
       <div class="needed">needed for: {gap.needed_for}</div>
       <div class="suggestion">suggested metric: <code>{metric(gap)}</code></div>

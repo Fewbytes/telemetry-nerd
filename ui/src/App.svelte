@@ -10,10 +10,13 @@
   import Sidebar from "./components/Sidebar.svelte";
   import ConnectionPill from "./components/ConnectionPill.svelte";
   import { setContext } from "svelte";
+  import { refTargets } from "./lib/refs";
 
   const ws = createWorkspace();
   // threads read presence for per-message delivery state without prop drilling
   setContext("presence", () => ws.presence);
+  // message text resolves object ids (p3, f2) to hover/click chips
+  setContext("refs", () => (ws.snapshot ? refTargets(ws.snapshot) : new Map()));
   $effect(() => ws.start());
 
   const panels = $derived((ws.snapshot?.panels ?? []).filter((p) => !p.closed));

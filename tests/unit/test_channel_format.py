@@ -82,3 +82,20 @@ def test_meta_panel_only_for_panel_anchor():
         [],
     )
     assert "panel" not in meta
+
+
+def test_format_channel_anchorless_chat_message_has_no_panel_meta():
+    content, meta = format_channel(
+        [
+            ev(
+                3,
+                "thread.message",
+                "t2",
+                {"thread": "t2", "text": "overall?", "anchor": None, "selection": None},
+            )
+        ],
+        [],
+    )
+    assert content.splitlines()[0] == 'user asked in t2: "overall?"'
+    assert "panel" not in meta
+    assert meta["thread"] == "t2"

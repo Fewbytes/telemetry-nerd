@@ -3,7 +3,9 @@
   import FindingCard from "./FindingCard.svelte";
   import GapList from "./GapList.svelte";
   import HypothesisList from "./HypothesisList.svelte";
+  import ChatThread from "./ChatThread.svelte";
   import { orphanedAnnotations } from "../lib/orphans";
+  import { chatThread } from "../lib/refs";
 
   let { snapshot }: { snapshot: Snapshot | null } = $props();
 
@@ -15,10 +17,17 @@
   const openFindings = $derived(findings.filter((f) => f.verdict !== "rejected"));
   const rejectedFindings = $derived(findings.filter((f) => f.verdict === "rejected"));
 
+  const chat = $derived(chatThread(snapshot?.threads ?? []));
+
   let showRejected = $state(false);
 </script>
 
 <aside class="sidebar">
+  <section>
+    <h2>Chat</h2>
+    <ChatThread thread={chat} />
+  </section>
+
   <section>
     <h2>Hypotheses</h2>
     {#if hypotheses.length === 0}
