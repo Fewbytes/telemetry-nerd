@@ -25,6 +25,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from telemetry_nerd.channel.dispatch import ChannelDispatcher
 from telemetry_nerd.config import DEFAULT_ALLOWED_HOSTS
+from telemetry_nerd.core.consumer import kind_of
 from telemetry_nerd.core.presence import MODES
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
 from telemetry_nerd.model.errors import NotFound
@@ -248,7 +249,7 @@ def create_app(
                 await websocket.send_json(event.to_dict())
                 last_sent = event.seq
         # Presence frames are control messages: no seq, never logged or replayed.
-        await websocket.send_json(dispatch.presence_frame(UI_CONSUMER))
+        await websocket.send_json(_ui_presence_frame())
 
         async def until_disconnect() -> None:
             while (await websocket.receive())["type"] != "websocket.disconnect":
@@ -273,8 +274,9 @@ def create_app(
                 if changed in done:
                     consumer = changed.result()
                     changed = asyncio.ensure_future(changes.get())
-                    if consumer == UI_CONSUMER:
-                        await websocket.send_json(dispatch.presence_frame(UI_CONSUMER))
+                    # any consumer's change can alter the session list the UI shows (dtk)
+                    if consumer == UI_CONSUMER or kind_of(consumer) != "ui":
+                        await websocket.send_json(_ui_presence_frame())
         except WebSocketDisconnect:
             pass
         finally:
@@ -462,6 +464,17 @@ def create_app(
             "delivered_up_to": frame["delivered_up_to"],
         }
 
+    @_api
+    async def channel_sessions(request: Request) -> object:
+        """Every connected consumer/session with its presence (dtk) — UI session list."""
+        return {"sessions": presence.sessions()}
+
+    def _ui_presence_frame() -> dict:
+        """The UI's presence frame plus the full session list (per-session consumers, dtk)."""
+        frame = dispatch.presence_frame(UI_CONSUMER)
+        frame["sessions"] = presence.sessions()
+        return frame
+
     routes = [
         Route("/api/health", health),
         Route("/api/workspace", workspace),
@@ -477,6 +490,7 @@ def create_app(
         Route("/api/focus", focus, methods=["POST"]),
         Route("/api/channel/claim", channel_claim, methods=["POST"]),
         Route("/api/channel/status", channel_status),
+        Route("/api/channel/sessions", channel_sessions),
         Route("/api/panels", list_panels),
         Route("/api/panels/{id}/data", panel_data),
         Route("/api/query", query, methods=["POST"]),

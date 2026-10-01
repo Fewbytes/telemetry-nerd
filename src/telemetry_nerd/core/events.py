@@ -165,6 +165,21 @@ class EventLog:
         ).fetchone()
         return row[0] if row is not None else 0
 
+    def seed_consumer(self, consumer: str, kind: str) -> None:
+        """Give a first-seen consumer the kind's max cursor so it only sees new events.
+
+        Per-session consumers (dtk) start with no row; without seeding, cursor 0 would
+        redeliver the whole backlog to a session that was never there. Existing rows
+        (and the plain-kind row) are left untouched.
+        """
+        self._db.execute(
+            "INSERT INTO consumers (name, cursor) "
+            "SELECT ?, COALESCE(MAX(cursor), 0) FROM consumers "
+            "WHERE name = ? OR name LIKE ? "
+            "ON CONFLICT (name) DO NOTHING",
+            (consumer, kind, f"{kind}-%"),
+        )
+
     def peek(self, consumer: str) -> tuple[list[Event], list[Event], int]:
         """The pending batch past the cursor, without advancing it.
 

@@ -227,10 +227,16 @@ def test_ui_socket_gets_presence_frames(client):
             "mode": None,
             "since_ms": None,
             "delivered_up_to": 0,
+            "sessions": [],
         }
         with client.websocket_connect("/ws/bridge") as br:
             br.send_json({"type": "hello", "mode": "hook"})
             frame = ui.receive_json()
             assert frame["kind"] == "presence" and frame["status"] == "terminal"
+            # the bridge's hello changed the session list the UI carries (dtk)
+            sessions = frame["sessions"]
+            assert [(s["consumer"], s["kind"], s["status"], s["mode"]) for s in sessions] == [
+                ("claude", "claude", "terminal", "hook")
+            ]
         frame = ui.receive_json()
         assert frame["kind"] == "presence" and frame["status"] == "offline"

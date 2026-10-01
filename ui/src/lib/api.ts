@@ -66,9 +66,15 @@ export interface Message {
   seq: number | null;
 }
 /** Control frame on /ws (no seq, never logged): who is connected and what was delivered. */
+export interface SessionPresence {
+  consumer: string; kind: string; status: "live" | "terminal" | "offline";
+  mode: "hook" | "channel" | null; since_ms: number | null;
+}
 export interface Presence {
   kind: "presence"; status: "live" | "terminal" | "offline";
   mode: "hook" | "channel" | null; since_ms: number | null; delivered_up_to: number;
+  /** every connected consumer/session (per-session consumers, dtk) */
+  sessions?: SessionPresence[];
 }
 export interface Thread {
   id: string; anchor: string | null; selection: TimeSpan | null; author: string;

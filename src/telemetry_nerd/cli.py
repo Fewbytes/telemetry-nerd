@@ -7,6 +7,7 @@ Logging goes to stderr."""
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import sys
@@ -22,6 +23,7 @@ from telemetry_nerd.api.app import create_app
 from telemetry_nerd.bridge.proxy import run_bridge
 from telemetry_nerd.config import Settings
 from telemetry_nerd.core.bootstrap import build_service
+from telemetry_nerd.core.consumer import consumer_id
 from telemetry_nerd.mcp.server import build_mcp
 
 
@@ -55,7 +57,9 @@ def _parse(argv: list[str] | None) -> argparse.Namespace:
     pending = sub.add_parser(
         "pending", help="hook: print pending user workspace events when no channel is live"
     )
-    pending.add_argument("--consumer", default="claude")
+    pending.add_argument(
+        "--consumer", default=None, help="channel consumer (default: per session, dtk)"
+    )
     return parser.parse_args(argv)
 
 
@@ -116,6 +120,43 @@ def _bridge_url(args: argparse.Namespace, settings: Settings, log: logging.Logge
     except RuntimeError as e:
         log.error("cannot start telemetry-nerd daemon: %s", e)
         sys.exit(1)
+
+
+def _hook_session_id() -> str | None:
+    """Claude Code passes hook input JSON (with session_id) on stdin; absent when run manually."""
+    if sys.stdin is None or sys.stdin.isatty():
+        return None
+    try:
+        data = json.load(sys.stdin)
+    except (ValueError, OSError):
+        return None
+    sid = data.get("session_id") if isinstance(data, dict) else None
+    return str(sid) if sid else None
+
+
+def _hook_consumer(explicit: str | None) -> str:
+    """Per-session consumer (dtk): explicit flag, then TN_CONSUMER, then claude-<session>."""
+    if explicit:
+        return explicit
+    if env := os.environ.get("TN_CONSUMER"):
+        return env
+    if sid := _hook_session_id():
+        return consumer_id("claude", sid)
+    return "claude"
+
+
+def _bridge_consumer() -> str:
+    """Per-session consumer for the bridge pump (dtk): TN_CONSUMER or claude-<session>.
+
+    Falls back to the legacy plain `claude` when the client gives the stdio server no
+    session id; deliveries then stay shared across such sessions (one-active-session
+    assumption, see the connection-status design).
+    """
+    if env := os.environ.get("TN_CONSUMER"):
+        return env
+    if sid := os.environ.get("CLAUDE_SESSION_ID"):
+        return consumer_id("claude", sid)
+    return "claude"
 
 
 _HOOK_HTTP_TIMEOUT_S = 1.0
@@ -198,12 +239,13 @@ def main(argv: list[str] | None = None) -> None:
             daemon.remove_state(settings.data_dir, pid)
     elif args.command == "bridge":
         url = _bridge_url(args, Settings.from_env(), log)
-        log.info("bridge: daemon at %s", url)
-        anyio.run(run_bridge, url)
+        consumer = _bridge_consumer()
+        log.info("bridge: daemon at %s, consumer %s", url, consumer)
+        anyio.run(run_bridge, url, consumer)
     elif args.command == "ensure":
         _cmd_ensure(Settings.from_env())
     elif args.command == "pending":
-        _cmd_pending(Settings.from_env(), args.consumer)
+        _cmd_pending(Settings.from_env(), _hook_consumer(args.consumer))
 
 
 if __name__ == "__main__":

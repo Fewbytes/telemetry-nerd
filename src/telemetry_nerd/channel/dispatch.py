@@ -11,6 +11,7 @@ Two paths share one cursor per consumer:
 from __future__ import annotations
 
 from telemetry_nerd.channel.format import format_channel
+from telemetry_nerd.core.consumer import kind_of
 from telemetry_nerd.core.events import EventLog
 from telemetry_nerd.core.presence import PresenceRegistry
 
@@ -25,6 +26,8 @@ class ChannelDispatcher:
         """The `deliver` frame for bridge `conn`, or None when it should get nothing now."""
         if self._presence.deliverer(consumer) != conn or consumer in self._in_flight:
             return None
+        # a per-session consumer's first delivery starts where its kind left off (dtk)
+        self._log.seed_consumer(consumer, kind_of(consumer))
         intentional, ambient, up_to = self._log.peek(consumer)
         if not intentional:
             return None
@@ -45,9 +48,15 @@ class ChannelDispatcher:
                 del self._in_flight[consumer]
 
     def claim(self, consumer: str) -> dict:
-        """Hook delivery: the pending batch, acked immediately; nothing while live."""
-        if self._presence.live(consumer):
+        """Hook delivery: the pending batch, acked immediately; nothing while live.
+
+        Refusal is per kind, not per exact consumer (dtk): a live channel bridge and
+        this hook may name different per-session consumers, but they are the same
+        client kind, so printing here would double-deliver what the channel sends.
+        """
+        if self._presence.live_for_kind(kind_of(consumer)):
             return {"content": None, "live": True}
+        self._log.seed_consumer(consumer, kind_of(consumer))
         intentional, ambient = self._log.claim(consumer)
         if not intentional:
             return {"content": None}

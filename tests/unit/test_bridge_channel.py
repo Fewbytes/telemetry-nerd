@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import io
+import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -12,6 +14,7 @@ from typing import Any, cast
 import anyio
 import httpx
 import pytest
+import websockets
 from mcp import Client
 from mcp.server.context import ServerRequestContext
 from mcp.types import ClientCapabilities, Notification, ServerNotification, TextContent
@@ -357,3 +360,86 @@ def _daemon_healthy(url: str) -> bool:
         return httpx.get(f"{url}/api/health", timeout=0.5).status_code == 200
     except httpx.HTTPError:
         return False
+
+
+# --- per-session consumers (dtk) -----------------------------------------------
+
+
+def test_consumer_id_and_kind():
+    from telemetry_nerd.core.consumer import consumer_id, kind_of
+
+    assert consumer_id("claude", None) == "claude"  # legacy fallback
+    assert consumer_id("claude", "a1b2") == "claude-a1b2"
+    assert kind_of("claude") == "claude"
+    # session ids contain dashes: split on the FIRST dash only
+    assert kind_of("claude-550e8400-e29b-41d4") == "claude"
+    assert kind_of("pi-x") == "pi"
+
+
+async def test_per_session_hooks_claim_disjoint_events(live_daemon):
+    """Two hook-mode sessions with their own consumer ids never steal each other's events."""
+    d = live_daemon.url
+    await _post_json(f"{d}/api/threads", json={"text": "first", "anchor": None})
+    a = await _post_json(f"{d}/api/channel/claim", json={"consumer": "claude-s1"})
+    assert "first" in a["content"]
+
+    await _post_json(f"{d}/api/threads", json={"text": "second", "anchor": None})
+    # s2 is new: seeded past s1's cursor, gets only the event after it
+    b = await _post_json(f"{d}/api/channel/claim", json={"consumer": "claude-s2"})
+    assert "second" in b["content"] and "first" not in b["content"]
+    # cursors are independent watermarks: s1 also sees "second" (broadcast per consumer)
+    a2 = await _post_json(f"{d}/api/channel/claim", json={"consumer": "claude-s1"})
+    assert "second" in a2["content"]
+
+
+async def test_hook_claim_refused_when_any_kind_bridge_is_live(live_daemon):
+    """Refusal is per kind: a live bridge under another session id still owns delivery."""
+    d = live_daemon.url
+    async with websockets.connect(
+        f"{d}".replace("http", "ws", 1) + "/ws/bridge?consumer=claude-other", open_timeout=5
+    ) as bridge_ws:
+        await bridge_ws.send(json.dumps({"type": "hello", "mode": "channel"}))
+        await bridge_ws.send(json.dumps({"type": "ready"}))
+        res = await _post_json(f"{d}/api/channel/claim", json={"consumer": "claude-s1"})
+        assert res["content"] is None and res["live"] is True
+
+
+async def test_sessions_endpoint_lists_per_consumer(live_daemon):
+    d = live_daemon.url
+    async with websockets.connect(
+        f"{d}".replace("http", "ws", 1) + "/ws/bridge?consumer=claude-s1", open_timeout=5
+    ) as bridge_ws:
+        await bridge_ws.send(json.dumps({"type": "hello", "mode": "channel"}))
+        await bridge_ws.send(json.dumps({"type": "ready"}))
+        sessions = (await _get_json(f"{d}/api/channel/sessions"))["sessions"]
+        assert [(s["consumer"], s["kind"], s["status"]) for s in sessions] == [
+            ("claude-s1", "claude", "live")
+        ]
+
+
+def test_hook_consumer_resolves_session_and_env(monkeypatch, tmp_path):
+    from telemetry_nerd.cli import _hook_consumer
+
+    monkeypatch.setattr(
+        "sys.stdin", io.StringIO('{"session_id": "abc-123", "hook_event_name": "x"}')
+    )
+    monkeypatch.delenv("TN_CONSUMER", raising=False)
+    assert _hook_consumer(None) == "claude-abc-123"
+    monkeypatch.setenv("TN_CONSUMER", "claude-mine")
+    assert _hook_consumer(None) == "claude-mine"  # env beats derived id
+    assert _hook_consumer("explicit") == "explicit"  # flag beats everything
+    monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
+    monkeypatch.delenv("TN_CONSUMER", raising=False)
+    assert _hook_consumer(None) == "claude"  # unparseable stdin → legacy fallback
+
+
+def test_bridge_consumer_resolves_env(monkeypatch):
+    from telemetry_nerd.cli import _bridge_consumer
+
+    monkeypatch.delenv("TN_CONSUMER", raising=False)
+    monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
+    assert _bridge_consumer() == "claude"
+    monkeypatch.setenv("CLAUDE_SESSION_ID", "s-9")
+    assert _bridge_consumer() == "claude-s-9"
+    monkeypatch.setenv("TN_CONSUMER", "claude-mine")
+    assert _bridge_consumer() == "claude-mine"

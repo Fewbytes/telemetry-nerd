@@ -234,11 +234,11 @@ def build_bridge(daemon_url: str, *, delivery: ChannelDelivery | None = None) ->
     return server
 
 
-async def run_bridge(daemon_url: str) -> None:
+async def run_bridge(daemon_url: str, consumer: str = "claude") -> None:
     """Serve the bridge over stdio with the channel pump alongside; exit on stdio EOF."""
     delivery = ChannelDelivery()
     server = build_bridge(daemon_url, delivery=delivery)
-    pump = ChannelPump(daemon_url, delivery.notify, gate=delivery.gate)
+    pump = ChannelPump(daemon_url, delivery.notify, consumer=consumer, gate=delivery.gate)
     delivery.on_ready(pump.mark_ready)
     init = server.create_initialization_options(experimental_capabilities=EXPERIMENTAL_CAPABILITIES)
     async with stdio_server() as (read_stream, write_stream), anyio.create_task_group() as tg:

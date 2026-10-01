@@ -142,3 +142,32 @@ def test_peek_up_to_excludes_trailing_ambient(log):
     assert log.cursor("claude") == 1
     # still pending: the trailing ambient was not consumed by the ack
     assert log.peek("claude") == ([], [], 1)
+
+
+def test_seed_consumer_inherits_kind_max_cursor(log):
+    """First-seen per-session consumers start where the kind left off (dtk)."""
+    log.append("user", "thread.message", "t1", {"text": "hi"})
+    log.claim("claude")  # legacy consumer consumes seq 1, cursor → 1
+    log.append("user", "thread.message", "t2", {"text": "again"})  # seq 2
+    log.seed_consumer("claude-s1", "claude")
+    assert log.cursor("claude-s1") == 1
+    intentional, _ = log.claim("claude-s1")
+    assert [e.seq for e in intentional] == [2]  # only NEW events, no backlog flood
+    assert log.cursor("claude") == 1  # legacy row untouched
+
+
+def test_seed_consumer_is_idempotent(log):
+    log.append("user", "thread.message", "t1", {"text": "hi"})
+    log.claim("claude-s1")  # claims seq 1, cursor → 1
+    log.seed_consumer("claude-s1", "claude")
+    assert log.cursor("claude-s1") == 1  # existing row never regresses
+
+
+def test_seed_consumer_across_peer_sessions(log):
+    log.append("user", "thread.message", "t1", {"text": "hi"})
+    log.claim("claude-s1")  # cursor → 1
+    log.append("user", "thread.message", "t2", {"text": "x"})  # seq 2
+    log.claim("claude-s2")  # cursor → 2
+    log.append("user", "thread.message", "t3", {"text": "y"})  # seq 3
+    log.seed_consumer("claude-s3", "claude")
+    assert log.cursor("claude-s3") == 2  # max across kind peers, not just legacy row

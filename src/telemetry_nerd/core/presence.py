@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
+from telemetry_nerd.core.consumer import kind_of
 from telemetry_nerd.model.time import now_ms
 
 log = logging.getLogger(__name__)
@@ -69,6 +70,16 @@ class PresenceRegistry:
     def live(self, consumer: str) -> bool:
         return self.deliverer(consumer) is not None
 
+    def live_for_kind(self, kind: str) -> bool:
+        """Any live bridge of this consumer kind, whatever its session id.
+
+        The hook path uses this for its refusal check: a live channel bridge and a
+        hook claim might name different per-session consumers, but both belong to the
+        same Claude client kind — printing via the hook while a channel delivers would
+        double-deliver (dtk).
+        """
+        return any(b.live for b in self._bridges.values() if kind_of(b.consumer) == kind)
+
     def deliverer(self, consumer: str) -> int | None:
         """The earliest-connected live bridge: the one that receives deliveries."""
         return next(
@@ -85,6 +96,19 @@ class PresenceRegistry:
         best = next((b for b in bridges if b.live), bridges[0])
         status: Status = "live" if best.live else "terminal"
         return {"status": status, "mode": best.mode, "since_ms": best.since_ms}
+
+    def sessions(self) -> list[dict]:
+        """One entry per distinct consumer (per session, dtk), in connect order."""
+        out: dict[str, dict] = {}
+        for b in self._bridges.values():
+            if b.consumer in out:
+                continue
+            out[b.consumer] = {
+                "consumer": b.consumer,
+                "kind": kind_of(b.consumer),
+                **self.snapshot(b.consumer),
+            }
+        return list(out.values())
 
     # change fan-out -----------------------------------------------------
     def subscribe(self) -> asyncio.Queue:

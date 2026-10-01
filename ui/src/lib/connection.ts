@@ -15,6 +15,13 @@ export interface Pill {
 }
 
 /** What the header pill shows for the daemon socket state and the latest presence frame. */
+function withSessions(detail: string, presence: Presence): string {
+  const live = (presence.sessions ?? []).filter((s) => s.status === "live");
+  if (live.length === 0) return detail;
+  const list = live.map((s) => `${s.consumer} (${s.mode ?? "?"})`).join(", ");
+  return `${detail}\nConnected sessions: ${list}`;
+}
+
 export function pill(daemon: DaemonState, presence: Presence | null): Pill {
   if (daemon === "reconnecting") {
     return {
@@ -29,19 +36,24 @@ export function pill(daemon: DaemonState, presence: Presence | null): Pill {
     case "live":
       return {
         label: "Claude live", tone: "ok", command: null,
-        detail: "Questions reach Claude as soon as you send them.",
+        detail: withSessions("Questions reach Claude as soon as you send them.", presence),
       };
     case "terminal":
       return {
         label: "Terminal only", tone: "warn", command: START_COMMAND,
-        detail:
+        detail: withSessions(
           "Claude sees UI questions when you next send a message in its terminal. " +
-          "Start Claude with the channel enabled for live delivery:",
+            "Start Claude with the channel enabled for live delivery:",
+          presence,
+        ),
       };
     case "offline":
       return {
         label: "Claude offline", tone: "off", command: START_COMMAND,
-        detail: "No Claude session is connected. Questions are kept and delivered when one starts:",
+        detail: withSessions(
+          "No Claude session is connected. Questions are kept and delivered when one starts:",
+          presence,
+        ),
       };
   }
 }
