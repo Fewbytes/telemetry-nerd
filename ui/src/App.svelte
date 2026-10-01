@@ -8,8 +8,12 @@
   };
   import PanelView from "./Panel.svelte";
   import Sidebar from "./components/Sidebar.svelte";
+  import ConnectionPill from "./components/ConnectionPill.svelte";
+  import { setContext } from "svelte";
 
   const ws = createWorkspace();
+  // threads read presence for per-message delivery state without prop drilling
+  setContext("presence", () => ws.presence);
   $effect(() => ws.start());
 
   const panels = $derived((ws.snapshot?.panels ?? []).filter((p) => !p.closed));
@@ -32,16 +36,19 @@
 <main>
   <div class="app-header">
     <h1>Telemetry Nerd</h1>
-    <select
-      class="theme-toggle"
-      value={theme.setting}
-      aria-label="Theme"
-      onchange={(e) => setTheme(e.currentTarget.value)}
-    >
-      <option value="system">system</option>
-      <option value="light">light</option>
-      <option value="dark">dark</option>
-    </select>
+    <div class="header-controls">
+      <ConnectionPill daemon={ws.daemon} presence={ws.presence} />
+      <select
+        class="theme-toggle"
+        value={theme.setting}
+        aria-label="Theme"
+        onchange={(e) => setTheme(e.currentTarget.value)}
+      >
+        <option value="system">system</option>
+        <option value="light">light</option>
+        <option value="dark">dark</option>
+      </select>
+    </div>
   </div>
   {#if ws.error}<div class="error">{ws.error}</div>{/if}
   <div class="layout">

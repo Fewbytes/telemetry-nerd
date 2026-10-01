@@ -1,9 +1,12 @@
 <script lang="ts">
-  import { postJSON, type Thread } from "../lib/api";
+  import { getContext } from "svelte";
+  import { postJSON, type Presence, type Thread } from "../lib/api";
+  import { composeHint, messageStatus } from "../lib/connection";
   import { fmtTime } from "../lib/format";
   import { isSendKey, sendHint } from "../lib/keys";
 
   let { thread }: { thread: Thread } = $props();
+  const presence = getContext<(() => Presence | null) | undefined>("presence") ?? (() => null);
 
   let text = $state("");
   let busy = $state(false);
@@ -31,10 +34,12 @@
     {/if}
   </header>
   <ul class="messages">
-    {#each thread.messages as m (m.id)}
+    {#each thread.messages as m, i (m.id)}
+      {@const status = messageStatus(thread, i, presence())}
       <li class="message">
         <span class="badge author {m.author}">{m.author}</span>
         <span class="text">{m.text}</span>
+        {#if status}<span class="delivery" data-testid="delivery-{m.id}">{status}</span>{/if}
       </li>
     {/each}
   </ul>
@@ -42,7 +47,7 @@
     <textarea
       bind:value={text}
       rows="2"
-      placeholder={sendHint()}
+      placeholder={sendHint() + composeHint(presence())}
       aria-label="Reply to thread {thread.id}"
       onkeydown={(e) => {
         if (isSendKey(e)) {

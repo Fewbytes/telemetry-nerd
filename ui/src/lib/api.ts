@@ -60,7 +60,16 @@ export interface Gap {
   suggestion: { name: string; type: "counter" | "gauge" | "histogram" | "summary"; labels: string[] };
   author: string; created_at_ms: number;
 }
-export interface Message { id: string; thread: string; author: string; text: string; created_at_ms: number }
+export interface Message {
+  id: string; thread: string; author: string; text: string; created_at_ms: number;
+  /** seq of the message's thread.message event; compared with Presence.delivered_up_to */
+  seq: number | null;
+}
+/** Control frame on /ws (no seq, never logged): who is connected and what was delivered. */
+export interface Presence {
+  kind: "presence"; status: "live" | "terminal" | "offline";
+  mode: "hook" | "channel" | null; since_ms: number | null; delivered_up_to: number;
+}
 export interface Thread {
   id: string; anchor: string | null; selection: TimeSpan | null; author: string;
   created_at_ms: number; messages: Message[];
@@ -109,23 +118,37 @@ export const fetchPanelData = (id: string, width: number) =>
 export const reportRender = (r: { panel_id: string; render_ms: number; points: number; width_px: number }) =>
   postJSON<{ budget_exceeded: boolean }>("/api/render-report", r);
 
+export interface SocketHandlers {
+  onPresence?: (p: Presence) => void;
+  onOpen?: () => void;
+  onClose?: () => void;
+}
+
 export function subscribe(
   onEvent: (e: WorkspaceEvent) => void,
   sinceRef: () => number = () => 0,
+  handlers: SocketHandlers = {},
 ): () => void {
   let socket: WebSocket | null = null;
   let stopped = false;
   const connect = () => {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     socket = new WebSocket(`${proto}://${location.host}/ws?since=${sinceRef()}`);
+    socket.onopen = () => handlers.onOpen?.();
     socket.onmessage = (m) => {
       try {
-        onEvent(JSON.parse(m.data));
+        const frame = JSON.parse(m.data);
+        if (frame.kind === "presence") handlers.onPresence?.(frame as Presence);
+        else onEvent(frame as WorkspaceEvent);
       } catch (e) {
         console.error("malformed workspace event", e, m.data);
       }
     };
-    socket.onclose = () => { if (!stopped) setTimeout(connect, 1000); };
+    socket.onclose = () => {
+      if (stopped) return;
+      handlers.onClose?.();
+      setTimeout(connect, 1000);
+    };
   };
   connect();
   return () => { stopped = true; socket?.close(); };

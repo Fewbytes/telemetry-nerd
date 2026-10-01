@@ -1,4 +1,5 @@
-import { fetchWorkspace, subscribe, type Snapshot, type WorkspaceEvent } from "./api";
+import { fetchWorkspace, subscribe, type Presence, type Snapshot, type WorkspaceEvent } from "./api";
+import type { DaemonState } from "./connection";
 
 const RELOAD_TYPES = new Set([
   "panel.created", "panel.answered", "finding.created", "finding.verdict",
@@ -12,6 +13,8 @@ export const needsReload = (e: WorkspaceEvent): boolean =>
 export function createWorkspace() {
   let snapshot = $state.raw<Snapshot | null>(null);
   let error = $state.raw<string | null>(null);
+  let daemon = $state<DaemonState>("connecting");
+  let presence = $state.raw<Presence | null>(null);
   let lastSeq = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -35,16 +38,33 @@ export function createWorkspace() {
   return {
     get snapshot() { return snapshot; },
     get error() { return error; },
+    /** UI socket to the daemon */
+    get daemon() { return daemon; },
+    /** latest presence frame; null until known and while the daemon is unreachable */
+    get presence() { return presence; },
     reload: load,
     start(): () => void {
       let stopUnsub = () => {};
       let stopped = false;
       load().then(() => {
         if (stopped) return;
+        let dropped = false;
         stopUnsub = subscribe((e) => {
           lastSeq = Math.max(lastSeq, e.seq);
           if (needsReload(e)) schedule();
-        }, () => lastSeq);
+        }, () => lastSeq, {
+          onPresence: (p) => (presence = p),
+          onOpen: () => {
+            daemon = "connected";
+            // resync after an outage: the daemon may have restarted with other state
+            if (dropped) schedule();
+          },
+          onClose: () => {
+            dropped = true;
+            daemon = "reconnecting";
+            presence = null;
+          },
+        });
       });
       return () => { stopped = true; clearTimeout(timer); stopUnsub(); };
     },

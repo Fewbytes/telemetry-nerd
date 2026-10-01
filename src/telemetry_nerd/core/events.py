@@ -129,6 +129,14 @@ class EventLog:
         (seq,) = self._db.execute("SELECT COALESCE(MAX(seq), 0) FROM events").fetchone()
         return seq
 
+    def message_seqs(self) -> dict[str, int]:
+        """Message id -> seq of its `thread.message` event (delivery state in the UI)."""
+        rows = self._db.execute(
+            "SELECT json_extract(payload, '$.message'), seq FROM events "
+            "WHERE type = 'thread.message'"
+        ).fetchall()
+        return {mid: seq for mid, seq in rows if mid is not None}
+
     # live fan-out -------------------------------------------------------
     @property
     def subscriber_count(self) -> int:

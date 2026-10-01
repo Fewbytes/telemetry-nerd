@@ -208,6 +208,15 @@ def test_snapshot_keys_and_exclusions(svc, panel):
     json.dumps(snap)
 
 
+def test_snapshot_messages_carry_their_event_seq(svc):
+    t = svc.ws.ask("why?", "user")
+    svc.ws.post_message(t.id, "because", "claude")
+    msgs = svc.ws.snapshot()["threads"][0]["messages"]
+    by_seq = {e.seq: e.payload["message"] for e in events(svc) if e.type == "thread.message"}
+    assert [m["seq"] for m in msgs] == sorted(by_seq)
+    assert [m["id"] for m in msgs] == [by_seq[s] for s in sorted(by_seq)]
+
+
 def test_brief_under_budget_truncates_and_keeps_open_threads(svc, panel):
     for i in range(50):
         svc.ws.finding_create(

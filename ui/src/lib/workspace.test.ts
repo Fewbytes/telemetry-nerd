@@ -52,3 +52,37 @@ describe("subscribe", () => {
     vi.useRealTimers();
   });
 });
+
+describe("subscribe frame routing", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  it("routes presence frames apart from events and reports open/close", () => {
+    const sockets: FakeWS[] = [];
+    class FakeWS {
+      onopen: (() => void) | null = null;
+      onmessage: ((m: { data: string }) => void) | null = null;
+      onclose: (() => void) | null = null;
+      constructor() { sockets.push(this); }
+      close() {}
+    }
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", FakeWS);
+    vi.stubGlobal("location", { protocol: "http:", host: "h:1" });
+    const events: unknown[] = [];
+    const presences: unknown[] = [];
+    const states: string[] = [];
+    const stop = subscribe((e) => events.push(e), () => 0, {
+      onPresence: (p) => presences.push(p),
+      onOpen: () => states.push("open"),
+      onClose: () => states.push("close"),
+    });
+    sockets[0].onopen!();
+    sockets[0].onmessage!({ data: JSON.stringify({ kind: "presence", status: "live" }) });
+    sockets[0].onmessage!({ data: JSON.stringify({ seq: 3, type: "panel.created" }) });
+    expect(presences).toEqual([{ kind: "presence", status: "live" }]);
+    expect(events).toEqual([{ seq: 3, type: "panel.created" }]);
+    sockets[0].onclose!();
+    expect(states).toEqual(["open", "close"]);
+    stop();
+    vi.useRealTimers();
+  });
+});

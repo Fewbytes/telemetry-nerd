@@ -239,9 +239,17 @@ class WorkspaceService:
             "hypotheses": [h.model_dump() for h in self.objects.list_hypotheses()],
             "findings": [f.model_dump() for f in self.objects.list_findings()],
             "gaps": [g.model_dump() for g in self.objects.list_gaps()],
-            "threads": [t.model_dump() for t in self.objects.list_threads()],
+            "threads": self._threads_with_seqs(),
             "last_seq": self.log.last_seq,
         }
+
+    def _threads_with_seqs(self) -> list[dict]:
+        seqs = self.log.message_seqs()
+        threads = [t.model_dump() for t in self.objects.list_threads()]
+        for t in threads:
+            for m in t["messages"]:
+                m["seq"] = seqs.get(m["id"])
+        return threads
 
     def brief(self) -> dict:
         """Compact state for Claude: newest first, truncated to BRIEF_BUDGET_BYTES."""
