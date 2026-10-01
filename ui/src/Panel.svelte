@@ -17,6 +17,9 @@
   import PinButton from "./components/PinButton.svelte";
   import HeatmapPlot from "./components/HeatmapPlot.svelte";
   import PercentilePlot from "./components/PercentilePlot.svelte";
+  import CountStrip from "./components/CountStrip.svelte";
+  import { colormap } from "./chart/colormap";
+  import { colorMaxOf } from "./chart/heatmap";
   import { DEFAULT_QUANTILES, QUANTILE_CHOICES, MAX_QUANTILES, overlay, qLabel, toggleQuantile } from "./chart/percentiles";
   import DistributionPlot from "./components/DistributionPlot.svelte";
 
@@ -279,14 +282,16 @@
             onRendered={(ms, cells) => onFacetRendered(0, 1, ms, cells, hm.facet_height_px)}
             onBrush={(b) => (selection = { ...b, top: 4 })}
           />
+          <CountStrip data={hm} series={hm.series} width={fetchWidth} />
         {:else}
           {#each hm.series as s, i (s.id)}
             <PercentilePlot
               data={hm} series={[s]} qs={heatQs} width={fetchWidth} height={hm.facet_height_px}
               unit={hm.panel.spec.y.unit}
               onRendered={(ms, cells) => onFacetRendered(i, hm.series.length, ms, cells, hm.facet_height_px)}
-              onBrush={(b) => (selection = { ...b, top: i * (hm.facet_height_px + 14) + 4 })}
+              onBrush={(b) => (selection = { ...b, top: i * (hm.facet_height_px + 14 + 30) + 4 })}
             />
+            <CountStrip data={hm} series={[s]} width={fetchWidth} />
           {/each}
         {/if}
       {:else}
@@ -296,8 +301,9 @@
           unit={hm.panel.spec.y.unit}
           color={heatColor} cmapName={heatCmap} overlayQ={heatQ}
           onRendered={(ms, cells) => onFacetRendered(i, hm.series.length, ms, cells, hm.facet_height_px)}
-          onBrush={(b) => (selection = { ...b, top: i * (hm.facet_height_px + 14) + 4 })}
+          onBrush={(b) => (selection = { ...b, top: i * (hm.facet_height_px + 14 + 30) + 4 })}
         />
+        <CountStrip data={hm} series={[s]} width={fetchWidth} />
       {/each}
       {/if}
       <div class="legend heat-controls">
@@ -326,7 +332,17 @@
         {/each}
         {#if heatQ !== null}(only where n ≥ {Math.ceil(10 / (1 - heatQ))}){/if}
       </div>
-      <div class="legend">colour: count per bucket per {fmtStep(hm.effective_step_ms)} (log scale) · hatched: no data · dimmed: n &lt; {hm.dataset.n_min}{#if hm.value_merge > 1} · {hm.value_merge} source buckets per row{/if}</div>
+      {@const cm = colormap(heatCmap)}
+      {@const cmax = colorMaxOf(hm.series, heatColor)}
+      <div class="legend color-key">
+        <span class="ramp" style="background: linear-gradient(to right, {[0, 0.25, 0.5, 0.75, 1].map((t) => cm(t)).join(', ')})"></span>
+        {#if heatColor === "count"}
+          0 → {Number(cmax.toPrecision(3))} per bucket per {fmtStep(hm.effective_step_ms)}; scale log(1+count) — rare buckets stay visible, counts are not linear in colour
+        {:else}
+          0 → {(100 * cmax).toPrecision(3)}% of the column, linear
+        {/if}
+        · no values trimmed · hatched: no data · dimmed: n &lt; {hm.dataset.n_min}{#if hm.value_merge > 1} · {hm.value_merge} source buckets per row{/if}
+      </div>
     {/if}
     {#if data && data.kind === "histogram"}
       {@const hg = data}

@@ -27,6 +27,8 @@
   let qMode = $state<"linear" | "nines">("nines");
   let yMode = $state<"auto" | "log" | "linear">("auto");
   let pinned = $state<number | null>(null); // CCDF threshold pinned by a click
+  let thresh = $state<number | null>(null); // histogram/ECDF threshold: drag to read below / in bucket / above
+  let dragging = $state(false);
   let userMode = $state<BarMode | null>(null);
   let tip = $state<{ x: number; y: number; text: string } | null>(null);
   let spans: { lo: number | null; hi: number | null; x0: number; x1: number }[][] = [];
@@ -134,6 +136,22 @@
       return `${name}: between ${(100 * r.min).toPrecision(3)}% and ${(100 * r.max).toPrecision(3)}% (inside (${edge(r.lo, "−∞")}, ${edge(r.hi, "+∞")}])`;
     });
 
+
+  /** below / in the straddled bucket / above, per window: the middle number is the bucket-edge uncertainty. */
+  const readout = (x: number): string[] =>
+    exact.map((w, k) => {
+      const r = fractionOver(w, x);
+      const name = w.label || `window ${k + 1}`;
+      if (r === null) return `${name}: no data`;
+      const pct = (f: number) => `${(100 * f).toPrecision(3)}%`;
+      if (r.exact) return `${name} at ${fmtValue(x, unit)}: below ${pct(1 - r.f)} · above ${pct(r.f)} (edge: exact)`;
+      return `${name} at ${fmtValue(x, unit)}: below ${pct(1 - r.max)} · in bucket ${pct(r.max - r.min)} · above ${pct(r.min)}`;
+    });
+  const histAxis = () => {
+    const { lo, hi } = edgesLoHi();
+    return valueAxis(lo, hi, plotW);
+  };
+
   const gap = $derived(multi ? maxEcdfGapAtEdges(exactWindow(windows[0]), exactWindow(windows[1])) : null);
 
   $effect(() => {
@@ -234,6 +252,11 @@
       const label = view === "ecdf" ? `${Math.round(t * 100)}%` : mode === "count" ? String(Number(t.toPrecision(3))) : t.toPrecision(2);
       ctx.fillText(label, -4, y(t));
     }
+    if (thresh !== null) {
+      ctx.strokeStyle = v("--fg"); ctx.setLineDash([3, 3]);
+      const tx = axis.pos(thresh);
+      ctx.beginPath(); ctx.moveTo(tx, 0); ctx.lineTo(tx, plotH); ctx.stroke(); ctx.setLineDash([]);
+    }
     ctx.restore();
     onRendered(performance.now() - t0, points);
   });
@@ -323,8 +346,17 @@
   <canvas
     bind:this={canvas}
     class="distribution"
-    onmousemove={move}
-    onmouseleave={() => (tip = null)}
+    onmousedown={(e) => {
+      if (view !== "histogram" && view !== "ecdf") return;
+      dragging = true;
+      thresh = valueAt(histAxis(), local(e).x);
+    }}
+    onmouseup={() => (dragging = false)}
+    onmousemove={(e) => {
+      if (dragging && (view === "histogram" || view === "ecdf")) thresh = valueAt(histAxis(), local(e).x);
+      move(e);
+    }}
+    onmouseleave={() => { tip = null; dragging = false; }}
     onclick={(e) => {
       if (view !== "ccdf") return;
       const { lo, hi } = edgesLoHi();
@@ -344,6 +376,12 @@
     {/each}
     {#if gap}
       <div>max |ΔF| at bucket edges = {gap.gap.toFixed(2)} at {fmtValue(gap.at, unit)} (lower bound, edges where both ECDFs are exact)</div>
+    {/if}
+    {#if (view === "histogram" || view === "ecdf") && thresh !== null}
+      {#each readout(thresh) as line (line)}<div>threshold: {line}</div>{/each}
+      <div><button type="button" onclick={() => (thresh = null)}>clear threshold</button></div>
+    {:else if view === "histogram" || view === "ecdf"}
+      <div class="hint">drag on the plot to read the share below / in-bucket / above a threshold</div>
     {/if}
     {#if view === "ccdf" && pinned !== null}
       {#each over(pinned) as line (line)}<div>pinned: {line}</div>{/each}

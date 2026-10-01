@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hitTest, layoutHeatmap, minSamples, timeAt, valueAt, valueAxis } from "./heatmap";
+import { colorMaxOf, hitTest, layoutHeatmap, minSamples, timeAt, valueAt, valueAxis } from "./heatmap";
 import type { HeatSeries } from "../lib/api";
 
 const series = (cells: [number, number | null, number | null, number][], ts: number[], n: number[]): HeatSeries => ({
@@ -68,5 +68,13 @@ describe("axis helpers", () => {
   });
   it("minSamples follows 10/(1-q)", () => {
     expect([0.5, 0.95, 0.99].map(minSamples)).toEqual([20, 200, 1000]);
+  });
+});
+
+describe("colorMaxOf", () => {
+  const sr = series([[60_000, 1, 10, 30], [60_000, 10, 100, 10], [120_000, 1, 10, 5]], [60_000, 120_000], [40, 5]);
+  it("is the largest bucket count, or the largest share of a column", () => {
+    expect(colorMaxOf([sr], "count")).toBe(30);
+    expect(colorMaxOf([sr], "density")).toBe(1); // 5 of 5 in the second column
   });
 });

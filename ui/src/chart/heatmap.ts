@@ -114,3 +114,16 @@ export function valueAt(a: ValueAxis, px: number): number {
   const l0 = Math.log10(a.min), l1 = Math.log10(a.max);
   return 10 ** (l0 + f * (l1 - l0));
 }
+
+/** Largest colour value on a heatmap, as layoutHeatmap scales it: a bucket count, or its share of its column. */
+export function colorMaxOf(series: HeatSeries[], mode: "count" | "density"): number {
+  let max = 0;
+  for (const s of series) {
+    const nAt = new Map(s.ts.map((t, i) => [t, s.n[i]]));
+    s.cells.c.forEach((c, i) => {
+      const v = mode === "count" ? c : (nAt.get(s.cells.ts[i]) ?? 0) > 0 ? c / (nAt.get(s.cells.ts[i]) as number) : 0;
+      if (v > max) max = v;
+    });
+  }
+  return max;
+}
