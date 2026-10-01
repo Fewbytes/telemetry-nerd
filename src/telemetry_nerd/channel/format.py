@@ -49,6 +49,11 @@ def describe_event(e: Event) -> str:
                 return f"{who} turned off the marginal histogram on {e.object_id}"
             why = f": {p['reason']}" if p.get("reason") else ""
             return f"{who} showed {e.object_id} marginal vs {p['label']}{why}"
+        case "panel.data_view_selected":
+            return (
+                f'{who} switched {e.object_id} to "{p["view"]}" '
+                f"(Claude's default: {p['default']}, {p['filter']})"
+            )
         case "panel.closed":
             return f"{who} closed {e.object_id}"
         case "catalog.claimed":

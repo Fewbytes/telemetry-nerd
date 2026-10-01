@@ -485,6 +485,15 @@ def create_app(
         return JSONResponse(service.workspace.get_panel(request.path_params["id"]).to_dict())
 
     @_api
+    async def panel_data_view(request: Request) -> object:
+        body = await _body(request)
+        if not isinstance(body.get("view"), str):
+            raise _BadRequest(
+                "invalid field 'view'", "view is a string: overlay, filtered, removed, raw"
+            )
+        return ws.select_data_view(request.path_params["id"], body["view"], "user").to_dict()
+
+    @_api
     async def list_sources(request: Request) -> object:
         return {"sources": service.source_list()}
 
@@ -620,6 +629,7 @@ def create_app(
         Route("/api/panels", list_panels),
         Route("/api/panels/{id}/y-view", panel_y_view, methods=["POST"]),
         Route("/api/panels/{id}/marginal", panel_marginal, methods=["POST"]),
+        Route("/api/panels/{id}/data-view", panel_data_view, methods=["POST"]),
         Route("/api/panels/{id}/data", panel_data),
         Route("/api/query", query, methods=["POST"]),
         Route("/api/query-distribution", query_distribution, methods=["POST"]),

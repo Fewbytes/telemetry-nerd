@@ -88,3 +88,51 @@ async def test_mcp_spectrum_and_filter_tools(tmp_path):
     )
     bad = await call(mcp, "spectrum", {"dataset": q})
     assert bad.is_error and "hint" in text_of(bad)
+
+
+def test_show_filtered_builds_views_and_payload(tmp_path):
+    svc = make_service(tmp_path)
+    d = put(svc, "queue_depth", periodic(), M)
+    f = svc.filter(d, "highpass", "2h", "remove the daily cycle to see bursts")["dataset"]
+    p = svc.show(f, "Are there bursts beyond the daily cycle?").panel
+    assert p.dataset_ids == [f, d] and [x["role"] for x in p.spec["layers"]] == ["main", "context"]
+    assert p.spec["signal"]["offered"] == ["filtered", "removed", "raw"]
+    assert p.spec["signal"]["default"] == "filtered"
+    data = svc.panel_data(p.id, 800)
+    assert data["kind"] == "time" and data["raw"] and data["removed"] and data["filter"]["edges"]
+    assert "filtered" in data["caveats"]
+
+
+def test_select_data_view_is_ambient_and_persists(tmp_path):
+    svc = make_service(tmp_path)
+    d = put(svc, "queue_depth", periodic(), M)
+    p = svc.show(svc.filter(d, "lowpass", "1h", "trend")["dataset"], "Trend?").panel
+    svc.ws.select_data_view(p.id, "raw", "user")
+    assert svc.workspace.get_panel(p.id).spec["signal"]["selected"] == "raw"
+    ev = svc.log.since(0)[-1]
+    assert ev.type == "panel.data_view_selected" and ev.klass == "ambient"
+    with pytest.raises(ValueError, match="offered"):
+        svc.ws.select_data_view(p.id, "removed", "user")
+    plain = svc.show(d, "plain?").panel
+    with pytest.raises(ValueError, match="filter"):
+        svc.ws.select_data_view(plain.id, "raw", "user")
+
+
+def test_spectrum_and_spectrogram_panels(tmp_path):
+    svc = make_service(tmp_path)
+    d = put(svc, "queue_depth", periodic(), M)
+    sp = svc.panel_data(svc.show(d, "Which periods?", mark="spectrum").panel.id, 800)
+    assert sp["kind"] == "spectrum" and sp["limits"]["shortest_s"] == 240
+    assert len(sp["series"][0]["periods_s"]) <= 400
+    sg_panel = svc.show(
+        d, "When do periods change?", mark="spectrogram", segment="6h", overlap=0.5
+    ).panel
+    assert sg_panel.spec["layers"][0]["segment_ms"] == 6 * 3_600_000  # explicit in provenance
+    sg = svc.panel_data(sg_panel.id, 800)
+    assert sg["kind"] == "spectrogram" and sg["hop_ms"] == 3 * 3_600_000
+    assert sg["series"][0]["level"]
+    q = put(
+        svc, "histogram_quantile(0.9, sum(rate(x_bucket[5m])) by (le))", periodic(), M, "quantile"
+    )
+    with pytest.raises(ValueError, match="percentile"):
+        svc.show(q, "periods?", mark="spectrum")

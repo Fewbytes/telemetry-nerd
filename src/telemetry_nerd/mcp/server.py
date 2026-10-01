@@ -318,6 +318,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         mark: str = "auto",
         windows: list[dict] | None = None,
         quantiles: list[float] | None = None,
+        view: str | None = None,
+        segment: str | None = None,
+        overlap: float | None = None,
     ) -> str:
         """Draw a dataset as a panel (mean line + min/max envelope) in the shared workspace.
 
@@ -333,6 +336,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         0.95, 0.99, 0.999, drawn only where n >= 10/(1-q); never interpolated), histogram,
         ecdf, quantile_curve (inverse ECDF as bucket boxes), ccdf (P(X > x), log-log, exact at
         bucket edges). The last four need windows.
+        spectrum / spectrogram (time series): periodicity panels; spectrogram needs `segment`
+        (e.g. "30m", state it in your answer) and takes `overlap` (default 0.5). view: for a panel
+        drawn from filter(): the default view (overlay | filtered | removed | raw).
         windows (histogram/ecdf): 1-4 [{start, end, label}] compared on one chart, e.g. the
         spike vs the preceding baseline; each window sums whole steps, n is shown per window.
         Returns {panel, url, warnings}.
@@ -347,7 +353,15 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                 for w in windows or []
             ]
             res = service.show(
-                dataset, question, unit=unit, mark=mark, windows=wins, quantiles=quantiles
+                dataset,
+                question,
+                unit=unit,
+                mark=mark,
+                windows=wins,
+                quantiles=quantiles,
+                view=view,
+                segment=segment,
+                overlap=overlap,
             )
         except ChartRejected as e:
             raise ToolError(f"chart rejected: {e}") from e

@@ -27,7 +27,7 @@ from telemetry_nerd.analysis.exprkind import (
     looks_like_histogram,
     min_samples,
 )
-from telemetry_nerd.analysis.filters import FilterSpec
+from telemetry_nerd.analysis.filters import FilterSpec, removed_table
 from telemetry_nerd.analysis.fraction import fraction_over, wilson
 from telemetry_nerd.analysis.marginal import (
     SAMPLE_N_MIN,
@@ -40,8 +40,10 @@ from telemetry_nerd.analysis.quantile import attach_counts
 from telemetry_nerd.analysis.quantiles import column_quantiles
 from telemetry_nerd.analysis.reference import reference_window
 from telemetry_nerd.analysis.resample import lod
+from telemetry_nerd.charts.dataview import SignalViews, offered_views
 from telemetry_nerd.charts.indexed import shifted, window_baselines
 from telemetry_nerd.charts.spec import (
+    SPECTRAL_MARKS,
     WINDOW_MARKS,
     ChartSpec,
     Layer,
@@ -117,6 +119,25 @@ def _edge_text(v: float) -> float | str:
 
 def _round_sig(v: float) -> float:
     return float(f"{v:.4g}")
+
+
+def _series_payload(table, labels: dict[str, dict]) -> list[dict]:
+    out = []
+    for (sid,), group in pl.DataFrame(table).group_by("series_id", maintain_order=True):
+        cols = {c: group[c].to_list() for c in ("ts_ms", "avg", "min", "max", "count")}
+        cols["ts"] = cols.pop("ts_ms")
+        out.append({"id": sid, "labels": labels.get(sid, {}), **cols})
+    return out
+
+
+_NICE_SEGMENTS = [m * 60_000 for m in (5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880)]
+
+
+def _auto_segment(span_ms: int, step_ms: int) -> int:
+    """Nice duration nearest span/16, clamped to [16 steps, span/4]."""
+    want = span_ms / 16
+    seg = min(_NICE_SEGMENTS, key=lambda s: abs(s - want))
+    return int(min(max(seg, 16 * step_ms), span_ms // 4))
 
 
 def _empty_window(w: dict) -> dict:
@@ -703,6 +724,31 @@ class TelemetryService:
         )
         return {"dataset": new.id, "summary": extra["summary"]}
 
+    def _signal_payload(
+        self, panel: Panel, meta, effective_step: int, width_px: int, labels
+    ) -> dict:
+        """raw / removed / filter info for a panel drawn from filter() (bead 4ok.9)."""
+        sig = panel.spec.get("signal")
+        if not sig or len(panel.dataset_ids) < 2 or not meta.derived:
+            return {}
+        _, raw = self.datasets.get(panel.dataset_ids[1])
+        rng = TimeRange(meta.start_ms, meta.end_ms)
+        raw_t, _ = lod(raw.buckets, meta.step_ms, rng, width_px)
+        out = {
+            "raw": _series_payload(raw_t, labels),
+            "filter": {
+                **sig,
+                "edges": meta.derived.get("edges", {}),
+                "period_ms": meta.derived["period_ms"],
+                "period_hi_ms": meta.derived.get("period_hi_ms"),
+            },
+        }
+        if meta.derived["op"] != "lowpass":
+            _, filt = self.datasets.get(panel.dataset_ids[0])
+            removed, _ = lod(removed_table(raw.buckets, filt.buckets), meta.step_ms, rng, width_px)
+            out["removed"] = _series_payload(removed, labels)
+        return out
+
     @staticmethod
     def _refuse_reserved(name: str) -> None:
         if name in RESERVED_NAMES:
@@ -772,6 +818,9 @@ class TelemetryService:
         mark: str = "auto",
         windows: list[Window] | None = None,
         quantiles: list[float] | None = None,
+        view: str | None = None,
+        segment: str | None = None,
+        overlap: float | None = None,
     ) -> ShowResult:
         meta = self.datasets.meta(dataset_id)
         # An agent-provided unit (Claude learned it from the source, the emitting
@@ -784,7 +833,38 @@ class TelemetryService:
             representation=meta.representation,
             lookup=lambda metric: self.ws.catalog_facts(meta.source, metric),
         )
-        if mark != "auto":
+        panel_datasets = [dataset_id]
+        if mark in SPECTRAL_MARKS:
+            self.signal.check(dataset_id, mark)
+            layer = Layer(mark=mark, data=dataset_id)  # type: ignore[arg-type]
+            if mark == "spectrogram":
+                span = meta.end_ms - meta.start_ms + meta.step_ms
+                seg = parse_duration(segment) if segment else _auto_segment(span, meta.step_ms)
+                lo, hi = 16 * meta.step_ms, span // 4
+                if not lo <= seg <= hi:
+                    raise ValueError(
+                        f"segment {format_duration(seg)} must lie between {format_duration(lo)} "
+                        f"(16 steps) and {format_duration(hi)} (a quarter of the range)"
+                    )
+                layer.segment_ms, layer.overlap = seg, 0.5 if overlap is None else overlap
+            spec.layers = [layer]
+        elif meta.derived and mark == "auto":
+            d = meta.derived
+            views = offered_views(d["op"])
+            if view is not None and view not in views:
+                raise ValueError(
+                    f"view {view!r} is not offered for a {d['op']} ({', '.join(views)})"
+                )
+            spec.layers = [
+                Layer(mark="line+envelope", data=dataset_id),
+                Layer(mark="line+envelope", data=d["from"], role="context"),
+            ]
+            spec.signal = SignalViews(
+                filter=d["label"], kind=d["op"], reason=d["reason"], offered=views,
+                default=view or views[0],
+            )  # type: ignore[arg-type]  # fmt: skip
+            panel_datasets = [dataset_id, d["from"]]
+        elif mark != "auto":
             for w in windows or []:
                 if not meta.start_ms - meta.step_ms <= w.start_ms < w.end_ms <= meta.end_ms:
                     raise ValueError(
@@ -796,20 +876,39 @@ class TelemetryService:
             spec.layers = [layer]
         issues = validate(
             spec,
-            {dataset_id: self.datasets.series_count(dataset_id)},
-            {dataset_id: meta.representation},
+            {d: self.datasets.series_count(d) for d in panel_datasets},
+            {d: self.datasets.meta(d).representation for d in panel_datasets},
         )
         errors = [i for i in issues if i.severity == "error"]
         if errors:
             raise ChartRejected(errors)
         with self.log.transaction():
-            panel = self.workspace.create_panel(question, spec.model_dump(), [dataset_id])
+            panel = self.workspace.create_panel(question, spec.model_dump(), panel_datasets)
             self.log.append(actor, "panel.created", panel.id, {"question": panel.question})
         return ShowResult(panel, [i for i in issues if i.severity == "warning"])
 
     def panel_data(self, panel_id: str, width_px: int) -> dict:
         panel = self.workspace.get_panel(panel_id)
         dataset_id = panel.dataset_ids[0]
+        layer0 = panel.spec["layers"][0]
+        if layer0["mark"] == "spectrum":
+            out = self.signal.spectrum_panel(
+                dataset_id, layer0.get("min_period_ms"), layer0.get("max_period_ms"), width_px
+            )
+            return {
+                "panel": panel.to_dict(),
+                "dataset": self.datasets.meta(dataset_id).to_dict(),
+                **out,
+            }
+        if layer0["mark"] == "spectrogram":
+            out = self.signal.spectrogram_panel(
+                dataset_id, layer0["segment_ms"], layer0["overlap"], FACET_HEIGHT_SINGLE
+            )
+            return {
+                "panel": panel.to_dict(),
+                "dataset": self.datasets.meta(dataset_id).to_dict(),
+                **out,
+            }
         if self.datasets.meta(dataset_id).representation == "distribution":
             return self._distribution_panel_data(panel, dataset_id, width_px)
         meta, result = self.datasets.get(dataset_id)
@@ -821,13 +920,13 @@ class TelemetryService:
                 result.buckets, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px
             )
         labels = _series_labels(result.series)
-        series = []
-        for (sid,), group in pl.DataFrame(table).group_by("series_id", maintain_order=True):
-            cols = {c: group[c].to_list() for c in ("ts_ms", "avg", "min", "max", "count")}
-            cols["ts"] = cols.pop("ts_ms")
-            series.append({"id": sid, "labels": labels.get(sid, {}), **cols})
+        series = _series_payload(table, labels)
         caveats = self._time_summary(meta, result, self.clock())["caveats"]
+        extra = self._signal_payload(panel, meta, effective_step, width_px, labels)
+        if extra:
+            caveats.append("filtered")
         return {
+            **extra,
             "kind": "time",
             "marginal": self._marginal(ChartSpec.model_validate(panel.spec), meta),
             "index": self._index(ChartSpec.model_validate(panel.spec), meta, result, width_px),

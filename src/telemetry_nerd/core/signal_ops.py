@@ -14,7 +14,14 @@ import polars as pl
 
 from telemetry_nerd.analysis.filters import FilterSpec, filter_buckets
 from telemetry_nerd.analysis.resample import lod
-from telemetry_nerd.analysis.spectrum import MAX_GAP_FRACTION, MIN_POINTS, Spectrum, spectrum
+from telemetry_nerd.analysis.spectrum import (
+    MAX_GAP_FRACTION,
+    MIN_POINTS,
+    Spectrum,
+    log_bins,
+    spectrogram,
+    spectrum,
+)
 from telemetry_nerd.analysis.timeops import time_op_problem
 from telemetry_nerd.catalog.rules import Facts
 from telemetry_nerd.charts.dataview import offered_views
@@ -228,3 +235,87 @@ class SignalOps:
             FetchResult(out.buckets, result.series),
             {"derived": derived, "summary": summary},
         )
+
+    # panel payloads ------------------------------------------------------
+    def spectrum_panel(
+        self, dataset_id: str, min_period_ms: int | None, max_period_ms: int | None, width_px: int
+    ) -> dict:
+        prep, spectra = self.spectrum_of(dataset_id, min_period_ms, max_period_ms)
+        summary = self.spectrum_summary(dataset_id, 5, min_period_ms, max_period_ms)
+        n_bins = max(32, width_px // 2)
+        series = []
+        for (sid, sp), info in zip(spectra.items(), summary["series"], strict=True):
+            periods = 1000.0 / sp.freqs  # ms, descending frequency -> ascending period
+            edges, power = log_bins(periods, sp.power, n_bins)
+            centres = np.sqrt(edges[:-1] * edges[1:]) / 1000.0
+            ok = ~np.isnan(power)
+            series.append(
+                {
+                    "id": sid,
+                    "labels": prep.series[sid][0],
+                    "periods_s": [float(f"{x:.5g}") for x in centres[ok]],
+                    "power": [float(f"{x:.4g}") for x in power[ok]],
+                    "level": float(f"{sp.level:.4g}"),
+                    "peaks": info["peaks"],
+                    "caveats": sp.caveats,
+                }
+            )
+        first = next(iter(spectra.values()))
+        return {
+            "kind": "spectrum",
+            "effective_step_ms": prep.step_ms,
+            "limits": {
+                "shortest_s": first.shortest_ms / 1000,
+                "longest_s": first.longest_ms / 1000,
+            },
+            "series": series,
+            "skipped": prep.skipped,
+            "caveats": summary["caveats"],
+        }
+
+    def spectrogram_panel(
+        self, dataset_id: str, segment_ms: int, overlap: float, height_px: int
+    ) -> dict:
+        prep = self._prepare(dataset_id, "spectrogram", 8192)
+        n_rows = max(8, height_px // 4)
+        series = []
+        hop = 0
+        for sid, (labels, ts, y) in prep.series.items():
+            sg = spectrogram(ts, y, prep.step_ms, segment_ms=segment_ms, overlap=overlap)
+            if sg.centres_ms.size > 400:
+                raise ValueError(
+                    f"{sg.centres_ms.size} spectrogram columns (max 400): use a longer segment or less overlap"
+                )
+            hop = sg.hop_ms
+            periods = 1000.0 / sg.freqs
+            edges, rows = log_bins(periods, sg.power.T, n_rows)  # rows: (n_rows, cols)
+            lo_s, hi_s = edges[:-1] / 1000.0, edges[1:] / 1000.0
+            keep = ~np.all(np.isnan(rows), axis=1)
+            power = [
+                [None if np.isnan(v) else float(f"{v:.3g}") for v in rows[k]]
+                for k in np.flatnonzero(keep)
+            ]
+            series.append(
+                {
+                    "id": sid,
+                    "labels": labels,
+                    "ts": [int(t) for t in sg.centres_ms],
+                    "rows": {
+                        "lo_s": [float(f"{x:.5g}") for x in lo_s[keep]],
+                        "hi_s": [float(f"{x:.5g}") for x in hi_s[keep]],
+                    },
+                    "power": power,  # [row][column]
+                    "level": [None if np.isnan(v) else float(f"{v:.3g}") for v in sg.level],
+                }
+            )
+        return {
+            "kind": "spectrogram",
+            "segment_ms": segment_ms,
+            "hop_ms": hop,
+            "overlap": overlap,
+            "effective_step_ms": prep.step_ms,
+            "limits": {"shortest_s": 2 * prep.step_ms / 1000, "longest_s": segment_ms / 2000},
+            "series": series,
+            "skipped": prep.skipped,
+            "caveats": prep.caveats,
+        }

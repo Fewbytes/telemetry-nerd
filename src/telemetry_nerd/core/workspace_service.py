@@ -22,6 +22,7 @@ from telemetry_nerd.catalog.packs import PackIndex, builtin_packs
 from telemetry_nerd.catalog.rules import Facts, derive_claims, facts_from_claims, facts_from_name
 from telemetry_nerd.catalog.store import CatalogStore
 from telemetry_nerd.channel.format import describe_event
+from telemetry_nerd.charts.dataview import SignalViews
 from telemetry_nerd.charts.indexed import check_index, shifted
 from telemetry_nerd.charts.spec import ChartSpec, Marginal, Reference
 from telemetry_nerd.charts.yview import (
@@ -527,6 +528,23 @@ class WorkspaceService:
         return p
 
     @atomic
+    def select_data_view(self, panel_id: str, view: str, actor: Actor) -> Panel:
+        """Pick filtered / raw / overlay / removed on a panel drawn from filter() (bead 4ok.9)."""
+        p = self.workspace.get_panel(panel_id)
+        spec = ChartSpec.model_validate(p.spec)
+        if spec.signal is None:
+            raise ValueError("data views apply to panels drawn from filter()")
+        spec.signal = SignalViews.model_validate({**spec.signal.model_dump(), "selected": view})
+        p = self.workspace.set_spec(p.id, spec.model_dump())
+        self.log.append(
+            actor,
+            "panel.data_view_selected",
+            p.id,
+            {"view": view, "default": spec.signal.default, "filter": spec.signal.filter},
+        )
+        return p
+
+    @atomic
     def set_marginal(
         self, panel_id: str, marginal: Marginal | None, reference: Reference | None, actor: Actor
     ) -> Panel:
@@ -569,6 +587,11 @@ class WorkspaceService:
                 "status": p.status,
                 **(
                     {"y_view": sel["label"]} if (sel := p.spec.get("y", {}).get("selected")) else {}
+                ),
+                **(
+                    {"data_view": sv["selected"]}
+                    if (sv := p.spec.get("signal")) and sv.get("selected")
+                    else {}
                 ),
                 **(
                     {"marginal": ref["label"]}

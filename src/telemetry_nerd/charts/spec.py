@@ -8,14 +8,24 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from telemetry_nerd.catalog.rules import facts_from_name
+from telemetry_nerd.charts.dataview import SignalViews
 from telemetry_nerd.charts.units import Lookup, infer_unit_with_provenance
 from telemetry_nerd.charts.yview import MAX_SUGGESTIONS, YView
 from telemetry_nerd.model.distribution import DEFAULT_QUANTILES, QUANTILE_CHOICES
 
 LINE_SERIES_BUDGET = 5
 Mark = Literal[
-    "line+envelope", "heatmap", "percentiles", "histogram", "ecdf", "quantile_curve", "ccdf"
+    "line+envelope",
+    "heatmap",
+    "percentiles",
+    "histogram",
+    "ecdf",
+    "quantile_curve",
+    "ccdf",
+    "spectrum",
+    "spectrogram",
 ]
+SPECTRAL_MARKS = {"spectrum", "spectrogram"}
 WINDOW_MARKS = {"histogram", "ecdf", "quantile_curve", "ccdf"}
 DISTRIBUTION_MARKS = {"heatmap", "percentiles", *WINDOW_MARKS}
 MAX_QUANTILES = 4
@@ -36,6 +46,11 @@ class Layer(BaseModel):
     color: Literal["count", "density"] = "count"  # heatmap colour
     # percentiles: which bands (also the initial chips of a heatmap's percentile view)
     quantiles: list[float] = Field(default_factory=lambda: list(DEFAULT_QUANTILES))
+    role: Literal["main", "context"] = "main"  # context: the raw series behind a filtered panel
+    segment_ms: int | None = None  # spectrogram window (explicit in provenance)
+    overlap: float | None = Field(default=None, ge=0, lt=0.95)
+    min_period_ms: int | None = None
+    max_period_ms: int | None = None
 
 
 class YAxis(BaseModel):
@@ -73,6 +88,7 @@ class ChartSpec(BaseModel):
     y: YAxis = Field(default_factory=YAxis)
     references: dict[str, Reference] = Field(default_factory=dict)
     marginal: Marginal | None = None
+    signal: SignalViews | None = None  # filtered/raw data views (4ok.9)
 
 
 class ValidationIssue(BaseModel):
@@ -125,7 +141,11 @@ def validate(
                         message=f"dataset {layer.data} is not known; cannot count its series",
                     )
                 )
-        elif layer.mark == "line+envelope" and layer.data not in datasets:
+        elif (
+            layer.role == "main"
+            and layer.mark in ("line+envelope", "spectrum")
+            and layer.data not in datasets
+        ):
             datasets.append(layer.data)
     reps = representations or {}
     for layer in spec.layers:
