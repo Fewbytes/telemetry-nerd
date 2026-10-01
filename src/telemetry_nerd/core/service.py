@@ -27,6 +27,7 @@ from telemetry_nerd.analysis.exprkind import (
     looks_like_histogram,
     min_samples,
 )
+from telemetry_nerd.analysis.filters import FilterSpec
 from telemetry_nerd.analysis.fraction import fraction_over, wilson
 from telemetry_nerd.analysis.marginal import (
     SAMPLE_N_MIN,
@@ -53,6 +54,7 @@ from telemetry_nerd.charts.spec import (
 )
 from telemetry_nerd.core.events import Actor, EventLog
 from telemetry_nerd.core.presence import PresenceRegistry
+from telemetry_nerd.core.signal_ops import SignalOps
 from telemetry_nerd.core.summary import summarize, summarize_distribution
 from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
@@ -144,6 +146,10 @@ class TelemetryService:
     ws: WorkspaceService
     clock: Callable[[], int] = now_ms
     presence: PresenceRegistry = field(default_factory=PresenceRegistry)
+    signal: SignalOps = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.signal = SignalOps(self.datasets, self.ws.catalog_facts)
 
     def _source(self, name: str) -> Source:
         src = self.sources.get(name)
@@ -639,6 +645,63 @@ class TelemetryService:
             "label": f"1 = the same series {when} (point by point)",
             "series": series,
         }
+
+    def spectrum(
+        self,
+        dataset_id: str,
+        top: int = 3,
+        min_period: str | None = None,
+        max_period: str | None = None,
+    ) -> dict:
+        """Dominant periods with intervals and false-alarm probabilities (bead 4ok.7)."""
+        return self.signal.spectrum_summary(
+            dataset_id,
+            top,
+            parse_duration(min_period) if min_period else None,
+            parse_duration(max_period) if max_period else None,
+        )
+
+    def filter(
+        self,
+        dataset_id: str,
+        kind: str,
+        period: str,
+        reason: str,
+        period_hi: str | None = None,
+        actor: Actor = "claude",
+    ) -> dict:
+        """Derive a low-/high-/band-pass filtered dataset; cutoff is a period (bead 4ok.9)."""
+        if kind not in ("lowpass", "highpass", "bandpass"):
+            raise ValueError("kind must be lowpass, highpass or bandpass")
+        spec = FilterSpec(
+            kind,  # type: ignore[arg-type]
+            parse_duration(period),
+            parse_duration(period_hi) if period_hi else None,
+        )
+        meta, result, extra = self.signal.filter(dataset_id, spec, reason)
+        new = self.datasets.put(
+            source=meta.source,
+            expr=meta.expr,
+            rng=TimeRange(meta.start_ms, meta.end_ms),
+            step_ms=meta.step_ms,
+            resolution_ms=meta.resolution_ms,
+            result=result,
+            representation=meta.representation,
+            quantile=meta.quantile,
+            n_min=meta.n_min,
+            histogram=meta.histogram,
+            derived=extra["derived"],
+        )
+        self.log.append(
+            actor,
+            "dataset.created",
+            new.id,
+            {
+                "expr": meta.expr,
+                "derived": {k: extra["derived"][k] for k in ("op", "from", "label")},
+            },
+        )
+        return {"dataset": new.id, "summary": extra["summary"]}
 
     @staticmethod
     def _refuse_reserved(name: str) -> None:

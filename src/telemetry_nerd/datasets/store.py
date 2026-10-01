@@ -32,6 +32,7 @@ class DatasetMeta:
     scheme: dict | None = None  # bucket scheme of a distribution dataset
     histogram: dict | None = None  # {"selector", "by"}: the histogram a distribution came from
     source_caveats: list[str] = field(default_factory=list)  # conversion caveats from the source
+    derived: dict | None = None  # filter() output: {op, from, label, reason, period_ms, ...}
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -61,6 +62,7 @@ class DatasetStore:
         quantile: float | None = None,
         n_min: int | None = None,
         histogram: dict | None = None,
+        derived: dict | None = None,
     ) -> DatasetMeta:
         meta = DatasetMeta(
             id=self._new_id("d"),
@@ -76,6 +78,7 @@ class DatasetStore:
             quantile=quantile,
             n_min=n_min,
             histogram=histogram,
+            derived=derived,
         )
         con = self._con
         con.begin()

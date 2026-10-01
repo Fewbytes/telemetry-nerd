@@ -32,6 +32,14 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   mode=meaningful) with a one-line reason; do not re-query to hide data.
 - To ask "is now different from before?" about a time panel, `show_marginal(panel,
   reference=previous|week)`; cite n for both windows and whether it is requests or per-step samples.
+- Periodicity (cron, GC, retries, scrape artefacts, diurnal): `spectrum(dataset)`. Report only
+  `significant` peaks with their interval, cite `evidence`; say which periods cannot be seen
+  (shorter than `limits.shortest` = 2 x step, longer than range/2). red_noise: long periods look
+  more significant than they are.
+- Filters: `filter(dataset, kind, period, reason)` only when the question needs it: lowpass for
+  trend/sustained shift, highpass to remove baseline/diurnal before looking for spikes/steps,
+  bandpass around a spectrum peak. Never filter percentiles or raw counters. `show` the result;
+  state the filter and why in your answer; raw stays one click away for the user.
 - Report caveats from summaries (gaps, settling, fake_resolution) when you describe data.
 - NEVER present a percentile without its sample count. A quantile over n samples is
   meaningless unless n >= ~10/(1-q) per bucket: p50 ~20, p95 ~200, p99 ~1000, p99.9 ~10000.
@@ -118,6 +126,49 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         except SourceError as e:
             raise ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e)) from e
         except ValueError as e:
+            raise ToolError(str(e)) from e
+
+    @mcp.tool()
+    def spectrum(
+        dataset: str, top: int = 3, min_period: str | None = None, max_period: str | None = None
+    ) -> str:
+        """Which periods does a time series contain (cron, GC, retries, diurnal cycles)?
+
+        Lomb-Scargle on the dataset's buckets: nothing is interpolated across gaps, a linear
+        trend is removed first. Returns the top peaks per series with period, an interval (the
+        half-power width, never finer than 1/range), power, fap (white-noise false-alarm
+        probability), local_ratio and `significant` (fap < 1% AND power >= 10x its neighbourhood).
+        Report only significant peaks; significant peaks carry an `evidence` statistic for
+        finding_create. `limits` states what cannot be seen: periods shorter than 2 x step and
+        longer than half the range. Caveats: red_noise (long periods look more significant than
+        they are), sampling_artifact (periodic gaps, not the signal), coarsened, gaps.
+        Refused with a hint on percentile series, distributions and raw counters (use a rate).
+        Draw it with show(mark="spectrum"), or show(mark="spectrogram", segment=...) for periods
+        that appear or disappear over time."""
+        try:
+            return _dump(service.spectrum(dataset, top, min_period, max_period))
+        except (NotFound, ValueError) as e:
+            raise ToolError(str(e)) from e
+
+    @mcp.tool(name="filter")
+    def filter_tool(
+        dataset: str, kind: str, period: str, reason: str, period_hi: str | None = None
+    ) -> str:
+        """Derive a filtered dataset: kind lowpass | highpass | bandpass (Gaussian, zero-phase).
+
+        The cutoff is a PERIOD at half power, e.g. "15m" (bandpass: period..period_hi, with
+        period_hi >= 4 x period). It must lie between 2 x step (Nyquist) and half the range.
+        lowpass: trend, capacity, sustained shifts: smooths scrape jitter; NEVER use it to look
+        for spikes (it erases them). highpass: removes the slow baseline/diurnal part to expose
+        spikes, bursts and steps. bandpass: isolate a periodicity found by spectrum.
+        reason: ONE line (<= 160 chars) shown on the panel; state why this filter answers the
+        question. Gaps split the series (nothing is interpolated); points within 3 sigma of a gap
+        or the range edge are flagged and dashed. Refused on percentile series, distributions
+        and raw counters. Returns {dataset, summary}; `show` the dataset: the panel offers
+        filtered / raw (and overlay or removed part) and the user can switch at any time."""
+        try:
+            return _dump(service.filter(dataset, kind, period, reason, period_hi))
+        except (NotFound, ValueError) as e:
             raise ToolError(str(e)) from e
 
     @mcp.tool()

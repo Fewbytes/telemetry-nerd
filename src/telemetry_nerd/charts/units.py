@@ -190,3 +190,34 @@ def _unit_with_transforms(
         # a per-second rate is only defined for counters (rate of a gauge stays put)
         return f"{unit}/s", facts.unit_provenance
     return unit, facts.unit_provenance
+
+
+_COUNTER_SAFE = {
+    "rate", "irate", "increase", "delta", "idelta", "deriv", "resets", "changes",
+    "rollup_rate", "rollup_increase", "rollup_deriv", "histogram_quantile",
+    "histogram_count", "histogram_sum", "count_over_time", "absent",
+}  # fmt: skip
+
+
+def raw_counters(expr: str, lookup: Lookup = facts_from_name) -> list[str]:
+    """Counters used outside any rate-like call: a running total, not a signal."""
+    calls: list[str | None] = []
+    out: set[str] = set()
+    prev: str | None = None
+    for token in _TOKEN.findall(_STRING.sub(" ", expr)):
+        if token == "(":
+            calls.append(prev)
+            prev = None
+        elif token == ")":
+            if calls:
+                calls.pop()
+            prev = None
+        else:
+            prev = token
+            if (
+                token not in _KEYWORDS
+                and lookup(token).type == "counter"
+                and not _COUNTER_SAFE.intersection(c for c in calls if c)
+            ):
+                out.add(token)
+    return sorted(out)
