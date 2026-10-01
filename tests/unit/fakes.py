@@ -1,5 +1,6 @@
 import pyarrow as pa
 
+from telemetry_nerd.analysis.histogram import from_matrix, histogram_expr
 from telemetry_nerd.core.events import EventLog
 from telemetry_nerd.core.service import TelemetryService
 from telemetry_nerd.core.workspace_service import WorkspaceService
@@ -24,7 +25,15 @@ NOW = 6_000_000_000
 
 
 class FakeSource:
-    def __init__(self, name="fake", n_series=2, resolution_ms=15_000, identity=None, values=None):
+    def __init__(
+        self,
+        name="fake",
+        n_series=2,
+        resolution_ms=15_000,
+        identity=None,
+        values=None,
+        cumulative=None,
+    ):
         self.name = name
         self.identity = identity or f"fake|{name}|{resolution_ms}"
         self.n_series = n_series
@@ -32,6 +41,8 @@ class FakeSource:
         self.calls = 0
         self.values = values or {}
         self.value_exprs: list[str] = []
+        self.cumulative = cumulative or {"0.1": 90.0, "1": 99.0, "10": 100.0, "+Inf": 100.0}
+        self.hist_selectors: list[str] = []
 
     async def probe(self) -> dict:
         return {"reachable": True, "latency_ms": 0, "version": "fake"}
@@ -57,6 +68,20 @@ class FakeSource:
             {"series_id": sids, "labels": [labels_json(lb) for lb in labels]}, schema=SERIES_SCHEMA
         )
         return FetchResult(buckets, series)
+
+    async def fetch_histogram(self, selector, by, rng, step_ms):
+        self.calls += 1
+        self.hist_selectors.append(selector)
+        ts = range(rng.start_ms, rng.end_ms + 1, step_ms)
+        result = [
+            {
+                "metric": {"instance": f"i{k}", "le": le},
+                "values": [[t / 1000, str(c * (k + 1))] for t in ts],
+            }
+            for k in range(self.n_series)
+            for le, c in self.cumulative.items()
+        ]
+        return from_matrix(self.name, result, expr=histogram_expr(selector, by, step_ms))
 
     async def fetch_values(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
         self.calls += 1

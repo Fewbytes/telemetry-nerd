@@ -1,3 +1,5 @@
+import math
+
 import httpx
 import pytest
 import respx
@@ -407,3 +409,81 @@ async def test_fetch_values_is_a_plain_query_range():
         (None, None, None, 1),
     ]
     assert res.series.to_pylist()[0]["series_id"] == series_id("s", {"region": "a"})
+
+
+@respx.mock
+async def test_fetch_histogram_classic_is_one_query():
+    route = respx.get(**ROUTE).mock(
+        return_value=httpx.Response(
+            200,
+            json=matrix(
+                [
+                    {"metric": {"le": "0.1", "region": "a"}, "values": [[1_700_000_100, "9"]]},
+                    {"metric": {"le": "+Inf", "region": "a"}, "values": [[1_700_000_100, "10"]]},
+                ]
+            ),
+        )
+    )
+    src = PromQLSource("s", BASE, flavor="prometheus")
+    d = await src.fetch_histogram('lat_bucket{job="x"}', ["region"], RNG, 60_000)
+    assert route.call_count == 1
+    assert route.calls.last.request.url.params["query"] == (
+        'sum by (le, vmrange, region) (increase(lat_bucket{job="x"}[1m]))'
+    )
+    assert d.scheme.kind == "classic"
+    assert [(r["bucket_lo"], r["bucket_hi"], r["count"]) for r in d.rows.to_pylist()] == [
+        (-math.inf, 0.1, 9.0),
+        (0.1, math.inf, 1.0),
+    ]
+    assert d.columns.to_pylist() == [
+        {"ts_ms": 1_700_000_100_000, "series_id": series_id("s", {"region": "a"}), "n": 10.0}
+    ]
+
+
+async def test_fetch_histogram_refuses_expressions():
+    with pytest.raises(SourceError, match="selector"):
+        await PromQLSource("s", BASE).fetch_histogram("rate(x_bucket[5m])", [], RNG, 60_000)
+
+
+@respx.mock
+async def test_fetch_histogram_on_a_plain_series_explains():
+    respx.get(**ROUTE).mock(
+        return_value=httpx.Response(
+            200, json=matrix([{"metric": {"job": "x"}, "values": [[1_700_000_100, "3"]]}])
+        )
+    )
+    with pytest.raises(SourceError, match="not a histogram") as e:
+        await PromQLSource("s", BASE).fetch_histogram("x_total", [], RNG, 60_000)
+    assert "_bucket" in (e.value.hint or "")
+
+
+@respx.mock
+async def test_fetch_histogram_series_limit():
+    respx.get(**ROUTE).mock(
+        return_value=httpx.Response(
+            200,
+            json=matrix(
+                [
+                    {"metric": {"le": "+Inf", "r": r}, "values": [[1_700_000_100, "1"]]}
+                    for r in ("a", "b")
+                ]
+            ),
+        )
+    )
+    src = PromQLSource("s", BASE, limits=Limits(max_series=1))
+    with pytest.raises(LimitExceeded):
+        await src.fetch_histogram("x_bucket", ["r"], RNG, 60_000)
+
+
+@respx.mock
+async def test_query_on_native_histograms_explains_instead_of_malformed():
+    native = {
+        "metric": {},
+        "histograms": [[1_700_000_100, {"count": "1", "sum": "1", "buckets": []}]],
+    }
+    respx.get(**ROUTE).mock(return_value=httpx.Response(200, json=matrix([native])))
+    src = PromQLSource("s", BASE, flavor="prometheus")
+    for call in (src.fetch_values, src.fetch):
+        with pytest.raises(SourceError, match="native histograms") as e:
+            await call("sum(rate(lat[5m]))", RNG, 60_000)
+        assert "query_distribution" in (e.value.hint or "")

@@ -7,8 +7,6 @@ from typing import Literal
 
 import pyarrow as pa
 
-from telemetry_nerd.model.series import SERIES_SCHEMA
-
 DIST_SCHEMA = pa.schema(
     [
         ("ts_ms", pa.int64()),  # end of the step window (ts - step, ts]

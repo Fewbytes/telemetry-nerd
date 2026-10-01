@@ -7,13 +7,15 @@ import math
 import os
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from importlib.metadata import PackageNotFoundError, version
 from typing import Literal
 
 import httpx
 import pyarrow as pa
 
+from telemetry_nerd.analysis.histogram import from_matrix, histogram_expr
+from telemetry_nerd.model.distribution import DistResult
 from telemetry_nerd.model.series import (
     BUCKET_SCHEMA,
     SERIES_SCHEMA,
@@ -41,6 +43,22 @@ def _user_agent() -> str:
 
 
 USER_AGENT = _user_agent()
+
+
+_HIST_HINT = (
+    "select the histogram itself: x_bucket{...} for classic (le) or VictoriaMetrics "
+    "(vmrange) histograms, or the native histogram metric x{...}; group with `by`"
+)
+
+
+def _native_histograms() -> SourceError:
+    return SourceError(
+        "the expression returns native histograms, not numbers",
+        hint=(
+            "use query_distribution(selector=...) for the distribution, or wrap it in "
+            "histogram_count / histogram_sum / histogram_fraction / histogram_quantile"
+        ),
+    )
 
 
 def _malformed(message: str) -> SourceError:
@@ -131,6 +149,8 @@ class PromQLSource:
         labels_by_sid: dict[str, dict[str, str]] = {}
         for query_field, result in zip(queries, results, strict=True):
             for item in result:
+                if isinstance(item, dict) and "histograms" in item:
+                    raise _native_histograms()
                 try:
                     labels = dict(item["metric"])
                     samples = list(item["values"])
@@ -245,6 +265,8 @@ class PromQLSource:
         rows: list[tuple[int, str, float | None]] = []
         labels_by_sid: dict[str, dict[str, str]] = {}
         for item in result:
+            if isinstance(item, dict) and "histograms" in item:
+                raise _native_histograms()
             try:
                 labels = dict(item["metric"])
                 samples = list(item["values"])
@@ -283,6 +305,41 @@ class PromQLSource:
             schema=SERIES_SCHEMA,
         )
         return FetchResult(buckets, series)
+
+    async def fetch_histogram(
+        self, selector: str, by: Sequence[str], rng: TimeRange, step_ms: int
+    ) -> DistResult:
+        """Per-step bucket counts: increase() over a window equal to the step (spec §4.1)."""
+        if not is_selector(selector):
+            raise SourceError(f"not a metric selector: {selector!r}", hint=_HIST_HINT)
+        steps = (rng.end_ms - rng.start_ms) // step_ms + 1
+        if steps > MAX_STEPS_PER_QUERY:
+            raise LimitExceeded(
+                f"{steps} steps exceeds {MAX_STEPS_PER_QUERY} per query",
+                hint="use a coarser step or a shorter range",
+            )
+        try:
+            expr = histogram_expr(selector, by, step_ms)
+        except ValueError as e:
+            raise SourceError(
+                str(e), hint="`by` takes plain label names other than le/vmrange"
+            ) from e
+        result = await self._query_range(expr, rng, step_ms)
+        try:
+            dist = from_matrix(self.name, result, expr=expr)
+        except (ValueError, TypeError, IndexError, KeyError) as e:
+            raise SourceError(str(e), hint=_HIST_HINT) from e
+        if dist.series.num_rows > self.limits.max_series:
+            raise LimitExceeded(
+                f"histogram has {dist.series.num_rows} series (limit {self.limits.max_series})",
+                hint="group by fewer labels (by=[...]) or narrow the selector",
+            )
+        if dist.rows.num_rows > self.limits.max_points:
+            raise LimitExceeded(
+                f"histogram has {dist.rows.num_rows} non-empty cells (limit {self.limits.max_points})",
+                hint="use a coarser step or a shorter range",
+            )
+        return dist
 
     async def _query_range(self, query: str, rng: TimeRange, step_ms: int) -> list[dict]:
         params = {

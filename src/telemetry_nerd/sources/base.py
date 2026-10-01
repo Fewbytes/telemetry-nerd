@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from telemetry_nerd.model.distribution import DistResult
 from telemetry_nerd.model.series import FetchResult
 from telemetry_nerd.model.time import TimeRange
 
@@ -42,3 +44,7 @@ class Source(Protocol):
     async def probe(self) -> dict: ...
 
     async def fetch_values(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult: ...
+
+    async def fetch_histogram(
+        self, selector: str, by: Sequence[str], rng: TimeRange, step_ms: int
+    ) -> DistResult: ...
