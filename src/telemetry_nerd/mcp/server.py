@@ -37,6 +37,10 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   of a percentile series). Aggregate the underlying histogram first, then take the quantile
   once: histogram_quantile(q, sum by (...) (rate(x[w]))). Likewise divide sums by counts
   only after aggregating both: histogram_sum(sum(rate(x[w]))) / histogram_count(sum(...)).
+- Histograms first: for latency, `query_distribution` the histogram (the `_bucket` metric or
+  native histogram, no functions) and `show` it (heatmap). Use `show(mark="histogram",
+  windows=[spike, baseline])` to compare windows and cite n per window. Quantiles only on
+  request; distribution summaries give them as the BUCKET holding them, never a value.
 - Write $__rate_interval as the rate window for quantiles so each value covers one display step.
 - Never look at latency alone: show it with throughput, and with concurrency when relevant
   (Little's law: mean concurrency L = throughput λ x mean latency W; W from
