@@ -11,7 +11,7 @@ import polars as pl
 import pyarrow as pa
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-YMode = Literal["auto", "zero", "data", "meaningful", "band", "log"]
+YMode = Literal["auto", "zero", "data", "meaningful", "band", "log", "indexed"]
 MAX_SUGGESTIONS = 4
 BUILTIN_LABELS: dict[str, str] = {
     "auto": "auto",
@@ -20,7 +20,9 @@ BUILTIN_LABELS: dict[str, str] = {
     "meaningful": "meaningful buckets only",
     "band": "y band",
     "log": "log scale",
+    "indexed": "indexed",
 }
+INDEX_LABELS = {"window": "÷ own mean", "previous": "÷ previous window", "week": "÷ last week"}
 
 
 class YView(BaseModel):
@@ -30,6 +32,7 @@ class YView(BaseModel):
     reason: str | None = Field(default=None, max_length=160)
     lo: float | None = Field(default=None, allow_inf_nan=False)
     hi: float | None = Field(default=None, allow_inf_nan=False)
+    baseline: Literal["window", "previous", "week"] | None = None  # indexed views only
     id: str | None = None  # "v1".. for suggestions
     author: Literal["claude", "user"] = "user"
 
@@ -42,6 +45,10 @@ class YView(BaseModel):
                 raise ValueError("band views need finite lo < hi")
         elif self.lo is not None or self.hi is not None:
             raise ValueError("lo/hi are only for band views")
+        if (self.mode == "indexed") != (self.baseline is not None):
+            raise ValueError(
+                "indexed views need a baseline (window, previous or week); other views take none"
+            )
         if self.author == "claude" and not self.reason:
             raise ValueError("a suggested view needs a one-line reason")
         return self
@@ -79,7 +86,7 @@ def value_stats(buckets: pa.Table, representation: str, n_min: int | None) -> Va
 
 def check_view(view: YView, st: ValueStats) -> list[str]:
     """Refusals raise ValueError (they reach Claude/the user as errors); warnings are returned."""
-    if view.mode == "auto":
+    if view.mode in ("auto", "indexed"):  # indexed needs the data: charts.indexed.check_index
         return []
     if st.lo is None or st.hi is None:
         raise ValueError("the panel has no drawn values; only the auto view applies")

@@ -445,6 +445,7 @@ def create_app(
             ("suggestion", str),
             ("lo", (int, float)),
             ("hi", (int, float)),
+            ("baseline", str),
         ):
             if body.get(key) is not None and (
                 not isinstance(body[key], typ) or isinstance(body[key], bool)
@@ -452,13 +453,20 @@ def create_app(
                 raise _BadRequest(
                     f"invalid field {key!r}", "mode/suggestion are strings, lo/hi numbers"
                 )
+        pid = request.path_params["id"]
+        baseline = body.get("baseline")
+        ref = None
+        if body.get("mode") == "indexed" and baseline in ("previous", "week"):
+            ref = await service.ensure_reference(pid, baseline, "user")
         return ws.select_y_view(
-            request.path_params["id"],
+            pid,
             "user",
             mode=body.get("mode"),
             suggestion=body.get("suggestion"),
             lo=body.get("lo"),
             hi=body.get("hi"),
+            baseline=baseline,
+            reference=ref,
         ).to_dict()
 
     async def panel_marginal(request: Request) -> JSONResponse:

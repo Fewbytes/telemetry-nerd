@@ -22,9 +22,11 @@ from telemetry_nerd.catalog.packs import PackIndex, builtin_packs
 from telemetry_nerd.catalog.rules import Facts, derive_claims, facts_from_claims, facts_from_name
 from telemetry_nerd.catalog.store import CatalogStore
 from telemetry_nerd.channel.format import describe_event
+from telemetry_nerd.charts.indexed import check_index, shifted
 from telemetry_nerd.charts.spec import ChartSpec, Marginal, Reference
 from telemetry_nerd.charts.yview import (
     BUILTIN_LABELS,
+    INDEX_LABELS,
     MAX_SUGGESTIONS,
     YView,
     check_view,
@@ -424,16 +426,37 @@ class WorkspaceService:
             )
         return p, spec
 
-    def _check(self, p: Panel, view: YView) -> list[str]:
+    def _check(self, p: Panel, view: YView, spec: ChartSpec | None = None) -> list[str]:
         meta, result = self.datasets.get(p.dataset_ids[0])
+        if view.mode == "indexed":
+            assert view.baseline is not None
+            ref = (
+                (spec.references.get(view.baseline) if spec else None)
+                if view.baseline != "window"
+                else None
+            )
+            on_grid = None
+            if ref is not None:
+                on_grid = shifted(self.datasets.get(ref.series)[1].buckets, ref.shift_ms)
+            labels = {r["series_id"]: r["labels"] for r in result.series.to_pylist()}
+            return check_index(
+                view.baseline, meta.representation, meta.n_min, result.buckets, on_grid, labels
+            )
         return check_view(view, value_stats(result.buckets, meta.representation, meta.n_min))
 
     @atomic
     def suggest_y_view(
-        self, panel_id: str, view: YView, actor: Actor, replace: bool = False
+        self,
+        panel_id: str,
+        view: YView,
+        actor: Actor,
+        replace: bool = False,
+        reference: Reference | None = None,
     ) -> tuple[YView, list[str]]:
         p, spec = self._time_spec(panel_id)
-        warnings = self._check(p, view)
+        if reference is not None:
+            spec.references[reference.mode] = reference
+        warnings = self._check(p, view, spec)
         keep = [] if replace else [v for v in spec.y.views if v.label != view.label]
         if len(keep) >= MAX_SUGGESTIONS:
             raise ValueError(
@@ -461,8 +484,12 @@ class WorkspaceService:
         lo: float | None = None,
         hi: float | None = None,
         suggestion: str | None = None,
+        baseline: str | None = None,
+        reference: Reference | None = None,
     ) -> Panel:
         p, spec = self._time_spec(panel_id)
+        if reference is not None:
+            spec.references[reference.mode] = reference
         if suggestion is not None:
             view = next((v for v in spec.y.views if v.id == suggestion), None)
             if view is None:
@@ -470,10 +497,17 @@ class WorkspaceService:
         elif mode is None:
             raise ValueError("give a mode or a suggestion id")
         else:
+            label = INDEX_LABELS.get(baseline or "", "") if mode == "indexed" else None
             view = YView.model_validate(
-                {"mode": mode, "label": BUILTIN_LABELS.get(mode, mode), "lo": lo, "hi": hi}
+                {
+                    "mode": mode,
+                    "label": label or BUILTIN_LABELS.get(mode, mode),
+                    "lo": lo,
+                    "hi": hi,
+                    "baseline": baseline,
+                }
             )
-        self._check(p, view)  # refusals raise; band warnings are shown in the UI as clipping
+        self._check(p, view, spec)  # refusals raise; band warnings are shown in the UI as clipping
         spec.y.selected = None if view.mode == "auto" else view
         p = self.workspace.set_spec(p.id, spec.model_dump())
         self.log.append(
@@ -487,6 +521,7 @@ class WorkspaceService:
                 "hi": view.hi,
                 "suggestion": view.id,
                 "reason": view.reason,
+                "baseline": view.baseline,
             },
         )
         return p

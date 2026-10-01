@@ -39,6 +39,7 @@ from telemetry_nerd.analysis.quantile import attach_counts
 from telemetry_nerd.analysis.quantiles import column_quantiles
 from telemetry_nerd.analysis.reference import reference_window
 from telemetry_nerd.analysis.resample import lod
+from telemetry_nerd.charts.indexed import shifted, window_baselines
 from telemetry_nerd.charts.spec import (
     WINDOW_MARKS,
     ChartSpec,
@@ -599,6 +600,46 @@ class TelemetryService:
             **head,
         }
 
+    def _index(self, spec: ChartSpec, meta, result, width_px: int) -> dict | None:
+        v = spec.y.selected
+        if v is None or v.mode != "indexed":
+            return None
+        if v.baseline == "window":
+            a, b = iso(meta.start_ms - meta.step_ms)[11:16], iso(meta.end_ms)[11:16]
+            return {
+                "baseline": "window",
+                "label": f"1 = each series' mean over {a}–{b}Z",
+                "values": window_baselines(result.buckets),
+            }
+        ref = spec.references.get(v.baseline)
+        if ref is None:
+            return {
+                "baseline": v.baseline,
+                "label": "",
+                "refused": f"no {v.baseline} reference fetched",
+            }
+        _, rres = self.datasets.get(ref.series)
+        table = shifted(rres.buckets, ref.shift_ms)
+        if (
+            meta.representation != "quantile"
+        ):  # same range and step as the panel => identical LOD grid
+            table, _ = lod(table, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px)
+        series = [
+            {
+                "id": sid,
+                "ts": g["ts_ms"].to_list(),
+                "avg": g["avg"].to_list(),
+                "count": g["count"].to_list(),
+            }
+            for (sid,), g in pl.DataFrame(table).group_by("series_id", maintain_order=True)
+        ]
+        when = "last week" if ref.mode == "week" else "in the previous window"
+        return {
+            "baseline": v.baseline,
+            "label": f"1 = the same series {when} (point by point)",
+            "series": series,
+        }
+
     @staticmethod
     def _refuse_reserved(name: str) -> None:
         if name in RESERVED_NAMES:
@@ -726,6 +767,7 @@ class TelemetryService:
         return {
             "kind": "time",
             "marginal": self._marginal(ChartSpec.model_validate(panel.spec), meta),
+            "index": self._index(ChartSpec.model_validate(panel.spec), meta, result, width_px),
             "panel": panel.to_dict(),
             "dataset": meta.to_dict(),
             "effective_step_ms": effective_step,

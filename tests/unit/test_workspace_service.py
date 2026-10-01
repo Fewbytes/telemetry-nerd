@@ -428,3 +428,22 @@ async def test_refusals(svc):
     with pytest.raises(NotFound):
         svc.ws.select_y_view(pid, "user", suggestion="v9")
     assert svc.log.since(0)[-1].type == "panel.created"  # nothing logged on refusal
+
+
+async def test_indexed_selection_window_and_week(svc):
+    pid = await _panel(svc)
+    p = svc.ws.select_y_view(pid, "user", mode="indexed", baseline="window")
+    assert p.spec["y"]["selected"] == {
+        **p.spec["y"]["selected"],
+        "mode": "indexed",
+        "baseline": "window",
+        "label": "÷ own mean",
+    }
+    data = svc.panel_data(pid, 800)["index"]
+    assert data["baseline"] == "window" and data["label"].startswith("1 = each series' mean over")
+    ref = await svc.ensure_reference(pid, "previous", "user")
+    svc.ws.select_y_view(pid, "user", mode="indexed", baseline="previous", reference=ref)
+    ix = svc.panel_data(pid, 800)["index"]
+    assert (
+        ix["series"][0]["ts"] == svc.panel_data(pid, 800)["series"][0]["ts"]
+    )  # same grid after shift + LOD

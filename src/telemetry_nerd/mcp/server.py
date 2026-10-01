@@ -316,7 +316,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         return None if text is None else parse_time(str(text), service.clock())
 
     @mcp.tool()
-    def suggest_y_view(
+    async def suggest_y_view(
         panel: str,
         mode: str,
         label: str,
@@ -324,21 +324,37 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         lo: float | None = None,
         hi: float | None = None,
         replace: bool = False,
+        baseline: str | None = None,
     ) -> str:
         """Offer the user another y-axis view of a time-series panel; the USER picks.
 
         mode: zero (include 0), data (fit the data), meaningful (percentile panels: range
         only over buckets with n >= n_min, so a faded low-n outlier does not squash the
         real values), band (lo..hi), log (all values must be > 0; good when data spans
-        more than 2 decades). label: short button text (<=40 chars). reason: ONE line
+        more than 2 decades), indexed (needs baseline: window = each series' own mean,
+        previous/week = the same series point by point; log axis, 1 centred; THE way to compare
+        series of different scales, never a dual axis). label: short button text (<=40 chars). reason: ONE line
         shown to the user, e.g. "one n=13 bucket at 34 s squashes the 0.4-1.3 s p95".
         At most 4 per panel; same label replaces; replace=true clears the others.
         Never a second y-axis: for p50 vs p99 on separate scales, show two panels.
         Returns {panel, view, warnings}. The user's choice arrives as ambient
         panel.y_view_selected."""
         try:
-            v = YView(mode=mode, label=label, reason=reason or None, lo=lo, hi=hi, author="claude")  # type: ignore[arg-type]
-            saved, warnings = ws.suggest_y_view(panel, v, "claude", replace=replace)
+            v = YView(
+                mode=mode,
+                label=label,
+                reason=reason or None,
+                lo=lo,
+                hi=hi,  # type: ignore[arg-type]
+                baseline=baseline,
+                author="claude",  # type: ignore[arg-type]
+            )
+            ref = (
+                await service.ensure_reference(panel, baseline, "claude")
+                if mode == "indexed" and baseline in ("previous", "week")
+                else None
+            )
+            saved, warnings = ws.suggest_y_view(panel, v, "claude", replace=replace, reference=ref)
             return _dump({"panel": panel, "view": saved.id, "warnings": warnings})
         except (ValidationError, NotFound, ValueError) as e:
             raise _fail(e) from e
