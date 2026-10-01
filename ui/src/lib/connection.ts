@@ -22,6 +22,30 @@ function withSessions(detail: string, presence: Presence): string {
   return `${detail}\nConnected sessions: ${list}`;
 }
 
+/** The session part of a per-session consumer id (claude-a1b2 → a1b2); plain ids pass through. */
+function shortSession(consumer: string): string {
+  return consumer.includes("-") ? consumer.slice(consumer.indexOf("-") + 1) : consumer;
+}
+
+/**
+ * Effective presence status (783): per-session bridges register as claude-<sid>, so the
+ * UI consumer's own frame can be offline while sessions are live — derive from the
+ * session list when it is present, falling back to the frame for legacy daemons.
+ */
+function effectiveStatus(presence: Presence): Presence["status"] {
+  const sessions = presence.sessions ?? [];
+  if (sessions.length === 0) return presence.status;
+  if (sessions.some((s) => s.status === "live")) return "live";
+  return "terminal";
+}
+
+function sessionLabel(presence: Presence): string | null {
+  const live = (presence.sessions ?? []).filter((s) => s.status === "live");
+  if (live.length === 0) return null;
+  if (live.length === 1) return `Claude live · ${shortSession(live[0].consumer)}`;
+  return `${live.length} Claude sessions live`;
+}
+
 export function pill(daemon: DaemonState, presence: Presence | null): Pill {
   if (daemon === "reconnecting") {
     return {
@@ -32,10 +56,10 @@ export function pill(daemon: DaemonState, presence: Presence | null): Pill {
   if (presence === null) {
     return { label: "Connecting…", tone: "neutral", detail: "Waiting for the daemon.", command: null };
   }
-  switch (presence.status) {
+  switch (effectiveStatus(presence)) {
     case "live":
       return {
-        label: "Claude live", tone: "ok", command: null,
+        label: sessionLabel(presence) ?? "Claude live", tone: "ok", command: null,
         detail: withSessions("Questions reach Claude as soon as you send them.", presence),
       };
     case "terminal":

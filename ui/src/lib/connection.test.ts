@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Message, Presence, Thread } from "./api";
+import type { Message, Presence, SessionPresence, Thread } from "./api";
 import { messageStatus, pill } from "./connection";
 
 const presence = (status: Presence["status"], delivered_up_to = 0): Presence => ({
@@ -53,5 +53,44 @@ describe("messageStatus", () => {
     const t = thread(msg("claude", 2), msg("user", 3));
     expect(messageStatus(t, 0, presence("live", 9))).toBeNull();
     expect(messageStatus(t, 1, null)).toBeNull();
+  });
+});
+
+describe("pill with per-session consumers (783)", () => {
+  const withSessions = (
+    status: Presence["status"],
+    sessions: SessionPresence[],
+  ): Presence => ({ kind: "presence", status, mode: null, since_ms: null, delivered_up_to: 0, sessions });
+
+  const session = (consumer: string, s: SessionPresence["status"] = "live"): SessionPresence => ({
+    consumer, kind: "claude", status: s, mode: "channel", since_ms: null,
+  });
+
+  it("shows the session id when exactly one session is live", () => {
+    const p = withSessions("offline", [session("claude-a1b2c3")]);
+    expect(pill("connected", p).label).toBe("Claude live · a1b2c3");
+    expect(pill("connected", p).tone).toBe("ok");
+  });
+
+  it("counts instead of listing when several sessions are live", () => {
+    const p = withSessions("offline", [session("claude-a"), session("claude-b")]);
+    expect(pill("connected", p).label).toBe("2 Claude sessions live");
+  });
+
+  it("is live from the session list even when the UI consumer's frame is offline", () => {
+    // the dtk-era inconsistency: claude-<sid> bridges bypass the UI consumer frame
+    const p = withSessions("offline", [session("claude-a1b2c3")]);
+    expect(pill("connected", p).command).toBeNull();
+  });
+
+  it("stays terminal-only when sessions exist but none is live", () => {
+    const p = withSessions("offline", [session("claude-a", "terminal")]);
+    expect(pill("connected", p).label).toBe("Terminal only");
+    expect(pill("connected", p).command).toMatch(/^claude /);
+  });
+
+  it("falls back to the frame status for legacy daemons without sessions", () => {
+    expect(pill("connected", presence("live")).label).toBe("Claude live");
+    expect(pill("connected", presence("offline")).label).toBe("Claude offline");
   });
 });
