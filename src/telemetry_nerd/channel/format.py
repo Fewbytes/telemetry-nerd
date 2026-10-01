@@ -38,6 +38,9 @@ def describe_event(e: Event) -> str:
             return f"{who} opened {e.object_id} ({p.get('question', '')})"
         case "panel.closed":
             return f"{who} closed {e.object_id}"
+        case "object.highlighted":
+            note = p.get("note")
+            return f"{who} highlighted {e.object_id}" + (f': "{note}"' if note else "")
         case "focus.changed":
             return f"{who} focused {_selection(p).strip()}"
         case _:

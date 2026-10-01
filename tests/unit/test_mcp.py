@@ -216,3 +216,23 @@ async def test_workspace_activity_and_reply_unknown_thread(tmp_path):
     assert a["events"]
     bad = await call(mcp, "reply", {"thread": "t99", "text": "x"})
     assert bad.is_error
+
+
+async def test_highlight_and_unhighlight_tools(tmp_path):
+    svc = make_service(tmp_path)
+    mcp = build_mcp(svc, "http://x")
+    h = svc.ws.hypothesis_create("saturation", "claude")
+    r = await call(mcp, "highlight", {"object": h.id, "note": "look", "seconds": 30})
+    assert not r.is_error, text_of(r)
+    e = [x for x in svc.ws.log.since(0) if x.type == "object.highlighted"][-1]
+    assert e.payload == {"note": "look", "ttl_ms": 30_000} and e.actor == "claude"
+    await call(mcp, "highlight", {"object": h.id, "seconds": 0})
+    e = [x for x in svc.ws.log.since(0) if x.type == "object.highlighted"][-1]
+    assert e.payload["ttl_ms"] is None
+    default = await call(mcp, "highlight", {"object": h.id})
+    assert not default.is_error
+    e = [x for x in svc.ws.log.since(0) if x.type == "object.highlighted"][-1]
+    assert e.payload["ttl_ms"] == 300_000
+    assert not (await call(mcp, "unhighlight", {"object": h.id})).is_error
+    assert (await call(mcp, "highlight", {"object": "p99"})).is_error
+    assert (await call(mcp, "highlight", {"object": h.id, "seconds": -1})).is_error

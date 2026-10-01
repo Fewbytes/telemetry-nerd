@@ -171,3 +171,12 @@ def test_seed_consumer_across_peer_sessions(log):
     log.append("user", "thread.message", "t3", {"text": "y"})  # seq 3
     log.seed_consumer("claude-s3", "claude")
     assert log.cursor("claude-s3") == 2  # max across kind peers, not just legacy row
+
+
+def test_classify_user_highlight_depends_on_note():
+    assert classify("user", "object.highlighted", {"note": "why?"}) == "intentional"
+    assert classify("user", "object.highlighted", {"note": None}) == "ambient"
+    assert classify("user", "object.highlighted", {"note": "  "}) == "ambient"
+    assert classify("user", "object.highlighted") == "ambient"
+    assert classify("claude", "object.highlighted", {"note": "x"}) == "internal"
+    assert classify("user", "object.unhighlighted") == "internal"

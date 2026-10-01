@@ -99,3 +99,10 @@ def test_format_channel_anchorless_chat_message_has_no_panel_meta():
     assert content.splitlines()[0] == 'user asked in t2: "overall?"'
     assert "panel" not in meta
     assert meta["thread"] == "t2"
+
+
+def test_describe_highlight_events():
+    noted = ev(4, "object.highlighted", "p3", {"note": "why spiky?", "ttl_ms": None})
+    assert describe_event(noted) == 'user highlighted p3: "why spiky?"'
+    bare = ev(5, "object.highlighted", "p3", {"note": None, "ttl_ms": None})
+    assert describe_event(bare) == "user highlighted p3"

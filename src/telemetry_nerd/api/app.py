@@ -457,6 +457,22 @@ def create_app(
         return ws.post_message(request.path_params["id"], body["text"], "user").model_dump()
 
     @_api
+    async def highlight_create(request: Request) -> object:
+        body = await _body(request, object=str)
+        note = body.get("note")
+        if note is not None and not isinstance(note, str):
+            raise _BadRequest("invalid field 'note'", "'note' must be a string")
+        # user pins stay until the user clears them
+        ws.highlight(body["object"], "user", note=note, ttl_ms=None)
+        return {"ok": True}
+
+    @_api
+    async def highlight_clear(request: Request) -> object:
+        await _body(request)
+        ws.unhighlight(request.path_params["id"], "user")
+        return {"ok": True}
+
+    @_api
     async def panel_close(request: Request) -> object:
         await _body(request)
         return ws.close_panel(request.path_params["id"], "user").to_dict()
@@ -507,6 +523,8 @@ def create_app(
         Route("/api/threads/{id}/messages", thread_message, methods=["POST"]),
         Route("/api/panels/{id}/close", panel_close, methods=["POST"]),
         Route("/api/focus", focus, methods=["POST"]),
+        Route("/api/highlights", highlight_create, methods=["POST"]),
+        Route("/api/highlights/{id}/clear", highlight_clear, methods=["POST"]),
         Route("/api/channel/claim", channel_claim, methods=["POST"]),
         Route("/api/channel/status", channel_status),
         Route("/api/channel/sessions", channel_sessions),

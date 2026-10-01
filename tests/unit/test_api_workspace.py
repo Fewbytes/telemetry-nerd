@@ -240,3 +240,19 @@ def test_ui_socket_gets_presence_frames(client):
             ]
         frame = ui.receive_json()
         assert frame["kind"] == "presence" and frame["status"] == "offline"
+
+
+def test_highlight_routes(client, service):
+    _, panel = _make_finding(client, service)
+    r = client.post("/api/highlights", json={"object": panel["id"], "note": "see this"})
+    assert r.status_code == 200
+    e = [x for x in service.ws.log.since(0) if x.type == "object.highlighted"][-1]
+    assert e.actor == "user" and e.klass == "intentional"
+    assert e.payload == {"note": "see this", "ttl_ms": None}
+    client.post("/api/highlights", json={"object": panel["id"]})
+    e = [x for x in service.ws.log.since(0) if x.type == "object.highlighted"][-1]
+    assert e.klass == "ambient"
+    assert client.post(f"/api/highlights/{panel['id']}/clear", json={}).status_code == 200
+    assert service.ws.log.since(0)[-1].type == "object.unhighlighted"
+    assert client.post("/api/highlights", json={"object": "p99"}).status_code == 404
+    assert client.post("/api/highlights", json={}).status_code == 400

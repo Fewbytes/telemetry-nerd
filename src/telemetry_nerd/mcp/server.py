@@ -48,6 +48,9 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   changes, `hypothesis_update`: that is how the contradiction surfaces on the hypothesis.
 - `finding_create` needs a scope and evidence; a statistic needs an interval unless exact.
 - `gap_create` records a signal you wish existed. `annotate` marks events/regions/thresholds.
+- When you tell the user to look at an object ("see p5"), also call `highlight(object, note?)`
+  so it is accented in their UI; `unhighlight` clears it. Mention ids like p5/f2 in text: they
+  become hoverable chips.
 - `workspace_activity` lists what the user did since a sequence number.
 """
 
@@ -328,6 +331,28 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         try:
             return _dump({"message": ws.post_message(thread, text, "claude").id})
         except (ValidationError, NotFound, ValueError) as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
+    def highlight(object: str, note: str | None = None, seconds: int = 300) -> str:
+        """Draw the user's attention to a panel/annotation/hypothesis/finding/gap id
+        (e.g. when you say 'look at p5'). Shown as an accent plus optional short note;
+        expires after `seconds` (default 300; 0 = until cleared)."""
+        try:
+            if seconds < 0:
+                raise ValueError("seconds must be >= 0")
+            ws.highlight(object, "claude", note=note, ttl_ms=seconds * 1000 or None)
+            return _dump({"highlighted": object})
+        except (NotFound, ValueError) as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
+    def unhighlight(object: str) -> str:
+        """Clear a highlight you set earlier."""
+        try:
+            ws.unhighlight(object, "claude")
+            return _dump({"cleared": object})
+        except (NotFound, ValueError) as e:
             raise _fail(e) from e
 
     @mcp.tool()

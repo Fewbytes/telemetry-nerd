@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from telemetry_nerd.channel.format import describe_event
-from telemetry_nerd.core.events import Actor, EventLog, check_actor
+from telemetry_nerd.core.events import Actor, Event, EventLog, check_actor
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.workspace.models import (
@@ -33,6 +33,7 @@ from telemetry_nerd.workspace.objects import ObjectStore
 from telemetry_nerd.workspace.store import Panel, WorkspaceStore
 
 BRIEF_BUDGET_BYTES = 4096
+DEFAULT_HIGHLIGHT_TTL_MS = 300_000
 
 
 def atomic[F: Callable](fn: F) -> F:
@@ -227,6 +228,28 @@ class WorkspaceService:
         self.log.append(
             actor, "focus.changed", None, {"start_ms": span.start_ms, "end_ms": span.end_ms}
         )
+
+    # highlights (UX only: events, no stored state) -----------------------
+    @atomic
+    def highlight(
+        self,
+        object_id: str,
+        actor: Actor,
+        note: str | None = None,
+        ttl_ms: int | None = DEFAULT_HIGHLIGHT_TTL_MS,
+    ) -> Event:
+        """Draw attention to an object; `ttl_ms=None` keeps it until cleared."""
+        self._check_anchor(object_id)
+        if ttl_ms is not None and ttl_ms <= 0:
+            raise ValueError("ttl_ms must be positive (or None for until cleared)")
+        return self.log.append(
+            actor, "object.highlighted", object_id, {"note": note or None, "ttl_ms": ttl_ms}
+        )
+
+    @atomic
+    def unhighlight(self, object_id: str, actor: Actor) -> Event:
+        self._check_anchor(object_id)
+        return self.log.append(actor, "object.unhighlighted", object_id, {})
 
     def list_panels(self) -> list[Panel]:
         return self.workspace.list_panels()

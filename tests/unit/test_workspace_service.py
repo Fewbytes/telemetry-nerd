@@ -348,3 +348,21 @@ def test_activity_cursor_and_truncation(svc, panel):
     empty = svc.ws.activity(since=out2["last_seq"])
     assert empty["events"] == [] and empty["next_since"] == out2["last_seq"]
     assert empty["truncated"] is False
+
+
+def test_highlight_rejects_unknown_objects(svc):
+    with pytest.raises(NotFound):
+        svc.ws.highlight("p99", "claude")
+    with pytest.raises(ValueError):
+        svc.ws.highlight("zz", "claude")
+
+
+def test_highlight_and_unhighlight_events(svc):
+    h = svc.ws.hypothesis_create("saturation", "claude")
+    e = svc.ws.highlight(h.id, "claude", note="look", ttl_ms=1000)
+    assert (e.type, e.object_id, e.klass) == ("object.highlighted", h.id, "internal")
+    assert e.payload == {"note": "look", "ttl_ms": 1000}
+    u = svc.ws.highlight(h.id, "user", note="why?", ttl_ms=None)
+    assert u.klass == "intentional" and u.payload["ttl_ms"] is None
+    c = svc.ws.unhighlight(h.id, "user")
+    assert (c.type, c.object_id, c.klass) == ("object.unhighlighted", h.id, "internal")

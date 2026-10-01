@@ -31,10 +31,14 @@ def check_actor(actor: str) -> None:
         raise ValueError(f"unknown actor {actor!r}; expected one of {sorted(_ACTORS)}")
 
 
-def classify(actor: str, type: str) -> Klass:
+def classify(actor: str, type: str, payload: dict | None = None) -> Klass:
     """Only human actions reach Claude; Claude's own actions never echo back."""
     if actor != "user":
         return "internal"
+    if type == "object.highlighted":
+        # a pin with a note is a message to Claude; a bare pin is just "I'm looking here"
+        note = (payload or {}).get("note")
+        return "intentional" if isinstance(note, str) and note.strip() else "ambient"
     if type in INTENTIONAL_TYPES:
         return "intentional"
     if type in AMBIENT_TYPES:
@@ -104,7 +108,7 @@ class EventLog:
     ) -> Event:
         check_actor(actor)
         body = finite(payload or {})
-        klass = classify(actor, type)
+        klass = classify(actor, type, body)
         ts = self._clock()
         cur = self._db.execute(
             "INSERT INTO events (ts_ms, actor, type, object_id, klass, payload) "
