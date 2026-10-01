@@ -3,7 +3,15 @@ export interface ChartSpec {
     mark: string; data: string;
     windows?: { start_ms: number; end_ms: number; label: string }[]; color?: "count" | "density";
   }[];
-  y: { range_mode: "data" | "reference" | "semantic"; unit: string | null; label: string | null };
+  y: {
+    range_mode: "data" | "reference" | "semantic"; unit: string | null; label: string | null;
+    views?: YView[]; selected?: YView | null;
+  };
+}
+export interface YView {
+  mode: "auto" | "zero" | "data" | "meaningful" | "band" | "log";
+  label: string; reason?: string | null; lo?: number | null; hi?: number | null;
+  id?: string | null; author?: string | null;
 }
 export interface Panel {
   id: string; question: string; status: string; spec: ChartSpec;
