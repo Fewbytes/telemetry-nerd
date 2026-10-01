@@ -1,0 +1,481 @@
+# kube-state-metrics (object state) and cAdvisor/kubelet (container resource usage).
+# Every exact name was checked against live /api/v1/metadata (Grafana Play); tests enforce it.
+
+[pack]
+name = "kubernetes"
+version = "ksm-2.x/cadvisor-0.4x"
+citation = "https://github.com/kubernetes/kube-state-metrics, https://github.com/google/cadvisor"
+
+# =========================== kube-state-metrics =========================================
+[[metric]]
+match = "kube_.*_(info|labels|annotations)"
+type = "gauge"
+additivity_series = "none"
+role = "info"
+description = "Constant 1 with labels describing the object; use it in joins, never plot it."
+
+[[metric]]
+match = "kube_(pod|node|deployment|daemonset|statefulset|replicaset|service|configmap|secret|namespace|endpoint|storageclass|volumeattachment|persistentvolume|persistentvolumeclaim|resourcequota)_created"
+type = "gauge"
+unit = "s"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "timestamp"
+description = "Creation time as a Unix timestamp, not a duration. Use time() - metric for age."
+
+[[metric]]
+match = "kube_pod_(start|completion)_time|kube_pod_status_(initialized|ready|scheduled|container_ready)_time|kube_pod_container_state_started|kube_.*_deletion_timestamp"
+type = "gauge"
+unit = "s"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "timestamp"
+description = "Unix timestamp, not a duration. Use time() - metric for elapsed time."
+
+# One series per possible value of a label, 1 for the current one: sum() counts objects.
+[[metric]]
+match = "kube_pod_status_(phase|ready|scheduled|unschedulable|reason|qos_class)|kube_pod_(init_)?container_status_(ready|running|terminated|waiting)|kube_node_status_condition|kube_node_spec_unschedulable|kube_deployment_(status_condition|spec_paused)|kube_horizontalpodautoscaler_status_condition|kube_namespace_status_(phase|condition)|kube_persistentvolume(claim)?_status_(phase|condition)|kube_volumeattachment_status_attached"
+type = "gauge"
+bounds = "[0,1]"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "state"
+description = "State flag: 1 for the current value of the labelled state, 0 otherwise. sum() over objects counts those in that state."
+
+[[metric]]
+names = ["kube_pod_container_status_restarts_total", "kube_pod_init_container_status_restarts_total"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "errors"
+description = "Container restarts. increase() over a window counts restarts; a rising rate is crash-looping."
+
+[[metric]]
+names = ["kube_pod_container_resource_requests", "kube_pod_container_resource_limits"]
+type = "gauge"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "capacity"
+description = "Requested/limit amount per resource; the unit follows the resource label (cpu in cores, memory in bytes). Filter by resource before comparing."
+
+[[metric]]
+name = "kube_pod_container_status_last_terminated_exitcode"
+type = "gauge"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "state"
+description = "Exit code of the last terminated container (137 = SIGKILL/OOM, 143 = SIGTERM)."
+
+# desired / actual replicas: the status counts never exceed the controller's replica count
+[[metric]]
+names = ["kube_deployment_spec_replicas", "kube_deployment_status_replicas", "kube_statefulset_replicas", "kube_statefulset_status_replicas", "kube_replicaset_spec_replicas", "kube_replicaset_status_replicas", "kube_daemonset_status_desired_number_scheduled", "kube_horizontalpodautoscaler_spec_max_replicas", "kube_horizontalpodautoscaler_spec_min_replicas"]
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "capacity"
+
+[[metric]]
+names = ["kube_deployment_status_replicas_available", "kube_deployment_status_replicas_ready", "kube_deployment_status_replicas_updated", "kube_deployment_status_replicas_unavailable"]
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "state"
+bounded_by = ["kube_deployment_status_replicas"]
+description = "Replicas of a Deployment in the named state; never more than status_replicas."
+
+[[metric]]
+names = ["kube_statefulset_status_replicas_available", "kube_statefulset_status_replicas_ready", "kube_statefulset_status_replicas_current", "kube_statefulset_status_replicas_updated"]
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "state"
+bounded_by = ["kube_statefulset_status_replicas"]
+description = "Replicas of a StatefulSet in the named state; never more than status_replicas."
+
+[[metric]]
+names = ["kube_replicaset_status_ready_replicas", "kube_replicaset_status_fully_labeled_replicas"]
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "state"
+bounded_by = ["kube_replicaset_status_replicas"]
+
+[[metric]]
+names = ["kube_daemonset_status_number_ready", "kube_daemonset_status_number_available", "kube_daemonset_status_current_number_scheduled", "kube_daemonset_status_updated_number_scheduled"]
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "state"
+bounded_by = ["kube_daemonset_status_desired_number_scheduled"]
+description = "Nodes in the named DaemonSet state; never more than the desired number."
+
+[[metric]]
+names = ["kube_daemonset_status_number_misscheduled", "kube_daemonset_status_number_unavailable"]
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "errors"
+
+[[metric]]
+name = "kube_horizontalpodautoscaler_status_desired_replicas"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "state"
+bounded_by = ["kube_horizontalpodautoscaler_spec_max_replicas"]
+
+[[metric]]
+name = "kube_horizontalpodautoscaler_status_current_replicas"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "state"
+
+[[metric]]
+name = "kube_node_status_capacity"
+type = "gauge"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "capacity"
+description = "Node capacity per resource; the unit follows the resource label."
+
+[[metric]]
+name = "kube_node_status_allocatable"
+type = "gauge"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "capacity"
+bounded_by = ["kube_node_status_capacity"]
+description = "What the scheduler can hand out on the node (capacity minus system reservations); the unit follows the resource label."
+
+[[metric]]
+names = ["kube_persistentvolume_capacity_bytes", "kube_persistentvolumeclaim_resource_requests_storage_bytes"]
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "capacity"
+
+# ================================== cAdvisor ============================================
+[[metric]]
+names = ["container_cpu_usage_seconds_total", "container_cpu_system_seconds_total", "container_cpu_user_seconds_total"]
+type = "counter"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "cpu-time"
+description = "Cumulative CPU time. rate() is the number of cores in use; compare it with the CPU limit."
+
+[[metric]]
+name = "container_cpu_cfs_periods_total"
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "operations"
+description = "Elapsed CFS enforcement periods (only for containers with a CPU limit)."
+
+[[metric]]
+name = "container_cpu_cfs_throttled_periods_total"
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "saturation"
+bounded_by = ["container_cpu_cfs_periods_total"]
+description = "Periods in which the container hit its CPU limit. Throttled fraction = rate(throttled_periods) / rate(periods)."
+
+[[metric]]
+name = "container_cpu_cfs_throttled_seconds_total"
+type = "counter"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "saturation"
+description = "Total time the container was throttled by its CPU limit."
+
+[[metric]]
+name = "container_memory_usage_bytes"
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "memory"
+description = "Memory usage including page cache and memory not yet reclaimed. Use working_set for OOM and eviction questions."
+
+[[metric]]
+name = "container_memory_working_set_bytes"
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "memory"
+bounded_by = ["container_memory_usage_bytes"]
+description = "Usage minus inactive file cache: what the kubelet uses for eviction and what the OOM killer compares with the limit."
+
+[[metric]]
+names = ["container_memory_rss", "container_memory_cache"]
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "memory"
+bounded_by = ["container_memory_usage_bytes"]
+description = "Anonymous (rss) or page-cache memory in bytes, despite the missing _bytes suffix."
+
+[[metric]]
+names = ["container_memory_swap", "container_memory_mapped_file", "container_memory_kernel_usage"]
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "memory"
+description = "Memory in bytes, despite the missing _bytes suffix."
+
+[[metric]]
+names = ["container_memory_max_usage_bytes", "container_memory_total_active_file_bytes", "container_memory_total_inactive_file_bytes"]
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "memory"
+
+[[metric]]
+names = ["container_memory_failcnt", "container_memory_failures_total", "container_oom_events_total"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "errors"
+description = "Memory limit hits, allocation failures and OOM events for the container."
+
+[[metric]]
+names = ["container_spec_memory_limit_bytes", "container_spec_memory_swap_limit_bytes", "container_spec_memory_reservation_limit_bytes"]
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "capacity"
+description = "Configured limit; 0 means unlimited."
+
+[[metric]]
+names = ["container_spec_cpu_quota", "container_spec_cpu_period", "container_spec_cpu_shares"]
+type = "gauge"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "config"
+description = "CFS quota/period (microseconds) and shares. CPU limit in cores = quota / period."
+
+[[metric]]
+names = ["container_network_receive_bytes_total", "container_network_transmit_bytes_total"]
+type = "counter"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+
+[[metric]]
+names = ["container_network_receive_packets_total", "container_network_transmit_packets_total"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+
+[[metric]]
+names = ["container_network_receive_errors_total", "container_network_transmit_errors_total", "container_network_receive_packets_dropped_total", "container_network_transmit_packets_dropped_total"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "errors"
+
+[[metric]]
+names = ["container_fs_reads_bytes_total", "container_fs_writes_bytes_total"]
+type = "counter"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+
+[[metric]]
+names = ["container_fs_reads_total", "container_fs_writes_total", "container_fs_reads_merged_total", "container_fs_writes_merged_total"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "operations"
+
+[[metric]]
+names = ["container_fs_read_seconds_total", "container_fs_write_seconds_total"]
+type = "counter"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "latency"
+description = "Time spent reading/writing. Mean latency = rate(time) / rate(operations)."
+
+[[metric]]
+names = ["container_fs_io_time_seconds_total", "container_fs_io_time_weighted_seconds_total"]
+type = "counter"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "utilization"
+
+[[metric]]
+name = "container_fs_io_current"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "saturation"
+
+[[metric]]
+name = "container_fs_usage_bytes"
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "capacity"
+bounded_by = ["container_fs_limit_bytes"]
+
+[[metric]]
+name = "container_fs_limit_bytes"
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "capacity"
+
+[[metric]]
+name = "container_fs_inodes_free"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "capacity"
+bounded_by = ["container_fs_inodes_total"]
+
+[[metric]]
+name = "container_fs_inodes_total"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "capacity"
+description = "Total inodes (a gauge, despite the _total suffix)."
+
+[[metric]]
+match = "container_pressure_(cpu|io|memory)_(waiting|stalled)_seconds_total"
+type = "counter"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "saturation"
+description = "Container PSI. rate() is the fraction of time tasks waited (waiting) or none could progress (stalled)."
+
+[[metric]]
+names = ["container_processes", "container_threads", "container_sockets", "container_file_descriptors"]
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "count"
+
+[[metric]]
+name = "container_threads_max"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "capacity"
+
+[[metric]]
+names = ["container_last_seen", "container_start_time_seconds"]
+type = "gauge"
+unit = "s"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "timestamp"
+description = "Unix timestamp, not a duration. Use time() - metric for age."
+
+[[metric]]
+names = ["machine_cpu_cores", "machine_cpu_physical_cores", "machine_cpu_sockets"]
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "capacity"
+
+[[metric]]
+names = ["machine_memory_bytes", "machine_swap_bytes"]
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "capacity"
+
+[[metric]]
+names = ["container_scrape_error", "machine_scrape_error"]
+type = "gauge"
+bounds = "[0,1]"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "state"
+description = "1 if collecting container/machine metrics failed."

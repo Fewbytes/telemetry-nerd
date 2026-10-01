@@ -1,0 +1,534 @@
+# node_exporter default collectors. Every exact name below was checked against a live
+# /api/v1/metadata (Wikimedia Thanos, node_exporter 1.x); tests/unit/test_packs.py enforces it.
+
+[pack]
+name = "node_exporter"
+version = "1.x"
+citation = "https://github.com/prometheus/node_exporter"
+
+# --- cpu ------------------------------------------------------------------------------
+[[metric]]
+names = ["node_cpu_seconds_total", "node_cpu_guest_seconds_total"]
+type = "counter"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "cpu-time"
+description = "CPU time per mode. rate() per cpu is the fraction of one core in that mode; utilization = 1 - rate(mode=\"idle\")."
+
+[[metric]]
+names = ["node_load1", "node_load5", "node_load15"]
+type = "gauge"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "saturation"
+description = "Load average (runnable plus uninterruptible tasks) over 1/5/15 minutes. Compare with the core count, not with 1."
+
+[[metric]]
+match = "node_cpu_(scaling_)?frequency_(max_|min_)?hertz|node_cpu_scaling_frequency_hertz"
+type = "gauge"
+unit = "Hz"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "frequency"
+
+[[metric]]
+names = ["node_cpu_core_throttles_total", "node_cpu_package_throttles_total"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "saturation"
+description = "Times the CPU core/package was thermally throttled."
+
+[[metric]]
+names = ["node_schedstat_running_seconds_total", "node_schedstat_waiting_seconds_total"]
+type = "counter"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "cpu-time"
+description = "Scheduler time per CPU. Waiting time is run-queue delay: rate(waiting) is the average number of tasks waiting."
+
+[[metric]]
+match = "node_pressure_(cpu|io|memory)_(waiting|stalled)_seconds_total"
+type = "counter"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "saturation"
+description = "Pressure stall information (PSI). rate() is the fraction of time tasks waited (waiting) or none could progress (stalled); it is at most 1."
+
+# --- memory ----------------------------------------------------------------------------
+[[metric]]
+match = "node_memory_.*_bytes"
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "memory"
+description = "A /proc/meminfo field in bytes."
+
+[[metric]]
+names = ["node_memory_MemTotal_bytes", "node_memory_SwapTotal_bytes"]
+role = "capacity"
+
+[[metric]]
+name = "node_memory_MemAvailable_bytes"
+bounded_by = ["node_memory_MemTotal_bytes"]
+description = "Kernel estimate of memory available to new workloads without swapping. Prefer it over MemFree for 'is memory tight'."
+
+[[metric]]
+names = [
+  "node_memory_MemFree_bytes", "node_memory_Buffers_bytes", "node_memory_Cached_bytes",
+  "node_memory_Active_bytes", "node_memory_Inactive_bytes", "node_memory_Slab_bytes",
+  "node_memory_Shmem_bytes", "node_memory_AnonPages_bytes", "node_memory_Dirty_bytes",
+]
+bounded_by = ["node_memory_MemTotal_bytes"]
+
+[[metric]]
+names = ["node_memory_SwapFree_bytes", "node_memory_SwapCached_bytes"]
+bounded_by = ["node_memory_SwapTotal_bytes"]
+
+# --- filesystem ------------------------------------------------------------------------
+[[metric]]
+name = "node_filesystem_size_bytes"
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "capacity"
+description = "Filesystem size. Summing across mountpoints double-counts bind mounts and shared devices."
+
+[[metric]]
+name = "node_filesystem_avail_bytes"
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "capacity"
+bounded_by = ["node_filesystem_size_bytes"]
+description = "Filesystem space available to non-root users. Usage = 1 - avail/size."
+
+[[metric]]
+name = "node_filesystem_free_bytes"
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "capacity"
+bounded_by = ["node_filesystem_size_bytes"]
+description = "Free filesystem space including blocks reserved for root (>= avail)."
+
+[[metric]]
+name = "node_filesystem_files"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "capacity"
+description = "Total inodes."
+
+[[metric]]
+name = "node_filesystem_files_free"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "capacity"
+bounded_by = ["node_filesystem_files"]
+description = "Free inodes."
+
+[[metric]]
+names = ["node_filesystem_readonly", "node_filesystem_device_error"]
+type = "gauge"
+bounds = "[0,1]"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "state"
+description = "1 if the filesystem is read-only / statistics could not be read, else 0."
+
+# --- disk ------------------------------------------------------------------------------
+[[metric]]
+names = ["node_disk_read_bytes_total", "node_disk_written_bytes_total"]
+type = "counter"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+
+[[metric]]
+names = [
+  "node_disk_reads_completed_total", "node_disk_writes_completed_total",
+  "node_disk_reads_merged_total", "node_disk_writes_merged_total",
+]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "operations"
+
+[[metric]]
+names = ["node_disk_read_time_seconds_total", "node_disk_write_time_seconds_total"]
+type = "counter"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "latency"
+description = "Time spent on all reads/writes. Mean latency = rate(time) / rate(completed operations)."
+
+[[metric]]
+name = "node_disk_io_time_seconds_total"
+type = "counter"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "utilization"
+description = "Time the device had I/O in flight. rate() is its busy fraction per device (at most 1); it does not measure saturation of parallel devices such as NVMe."
+
+[[metric]]
+name = "node_disk_io_time_weighted_seconds_total"
+type = "counter"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "saturation"
+description = "Weighted I/O time. rate() is the average number of requests in flight (queue depth)."
+
+[[metric]]
+name = "node_disk_io_now"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "saturation"
+description = "I/Os in progress right now."
+
+# --- network ---------------------------------------------------------------------------
+[[metric]]
+names = ["node_network_receive_bytes_total", "node_network_transmit_bytes_total"]
+type = "counter"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+
+[[metric]]
+names = ["node_network_receive_packets_total", "node_network_transmit_packets_total"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+
+[[metric]]
+names = [
+  "node_network_receive_errs_total", "node_network_transmit_errs_total",
+  "node_network_receive_drop_total", "node_network_transmit_drop_total",
+]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "errors"
+
+[[metric]]
+name = "node_network_up"
+type = "gauge"
+bounds = "[0,1]"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "state"
+description = "1 if the interface operstate is up."
+
+[[metric]]
+name = "node_network_mtu_bytes"
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "config"
+
+[[metric]]
+name = "node_network_speed_bytes"
+type = "gauge"
+unit = "B/s"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "capacity"
+description = "Link speed in bytes per second (despite the _bytes name), the ceiling for rate(node_network_*_bytes_total)."
+
+[[metric]]
+names = ["node_softnet_dropped_total", "node_softnet_times_squeezed_total"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "errors"
+description = "Per-CPU softirq network backlog: packets dropped / times processing ran out of budget."
+
+[[metric]]
+names = ["node_netstat_Tcp_RetransSegs", "node_netstat_TcpExt_ListenOverflows", "node_netstat_TcpExt_ListenDrops", "node_netstat_Udp_InErrors"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "errors"
+description = "Kernel network statistic (exported as untyped by node_exporter, but cumulative)."
+
+[[metric]]
+names = ["node_netstat_Tcp_OutSegs"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+description = "TCP segments sent (exported as untyped by node_exporter, but cumulative)."
+
+[[metric]]
+match = "node_sockstat_(TCP|UDP)_(alloc|inuse)"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "count"
+
+[[metric]]
+name = "node_nf_conntrack_entries"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "saturation"
+bounded_by = ["node_nf_conntrack_entries_limit"]
+description = "Allocated connection-tracking entries; when full, new connections are dropped."
+
+[[metric]]
+name = "node_nf_conntrack_entries_limit"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "capacity"
+
+# --- kernel / process ------------------------------------------------------------------
+[[metric]]
+names = ["node_procs_running", "node_procs_blocked"]
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "saturation"
+description = "Processes runnable / blocked on I/O."
+
+[[metric]]
+names = ["node_context_switches_total", "node_intr_total", "node_forks_total"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "operations"
+
+[[metric]]
+names = ["node_vmstat_oom_kill"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "errors"
+description = "Processes killed by the OOM killer (exported as untyped by node_exporter, but cumulative)."
+
+[[metric]]
+names = ["node_vmstat_pgmajfault", "node_vmstat_pswpin", "node_vmstat_pswpout"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "saturation"
+description = "Major page faults / pages swapped in or out (exported as untyped, but cumulative). Sustained swap activity means memory pressure."
+
+[[metric]]
+name = "node_filefd_allocated"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "saturation"
+bounded_by = ["node_filefd_maximum"]
+
+[[metric]]
+name = "node_filefd_maximum"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "capacity"
+
+[[metric]]
+name = "node_processes_threads"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "saturation"
+bounded_by = ["node_processes_max_threads"]
+
+[[metric]]
+name = "node_processes_pids"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "saturation"
+bounded_by = ["node_processes_max_processes"]
+
+[[metric]]
+names = ["node_processes_max_threads", "node_processes_max_processes"]
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "capacity"
+
+[[metric]]
+name = "node_entropy_available_bits"
+type = "gauge"
+unit = "bit"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "capacity"
+bounded_by = ["node_entropy_pool_size_bits"]
+
+[[metric]]
+name = "node_entropy_pool_size_bits"
+type = "gauge"
+unit = "bit"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "capacity"
+
+# --- time ------------------------------------------------------------------------------
+[[metric]]
+names = ["node_boot_time_seconds", "node_time_seconds", "node_textfile_mtime_seconds"]
+type = "gauge"
+unit = "s"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "timestamp"
+description = "Unix timestamp, not a duration. Use time() - metric for uptime or age."
+
+[[metric]]
+name = "node_time_zone_offset_seconds"
+type = "gauge"
+unit = "s"
+bounds = "none"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "config"
+
+[[metric]]
+name = "node_timex_offset_seconds"
+type = "gauge"
+unit = "s"
+bounds = "none"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "state"
+description = "Offset between the local clock and its reference; signed."
+
+[[metric]]
+name = "node_timex_sync_status"
+type = "gauge"
+bounds = "[0,1]"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "state"
+description = "1 if the clock is synchronized to a reliable server."
+
+# --- hardware --------------------------------------------------------------------------
+[[metric]]
+match = "node_hwmon_temp(_max|_crit)?_celsius"
+type = "gauge"
+unit = "°C"
+bounds = "none"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "temperature"
+
+[[metric]]
+names = ["node_edac_correctable_errors_total"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "errors"
+description = "Correctable memory (ECC) errors."
+
+# --- exporter self-metrics -------------------------------------------------------------
+[[metric]]
+names = ["node_exporter_build_info", "node_uname_info", "node_os_info"]
+type = "gauge"
+additivity_series = "none"
+role = "info"
+description = "Constant 1 with labels carrying build/system information."
+
+[[metric]]
+name = "node_scrape_collector_duration_seconds"
+type = "gauge"
+unit = "s"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "latency"
+description = "Duration of one collector run inside node_exporter."
+
+[[metric]]
+names = ["node_scrape_collector_success", "node_textfile_scrape_error"]
+type = "gauge"
+bounds = "[0,1]"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "state"
+description = "Collector success (1 = ok) / textfile read error (1 = error)."

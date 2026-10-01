@@ -36,9 +36,11 @@ FieldName = Literal[
     "description",
     "histogram_family",
     "operating_profile_ref",
+    "bounded_by",
 ]
 FIELDS = frozenset(get_args(FieldName))
 
+PROSE_FIELDS = frozenset({"description"})
 _METRIC_TYPES = frozenset(get_args(MetricType))
 _BOUNDS = frozenset({"≥0", "[0,1]", "[0,100]", "none"})
 _ADDITIVITY = frozenset({"additive", "intensive", "none"})
@@ -61,10 +63,10 @@ def validate_value(field: str, value: Any) -> Any:
     elif field in _TEXT:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{field} must be a non-empty string")
-    elif field == "histogram_family" and (
+    elif field in ("histogram_family", "bounded_by") and (
         not isinstance(value, list) or not value or not all(isinstance(v, str) for v in value)
     ):
-        raise ValueError("histogram_family must be a non-empty list of metric names")
+        raise ValueError(f"{field} must be a non-empty list of metric names")
     return value
 
 
@@ -107,11 +109,14 @@ class CatalogEntry(BaseModel):
     claims: dict[str, list[Claim]]
 
     def conflicts(self) -> dict[str, list[Claim]]:
-        """Fields where a lower-ranked claim disagrees with the winner."""
+        """Fields where a lower-ranked claim disagrees with the winner.
+
+        Descriptions are prose: two origins wording the same thing differently is not a
+        contradiction, so they are never reported."""
         return {
             f: [c for c in cs[1:] if c.value != cs[0].value]
             for f, cs in self.claims.items()
-            if any(c.value != cs[0].value for c in cs[1:])
+            if f not in PROSE_FIELDS and any(c.value != cs[0].value for c in cs[1:])
         }
 
 

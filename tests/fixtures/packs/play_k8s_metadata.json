@@ -1,0 +1,1430 @@
+{
+"container_cpu_cfs_periods_total": [
+{
+"help": "Number of elapsed enforcement period intervals.",
+"type": "counter",
+"unit": ""
+}
+],
+"container_cpu_cfs_throttled_periods_total": [
+{
+"help": "Number of throttled period intervals.",
+"type": "counter",
+"unit": ""
+}
+],
+"container_cpu_cfs_throttled_seconds_total": [
+{
+"help": "Total time duration the container has been throttled.",
+"type": "counter",
+"unit": ""
+}
+],
+"container_cpu_system_seconds_total": [
+{
+"help": "Cumulative system cpu time consumed in seconds.",
+"type": "counter",
+"unit": ""
+}
+],
+"container_cpu_usage_seconds_total": [
+{
+"help": "Cumulative cpu time consumed in seconds.",
+"type": "counter",
+"unit": ""
+}
+],
+"container_cpu_user_seconds_total": [
+{
+"help": "Cumulative user cpu time consumed in seconds.",
+"type": "counter",
+"unit": ""
+}
+],
+"container_file_descriptors": [
+{
+"help": "Number of open file descriptors for the container.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_fs_inodes_free": [
+{
+"help": "Number of available Inodes",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_fs_inodes_total": [
+{
+"help": "Number of Inodes",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_fs_io_current": [
+{
+"help": "Number of I/Os currently in progress",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_fs_io_time_seconds_total": [
+{
+"help": "Cumulative count of seconds spent doing I/Os",
+"type": "counter",
+"unit": ""
+}
+],
+"container_fs_io_time_weighted_seconds_total": [
+{
+"help": "Cumulative weighted I/O time in seconds",
+"type": "counter",
+"unit": ""
+}
+],
+"container_fs_limit_bytes": [
+{
+"help": "Number of bytes that can be consumed by the container on this filesystem.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_fs_read_seconds_total": [
+{
+"help": "Cumulative count of seconds spent reading",
+"type": "counter",
+"unit": ""
+}
+],
+"container_fs_reads_bytes_total": [
+{
+"help": "Cumulative count of bytes read",
+"type": "counter",
+"unit": ""
+}
+],
+"container_fs_reads_merged_total": [
+{
+"help": "Cumulative count of reads merged",
+"type": "counter",
+"unit": ""
+}
+],
+"container_fs_reads_total": [
+{
+"help": "Cumulative count of reads completed",
+"type": "counter",
+"unit": ""
+}
+],
+"container_fs_usage_bytes": [
+{
+"help": "Number of bytes that are consumed by the container on this filesystem.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_fs_write_seconds_total": [
+{
+"help": "Cumulative count of seconds spent writing",
+"type": "counter",
+"unit": ""
+}
+],
+"container_fs_writes_bytes_total": [
+{
+"help": "Cumulative count of bytes written",
+"type": "counter",
+"unit": ""
+}
+],
+"container_fs_writes_merged_total": [
+{
+"help": "Cumulative count of writes merged",
+"type": "counter",
+"unit": ""
+}
+],
+"container_fs_writes_total": [
+{
+"help": "Cumulative count of writes completed",
+"type": "counter",
+"unit": ""
+}
+],
+"container_last_seen": [
+{
+"help": "Last time a container was seen by the exporter",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_memory_cache": [
+{
+"help": "Number of bytes of page cache memory.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_memory_failcnt": [
+{
+"help": "Number of memory usage hits limits",
+"type": "counter",
+"unit": ""
+}
+],
+"container_memory_failures_total": [
+{
+"help": "Cumulative count of memory allocation failures.",
+"type": "counter",
+"unit": ""
+}
+],
+"container_memory_kernel_usage": [
+{
+"help": "Size of kernel memory allocated in bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_memory_mapped_file": [
+{
+"help": "Size of memory mapped files in bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_memory_max_usage_bytes": [
+{
+"help": "Maximum memory usage recorded in bytes",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_memory_rss": [
+{
+"help": "Size of RSS in bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_memory_swap": [
+{
+"help": "Container swap usage in bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_memory_total_active_file_bytes": [
+{
+"help": "Current total active file in bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_memory_total_inactive_file_bytes": [
+{
+"help": "Current total inactive file in bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_memory_usage_bytes": [
+{
+"help": "Current memory usage in bytes, including all memory regardless of when it was accessed",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_memory_working_set_bytes": [
+{
+"help": "Current working set in bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_network_receive_bytes_total": [
+{
+"help": "Cumulative count of bytes received",
+"type": "counter",
+"unit": ""
+}
+],
+"container_network_receive_errors_total": [
+{
+"help": "Cumulative count of errors encountered while receiving",
+"type": "counter",
+"unit": ""
+}
+],
+"container_network_receive_packets_dropped_total": [
+{
+"help": "Cumulative count of packets dropped while receiving",
+"type": "counter",
+"unit": ""
+}
+],
+"container_network_receive_packets_total": [
+{
+"help": "Cumulative count of packets received",
+"type": "counter",
+"unit": ""
+}
+],
+"container_network_transmit_bytes_total": [
+{
+"help": "Cumulative count of bytes transmitted",
+"type": "counter",
+"unit": ""
+}
+],
+"container_network_transmit_errors_total": [
+{
+"help": "Cumulative count of errors encountered while transmitting",
+"type": "counter",
+"unit": ""
+}
+],
+"container_network_transmit_packets_dropped_total": [
+{
+"help": "Cumulative count of packets dropped while transmitting",
+"type": "counter",
+"unit": ""
+}
+],
+"container_network_transmit_packets_total": [
+{
+"help": "Cumulative count of packets transmitted",
+"type": "counter",
+"unit": ""
+}
+],
+"container_oom_events_total": [
+{
+"help": "Count of out of memory events observed for the container",
+"type": "counter",
+"unit": ""
+}
+],
+"container_pressure_cpu_stalled_seconds_total": [
+{
+"help": "Total time duration no tasks in the container could make progress due to CPU congestion.",
+"type": "counter",
+"unit": ""
+}
+],
+"container_pressure_cpu_waiting_seconds_total": [
+{
+"help": "Total time duration tasks in the container have waited due to CPU congestion.",
+"type": "counter",
+"unit": ""
+}
+],
+"container_pressure_io_stalled_seconds_total": [
+{
+"help": "Total time duration no tasks in the container could make progress due to IO congestion.",
+"type": "counter",
+"unit": ""
+}
+],
+"container_pressure_io_waiting_seconds_total": [
+{
+"help": "Total time duration tasks in the container have waited due to IO congestion.",
+"type": "counter",
+"unit": ""
+}
+],
+"container_pressure_memory_stalled_seconds_total": [
+{
+"help": "Total time duration no tasks in the container could make progress due to memory congestion.",
+"type": "counter",
+"unit": ""
+}
+],
+"container_pressure_memory_waiting_seconds_total": [
+{
+"help": "Total time duration tasks in the container have waited due to memory congestion.",
+"type": "counter",
+"unit": ""
+}
+],
+"container_processes": [
+{
+"help": "Number of processes running inside the container.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_scrape_error": [
+{
+"help": "1 if there was an error while getting container metrics, 0 otherwise",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_sockets": [
+{
+"help": "Number of open sockets for the container.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_spec_cpu_period": [
+{
+"help": "CPU period of the container.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_spec_cpu_quota": [
+{
+"help": "CPU quota of the container.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_spec_cpu_shares": [
+{
+"help": "CPU share of the container.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_spec_memory_limit_bytes": [
+{
+"help": "Memory limit for the container.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_spec_memory_reservation_limit_bytes": [
+{
+"help": "Memory reservation limit for the container.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_spec_memory_swap_limit_bytes": [
+{
+"help": "Memory swap limit for the container.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_start_time_seconds": [
+{
+"help": "Start time of the container since unix epoch in seconds.",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_threads": [
+{
+"help": "Number of threads running inside the container",
+"type": "gauge",
+"unit": ""
+}
+],
+"container_threads_max": [
+{
+"help": "Maximum number of threads allowed inside the container, infinity if value is zero",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_configmap_annotations": [
+{
+"help": "Kubernetes annotations converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_configmap_created": [
+{
+"help": "[STABLE] Unix creation timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_configmap_info": [
+{
+"help": "[STABLE] Information about configmap.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_configmap_labels": [
+{
+"help": "[STABLE] Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_daemonset_annotations": [
+{
+"help": "Kubernetes annotations converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_daemonset_created": [
+{
+"help": "[STABLE] Unix creation timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_daemonset_labels": [
+{
+"help": "[STABLE] Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_daemonset_status_current_number_scheduled": [
+{
+"help": "[STABLE] The number of nodes running at least one daemon pod and are supposed to.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_daemonset_status_desired_number_scheduled": [
+{
+"help": "[STABLE] The number of nodes that should be running the daemon pod.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_daemonset_status_number_available": [
+{
+"help": "[STABLE] The number of nodes that should be running the daemon pod and have one or more of the daemon pod running and available",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_daemonset_status_number_misscheduled": [
+{
+"help": "[STABLE] The number of nodes running a daemon pod but are not supposed to.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_daemonset_status_number_ready": [
+{
+"help": "[STABLE] The number of nodes that should be running the daemon pod and have one or more of the daemon pod running and ready.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_daemonset_status_number_unavailable": [
+{
+"help": "[STABLE] The number of nodes that should be running the daemon pod and have none of the daemon pod running and available",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_daemonset_status_updated_number_scheduled": [
+{
+"help": "[STABLE] The total number of nodes that are running updated daemon pod",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_deployment_annotations": [
+{
+"help": "Kubernetes annotations converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_deployment_created": [
+{
+"help": "[STABLE] Unix creation timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_deployment_labels": [
+{
+"help": "[STABLE] Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_deployment_spec_paused": [
+{
+"help": "[STABLE] Whether the deployment is paused and will not be processed by the deployment controller.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_deployment_spec_replicas": [
+{
+"help": "[STABLE] Number of desired pods for a deployment.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_deployment_status_condition": [
+{
+"help": "[STABLE] The current status conditions of a deployment.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_deployment_status_replicas": [
+{
+"help": "[STABLE] The number of replicas per deployment.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_deployment_status_replicas_available": [
+{
+"help": "[STABLE] The number of available replicas per deployment.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_deployment_status_replicas_ready": [
+{
+"help": "[STABLE] The number of ready replicas per deployment.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_deployment_status_replicas_unavailable": [
+{
+"help": "[STABLE] The number of unavailable replicas per deployment.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_deployment_status_replicas_updated": [
+{
+"help": "[STABLE] The number of updated replicas per deployment.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_endpoint_annotations": [
+{
+"help": "Kubernetes annotations converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_endpoint_created": [
+{
+"help": "[STABLE] Unix creation timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_endpoint_info": [
+{
+"help": "[STABLE] Information about endpoint.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_endpoint_labels": [
+{
+"help": "[STABLE] Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_horizontalpodautoscaler_annotations": [
+{
+"help": "Kubernetes annotations converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_horizontalpodautoscaler_info": [
+{
+"help": "Information about this autoscaler.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_horizontalpodautoscaler_labels": [
+{
+"help": "[STABLE] Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_horizontalpodautoscaler_spec_max_replicas": [
+{
+"help": "[STABLE] Upper limit for the number of pods that can be set by the autoscaler; cannot be smaller than MinReplicas.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_horizontalpodautoscaler_spec_min_replicas": [
+{
+"help": "[STABLE] Lower limit for the number of pods that can be set by the autoscaler, default 1.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_horizontalpodautoscaler_status_condition": [
+{
+"help": "[STABLE] The condition of this autoscaler.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_horizontalpodautoscaler_status_current_replicas": [
+{
+"help": "[STABLE] Current number of replicas of pods managed by this autoscaler.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_horizontalpodautoscaler_status_desired_replicas": [
+{
+"help": "[STABLE] Desired number of replicas of pods managed by this autoscaler.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_namespace_annotations": [
+{
+"help": "Kubernetes annotations converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_namespace_created": [
+{
+"help": "[STABLE] Unix creation timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_namespace_labels": [
+{
+"help": "[STABLE] Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_namespace_status_condition": [
+{
+"help": "The condition of a namespace.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_namespace_status_phase": [
+{
+"help": "[STABLE] kubernetes namespace status phase.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_node_annotations": [
+{
+"help": "Kubernetes annotations converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_node_created": [
+{
+"help": "[STABLE] Unix creation timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_node_deletion_timestamp": [
+{
+"help": "Unix deletion timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_node_info": [
+{
+"help": "[STABLE] Information about a cluster node.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_node_labels": [
+{
+"help": "[STABLE] Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_node_spec_unschedulable": [
+{
+"help": "[STABLE] Whether a node can schedule new pods.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_node_status_allocatable": [
+{
+"help": "[STABLE] The allocatable for different resources of a node that are available for scheduling.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_node_status_capacity": [
+{
+"help": "[STABLE] The capacity for different resources of a node.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_node_status_condition": [
+{
+"help": "[STABLE] The condition of a cluster node.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_persistentvolume_annotations": [
+{
+"help": "Kubernetes annotations converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_persistentvolume_capacity_bytes": [
+{
+"help": "[STABLE] Persistentvolume capacity in bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_persistentvolume_created": [
+{
+"help": "Unix creation timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_persistentvolume_deletion_timestamp": [
+{
+"help": "Unix deletion timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_persistentvolume_info": [
+{
+"help": "[STABLE] Information about persistentvolume.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_persistentvolume_labels": [
+{
+"help": "[STABLE] Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_persistentvolume_status_phase": [
+{
+"help": "[STABLE] The phase indicates if a volume is available, bound to a claim, or released by a claim.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_persistentvolumeclaim_annotations": [
+{
+"help": "Kubernetes annotations converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_persistentvolumeclaim_created": [
+{
+"help": "Unix creation timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_persistentvolumeclaim_deletion_timestamp": [
+{
+"help": "Unix deletion timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_persistentvolumeclaim_info": [
+{
+"help": "[STABLE] Information about persistent volume claim.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_persistentvolumeclaim_labels": [
+{
+"help": "[STABLE] Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_persistentvolumeclaim_resource_requests_storage_bytes": [
+{
+"help": "[STABLE] The capacity of storage requested by the persistent volume claim.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_persistentvolumeclaim_status_condition": [
+{
+"help": "Information about status of different conditions of persistent volume claim.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_persistentvolumeclaim_status_phase": [
+{
+"help": "[STABLE] The phase the persistent volume claim is currently in.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_annotations": [
+{
+"help": "Kubernetes annotations converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_completion_time": [
+{
+"help": "[STABLE] Completion time in unix timestamp for a pod.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_container_info": [
+{
+"help": "[STABLE] Information about a container in a pod.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_container_resource_limits": [
+{
+"help": "The number of requested limit resource by a container. It is recommended to use the kube_pod_resource_limits metric exposed by kube-scheduler instead, as it is more precise.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_container_resource_requests": [
+{
+"help": "The number of requested request resource by a container. It is recommended to use the kube_pod_resource_requests metric exposed by kube-scheduler instead, as it is more precise.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_container_state_started": [
+{
+"help": "[STABLE] Start time in unix timestamp for a pod container.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_container_status_last_terminated_exitcode": [
+{
+"help": "Describes the exit code for the last container in terminated state.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_container_status_ready": [
+{
+"help": "[STABLE] Describes whether the containers readiness check succeeded.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_container_status_restarts_total": [
+{
+"help": "[STABLE] The number of container restarts per container.",
+"type": "counter",
+"unit": ""
+}
+],
+"kube_pod_container_status_running": [
+{
+"help": "[STABLE] Describes whether the container is currently in running state.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_container_status_terminated": [
+{
+"help": "[STABLE] Describes whether the container is currently in terminated state.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_container_status_waiting": [
+{
+"help": "[STABLE] Describes whether the container is currently in waiting state.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_created": [
+{
+"help": "[STABLE] Unix creation timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_deletion_timestamp": [
+{
+"help": "Unix deletion timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_info": [
+{
+"help": "[STABLE] Information about pod.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_init_container_info": [
+{
+"help": "[STABLE] Information about an init container in a pod.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_init_container_status_ready": [
+{
+"help": "[STABLE] Describes whether the init containers readiness check succeeded.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_init_container_status_restarts_total": [
+{
+"help": "[STABLE] The number of restarts for the init container.",
+"type": "counter",
+"unit": ""
+}
+],
+"kube_pod_init_container_status_running": [
+{
+"help": "[STABLE] Describes whether the init container is currently in running state.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_init_container_status_terminated": [
+{
+"help": "[STABLE] Describes whether the init container is currently in terminated state.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_init_container_status_waiting": [
+{
+"help": "[STABLE] Describes whether the init container is currently in waiting state.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_labels": [
+{
+"help": "[STABLE] Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_runtimeclass_name_info": [
+{
+"help": "The runtimeclass associated with the pod.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_spec_volumes_persistentvolumeclaims_info": [
+{
+"help": "[STABLE] Information about persistentvolumeclaim volumes in a pod.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_start_time": [
+{
+"help": "[STABLE] Start time in unix timestamp for a pod.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_status_container_ready_time": [
+{
+"help": "Readiness achieved time in unix timestamp for a pod containers.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_status_initialized_time": [
+{
+"help": "Initialized time in unix timestamp for a pod.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_status_phase": [
+{
+"help": "[STABLE] The pods current phase.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_status_qos_class": [
+{
+"help": "The pods current qosClass.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_status_ready": [
+{
+"help": "[STABLE] Describes whether the pod is ready to serve requests.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_status_ready_time": [
+{
+"help": "Readiness achieved time in unix timestamp for a pod.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_status_reason": [
+{
+"help": "The pod status reasons",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_status_scheduled": [
+{
+"help": "[STABLE] Describes the status of the scheduling process for the pod.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_status_scheduled_time": [
+{
+"help": "[STABLE] Unix timestamp when pod moved into scheduled status",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_pod_status_unschedulable": [
+{
+"help": "[STABLE] Describes the unschedulable status for the pod.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_replicaset_annotations": [
+{
+"help": "Kubernetes annotations converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_replicaset_created": [
+{
+"help": "[STABLE] Unix creation timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_replicaset_labels": [
+{
+"help": "[STABLE] Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_replicaset_spec_replicas": [
+{
+"help": "[STABLE] Number of desired pods for a ReplicaSet.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_replicaset_status_fully_labeled_replicas": [
+{
+"help": "[STABLE] The number of fully labeled replicas per ReplicaSet.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_replicaset_status_ready_replicas": [
+{
+"help": "[STABLE] The number of ready replicas per ReplicaSet.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_replicaset_status_replicas": [
+{
+"help": "[STABLE] The number of replicas per ReplicaSet.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_resourcequota_annotations": [
+{
+"help": "Kubernetes annotations converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_resourcequota_created": [
+{
+"help": "[STABLE] Unix creation timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_resourcequota_labels": [
+{
+"help": "[STABLE] Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_secret_annotations": [
+{
+"help": "Kubernetes annotations converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_secret_created": [
+{
+"help": "[STABLE] Unix creation timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_secret_info": [
+{
+"help": "[STABLE] Information about secret.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_secret_labels": [
+{
+"help": "[STABLE] Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_service_annotations": [
+{
+"help": "Kubernetes annotations converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_service_created": [
+{
+"help": "[STABLE] Unix creation timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_service_info": [
+{
+"help": "[STABLE] Information about service.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_service_labels": [
+{
+"help": "[STABLE] Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_statefulset_annotations": [
+{
+"help": "Kubernetes annotations converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_statefulset_created": [
+{
+"help": "[STABLE] Unix creation timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_statefulset_labels": [
+{
+"help": "[STABLE] Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_statefulset_replicas": [
+{
+"help": "[STABLE] Number of desired pods for a StatefulSet.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_statefulset_status_replicas": [
+{
+"help": "[STABLE] The number of replicas per StatefulSet.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_statefulset_status_replicas_available": [
+{
+"help": "The number of available replicas per StatefulSet.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_statefulset_status_replicas_current": [
+{
+"help": "[STABLE] The number of current replicas per StatefulSet.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_statefulset_status_replicas_ready": [
+{
+"help": "[STABLE] The number of ready replicas per StatefulSet.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_statefulset_status_replicas_updated": [
+{
+"help": "[STABLE] The number of updated replicas per StatefulSet.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_storageclass_annotations": [
+{
+"help": "Kubernetes annotations converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_storageclass_created": [
+{
+"help": "[STABLE] Unix creation timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_storageclass_info": [
+{
+"help": "[STABLE] Information about storageclass.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_storageclass_labels": [
+{
+"help": "[STABLE] Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_volumeattachment_created": [
+{
+"help": "Unix creation timestamp",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_volumeattachment_info": [
+{
+"help": "Information about volumeattachment.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_volumeattachment_labels": [
+{
+"help": "Kubernetes labels converted to Prometheus labels.",
+"type": "gauge",
+"unit": ""
+}
+],
+"kube_volumeattachment_status_attached": [
+{
+"help": "Information about volumeattachment.",
+"type": "gauge",
+"unit": ""
+}
+],
+"machine_cpu_cores": [
+{
+"help": "Number of logical CPU cores.",
+"type": "gauge",
+"unit": ""
+}
+],
+"machine_cpu_physical_cores": [
+{
+"help": "Number of physical CPU cores.",
+"type": "gauge",
+"unit": ""
+}
+],
+"machine_cpu_sockets": [
+{
+"help": "Number of CPU sockets.",
+"type": "gauge",
+"unit": ""
+}
+],
+"machine_memory_bytes": [
+{
+"help": "Amount of memory installed on the machine.",
+"type": "gauge",
+"unit": ""
+}
+],
+"machine_scrape_error": [
+{
+"help": "1 if there was an error while getting machine metrics, 0 otherwise.",
+"type": "gauge",
+"unit": ""
+}
+],
+"machine_swap_bytes": [
+{
+"help": "Amount of swap memory available on the machine.",
+"type": "gauge",
+"unit": ""
+}
+]
+}

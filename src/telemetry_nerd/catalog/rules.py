@@ -38,6 +38,10 @@ _DECLARED_UNITS = {
     "by": "B",
     "byte": "B",
     "bytes": "B",
+    "hz": "Hz",
+    "w": "W",
+    "j": "J",
+    "cel": "°C",
     "ratio": "ratio",
     "percent": "%",
     "%": "%",
@@ -49,6 +53,12 @@ _SUFFIX_UNITS = (
     ("_microseconds", "us"),
     ("_nanoseconds", "ns"),
     ("_bytes", "B"),
+    ("_hertz", "Hz"),
+    ("_watts", "W"),
+    ("_joules", "J"),
+    ("_volts", "V"),
+    ("_amperes", "A"),
+    ("_celsius", "°C"),
     ("_ratio", "ratio"),
     ("_percent", "%"),
 )
@@ -158,7 +168,7 @@ def derive_claims(
             ClaimSpec("histogram_family", members, "rule", 0.95 if kind == "classic" else 0.9, why)
         )
 
-    if unit in ("s", "ms", "us", "ns", "B", "count"):
+    if unit in ("s", "ms", "us", "ns", "B", "Hz", "W", "J", "count"):
         out.append(ClaimSpec("bounds", "≥0", "rule", 0.7, rule))
     elif unit == "ratio":
         out.append(ClaimSpec("bounds", "[0,1]", "rule", 0.6, rule))

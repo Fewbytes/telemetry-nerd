@@ -231,3 +231,10 @@ def test_classify_catalog_claim():
     assert classify("user", "catalog.claimed") == "intentional"
     assert classify("claude", "catalog.claimed") == "internal"
     assert classify("system", "catalog.relearned") == "internal"
+
+
+def test_differently_worded_descriptions_are_not_conflicts(store):
+    store.put_claim("vm", "m", claim("description", "Seconds spent.", "metadata"))
+    store.put_claim("vm", "m", claim("description", "Time spent, in seconds.", "pack"))
+    e = store.entry("vm", "m")
+    assert len(e.claims["description"]) == 2 and e.conflicts() == {}

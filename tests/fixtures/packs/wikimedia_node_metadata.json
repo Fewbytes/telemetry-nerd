@@ -1,0 +1,1024 @@
+{
+"node_boot_time_seconds": [
+{
+"help": "Node boot time, in unixtime.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_context_switches_total": [
+{
+"help": "Total number of context switches.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_cpu_core_throttles_total": [
+{
+"help": "Number of times this CPU core has been throttled.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_cpu_frequency_max_hertz": [
+{
+"help": "Maximum CPU thread frequency in hertz.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_cpu_frequency_min_hertz": [
+{
+"help": "Minimum CPU thread frequency in hertz.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_cpu_guest_seconds_total": [
+{
+"help": "Seconds the CPUs spent in guests (VMs) for each mode.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_cpu_package_throttles_total": [
+{
+"help": "Number of times this CPU package has been throttled.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_cpu_scaling_frequency_hertz": [
+{
+"help": "Current scaled CPU thread frequency in hertz.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_cpu_scaling_frequency_max_hertz": [
+{
+"help": "Maximum scaled CPU thread frequency in hertz.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_cpu_scaling_frequency_min_hertz": [
+{
+"help": "Minimum scaled CPU thread frequency in hertz.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_cpu_seconds_total": [
+{
+"help": "Seconds the CPUs spent in each mode.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_disk_io_now": [
+{
+"help": "The number of I/Os currently in progress.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_disk_io_time_seconds_total": [
+{
+"help": "Total seconds spent doing I/Os.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_disk_io_time_weighted_seconds_total": [
+{
+"help": "The weighted # of seconds spent doing I/Os.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_disk_read_bytes_total": [
+{
+"help": "The total number of bytes read successfully.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_disk_read_time_seconds_total": [
+{
+"help": "The total number of seconds spent by all reads.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_disk_reads_completed_total": [
+{
+"help": "The total number of reads completed successfully.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_disk_reads_merged_total": [
+{
+"help": "The total number of reads merged.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_disk_write_time_seconds_total": [
+{
+"help": "This is the total number of seconds spent by all writes.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_disk_writes_completed_total": [
+{
+"help": "The total number of writes completed successfully.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_disk_writes_merged_total": [
+{
+"help": "The number of writes merged.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_disk_written_bytes_total": [
+{
+"help": "The total number of bytes written successfully.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_edac_correctable_errors_total": [
+{
+"help": "Total correctable memory errors.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_entropy_available_bits": [
+{
+"help": "Bits of available entropy.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_entropy_pool_size_bits": [
+{
+"help": "Bits of entropy pool.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_exporter_build_info": [
+{
+"help": "A metric with a constant '1' value labeled by version, revision, branch, goversion from which node_exporter was built, and the goos and goarch for the build.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_filefd_allocated": [
+{
+"help": "File descriptor statistics: allocated.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_filefd_maximum": [
+{
+"help": "File descriptor statistics: maximum.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_filesystem_avail_bytes": [
+{
+"help": "Filesystem space available to non-root users in bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_filesystem_device_error": [
+{
+"help": "Whether an error occurred while getting statistics for the given device.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_filesystem_files": [
+{
+"help": "Filesystem total file nodes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_filesystem_files_free": [
+{
+"help": "Filesystem total free file nodes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_filesystem_free_bytes": [
+{
+"help": "Filesystem free space in bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_filesystem_readonly": [
+{
+"help": "Filesystem read-only status.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_filesystem_size_bytes": [
+{
+"help": "Filesystem size in bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_forks_total": [
+{
+"help": "Total number of forks.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_hwmon_temp_celsius": [
+{
+"help": "Hardware monitor for temperature (input)",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_hwmon_temp_crit_celsius": [
+{
+"help": "Hardware monitor for temperature (crit)",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_hwmon_temp_max_celsius": [
+{
+"help": "Hardware monitor for temperature (max)",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_intr_total": [
+{
+"help": "Total number of interrupts serviced.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_load1": [
+{
+"help": "1m load average.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_load15": [
+{
+"help": "15m load average.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_load5": [
+{
+"help": "5m load average.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Active_anon_bytes": [
+{
+"help": "Memory information field Active_anon_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Active_bytes": [
+{
+"help": "Memory information field Active_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Active_file_bytes": [
+{
+"help": "Memory information field Active_file_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_AnonHugePages_bytes": [
+{
+"help": "Memory information field AnonHugePages_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_AnonPages_bytes": [
+{
+"help": "Memory information field AnonPages_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Bounce_bytes": [
+{
+"help": "Memory information field Bounce_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Buffers_bytes": [
+{
+"help": "Memory information field Buffers_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Cached_bytes": [
+{
+"help": "Memory information field Cached_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_CmaFree_bytes": [
+{
+"help": "Memory information field CmaFree_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_CmaTotal_bytes": [
+{
+"help": "Memory information field CmaTotal_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_CommitLimit_bytes": [
+{
+"help": "Memory information field CommitLimit_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Committed_AS_bytes": [
+{
+"help": "Memory information field Committed_AS_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_DirectMap1G_bytes": [
+{
+"help": "Memory information field DirectMap1G_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_DirectMap2M_bytes": [
+{
+"help": "Memory information field DirectMap2M_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_DirectMap4k_bytes": [
+{
+"help": "Memory information field DirectMap4k_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Dirty_bytes": [
+{
+"help": "Memory information field Dirty_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_FileHugePages_bytes": [
+{
+"help": "Memory information field FileHugePages_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_FilePmdMapped_bytes": [
+{
+"help": "Memory information field FilePmdMapped_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_HardwareCorrupted_bytes": [
+{
+"help": "Memory information field HardwareCorrupted_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Hugepagesize_bytes": [
+{
+"help": "Memory information field Hugepagesize_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Hugetlb_bytes": [
+{
+"help": "Memory information field Hugetlb_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Inactive_anon_bytes": [
+{
+"help": "Memory information field Inactive_anon_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Inactive_bytes": [
+{
+"help": "Memory information field Inactive_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Inactive_file_bytes": [
+{
+"help": "Memory information field Inactive_file_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_KReclaimable_bytes": [
+{
+"help": "Memory information field KReclaimable_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_KernelStack_bytes": [
+{
+"help": "Memory information field KernelStack_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Mapped_bytes": [
+{
+"help": "Memory information field Mapped_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_MemAvailable_bytes": [
+{
+"help": "Memory information field MemAvailable_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_MemFree_bytes": [
+{
+"help": "Memory information field MemFree_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_MemTotal_bytes": [
+{
+"help": "Memory information field MemTotal_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Mlocked_bytes": [
+{
+"help": "Memory information field Mlocked_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_NFS_Unstable_bytes": [
+{
+"help": "Memory information field NFS_Unstable_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_PageTables_bytes": [
+{
+"help": "Memory information field PageTables_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Percpu_bytes": [
+{
+"help": "Memory information field Percpu_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_SReclaimable_bytes": [
+{
+"help": "Memory information field SReclaimable_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_SUnreclaim_bytes": [
+{
+"help": "Memory information field SUnreclaim_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_SecPageTables_bytes": [
+{
+"help": "Memory information field SecPageTables_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_ShmemHugePages_bytes": [
+{
+"help": "Memory information field ShmemHugePages_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_ShmemPmdMapped_bytes": [
+{
+"help": "Memory information field ShmemPmdMapped_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Shmem_bytes": [
+{
+"help": "Memory information field Shmem_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Slab_bytes": [
+{
+"help": "Memory information field Slab_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_SwapCached_bytes": [
+{
+"help": "Memory information field SwapCached_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_SwapFree_bytes": [
+{
+"help": "Memory information field SwapFree_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_SwapTotal_bytes": [
+{
+"help": "Memory information field SwapTotal_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Unaccepted_bytes": [
+{
+"help": "Memory information field Unaccepted_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Unevictable_bytes": [
+{
+"help": "Memory information field Unevictable_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_VmallocChunk_bytes": [
+{
+"help": "Memory information field VmallocChunk_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_VmallocTotal_bytes": [
+{
+"help": "Memory information field VmallocTotal_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_VmallocUsed_bytes": [
+{
+"help": "Memory information field VmallocUsed_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_WritebackTmp_bytes": [
+{
+"help": "Memory information field WritebackTmp_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Writeback_bytes": [
+{
+"help": "Memory information field Writeback_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Zswap_bytes": [
+{
+"help": "Memory information field Zswap_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_memory_Zswapped_bytes": [
+{
+"help": "Memory information field Zswapped_bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_netstat_TcpExt_ListenDrops": [
+{
+"help": "Statistic TcpExtListenDrops.",
+"type": "unknown",
+"unit": ""
+}
+],
+"node_netstat_TcpExt_ListenOverflows": [
+{
+"help": "Statistic TcpExtListenOverflows.",
+"type": "unknown",
+"unit": ""
+}
+],
+"node_netstat_Tcp_OutSegs": [
+{
+"help": "Statistic TcpOutSegs.",
+"type": "unknown",
+"unit": ""
+}
+],
+"node_netstat_Tcp_RetransSegs": [
+{
+"help": "Statistic TcpRetransSegs.",
+"type": "unknown",
+"unit": ""
+}
+],
+"node_netstat_Udp_InErrors": [
+{
+"help": "Statistic UdpInErrors.",
+"type": "unknown",
+"unit": ""
+}
+],
+"node_network_mtu_bytes": [
+{
+"help": "Network device property: mtu_bytes",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_network_receive_bytes_total": [
+{
+"help": "Network device statistic receive_bytes.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_network_receive_drop_total": [
+{
+"help": "Network device statistic receive_drop.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_network_receive_errs_total": [
+{
+"help": "Network device statistic receive_errs.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_network_receive_packets_total": [
+{
+"help": "Network device statistic receive_packets.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_network_speed_bytes": [
+{
+"help": "Network device property: speed_bytes",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_network_transmit_bytes_total": [
+{
+"help": "Network device statistic transmit_bytes.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_network_transmit_drop_total": [
+{
+"help": "Network device statistic transmit_drop.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_network_transmit_errs_total": [
+{
+"help": "Network device statistic transmit_errs.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_network_transmit_packets_total": [
+{
+"help": "Network device statistic transmit_packets.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_network_up": [
+{
+"help": "Value is 1 if operstate is 'up', 0 otherwise.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_nf_conntrack_entries": [
+{
+"help": "Number of currently allocated flow entries for connection tracking.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_nf_conntrack_entries_limit": [
+{
+"help": "Maximum size of connection tracking table.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_os_info": [
+{
+"help": "A metric with a constant '1' value labeled by build_id, id, id_like, image_id, image_version, name, pretty_name, variant, variant_id, version, version_codename, version_id.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_pressure_cpu_waiting_seconds_total": [
+{
+"help": "Total time in seconds that processes have waited for CPU time",
+"type": "counter",
+"unit": ""
+}
+],
+"node_pressure_io_stalled_seconds_total": [
+{
+"help": "Total time in seconds no process could make progress due to IO congestion",
+"type": "counter",
+"unit": ""
+}
+],
+"node_pressure_io_waiting_seconds_total": [
+{
+"help": "Total time in seconds that processes have waited due to IO congestion",
+"type": "counter",
+"unit": ""
+}
+],
+"node_pressure_memory_stalled_seconds_total": [
+{
+"help": "Total time in seconds no process could make progress due to memory congestion",
+"type": "counter",
+"unit": ""
+}
+],
+"node_pressure_memory_waiting_seconds_total": [
+{
+"help": "Total time in seconds that processes have waited for memory",
+"type": "counter",
+"unit": ""
+}
+],
+"node_processes_max_processes": [
+{
+"help": "Number of max PIDs limit",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_processes_max_threads": [
+{
+"help": "Limit of threads in the system",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_processes_pids": [
+{
+"help": "Number of PIDs",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_processes_threads": [
+{
+"help": "Allocated threads in system",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_procs_blocked": [
+{
+"help": "Number of processes blocked waiting for I/O to complete.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_procs_running": [
+{
+"help": "Number of processes in runnable state.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_schedstat_running_seconds_total": [
+{
+"help": "Number of seconds CPU spent running a process.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_schedstat_waiting_seconds_total": [
+{
+"help": "Number of seconds spent by processing waiting for this CPU.",
+"type": "counter",
+"unit": ""
+}
+],
+"node_scrape_collector_duration_seconds": [
+{
+"help": "node_exporter: Duration of a collector scrape.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_scrape_collector_success": [
+{
+"help": "node_exporter: Whether a collector succeeded.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_sockstat_TCP_alloc": [
+{
+"help": "Number of TCP sockets in state alloc.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_sockstat_TCP_inuse": [
+{
+"help": "Number of TCP sockets in state inuse.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_sockstat_UDP_inuse": [
+{
+"help": "Number of UDP sockets in state inuse.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_softnet_dropped_total": [
+{
+"help": "Number of dropped packets",
+"type": "counter",
+"unit": ""
+}
+],
+"node_softnet_times_squeezed_total": [
+{
+"help": "Number of times processing packets ran out of quota",
+"type": "counter",
+"unit": ""
+}
+],
+"node_textfile_mtime_seconds": [
+{
+"help": "Unixtime mtime of textfiles successfully read.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_textfile_scrape_error": [
+{
+"help": "1 if there was an error opening or reading a file, 0 otherwise",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_time_seconds": [
+{
+"help": "System time in seconds since epoch (1970).",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_time_zone_offset_seconds": [
+{
+"help": "System time zone offset in seconds.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_timex_offset_seconds": [
+{
+"help": "Time offset in between local system and reference clock.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_timex_sync_status": [
+{
+"help": "Is clock synchronized to a reliable server (1 = yes, 0 = no).",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_uname_info": [
+{
+"help": "Labeled system information as provided by the uname system call.",
+"type": "gauge",
+"unit": ""
+}
+],
+"node_vmstat_oom_kill": [
+{
+"help": "/proc/vmstat information field oom_kill.",
+"type": "unknown",
+"unit": ""
+}
+],
+"node_vmstat_pgmajfault": [
+{
+"help": "/proc/vmstat information field pgmajfault.",
+"type": "unknown",
+"unit": ""
+}
+],
+"node_vmstat_pswpin": [
+{
+"help": "/proc/vmstat information field pswpin.",
+"type": "unknown",
+"unit": ""
+}
+],
+"node_vmstat_pswpout": [
+{
+"help": "/proc/vmstat information field pswpout.",
+"type": "unknown",
+"unit": ""
+}
+]
+}

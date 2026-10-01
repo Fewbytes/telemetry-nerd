@@ -50,6 +50,10 @@ def by(claims, origin="rule"):
         ("build_info", {"additivity_series": "none"}),
         ("go_gc_duration_nanoseconds_total", {"type": "counter", "unit": "ns", "bounds": "≥0"}),
         ("uptime_milliseconds_total", {"unit": "ms"}),
+        ("node_cpu_frequency_hertz", {"unit": "Hz", "bounds": "≥0"}),
+        ("node_hwmon_temp_celsius", {"unit": "°C"}),
+        ("kepler_energy_joules_total", {"unit": "J", "type": "counter"}),
+        ("power_watts", {"unit": "W", "bounds": "≥0"}),
         ("http.server.duration_seconds", {"unit": "s", "bounds": "≥0"}),
         ("traces_spanmetrics_latency", {"unit": "s", "type": "histogram", "bounds": "≥0"}),
         ("traces_service_graph_request_server_seconds_sum", {"unit": "s"}),
@@ -75,6 +79,7 @@ def test_metadata_claims_and_unit_normalization():
     got = by(derive_claims("m", info), "metadata")
     assert got == {"type": "gauge", "unit": "s", "description": "How long it takes"}
     assert normalize_unit("By") == "B" and normalize_unit("percent") == "%"
+    assert normalize_unit("Hz") == "Hz" and normalize_unit("Cel") == "°C"
     assert normalize_unit("1") is None and normalize_unit("{request}") is None
     assert normalize_unit(None) is None
 

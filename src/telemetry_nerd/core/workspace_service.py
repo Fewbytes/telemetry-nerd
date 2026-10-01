@@ -6,7 +6,7 @@ import functools
 import inspect
 import json
 from collections.abc import Callable, Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from telemetry_nerd.catalog.models import (
@@ -18,6 +18,7 @@ from telemetry_nerd.catalog.models import (
     RelearnDiff,
     validate_value,
 )
+from telemetry_nerd.catalog.packs import PackIndex, builtin_packs
 from telemetry_nerd.catalog.rules import Facts, derive_claims, facts_from_claims, facts_from_name
 from telemetry_nerd.catalog.store import CatalogStore
 from telemetry_nerd.channel.format import describe_event
@@ -80,6 +81,7 @@ class WorkspaceService:
     log: EventLog
     catalog: CatalogStore
     clock: Callable[[], int] = now_ms
+    packs: PackIndex = field(default_factory=builtin_packs)
 
     # annotations --------------------------------------------------------
     @atomic
@@ -336,7 +338,10 @@ class WorkspaceService:
         rows = [
             (m.name, spec.to_claim(ts))
             for m in discovery.metrics
-            for spec in derive_claims(m.name, m, discovery.histograms)
+            for spec in [
+                *derive_claims(m.name, m, discovery.histograms),
+                *self.packs.claims_for(m.name),
+            ]
         ]
         changed = self.catalog.put_claims_bulk(source, rows)
         summary = {
