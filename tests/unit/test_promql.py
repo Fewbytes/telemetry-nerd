@@ -5,7 +5,8 @@ import respx
 from telemetry_nerd.model.series import series_id
 from telemetry_nerd.model.time import TimeRange
 from telemetry_nerd.sources.base import LimitExceeded, Limits, SourceError, SourceUnavailable
-from telemetry_nerd.sources.promql import PromQLSource, is_selector
+from telemetry_nerd.sources.promql import USER_AGENT, PromQLSource, is_selector
+from telemetry_nerd.sources.spec import AuthRef, MissingSecret, SourceSpec
 
 BASE = "http://vm.test"
 RNG = TimeRange(1_700_000_040_000, 1_700_000_160_000)
@@ -302,3 +303,81 @@ async def test_malformed_success_body_is_source_error_with_hint(body):
     with pytest.raises(SourceError) as exc:
         await PromQLSource("vm", BASE).fetch("up", RNG, 60_000)
     assert exc.value.hint
+
+
+@respx.mock
+async def test_from_spec_sends_user_agent_and_auth():
+    route = respx.get(**ROUTE).mock(return_value=httpx.Response(200, json=matrix([])))
+    spec = SourceSpec(name="s", url=BASE, auth=AuthRef(env="TN_T"))
+    src = PromQLSource.from_spec(spec, environ={"TN_T": "tok"})
+    await src.fetch("up", RNG, 60_000)
+    sent = route.calls.last.request.headers
+    assert sent["user-agent"] == USER_AGENT
+    assert sent["authorization"] == "Bearer tok"
+    await src.aclose()
+
+
+def test_from_spec_missing_secret_raises():
+    spec = SourceSpec(name="s", url=BASE, auth=AuthRef(env="TN_NOPE"))
+    with pytest.raises(MissingSecret):
+        PromQLSource.from_spec(spec, environ={})
+
+
+def test_from_spec_maps_politeness_and_resolution():
+    spec = SourceSpec.model_validate(
+        {
+            "name": "s",
+            "url": BASE,
+            "flavor": "victoriametrics",
+            "resolution_ms": 20_000,
+            "politeness": {"timeout_s": 90},
+        }
+    )
+    src = PromQLSource.from_spec(spec, environ={})
+    assert src.flavor == "victoriametrics"
+    assert src.resolution_ms == 20_000
+    assert src.limits.timeout_s == 90
+    assert src.name == "s"
+
+
+@respx.mock
+async def test_probe_reports_buildinfo():
+    respx.get(host="vm.test", path="/api/v1/status/buildinfo").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "data": {"application": "Grafana Mimir", "version": "2.15.0"},
+            },
+        )
+    )
+    out = await PromQLSource("s", BASE).probe()
+    assert out["reachable"] is True
+    assert out["application"] == "Grafana Mimir"
+    assert out["version"] == "2.15.0"
+    assert isinstance(out["latency_ms"], int)
+
+
+@respx.mock
+async def test_probe_falls_back_to_trivial_query_when_buildinfo_hidden():
+    respx.get(host="vm.test", path="/api/v1/status/buildinfo").mock(
+        return_value=httpx.Response(404, text="404 page not found")
+    )
+    q = respx.get(host="vm.test", path="/api/v1/query").mock(
+        return_value=httpx.Response(
+            200, json={"status": "success", "data": {"resultType": "scalar", "result": [0, "1"]}}
+        )
+    )
+    out = await PromQLSource("s", BASE).probe()
+    assert out["reachable"] is True
+    assert q.calls.last.request.url.params["query"] == "1"
+
+
+@respx.mock
+async def test_probe_unreachable_raises_source_unavailable():
+    respx.get(host="vm.test", path="/api/v1/status/buildinfo").mock(
+        side_effect=httpx.ConnectError("refused")
+    )
+    respx.get(host="vm.test", path="/api/v1/query").mock(side_effect=httpx.ConnectError("refused"))
+    with pytest.raises(SourceUnavailable):
+        await PromQLSource("s", BASE).probe()

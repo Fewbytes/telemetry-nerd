@@ -29,6 +29,9 @@ class FakeSource:
         self.resolution_ms = resolution_ms
         self.calls = 0
 
+    async def probe(self) -> dict:
+        return {"reachable": True, "latency_ms": 0, "version": "fake"}
+
     async def fetch(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
         self.calls += 1
         ts = list(range(rng.start_ms, rng.end_ms + 1, step_ms))

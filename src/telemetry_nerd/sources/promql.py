@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import math
+import os
 import re
+import time
+from collections.abc import Mapping
+from importlib.metadata import PackageNotFoundError, version
 from typing import Literal
 
 import httpx
@@ -19,11 +23,24 @@ from telemetry_nerd.model.series import (
 )
 from telemetry_nerd.model.time import TimeRange, format_duration
 from telemetry_nerd.sources.base import LimitExceeded, Limits, SourceError, SourceUnavailable
+from telemetry_nerd.sources.gate import Gate
+from telemetry_nerd.sources.spec import SourceSpec
 
 MAX_STEPS_PER_QUERY = 11_000
 _SELECTOR = re.compile(r"^\s*[a-zA-Z_:][a-zA-Z0-9_:]*\s*(\{[^{}]*\})?\s*$")
 _DEFAULT_LIMITS = Limits()
 _FIELDS = ("avg", "min", "max", "count")
+
+
+def _user_agent() -> str:
+    try:
+        ver = version("telemetry-nerd")
+    except PackageNotFoundError:
+        ver = "dev"
+    return f"telemetry-nerd/{ver} (+https://github.com/Fewbytes/telemtry-nerd)"
+
+
+USER_AGENT = _user_agent()
 
 
 def _malformed(message: str) -> SourceError:
@@ -46,13 +63,42 @@ class PromQLSource:
         resolution_ms: int = 15_000,
         limits: Limits = _DEFAULT_LIMITS,
         client: httpx.AsyncClient | None = None,
+        headers: Mapping[str, str] | None = None,
+        gate: Gate | None = None,
     ) -> None:
         self.name = name
         self.base_url = base_url.rstrip("/")
         self.flavor = flavor
         self.resolution_ms = resolution_ms
         self.limits = limits
+        self._owns_client = client is None
         self._client = client or httpx.AsyncClient()
+        self._headers = {"User-Agent": USER_AGENT, **(headers or {})}
+        self._gate = gate or Gate()
+
+    @classmethod
+    def from_spec(
+        cls,
+        spec: SourceSpec,
+        environ: Mapping[str, str] = os.environ,
+        client: httpx.AsyncClient | None = None,
+    ) -> PromQLSource:
+        """Build a live source; resolves the secret reference now (raises MissingSecret)."""
+        headers = spec.auth.headers(environ) if spec.auth else {}
+        return cls(
+            spec.name,
+            spec.url,
+            flavor=spec.flavor,
+            resolution_ms=spec.resolution_ms,
+            limits=Limits(timeout_s=spec.politeness.timeout_s),
+            client=client,
+            headers=headers,
+            gate=Gate(spec.politeness.max_concurrency, spec.politeness.min_interval_ms),
+        )
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self._client.aclose()
 
     @property
     def identity(self) -> str:
@@ -148,19 +194,13 @@ class PromQLSource:
         )
         return FetchResult(buckets, series, partial=partial)
 
-    async def _query_range(self, query: str, rng: TimeRange, step_ms: int) -> list[dict]:
-        params = {
-            "query": query,
-            "start": f"{rng.start_ms / 1000:.3f}",
-            "end": f"{rng.end_ms / 1000:.3f}",
-            "step": f"{step_ms / 1000:g}s",
-        }
-        if self.flavor == "victoriametrics":
-            # Our cache owns freshness; VM's response cache would hide late samples.
-            params["nocache"] = "1"
-        url = f"{self.base_url}/api/v1/query_range"
+    async def _get_json(self, path: str, params: dict[str, str]) -> dict:
+        url = f"{self.base_url}{path}"
         try:
-            resp = await self._client.get(url, params=params, timeout=self.limits.timeout_s)
+            async with self._gate.slot():
+                resp = await self._client.get(
+                    url, params=params, headers=self._headers, timeout=self.limits.timeout_s
+                )
         except httpx.TimeoutException as e:
             raise SourceUnavailable(
                 f"query timed out after {self.limits.timeout_s}s",
@@ -190,7 +230,19 @@ class PromQLSource:
                 f"query failed: {body.get('error', f'HTTP {resp.status_code}')}",
                 hint="check PromQL/MetricsQL syntax and metric names",
             )
-        data = body.get("data")
+        return body
+
+    async def _query_range(self, query: str, rng: TimeRange, step_ms: int) -> list[dict]:
+        params = {
+            "query": query,
+            "start": f"{rng.start_ms / 1000:.3f}",
+            "end": f"{rng.end_ms / 1000:.3f}",
+            "step": f"{step_ms / 1000:g}s",
+        }
+        if self.flavor == "victoriametrics":
+            # Our cache owns freshness; VM's response cache would hide late samples.
+            params["nocache"] = "1"
+        data = (await self._get_json("/api/v1/query_range", params)).get("data")
         if not isinstance(data, dict) or "resultType" not in data or "result" not in data:
             raise _malformed("response missing data.resultType / data.result")
         if data["resultType"] != "matrix":
@@ -201,3 +253,16 @@ class PromQLSource:
         if not isinstance(data["result"], list):
             raise _malformed("data.result is not a list")
         return data["result"]
+
+    async def probe(self) -> dict:
+        """Cheap reachability check: buildinfo, else a trivial instant query
+        (some proxies hide status endpoints)."""
+        t0 = time.monotonic()
+        info: dict[str, str] = {}
+        try:
+            data = (await self._get_json("/api/v1/status/buildinfo", {})).get("data")
+            if isinstance(data, dict):
+                info = {k: str(data[k]) for k in ("application", "version") if k in data}
+        except SourceError:
+            await self._get_json("/api/v1/query", {"query": "1"})
+        return {"reachable": True, "latency_ms": round((time.monotonic() - t0) * 1000), **info}
