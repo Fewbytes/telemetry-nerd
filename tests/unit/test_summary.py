@@ -117,3 +117,56 @@ def test_partial_meta_flags_caveat():
     m = DatasetMeta(**{**meta(end=0).to_dict(), "partial": 2})
     out = run(m, result([(0, "a", 1.0, 1.0, 1.0, 1)], {"a": "a"}))
     assert "partial" in out["caveats"]
+
+
+def _quantile_inputs(counts, values, n_min=200):
+    import pyarrow as pa
+
+    from telemetry_nerd.datasets.store import DatasetMeta
+    from telemetry_nerd.model.series import BUCKET_SCHEMA, SERIES_SCHEMA, FetchResult
+
+    ts = [1_000 + 60_000 * i for i in range(len(values))]
+    buckets = pa.table(
+        {
+            "ts_ms": ts,
+            "series_id": ["a"] * len(ts),
+            "avg": values,
+            "min": values,
+            "max": values,
+            "count": counts,
+        },
+        schema=BUCKET_SCHEMA,
+    )
+    series = pa.table({"series_id": ["a"], "labels": ['{"r":"x"}']}, schema=SERIES_SCHEMA)
+    meta = DatasetMeta(
+        id="d1",
+        source="s",
+        expr="histogram_quantile(0.95, x)",
+        start_ms=ts[0],
+        end_ms=ts[-1],
+        step_ms=60_000,
+        resolution_ms=15_000,
+        representation="quantile",
+        quantile=0.95,
+        n_min=n_min,
+    )
+    return meta, FetchResult(buckets, series)
+
+
+def test_quantile_summary_reports_n_and_never_averages():
+    meta, result = _quantile_inputs([10, 300, 500, 12], [34.0, 0.6, 0.7, 0.2])
+    s = summarize(meta, result, now_ms=10**13, settle_ms=0)
+    [row] = s["series"]
+    assert s["quantile"] == 0.95 and s["n_min"] == 200
+    assert row["mean"] is None
+    assert row["n_total"] == 822
+    assert (row["meaningful_buckets"], row["buckets"]) == (2, 4)
+    assert (row["min"], row["max"]) == (0.6, 0.7)  # the n=10 spike is not a meaningful p95
+    assert "low_count" in s["caveats"]
+
+
+def test_quantile_summary_without_n():
+    meta, result = _quantile_inputs([1, 1], [0.3, 0.4], n_min=None)
+    s = summarize(meta, result, now_ms=10**13, settle_ms=0)
+    assert "n_unknown" in s["caveats"]
+    assert (s["series"][0]["min"], s["series"][0]["max"]) == (0.3, 0.4)
