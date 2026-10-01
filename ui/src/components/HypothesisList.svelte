@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { postJSON, type Hypothesis } from "../lib/api";
+  import { postJSON, type Finding, type Hypothesis } from "../lib/api";
+  import { supportingCaveats } from "../lib/caveats";
   import { isSendKey } from "../lib/keys";
 
-  let { hypotheses = [] }: { hypotheses?: Hypothesis[] } = $props();
+  let { hypotheses = [], findings = [] }: { hypotheses?: Hypothesis[]; findings?: Finding[] } = $props();
 
   let notes = $state<Record<string, string>>({});
   let busy = $state<string | null>(null);
@@ -37,6 +38,9 @@
         {#each h.evidence_against as fid (fid)}<a href="#finding-{fid}">{fid}</a>{/each}
       </span>
     </div>
+    {#each supportingCaveats(h, findings) as c (c.finding + c.caveat)}
+      <div class="caveats"><span class="chip caveat">{c.finding}: {c.caveat}</span></div>
+    {/each}
     <div class="controls">
       <span class="chip status-chip {h.status}">{h.status}</span>
       <select

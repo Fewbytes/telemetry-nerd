@@ -42,6 +42,9 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
 - Scope every claim: source, selector, time range, step. Do not generalize beyond it.
 - `workspace_get` shows open threads (user questions awaiting you), hypotheses, findings.
   `reply` answers a thread. `hypothesis_create`/`hypothesis_update` track explanations.
+- A thread reply cannot be evidence. When data or a user reply contradicts a hypothesis,
+  also call `finding_create(hypothesis=<id>, stance="against", ...)` and, if the verdict
+  changes, `hypothesis_update`: that is how the contradiction surfaces on the hypothesis.
 - `finding_create` needs a scope and evidence; a statistic needs an interval unless exact.
 - `gap_create` records a signal you wish existed. `annotate` marks events/regions/thresholds.
 - `workspace_activity` lists what the user did since a sequence number.
