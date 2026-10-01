@@ -413,6 +413,11 @@ async def test_fetch_values_is_a_plain_query_range():
 
 @respx.mock
 async def test_fetch_histogram_classic_is_one_query():
+    respx.get(host="vm.test", path="/api/v1/query").mock(
+        return_value=httpx.Response(
+            200, json={"status": "success", "data": {"resultType": "vector", "result": []}}
+        )
+    )  # the le-layout probe: nothing to compare
     route = respx.get(**ROUTE).mock(
         return_value=httpx.Response(
             200,
@@ -459,6 +464,11 @@ async def test_fetch_histogram_on_a_plain_series_explains():
 
 @respx.mock
 async def test_fetch_histogram_series_limit():
+    respx.get(host="vm.test", path="/api/v1/query").mock(
+        return_value=httpx.Response(
+            200, json={"status": "success", "data": {"resultType": "vector", "result": []}}
+        )
+    )  # the le-layout probe: nothing to compare
     respx.get(**ROUTE).mock(
         return_value=httpx.Response(
             200,
@@ -487,3 +497,40 @@ async def test_query_on_native_histograms_explains_instead_of_malformed():
         with pytest.raises(SourceError, match="native histograms") as e:
             await call("sum(rate(lat[5m]))", RNG, 60_000)
         assert "query_distribution" in (e.value.hint or "")
+
+
+@respx.mock
+async def test_mixed_le_layouts_in_a_group_are_refused_with_a_hint():
+    respx.get(**ROUTE).mock(
+        return_value=httpx.Response(
+            200,
+            json=matrix(
+                [
+                    {"metric": {"le": "1"}, "values": [[1_700_000_100, "1"]]},
+                    {"metric": {"le": "+Inf"}, "values": [[1_700_000_100, "2"]]},
+                ]
+            ),
+        )
+    )
+    instant = {"host": "vm.test", "path": "/api/v1/query"}
+    respx.get(**instant).mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "status": "success",
+                "data": {
+                    "resultType": "vector",
+                    "result": [
+                        {"metric": {"le": "1"}, "value": [1, "2"]},
+                        {
+                            "metric": {"le": "+Inf"},
+                            "value": [1, "3"],
+                        },  # one series has no le=1 bucket
+                    ],
+                },
+            },
+        )
+    )
+    with pytest.raises(SourceError, match="different bucket layouts") as e:
+        await PromQLSource("s", BASE).fetch_histogram("x_bucket", [], RNG, 60_000)
+    assert "group by" in (e.value.hint or "")

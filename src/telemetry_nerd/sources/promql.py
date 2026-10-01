@@ -334,6 +334,8 @@ class PromQLSource:
             dist = from_matrix(self.name, result, expr=expr)
         except (ValueError, TypeError, IndexError, KeyError) as e:
             raise SourceError(str(e), hint=_HIST_HINT) from e
+        if dist.scheme.kind == "classic":
+            await self._check_le_layouts(selector, by, rng.end_ms)
         if dist.series.num_rows > self.limits.max_series:
             raise LimitExceeded(
                 f"histogram has {dist.series.num_rows} series (limit {self.limits.max_series})",
@@ -345,6 +347,41 @@ class PromQLSource:
                 hint="use a coarser step or a shorter range",
             )
         return dist
+
+    async def _check_le_layouts(self, selector: str, by: Sequence[str], at_ms: int) -> None:
+        """`sum by (le)` across series with different bucket layouts gives bogus cumulative counts
+        (4ok.17). Within each `by` group every series must carry the same le set: refuse otherwise.
+        Best effort: a source that cannot answer the probe is not blocked."""
+        probe = f"count by (le{''.join(', ' + b for b in by)}) ({selector})"
+        try:
+            body = await self._get_json(
+                "/api/v1/query", {"query": probe, "time": f"{at_ms / 1000:.3f}"}
+            )
+        except SourceError:
+            return
+        data = body.get("data")
+        items = data.get("result") if isinstance(data, dict) else None
+        if not isinstance(items, list):
+            return
+        counts: dict[tuple, set[float]] = {}
+        for item in items:
+            try:
+                m = item["metric"]
+                counts.setdefault(tuple(m.get(b, "") for b in by), set()).add(
+                    float(item["value"][1])
+                )
+            except (KeyError, TypeError, ValueError, IndexError):
+                return
+        bad = [g for g, c in counts.items() if len(c) > 1]
+        if bad:
+            raise SourceError(
+                "series in the same group have different bucket layouts (le sets), so summing by le "
+                "gives wrong cumulative counts",
+                hint=(
+                    "group by the label that distinguishes the layouts (by=[...], e.g. job or "
+                    "service), or narrow the selector to one layout"
+                ),
+            )
 
     async def _query_range(self, query: str, rng: TimeRange, step_ms: int) -> list[dict]:
         params = {
