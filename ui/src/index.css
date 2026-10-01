@@ -1,11 +1,19 @@
 :root {
-  --bg: #ffffff; --fg: #1a1a1a; --muted: #666; --border: #ddd; --badge: #fff4d6; --error: #b00020;
+  --bg: #ffffff; --fg: #1a1a1a; --muted: #666; --border: #ddd; --badge: #fff4d6; --error: #b00020; --grid: #e8e8e8;
   --ann-claude: #8250df; --ann-user: #e69f00;
   font-family: system-ui, sans-serif; color: var(--fg); background: var(--bg);
 }
+/* Explicit user choice wins over the OS preference (theme store sets
+   data-theme on <html>); keep the two dark token blocks identical. */
+:root[data-theme="dark"] {
+  --bg: #16181d; --fg: #e6e6e6; --muted: #9aa0a6; --border: #333; --badge: #3a3220; --error: #ff6b6b; --grid: #2a2d33;
+  --ann-claude: #a371f7; --ann-user: #f0a232;
+}
 @media (prefers-color-scheme: dark) {
-  :root { --bg: #16181d; --fg: #e6e6e6; --muted: #9aa0a6; --border: #333; --badge: #3a3220; --error: #ff6b6b;
-  --ann-claude: #a371f7; --ann-user: #f0a232; }
+  :root:not([data-theme="light"]) {
+    --bg: #16181d; --fg: #e6e6e6; --muted: #9aa0a6; --border: #333; --badge: #3a3220; --error: #ff6b6b; --grid: #2a2d33;
+    --ann-claude: #a371f7; --ann-user: #f0a232;
+  }
 }
 body { margin: 0; background: var(--bg); }
 main { max-width: 1200px; margin: 0 auto; padding: 16px; }
@@ -18,6 +26,13 @@ main { max-width: 1200px; margin: 0 auto; padding: 16px; }
 .empty { color: var(--muted); }
 .panel .answered-by { color: var(--muted); font-size: 0.85em; margin-left: 0.5em; }
 .panel button.close { margin-left: auto; background: none; border: none; font-size: 1.2em; cursor: pointer; color: var(--muted); }
+
+/* App header (title + theme toggle) */
+.app-header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.theme-toggle {
+  background: var(--bg); color: var(--fg); font: inherit; font-size: 12px;
+  border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px;
+}
 
 /* Two-column layout: panels | sidebar; one column under 900px */
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }

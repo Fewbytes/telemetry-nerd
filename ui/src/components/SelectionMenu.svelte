@@ -1,5 +1,6 @@
 <script lang="ts">
   import { postJSON } from "../lib/api";
+  import { isSendKey, sendHint } from "../lib/keys";
 
   let {
     panelId,
@@ -75,13 +76,30 @@
     <button type="button" disabled={busy} onclick={markEvent}>Mark event</button>
     <button type="button" disabled={busy} onclick={focus}>Focus</button>
   {:else if mode === "ask"}
-    <textarea bind:value={text} placeholder="Ask Claude about this selection" rows="3"></textarea>
+    <textarea
+      bind:value={text}
+      placeholder="Ask Claude about this selection — {sendHint()}"
+      rows="3"
+      onkeydown={(e) => {
+        if (!isSendKey(e)) return;
+        e.preventDefault();
+        if (!busy && text.trim()) ask();
+      }}
+    ></textarea>
     <div class="row">
       <button type="button" disabled={busy || !text.trim()} onclick={ask}>Send</button>
       <button type="button" onclick={() => (mode = "actions")}>Back</button>
     </div>
   {:else}
-    <input bind:value={label} placeholder="Region label" />
+    <input
+      bind:value={label}
+      placeholder="Region label"
+      onkeydown={(e) => {
+        if (!isSendKey(e)) return;
+        e.preventDefault();
+        if (!busy) markRegion();
+      }}
+    />
     <div class="row">
       <button type="button" disabled={busy} onclick={markRegion}>Save</button>
       <button type="button" onclick={() => (mode = "actions")}>Back</button>

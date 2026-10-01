@@ -1,5 +1,6 @@
 <script lang="ts">
   import { postJSON, type Hypothesis } from "../lib/api";
+  import { isSendKey } from "../lib/keys";
 
   let { hypotheses = [] }: { hypotheses?: Hypothesis[] } = $props();
 
@@ -53,6 +54,13 @@
         bind:value={notes[h.id]}
         placeholder="Optional note"
         aria-label="Status note for {h.id}"
+        onkeydown={(e) => {
+          // Cmd/Ctrl+Enter applies the currently selected status with the note
+          if (isSendKey(e) && busy !== h.id) {
+            e.preventDefault();
+            setStatus(h, h.status);
+          }
+        }}
       />
       <span class="badge author {h.author}">{h.author}</span>
     </div>

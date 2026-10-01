@@ -1,6 +1,7 @@
 <script lang="ts">
   import { postJSON, type Thread } from "../lib/api";
   import { fmtTime } from "../lib/format";
+  import { isSendKey, sendHint } from "../lib/keys";
 
   let { thread }: { thread: Thread } = $props();
 
@@ -10,7 +11,7 @@
 
   const send = () => {
     const t = text.trim();
-    if (!t) return;
+    if (busy || !t) return;
     busy = true;
     error = null;
     postJSON(`/api/threads/${thread.id}/messages`, { text: t })
@@ -41,8 +42,14 @@
     <textarea
       bind:value={text}
       rows="2"
-      placeholder="Reply…"
+      placeholder={sendHint()}
       aria-label="Reply to thread {thread.id}"
+      onkeydown={(e) => {
+        if (isSendKey(e)) {
+          e.preventDefault();
+          send();
+        }
+      }}
     ></textarea>
     <button type="button" disabled={busy || !text.trim()} onclick={send}>Send</button>
   </div>

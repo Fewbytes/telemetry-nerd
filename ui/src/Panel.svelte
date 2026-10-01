@@ -8,6 +8,7 @@
   import { toUplot } from "./chart/toUplot";
   import { measureFirstDraw } from "./chart/measureDraw";
   import { drawAnnotations, drawOps, readAnnotationColors } from "./chart/annotations";
+  import { plotColors, theme } from "./lib/theme.svelte";
   import SelectionMenu from "./components/SelectionMenu.svelte";
   import PanelThread from "./components/PanelThread.svelte";
 
@@ -67,7 +68,9 @@
     const el = plotEl;
     if (!data || !el) return;
     const anns = panelAnns; // tracked: rebuild the plot when annotations change
+    const mode = theme.effective; // tracked: rebuild the plot when the theme flips
     const colors = readAnnotationColors(el);
+    const { stroke, grid } = plotColors(el, mode);
     const dpr = window.devicePixelRatio || 1;
     const model = toUplot(data.series, {
       start: data.dataset.start_ms, end: data.dataset.end_ms, step: data.effective_step_ms,
@@ -81,7 +84,11 @@
             width, height: 260, series: model.series, bands: model.bands,
             tzDate: (ts: number) => uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"),
             scales: { x: { time: true } },
-            axes: [{}, { label: unit ?? "value (unit unknown)" }],
+            // axis/grid colors from CSS tokens so they follow the theme
+            axes: [
+              { stroke, grid: { stroke: grid }, ticks: { stroke: grid } },
+              { label: unit ?? "value (unit unknown)", stroke, grid: { stroke: grid }, ticks: { stroke: grid } },
+            ],
             // brush = x-only selection; we open a menu instead of zooming
             cursor: { drag: { setScale: false, x: true, y: false } },
             hooks: {

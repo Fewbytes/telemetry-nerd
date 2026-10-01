@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createWorkspace } from "./lib/workspace.svelte";
+  import { theme, type Theme } from "./lib/theme.svelte";
   import PanelView from "./Panel.svelte";
   import Sidebar from "./components/Sidebar.svelte";
 
@@ -24,7 +25,19 @@
 </script>
 
 <main>
-  <h1>Telemetry Nerd</h1>
+  <div class="app-header">
+    <h1>Telemetry Nerd</h1>
+    <select
+      class="theme-toggle"
+      value={theme.setting}
+      aria-label="Theme"
+      onchange={(e) => theme.set(e.currentTarget.value as Theme)}
+    >
+      <option value="system">system</option>
+      <option value="light">light</option>
+      <option value="dark">dark</option>
+    </select>
+  </div>
   {#if ws.error}<div class="error">{ws.error}</div>{/if}
   <div class="layout">
     <div class="panels">
