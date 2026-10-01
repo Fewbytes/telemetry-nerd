@@ -324,3 +324,36 @@ async def test_failed_notify_is_redelivered_after_reconnect(live_daemon):
         await _until(lambda: _delivered(live_daemon.url, 1))
         tg.cancel_scope.cancel()
     assert attempts[0] == attempts[1]
+
+
+# --- degraded start and lazy recovery (grd) ------------------------------------
+
+
+async def test_bridge_survives_daemon_down_at_start_and_recovers(tmp_path):
+    """Daemon unreachable at startup: bridge serves, calls error typed; recovers live (grd)."""
+    from tests.unit.conftest import _free_port, spawned_daemon
+
+    url = f"http://127.0.0.1:{_free_port()}"
+    bridge = build_bridge(url)
+    async with Client(bridge) as client:
+        # degraded start: no tools, typed error on calls — but the bridge is up
+        tools = (await client.list_tools()).tools
+        assert tools == []
+        res = await client.call_tool("workspace_get", {})
+        assert res.is_error
+        assert "daemon unreachable" in _text(res)
+
+        # the daemon comes up on the same URL mid-session
+        with spawned_daemon(url, tmp_path) as daemon:
+            await _until(lambda: _daemon_healthy(daemon.url))
+            tools = (await client.list_tools()).tools
+            assert [t.name for t in tools]
+            res = await client.call_tool("workspace_get", {})
+            assert not res.is_error
+
+
+def _daemon_healthy(url: str) -> bool:
+    try:
+        return httpx.get(f"{url}/api/health", timeout=0.5).status_code == 200
+    except httpx.HTTPError:
+        return False

@@ -1,16 +1,20 @@
 """The stdio MCP bridge: proxies the daemon's tools and delivers the Claude Code channel.
 
 `telemetry-nerd bridge` runs this server over stdio for one Claude session. Tools are
-fetched from the daemon's `/mcp` at startup and forwarded verbatim; user workspace
-events are pushed to Claude as `notifications/claude/channel` (an experimental
-capability this server declares — NOT claude/channel/permission).
+fetched from the daemon's `/mcp` and forwarded verbatim; user workspace events are pushed
+to Claude as `notifications/claude/channel` (an experimental capability this server
+declares — NOT claude/channel/permission).
+
+The daemon connection is lazy and reconnecting (grd): if the daemon is unreachable at
+startup the bridge still serves (empty tool list, typed errors on calls) and reconnects
+on demand when a listing or call arrives, so the session recovers without a restart.
 """
 
 from __future__ import annotations
 
 import logging
 from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any, cast
 
 import anyio
@@ -115,32 +119,96 @@ def _error_result(message: str) -> CallToolResult:
     return CallToolResult(content=[TextContent(type="text", text=message)], is_error=True)
 
 
+class DaemonUnavailable(RuntimeError):
+    """The daemon's /mcp could not be reached for this operation."""
+
+
+class DaemonProxy:
+    """Reconnecting proxy for the daemon's MCP endpoint (grd).
+
+    Each listing or call opens a fresh bounded client session, so the bridge survives
+    a daemon that is down at startup and recovers without a restart when it returns:
+    failures raise DaemonUnavailable (typed error for the caller) and the next
+    operation retries. `tools` holds the last-known tool list, empty until the first
+    successful fetch.
+    """
+
+    def __init__(self, daemon_url: str) -> None:
+        self._mcp_url = f"{daemon_url.rstrip('/')}/mcp"
+        self._tools: list[Tool] = []
+
+    @property
+    def tools(self) -> list[Tool]:
+        return self._tools
+
+    @asynccontextmanager
+    async def _session(self) -> AsyncIterator[Client]:
+        """One client session; connect failures become DaemonUnavailable.
+
+        No outer timeout here: the mcp client's internal task group must outlive this
+        scope, so connection bounding is left to the transport's own httpx timeouts.
+        """
+        try:
+            client = Client(self._mcp_url)
+            await client.__aenter__()
+        except Exception as e:
+            raise DaemonUnavailable(f"could not connect to {self._mcp_url}: {e}") from e
+        try:
+            yield client
+        finally:
+            with suppress(Exception):
+                await client.__aexit__(None, None, None)
+
+    async def refresh(self) -> list[Tool]:
+        """Fetch the daemon's tool list, keeping last-known on failure (grd)."""
+        try:
+            async with self._session() as client:
+                self._tools = await _daemon_tools(client)
+        except DaemonUnavailable as e:
+            log.warning("bridge: daemon unreachable (%s); serving last-known tools", e)
+        except Exception as e:  # noqa: BLE001 — transport died mid-list; retry next time
+            log.warning("bridge: tool fetch failed (%s); serving last-known tools", e)
+        return self._tools
+
+    async def call_tool(self, name: str, arguments: dict[str, Any] | None) -> CallToolResult:
+        """Forward one tool call in a fresh session."""
+        async with self._session() as client:
+            return await client.call_tool(name, arguments)
+
+
 def build_bridge(daemon_url: str, *, delivery: ChannelDelivery | None = None) -> Server:
     """A low-level stdio MCP server proxying the daemon's tools, with the channel capability."""
     delivery = delivery if delivery is not None else ChannelDelivery()
-    daemon: list[Client] = []  # singleton holder; set when the lifespan runs
-    tools: list[Tool] = []
+    proxy = DaemonProxy(daemon_url)
 
     @asynccontextmanager
     async def lifespan(server: Server) -> AsyncIterator[dict[str, Any]]:
-        async with Client(f"{daemon_url.rstrip('/')}/mcp") as client:
-            daemon.append(client)
-            tools.extend(await _daemon_tools(client))
-            log.info("bridge: proxying %d tools from %s/mcp", len(tools), daemon_url)
-            yield {}
+        await proxy.refresh()  # best effort at startup; retried lazily on demand (grd)
+        if proxy.tools:
+            log.info("bridge: proxying %d tools from %s/mcp", len(proxy.tools), daemon_url)
+        else:
+            log.warning(
+                "bridge: daemon %s unreachable at startup; serving degraded until it returns",
+                daemon_url,
+            )
+        yield {}
 
     async def on_list_tools(ctx: ServerRequestContext[Any], params: Any) -> ListToolsResult:
         delivery.observe(ctx)
-        return ListToolsResult(tools=tools)
+        await proxy.refresh()
+        return ListToolsResult(tools=proxy.tools)
 
     async def on_call_tool(
         ctx: ServerRequestContext[Any], params: CallToolRequestParams
     ) -> CallToolResult:
         delivery.observe(ctx)
-        if not daemon:
-            return _error_result("bridge not started (hint: the daemon connection is missing)")
         try:
-            res = await daemon[0].call_tool(params.name, params.arguments)
+            res = await proxy.call_tool(params.name, params.arguments)
+        except DaemonUnavailable as e:
+            return _error_result(
+                f"daemon unreachable: {e} (hint: is the daemon running? calls succeed "
+                "once it is back, no bridge restart needed)"
+            )
         except MCPError as e:
             return _error_result(f"{e} (hint: the daemon rejected the call; check the arguments)")
         except httpx.HTTPError as e:
