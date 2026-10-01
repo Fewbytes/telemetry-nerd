@@ -97,3 +97,35 @@ export function hitTest(l: HeatLayout, px: number, py: number): number | null {
 }
 
 export const timeAt = (l: HeatLayout, px: number): number => l.x0Ms + (px / l.width) * l.spanMs;
+
+/** Observations needed for a meaningful quantile: n >= 10/(1-q) (port of exprkind.min_samples). */
+export const minSamples = (q: number): number => Math.ceil(Number((10 / (1 - q)).toFixed(6)));
+
+export interface QuantileCell { ts: number; lo: number | null; hi: number | null; cell: number }
+
+/**
+ * Per column, the SOURCE bucket that contains quantile q (never an interpolated value),
+ * only where the column has enough observations for q to mean anything.
+ */
+export function quantileCells(s: HeatSeries, q: number): QuantileCell[] {
+  const need = minSamples(q);
+  const byTs = new Map<number, number[]>();
+  s.cells.ts.forEach((t, i) => byTs.set(t, [...(byTs.get(t) ?? []), i]));
+  const out: QuantileCell[] = [];
+  s.ts.forEach((t, k) => {
+    const n = s.n[k];
+    const idx = byTs.get(t);
+    if (!idx || !(n >= need)) return;
+    idx.sort((a, b) => (s.cells.hi[a] ?? Infinity) - (s.cells.hi[b] ?? Infinity) || (s.cells.lo[a] ?? -Infinity) - (s.cells.lo[b] ?? -Infinity));
+    const total = idx.reduce((acc, i) => acc + s.cells.c[i], 0);
+    let acc = 0;
+    for (const i of idx) {
+      acc += s.cells.c[i];
+      if (acc >= q * total * (1 - 1e-12)) {
+        out.push({ ts: t, lo: s.cells.lo[i], hi: s.cells.hi[i], cell: i });
+        break;
+      }
+    }
+  });
+  return out;
+}

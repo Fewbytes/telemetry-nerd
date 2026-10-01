@@ -1,14 +1,16 @@
 <script lang="ts">
-  import { colormap } from "../chart/colormap";
-  import { hitTest, layoutHeatmap, STRIP_PX, timeAt, type HeatLayout } from "../chart/heatmap";
+  import { colormap, type ColormapName } from "../chart/colormap";
+  import { hitTest, layoutHeatmap, quantileCells, STRIP_PX, timeAt, type HeatLayout } from "../chart/heatmap";
   import { fmtValue, valueTicks } from "../chart/axis";
   import { seriesName } from "../chart/toUplot";
   import { fmtRange } from "../lib/format";
   import type { HeatmapPanelData, HeatSeries } from "../lib/api";
 
-  let { data, series, width, height, unit, color = "count", onRendered, onBrush }: {
+  let { data, series, width, height, unit, color = "count", cmapName = "viridis", overlayQ = null, onRendered, onBrush }: {
     data: HeatmapPanelData; series: HeatSeries; width: number; height: number; unit: string | null;
     color?: "count" | "density";
+    cmapName?: ColormapName;
+    overlayQ?: number | null; // outline the bucket holding this quantile, where n is enough
     onRendered: (ms: number, cells: number) => void;
     onBrush: (b: { x0: number; x1: number; left: number; width: number }) => void;
   } = $props();
@@ -21,7 +23,7 @@
   let layout: HeatLayout | null = null;
   const plotW = $derived(Math.max(10, width - AXIS_LEFT));
   const plotH = $derived(Math.max(10, height - AXIS_BOTTOM));
-  const cmap = colormap("viridis");
+  const cmap = $derived(colormap(cmapName));
 
   function hatch(ctx: CanvasRenderingContext2D, x: number, w: number, h: number) {
     ctx.save(); ctx.beginPath(); ctx.rect(x, 0, w, h); ctx.clip(); ctx.beginPath();
@@ -56,17 +58,34 @@
       ctx.fillRect(r.x, r.y, Math.max(r.w, 1), Math.max(r.h, 1));
     }
     ctx.globalAlpha = 1;
+    if (overlayQ !== null) {
+      // the quantile's source bucket, outlined: an honest range, never an interpolated line
+      for (const qc of quantileCells(series, overlayQ)) {
+        const r = l.rects.find((x) => x.cell === qc.cell);
+        if (!r) continue;
+        ctx.lineWidth = 2; ctx.strokeStyle = "#000";
+        ctx.strokeRect(r.x + 1, r.y + 1, Math.max(r.w - 2, 1), Math.max(r.h - 2, 1));
+        ctx.lineWidth = 1; ctx.strokeStyle = "#fff";
+        ctx.strokeRect(r.x + 1.5, r.y + 1.5, Math.max(r.w - 3, 1), Math.max(r.h - 3, 1));
+      }
+    }
     ctx.fillStyle = v("--warn");
     for (const m of l.lowN) ctx.fillRect(m.x, plotH - 3, m.w, 3);
     // value axis
     ctx.fillStyle = v("--muted"); ctx.font = "10px sans-serif"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
-    for (const t of valueTicks(l.axis)) ctx.fillText(fmtValue(t, unit), -4, plotH - l.axis.pos(t));
+    for (const t of valueTicks(l.axis)) {
+      const y = plotH - l.axis.pos(t);
+      // a tick too close to an open-bucket strip label would overprint it
+      if ((l.axis.over && y < STRIP_PX + 8) || (l.axis.under && y > plotH - STRIP_PX - 8)) continue;
+      ctx.fillText(fmtValue(t, unit), -4, y);
+    }
     if (l.axis.over) ctx.fillText(`> ${fmtValue(l.axis.max, unit)}`, -4, STRIP_PX / 2);
     if (l.axis.under) ctx.fillText(`≤ ${fmtValue(l.axis.min, unit)}`, -4, plotH - STRIP_PX / 2);
     // time axis: 5 ticks
-    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    ctx.textBaseline = "top";
     for (let i = 0; i <= 4; i++) {
       const x = (plotW * i) / 4;
+      ctx.textAlign = i === 4 ? "right" : "center"; // keep the last label inside the canvas
       ctx.fillText(new Date(timeAt(l, x)).toISOString().slice(11, 16), x, plotH + 2);
     }
     if (drag) { ctx.fillStyle = "rgba(127,127,127,0.25)"; ctx.fillRect(Math.min(drag.from, drag.to), 0, Math.abs(drag.to - drag.from), plotH); }

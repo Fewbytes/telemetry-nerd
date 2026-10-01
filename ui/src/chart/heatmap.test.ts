@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hitTest, layoutHeatmap, timeAt, valueAxis } from "./heatmap";
+import { hitTest, layoutHeatmap, minSamples, quantileCells, timeAt, valueAxis } from "./heatmap";
 import type { HeatSeries } from "../lib/api";
 
 const series = (cells: [number, number | null, number | null, number][], ts: number[], n: number[]): HeatSeries => ({
@@ -58,5 +58,24 @@ describe("layoutHeatmap", () => {
     expect(hitTest(l, r.x + 1, r.y + 1)).toBe(0);
     expect(hitTest(l, 250, 50)).toBeNull();
     expect(timeAt(l, 150)).toBe(90_000);
+  });
+});
+
+describe("quantileCells", () => {
+  it("minSamples follows 10/(1-q)", () => {
+    expect([0.5, 0.95, 0.99].map(minSamples)).toEqual([20, 200, 1000]);
+  });
+  it("emits the source bucket holding q only where n is enough", () => {
+    const s = series(
+      [[60_000, 1, 10, 280], [60_000, 10, null, 20], [120_000, 1, 10, 100], [120_000, 10, null, 50]],
+      [60_000, 120_000],
+      [300, 150],
+    );
+    expect(quantileCells(s, 0.95).map((c) => [c.ts, c.lo, c.hi])).toEqual([[60_000, 10, null]]); // 280/300 < 0.95
+    expect(quantileCells(s, 0.5).map((c) => [c.ts, c.lo, c.hi])).toEqual([[60_000, 1, 10], [120_000, 1, 10]]);
+  });
+  it("skips columns with n below the rule (n = 150 has no p95)", () => {
+    const s = series([[60_000, 1, 10, 150]], [60_000], [150]);
+    expect(quantileCells(s, 0.95)).toEqual([]);
   });
 });

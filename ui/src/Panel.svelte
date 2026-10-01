@@ -102,6 +102,10 @@
       .catch((e) => (error = String(e)));
   };
   let heatCells = $state(0);
+  // heatmap view options (local UI state): colour by count or by share of the column, colormap, quantile outline
+  let heatColor = $state<"count" | "density">("count");
+  let heatCmap = $state<"viridis" | "cividis">("viridis");
+  let heatQ = $state<number | null>(null);
 
   const close = () => closePanel(panel.id).catch((e) => (error = String(e)));
 
@@ -211,10 +215,24 @@
         <HeatmapPlot
           data={hm} series={s} width={fetchWidth} height={hm.facet_height_px}
           unit={hm.panel.spec.y.unit}
+          color={heatColor} cmapName={heatCmap} overlayQ={heatQ}
           onRendered={(ms, cells) => onFacetRendered(i, hm.series.length, ms, cells, hm.facet_height_px)}
           onBrush={(b) => (selection = { ...b, top: i * (hm.facet_height_px + 14) + 4 })}
         />
       {/each}
+      <div class="legend heat-controls">
+        colour:
+        <button type="button" class:on={heatColor === "count"} onclick={() => (heatColor = "count")}>count</button>
+        <button type="button" class:on={heatColor === "density"} onclick={() => (heatColor = "density")}>share of column</button>
+        · colormap:
+        <button type="button" class:on={heatCmap === "viridis"} onclick={() => (heatCmap = "viridis")}>viridis</button>
+        <button type="button" class:on={heatCmap === "cividis"} onclick={() => (heatCmap = "cividis")}>cividis</button>
+        · outline bucket holding:
+        {#each [null, 0.5, 0.95, 0.99] as q (q)}
+          <button type="button" class:on={heatQ === q} onclick={() => (heatQ = q)}>{q === null ? "none" : `p${q * 100}`}</button>
+        {/each}
+        {#if heatQ !== null}(only where n ≥ {Math.ceil(10 / (1 - heatQ))}){/if}
+      </div>
       <div class="legend">colour: count per bucket per {fmtStep(hm.effective_step_ms)} (log scale) · hatched: no data · dimmed: n &lt; {hm.dataset.n_min}{#if hm.value_merge > 1} · {hm.value_merge} source buckets per row{/if}</div>
     {/if}
     {#if data && data.kind === "histogram"}
