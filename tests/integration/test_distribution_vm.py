@@ -50,3 +50,25 @@ async def test_classic_histogram_distribution_end_to_end(vm_url, tmp_path):
         TimeRange(meta.start_ms, meta.end_ms), 60_000,
     )  # fmt: skip
     assert {round(r["avg"], 6) for r in counts.buckets.to_pylist()} == {600.0}
+
+
+VMRANGES = {"1.000e-01...1.136e-01": 5, "1.000e+00...1.136e+00": 1}  # increments per 15s scrape
+
+
+async def test_vmrange_histogram_distribution(vm_url, tmp_path):
+    t0 = (now_ms() - 2 * 3_600_000) // 60_000 * 60_000
+    push(vm_url, "".join(
+        exposition("tn_it_vm_seconds_bucket", {"vmrange": r, "job": "it"},
+                   [(t0 + i * 15_000, float(inc * i)) for i in range(480)])
+        for r, inc in VMRANGES.items()
+    ))  # fmt: skip
+    svc = await _service(vm_url, tmp_path)
+    out = await svc.query_distribution(
+        'tn_it_vm_seconds_bucket{job="it"}', start="now-100m", end="now-40m", step="1m", source="vm"
+    )
+    assert out["summary"]["buckets"].startswith("VictoriaMetrics vmrange, 18 per decade")
+    _, dist = svc.datasets.get_distribution(out["dataset"])
+    assert {c["n"] for c in dist.columns.to_pylist()} == {24.0}
+    assert sorted({(r["bucket_lo"], r["bucket_hi"]) for r in dist.rows.to_pylist()}) == [
+        (0.1, 0.1136), (1.0, 1.136)
+    ]  # fmt: skip

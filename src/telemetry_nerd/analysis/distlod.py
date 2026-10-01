@@ -61,10 +61,67 @@ def _edge_mapping(lo, hi, edges: tuple[float, ...], max_rows: int) -> tuple[Mapp
     return out, m
 
 
+def _native_mapping(lo, hi, max_rows: int) -> tuple[Mapping, int]:
+    """Coarsen to a lower schema: merge 2^k adjacent buckets on the coarsest schema's grid,
+    so buckets of different schemas in one series nest. Zero, negative and open buckets stay."""
+    spec: list[int | None] = []
+    for low, high in zip(lo, hi, strict=True):
+        ok = low > 0 and math.isfinite(high) and high > low
+        spec.append(round(-math.log2(math.log2(high / low))) if ok else None)
+    known = [s for s in spec if s is not None]
+    if not known:
+        return None, 1
+    fine, coarse = max(known), min(known)
+    idx = [
+        round(math.log2(high) * 2**fine) if s is not None else None
+        for high, s in zip(hi, spec, strict=True)
+    ]
+    finite = [i for i in idx if i is not None]
+    unit = 2 ** (fine - coarse)  # fine indices per coarsest bucket
+    span = (max(finite) - min(finite)) // unit + 1
+    m = 1 << max(0, math.ceil(math.log2(max(1.0, span / max_rows))))
+    if m == 1:
+        return None, 1
+    width = m * unit
+    out = []
+    for low, high, i in zip(lo, hi, idx, strict=True):
+        if i is None:
+            out.append((low, high))
+        else:
+            u = -(-i // width) * width
+            out.append((2.0 ** ((u - width) / 2**fine), 2.0 ** (u / 2**fine)))
+    return out, m
+
+
+def _vm_mapping(lo, hi, per_decade: int, max_rows: int) -> tuple[Mapping, int]:
+    idx = [
+        round(math.log10(high) * per_decade) if low > 0 and math.isfinite(high) else None
+        for low, high in zip(lo, hi, strict=True)
+    ]
+    finite = [i for i in idx if i is not None]
+    if not finite:
+        return None, 1
+    m = math.ceil((max(finite) - min(finite) + 1) / max_rows)
+    if m <= 1:
+        return None, 1
+    out = []
+    for low, high, i in zip(lo, hi, idx, strict=True):
+        if i is None:
+            out.append((low, high))
+        else:
+            u = -(-i // m) * m
+            out.append((10 ** ((u - m) / per_decade), 10 ** (u / per_decade)))
+    return out, m
+
+
 def _mapping(lo, hi, scheme: BucketScheme, max_rows: int) -> tuple[Mapping, int]:
     if scheme.kind in ("classic", "custom"):
         return _edge_mapping(lo, hi, scheme.edges, max_rows)
-    return None, 1  # native: Task 9; vmrange: Task 10
+    if scheme.kind == "native":
+        return _native_mapping(lo, hi, max_rows)
+    if scheme.kind == "vmrange" and scheme.per_decade:
+        return _vm_mapping(lo, hi, scheme.per_decade, max_rows)
+    return None, 1
 
 
 def merge_values(

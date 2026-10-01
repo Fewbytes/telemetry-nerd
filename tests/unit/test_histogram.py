@@ -3,7 +3,13 @@ import math
 import pytest
 
 from telemetry_nerd.analysis.exprkind import min_samples
-from telemetry_nerd.analysis.histogram import cumulative_to_buckets, from_matrix, histogram_expr
+from telemetry_nerd.analysis.histogram import (
+    cumulative_to_buckets,
+    from_matrix,
+    histogram_expr,
+    native_schema,
+    parse_vmrange,
+)
 from telemetry_nerd.model.distribution import DIST_N_MIN, BucketScheme
 from telemetry_nerd.model.series import series_id
 
@@ -132,3 +138,77 @@ def test_scheme_round_trip_and_description():
     assert BucketScheme.from_dict(s.to_dict()) == s
     assert s.describe() == "classic le buckets: 0.1, 1, 10"
     assert BucketScheme.from_dict(None).kind == "none"
+
+
+def b(i, schema=3):
+    return repr(2 ** (i / 2**schema))
+
+
+# Grafana Play, sum by (le, vmrange, cloud_region) (increase(traces_spanmetrics_latency{...}[1m])),
+# 2026-10-01T10:02Z (bounds are 2^(i/8): schema 3)
+NATIVE = [
+    {"metric": {"cloud_region": "ap-south-1"}, "histograms": [[1790848920, {
+        "count": "8.000800080008", "sum": "212.3",
+        "buckets": [[0, b(31), b(32), "2.0"], [0, b(39), b(40), "2.0"], [0, b(40), b(41), "4.0"]]}]]},
+    {"metric": {"cloud_region": "eu-west-1"}, "histograms": [[1790848920, {
+        "count": "5", "sum": "1.86",
+        "buckets": [[0, b(-14), b(-13), "1.25"], [0, b(-12), b(-11), "2.5"], [0, b(-10), b(-9), "1.25"]]}]]},
+]  # fmt: skip
+
+
+def test_native_matrix_uses_histogram_count_and_detects_schema():
+    d = from_matrix("play", NATIVE)
+    assert d.scheme == BucketScheme("native", schema=3)
+    ap = series_id("play", {"cloud_region": "ap-south-1"})
+    assert {c["series_id"]: c["n"] for c in d.columns.to_pylist()}[ap] == 8.000800080008
+    rows = [
+        (r["bucket_lo"], r["bucket_hi"], r["count"])
+        for r in d.rows.to_pylist()
+        if r["series_id"] == ap
+    ]
+    assert rows == [
+        (2 ** (31 / 8), 16.0, 2.0),
+        (2 ** (39 / 8), 32.0, 2.0),
+        (32.0, 2 ** (41 / 8), 4.0),
+    ]
+    assert "estimated_counts" in d.caveats
+
+
+def test_native_schema_detection():
+    assert native_schema([(2 ** (3 / 8), 2 ** (4 / 8)), (2 ** (1 / 4), 2 ** (2 / 4))]) == 2
+    assert native_schema([(-1e-128, 1e-128)]) is None  # zero bucket only
+    assert native_schema([(0.005, 0.01), (0.01, 0.025)]) is None  # custom (NHCB)
+    assert native_schema([(1.0, math.inf)]) is None
+
+
+def test_mixed_float_and_histogram_samples_are_refused():
+    with pytest.raises(ValueError, match="mixes"):
+        from_matrix(
+            "s", [{"metric": {}, "values": [[1, "1"]], "histograms": NATIVE[0]["histograms"]}]
+        )
+
+
+def test_parse_vmrange():
+    assert parse_vmrange("5.275e-02...5.995e-02") == (0.05275, 0.05995)
+    assert parse_vmrange("1.000e+18...+Inf") == (1e18, math.inf)
+    assert parse_vmrange("0...0") == (0.0, 0.0)
+    with pytest.raises(ValueError):
+        parse_vmrange("1..2")
+
+
+# dev VictoriaMetrics: sum by (vmrange) (histogram_over_time(tn_demo_latency_seconds[5m])), step 5m
+VMRANGE = [
+    {"metric": {"vmrange": "5.275e-02...5.995e-02"}, "values": [[1790865000, "19"]]},
+    {"metric": {"vmrange": "5.995e-02...6.813e-02"}, "values": [[1790864700, "10"], [1790865000, "38"]]},
+    {"metric": {"vmrange": "6.813e-02...7.743e-02"}, "values": [[1790864400, "46"], [1790864700, "50"], [1790865000, "3"]]},
+    {"metric": {"vmrange": "7.743e-02...8.799e-02"}, "values": [[1790864400, "14"]]},
+]  # fmt: skip
+
+
+def test_vmrange_columns_sum_the_present_ranges():
+    d = from_matrix("vm", VMRANGE)
+    assert d.scheme == BucketScheme("vmrange", per_decade=18)
+    assert [(c["ts_ms"], c["n"]) for c in d.columns.to_pylist()] == [
+        (1790864400000, 60.0), (1790864700000, 60.0), (1790865000000, 60.0)
+    ]  # fmt: skip
+    assert d.caveats == ()

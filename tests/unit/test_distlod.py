@@ -62,3 +62,31 @@ def test_merge_preserves_total_and_respects_the_row_budget(counts, max_rows):
     out, _ = merge_values(rows, BucketScheme("classic", edges=edges), max_rows)
     assert out["count"].sum() == sum(counts)
     assert out.height <= max_rows
+
+
+def test_native_merge_lowers_the_schema_exactly():
+    buckets = [(2 ** ((i - 1) / 8), 2 ** (i / 8)) for i in range(1, 9)]
+    out, m = merge_values(_rows(buckets, [1] * 8), BucketScheme("native", schema=3), 2)
+    assert m == 4
+    assert out.select("bucket_lo", "bucket_hi", "count").rows() == [
+        (1.0, 2**0.5, 4.0), (2**0.5, 2.0, 4.0)
+    ]  # fmt: skip
+
+
+def test_native_merge_nests_mixed_schemas_on_the_coarse_grid():
+    # one schema-2 bucket (2^(1/4), 2^(2/4)] and four schema-3 buckets, max 1 row
+    buckets = [(2 ** (2 / 8), 2 ** (4 / 8))] + [
+        (2 ** ((i - 1) / 8), 2 ** (i / 8)) for i in range(5, 9)
+    ]
+    out, _ = merge_values(_rows(buckets, [1] * 5), BucketScheme("native", schema=2), 1)
+    assert out.select("bucket_lo", "bucket_hi", "count").rows() == [(2 ** (0 / 8), 2.0, 5.0)]
+
+
+def test_vmrange_merge_groups_m_ranges():
+    g = 10 ** (1 / 18)
+    buckets = [(g ** (i - 1), g**i) for i in range(1, 7)] + [(0.0, 1e-9), (1e18, INF)]
+    out, m = merge_values(_rows(buckets, [1] * 8), BucketScheme("vmrange", per_decade=18), 3)
+    assert m == 2
+    assert out["count"].sum() == 8.0
+    finite = [r for r in out.select("bucket_lo", "bucket_hi").rows() if r[0] > 0 and r[1] < INF]
+    assert len(finite) == 3

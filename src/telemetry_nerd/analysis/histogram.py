@@ -16,6 +16,7 @@ import pyarrow as pa
 from telemetry_nerd.model.distribution import (
     COLUMN_SCHEMA,
     DIST_SCHEMA,
+    VM_PER_DECADE,
     BucketScheme,
     DistResult,
 )
@@ -68,6 +69,50 @@ def cumulative_to_buckets(
     return out, prev_c, problems
 
 
+def native_buckets(h: dict) -> tuple[list[Bucket], float]:
+    """One native histogram sample {count, sum, buckets: [[rule, lo, hi, count], ...]}.
+    n is the histogram's own count (histogram_count): it can differ from the bucket sum
+    (Play: 8.0008 vs 8.0). Boundary rule 0 = (lo, hi]; the zero bucket is [-z, z]."""
+    n = float(h["count"])
+    out: list[Bucket] = []
+    for _rule, lo, hi, c in h.get("buckets") or []:
+        c = float(c)
+        if math.isfinite(c) and c > 0:
+            out.append((float(lo), float(hi), c))
+    return out, n
+
+
+def native_schema(pairs) -> int | None:
+    """Coarsest exponential schema s (bucket growth 2^(2^-s)) with every bucket on the
+    2^(i * 2^-s) grid; None for custom bounds (NHCB). The zero bucket is ignored."""
+    schemas: set[int] = set()
+    for lo, hi in pairs:
+        if not (math.isfinite(lo) and math.isfinite(hi)):
+            return None
+        a, b = sorted((abs(lo), abs(hi)))
+        if a == 0 or a == b:
+            continue
+        s = -math.log2(math.log2(b / a))
+        if abs(s - round(s)) > 1e-6:
+            return None
+        idx = math.log2(b) * 2 ** round(s)
+        if abs(idx - round(idx)) > 1e-6:
+            return None
+        schemas.add(round(s))
+    return min(schemas) if schemas else None
+
+
+def parse_vmrange(text: str) -> tuple[float, float]:
+    """VictoriaMetrics bucket label "lo...hi" ("%.3e", "+Inf" allowed)."""
+    lo, sep, hi = text.partition("...")
+    if not sep:
+        raise ValueError(f"malformed vmrange {text!r}")
+    a, b = float(lo), float(hi)
+    if not a <= b:
+        raise ValueError(f"malformed vmrange {text!r}")
+    return a, b
+
+
 def _ts(value: object) -> int:
     return round(float(value) * 1000)  # type: ignore[arg-type]
 
@@ -95,8 +140,20 @@ def from_matrix(source: str, result: list[dict], expr: str = "") -> DistResult:
         le, vmrange = labels.pop("le", None), labels.pop("vmrange", None)
         sid = series_id(source, labels)
         labels_by_sid[sid] = labels
-        if "histograms" in item:
-            raise ValueError("native histograms are not supported yet")  # Task 9
+        if "histograms" in item and item.get("values"):
+            raise ValueError(
+                "a series mixes float and native histogram samples (migration?); narrow the selector or time range"
+            )
+        for sample in item.get("histograms") or []:
+            forms.add("native")
+            t = _ts(sample[0])
+            buckets, n = native_buckets(sample[1])
+            if not math.isfinite(n):
+                continue
+            cols[(sid, t)] = n
+            for lo, hi, c in buckets:
+                rows.append((t, sid, lo, hi, c))
+                pairs.add((lo, hi))
         for sample in item.get("values") or []:
             t, x = _ts(sample[0]), float(sample[1])
             if le is not None:
@@ -105,7 +162,13 @@ def from_matrix(source: str, result: list[dict], expr: str = "") -> DistResult:
                 les_by_sid.setdefault(sid, set()).add(edge)
                 classic.setdefault((sid, t), {})[edge] = x
             elif vmrange is not None:
-                raise ValueError("vmrange histograms are not supported yet")  # Task 10
+                forms.add("vmrange")
+                lo, hi = parse_vmrange(vmrange)
+                if not math.isfinite(x):
+                    continue
+                cols[(sid, t)] = cols.get((sid, t), 0.0) + x
+                if x > 0:
+                    rows.append((t, sid, lo, hi, x))
             else:
                 raise ValueError("not a histogram: a series has neither an le nor a vmrange label")
     caveats: set[str] = set()
@@ -133,7 +196,16 @@ def _scheme(
     if form == "classic":
         common = set.intersection(*les_by_sid.values()) if les_by_sid else set()
         return BucketScheme("classic", edges=tuple(sorted(e for e in common if math.isfinite(e))))
-    raise ValueError(f"unsupported histogram form {form}")  # Tasks 9-10
+    if form == "native":
+        schema = native_schema(pairs)
+        if schema is not None:
+            return BucketScheme("native", schema=schema)
+        return BucketScheme(
+            "custom", edges=tuple(sorted({e for p in pairs for e in p if math.isfinite(e)}))
+        )
+    if form == "vmrange":
+        return BucketScheme("vmrange", per_decade=VM_PER_DECADE)
+    raise ValueError(f"unsupported histogram form {form}")
 
 
 def _tables(rows, cols, labels_by_sid, scheme, expr, caveats) -> DistResult:
