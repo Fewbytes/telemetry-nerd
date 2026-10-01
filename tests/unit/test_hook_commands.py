@@ -6,10 +6,12 @@ stdout becomes session context, and a failing hook must never block the session.
 
 from __future__ import annotations
 
+import json
 import socket
 
 import httpx
 import pytest
+from websockets.sync.client import connect
 
 from telemetry_nerd import daemon
 from telemetry_nerd.cli import main
@@ -47,12 +49,25 @@ def test_pending_prints_wrapped_block_once(hook_env, live_daemon, capsys):
     assert capsys.readouterr().out == ""
 
 
-def test_pending_silent_when_channel_heartbeat_fresh(hook_env, live_daemon, capsys):
+def test_pending_silent_while_channel_bridge_live(hook_env, live_daemon, capsys):
     _ask(live_daemon.url)
-    r = httpx.post(f"{live_daemon.url}/api/channel/heartbeat", json={"consumer": "claude"})
-    assert r.status_code == 200
-    main(["pending"])
-    assert capsys.readouterr().out == ""
+    ws_url = live_daemon.url.replace("http://", "ws://") + "/ws/bridge?consumer=claude"
+    with connect(ws_url) as bridge:
+        bridge.send(json.dumps({"type": "hello", "mode": "channel"}))
+        bridge.send(json.dumps({"type": "ready"}))
+        assert json.loads(bridge.recv(timeout=5))["type"] == "deliver"
+        main(["pending"])
+        assert capsys.readouterr().out == ""
+
+
+def test_pending_delivers_while_bridge_in_hook_mode(hook_env, live_daemon, capsys):
+    _ask(live_daemon.url)
+    ws_url = live_daemon.url.replace("http://", "ws://") + "/ws/bridge?consumer=claude"
+    with connect(ws_url) as bridge:
+        bridge.send(json.dumps({"type": "hello", "mode": "hook"}))
+        bridge.send(json.dumps({"type": "ready"}))
+        main(["pending"])
+        assert "why the dip?" in capsys.readouterr().out
 
 
 def test_pending_silent_when_daemon_down(tmp_path, monkeypatch, capsys):

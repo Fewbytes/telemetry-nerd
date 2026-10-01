@@ -23,8 +23,9 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from telemetry_nerd.channel.format import format_channel
+from telemetry_nerd.channel.dispatch import ChannelDispatcher
 from telemetry_nerd.config import DEFAULT_ALLOWED_HOSTS
+from telemetry_nerd.core.presence import MODES
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.jsonsafe import finite
@@ -35,6 +36,8 @@ log = logging.getLogger(__name__)
 
 RENDER_BUDGET_MS = 100
 RENDER_POINTS_PER_PX = 2
+UI_CONSUMER = "claude"
+"""The channel consumer the UI reports presence and delivery state for."""
 
 
 class JSONResponse(_JSONResponse):
@@ -137,6 +140,8 @@ def create_app(
     mcp: MCPServer | None = None,
 ) -> Starlette:
     hosts = frozenset(h.strip("[]").lower() for h in allowed_hosts)
+    presence = service.presence
+    dispatch = ChannelDispatcher(service.log, presence)
 
     def origin_allowed(origin: str) -> bool:
         try:
@@ -178,8 +183,11 @@ def create_app(
             body = await _body(request, dataset=str, question=str)
         except _BadRequest as e:
             return _error(e.status, str(e), hint=e.hint)
+        unit = body.get("unit")
+        if unit is not None and not isinstance(unit, str):
+            return _error(400, "unit must be a string", hint='e.g. "s", "B", "req/s"')
         try:
-            res = service.show(body["dataset"], body["question"], actor="user")
+            res = service.show(body["dataset"], body["question"], actor="user", unit=unit)
         except ChartRejected as e:
             return _error(422, "chart rejected", issues=[i.model_dump() for i in e.issues])
         except NotFound as e:
@@ -232,35 +240,125 @@ def create_app(
                 return
         await websocket.accept()
         queue = service.log.subscribe()
+        changes = presence.subscribe()
         # Subscribed first, so nothing is lost between replay and live; dedupe by seq.
         last_sent = since
         while batch := service.log.since(last_sent):
             for event in batch:
                 await websocket.send_json(event.to_dict())
                 last_sent = event.seq
+        # Presence frames are control messages: no seq, never logged or replayed.
+        await websocket.send_json(dispatch.presence_frame(UI_CONSUMER))
 
         async def until_disconnect() -> None:
             while (await websocket.receive())["type"] != "websocket.disconnect":
                 pass
 
         reader = asyncio.ensure_future(until_disconnect())
+        getter = asyncio.ensure_future(queue.get())
+        changed = asyncio.ensure_future(changes.get())
         try:
             while True:
-                getter = asyncio.ensure_future(queue.get())
-                done, _ = await asyncio.wait({reader, getter}, return_when=asyncio.FIRST_COMPLETED)
+                done, _ = await asyncio.wait(
+                    {reader, getter, changed}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if reader in done:
+                    break
                 if getter in done:
                     event = getter.result()
+                    getter = asyncio.ensure_future(queue.get())
                     if event["seq"] > last_sent:
                         await websocket.send_json(event)
                         last_sent = event["seq"]
-                else:
-                    getter.cancel()
-                    break
+                if changed in done:
+                    consumer = changed.result()
+                    changed = asyncio.ensure_future(changes.get())
+                    if consumer == UI_CONSUMER:
+                        await websocket.send_json(dispatch.presence_frame(UI_CONSUMER))
         except WebSocketDisconnect:
             pass
         finally:
-            reader.cancel()
+            for task in (reader, getter, changed):
+                task.cancel()
             service.log.unsubscribe(queue)
+            presence.unsubscribe(changes)
+
+    async def bridge(websocket: WebSocket) -> None:
+        """One stdio bridge's lifetime socket: presence reports in, channel deliveries out."""
+        origin = websocket.headers.get("origin")
+        if origin is not None and not origin_allowed(origin):
+            await websocket.close(code=1008)
+            return
+        consumer = websocket.query_params.get("consumer", UI_CONSUMER)
+        await websocket.accept()
+        events_q = service.log.subscribe()
+        changes = presence.subscribe()
+        conn: int | None = None
+        receiver = asyncio.ensure_future(websocket.receive())
+        getter = asyncio.ensure_future(events_q.get())
+        changed = asyncio.ensure_future(changes.get())
+        try:
+            while True:
+                done, _ = await asyncio.wait(
+                    {receiver, getter, changed}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if receiver in done:
+                    message = receiver.result()
+                    if message["type"] == "websocket.disconnect":
+                        break
+                    receiver = asyncio.ensure_future(websocket.receive())
+                    try:
+                        conn = _bridge_frame(consumer, conn, json.loads(message.get("text") or ""))
+                    except (ValueError, KeyError, TypeError) as e:
+                        log.warning("bridge: bad frame %r: %s", message.get("text"), e)
+                        await websocket.close(code=1003)
+                        break
+                if getter in done:
+                    getter = asyncio.ensure_future(events_q.get())
+                if changed in done:
+                    changed = asyncio.ensure_future(changes.get())
+                # Every wake-up is a chance to deliver; next_delivery guards readiness,
+                # deliverer choice and the one-in-flight rule.
+                if conn is not None and (frame := dispatch.next_delivery(consumer, conn)):
+                    await websocket.send_json(frame)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            for task in (receiver, getter, changed):
+                task.cancel()
+            service.log.unsubscribe(events_q)
+            presence.unsubscribe(changes)
+            if conn is not None:
+                dispatch.dropped(conn)
+                presence.disconnect(conn)
+
+    def _bridge_frame(consumer: str, conn: int | None, frame: dict) -> int:
+        """Apply one bridge → daemon frame; returns the connection id."""
+        kind = frame["type"]
+        if kind == "hello":
+            mode = frame["mode"]
+            if mode not in MODES:
+                raise ValueError(f"unknown mode {mode!r}")
+            if conn is None:
+                return presence.connect(consumer, mode)
+            presence.update(conn, mode=mode)
+            return conn
+        if conn is None:
+            raise ValueError(f"{kind!r} before hello")
+        if kind == "mode":
+            if frame["mode"] not in MODES:
+                raise ValueError(f"unknown mode {frame['mode']!r}")
+            presence.update(conn, mode=frame["mode"])
+        elif kind == "ready":
+            presence.update(conn, ready=True)
+        elif kind == "ack":
+            up_to = frame["up_to"]
+            if not isinstance(up_to, int) or isinstance(up_to, bool):
+                raise TypeError("ack up_to must be an integer")
+            dispatch.ack(consumer, conn, up_to)
+        else:
+            raise ValueError(f"unknown frame type {kind!r}")
+        return conn
 
     ws = service.ws
 
@@ -347,22 +445,18 @@ def create_app(
     @_api
     async def channel_claim(request: Request) -> object:
         body = await _body(request, consumer=str)
-        intentional, ambient = service.log.claim(body["consumer"])
-        if not intentional:
-            return {"content": None}
-        content, meta = format_channel(intentional, ambient)
-        return {"content": content, "meta": meta, "seqs": [e.seq for e in intentional]}
-
-    @_api
-    async def channel_heartbeat(request: Request) -> object:
-        body = await _body(request, consumer=str)
-        service.log.heartbeat(body["consumer"])
-        return {"ok": True}
+        return dispatch.claim(body["consumer"])
 
     @_api
     async def channel_status(request: Request) -> object:
-        consumer = request.query_params.get("consumer", "claude")
-        return {"channel_active": service.log.channel_active(consumer)}
+        consumer = request.query_params.get("consumer", UI_CONSUMER)
+        frame = dispatch.presence_frame(consumer)
+        return {
+            "channel_active": frame["status"] == "live",
+            "status": frame["status"],
+            "mode": frame["mode"],
+            "delivered_up_to": frame["delivered_up_to"],
+        }
 
     routes = [
         Route("/api/health", health),
@@ -377,7 +471,6 @@ def create_app(
         Route("/api/panels/{id}/close", panel_close, methods=["POST"]),
         Route("/api/focus", focus, methods=["POST"]),
         Route("/api/channel/claim", channel_claim, methods=["POST"]),
-        Route("/api/channel/heartbeat", channel_heartbeat, methods=["POST"]),
         Route("/api/channel/status", channel_status),
         Route("/api/panels", list_panels),
         Route("/api/panels/{id}/data", panel_data),
@@ -385,10 +478,11 @@ def create_app(
         Route("/api/show", show, methods=["POST"]),
         Route("/api/render-report", render_report, methods=["POST"]),
         WebSocketRoute("/ws", events),
+        WebSocketRoute("/ws/bridge", bridge),
     ]
     if ui_dir is not None and (ui_dir / "index.html").exists():
         routes.append(Mount("/", app=StaticFiles(directory=ui_dir, html=True)))
-    lifespan = None
+    lifespan: Callable[[Starlette], contextlib.AbstractAsyncContextManager[None]] | None = None
     if mcp is not None:
         names = [h.strip("[]") for h in allowed_hosts]
         bracket = lambda h: f"[{h}]" if ":" in h else h
@@ -403,9 +497,11 @@ def create_app(
         routes[:0] = list(mcp_app.routes)  # before the static catch-all mount
 
         @contextlib.asynccontextmanager
-        async def lifespan(app: Starlette):
+        async def _lifespan(app: Starlette):
             async with mcp.session_manager.run():
                 yield
+
+        lifespan = _lifespan
 
     return Starlette(
         routes=routes,

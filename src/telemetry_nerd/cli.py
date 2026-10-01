@@ -156,7 +156,7 @@ def _cmd_pending(settings: Settings, consumer: str) -> None:
             timeout=_HOOK_HTTP_TIMEOUT_S,
         )
         if r.status_code != 200 or r.json().get("channel_active"):
-            # Active channel (fresh heartbeat): the bridge is delivering.
+            # A ready channel bridge is connected: it delivers (the claim would be refused).
             return
         r = httpx.post(
             f"{url}/api/channel/claim",

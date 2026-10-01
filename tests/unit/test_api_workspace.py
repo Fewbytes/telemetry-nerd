@@ -1,5 +1,6 @@
 import pytest
 from starlette.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from telemetry_nerd.api.app import create_app
 from tests.unit.fakes import make_service
@@ -136,12 +137,100 @@ def test_thread_then_claim(client):
     }
 
 
-def test_events_replay_and_heartbeat(client):
+def test_events_replay(client):
     client.post("/api/threads", json={"text": "hi"})
     body = client.get("/api/events?since=0&limit=10").json()
     assert body["events"][0]["seq"] == 1
     assert body["last_seq"] == body["events"][-1]["seq"]
     assert client.get("/api/events?since=abc").status_code == 400
-    assert client.get("/api/channel/status?consumer=claude").json() == {"channel_active": False}
-    assert client.post("/api/channel/heartbeat", json={"consumer": "claude"}).json() == {"ok": True}
-    assert client.get("/api/channel/status?consumer=claude").json() == {"channel_active": True}
+
+
+def _status(client) -> dict:
+    return client.get("/api/channel/status?consumer=claude").json()
+
+
+def test_channel_status_offline_without_bridge(client):
+    assert _status(client) == {
+        "channel_active": False,
+        "status": "offline",
+        "mode": None,
+        "delivered_up_to": 0,
+    }
+    assert client.post("/api/channel/heartbeat", json={"consumer": "claude"}).status_code in (
+        404,
+        405,
+    )
+
+
+def test_bridge_presence_and_delivery_ack(client):
+    client.post("/api/threads", json={"text": "asked before the handshake"})
+    with client.websocket_connect("/ws/bridge?consumer=claude") as br:
+        br.send_json({"type": "hello", "mode": "channel"})
+        # Connected but not ready: terminal, and the hook may still deliver.
+        assert _status(client)["status"] == "terminal"
+        br.send_json({"type": "ready"})
+        frame = br.receive_json()
+        assert frame["type"] == "deliver"
+        assert "asked before the handshake" in frame["content"]
+        assert frame["meta"]["thread"] == "t1"
+        status = _status(client)
+        assert status["status"] == "live" and status["channel_active"]
+        assert status["delivered_up_to"] == 0  # not acked yet
+        # The hook is refused while a channel bridge is live.
+        claim = client.post("/api/channel/claim", json={"consumer": "claude"}).json()
+        assert claim == {"content": None, "live": True}
+        br.send_json({"type": "ack", "up_to": frame["up_to"]})
+        client.post("/api/threads/t1/messages", json={"text": "follow-up"})
+        frame = br.receive_json()
+        assert "follow-up" in frame["content"]
+        assert _status(client)["delivered_up_to"] >= 1
+    assert _status(client)["status"] == "offline"
+
+
+def test_unacked_delivery_returns_to_hook_after_bridge_leaves(client):
+    client.post("/api/threads", json={"text": "lost in transit?"})
+    with client.websocket_connect("/ws/bridge") as br:
+        br.send_json({"type": "hello", "mode": "channel"})
+        br.send_json({"type": "ready"})
+        assert br.receive_json()["type"] == "deliver"
+    claim = client.post("/api/channel/claim", json={"consumer": "claude"}).json()
+    assert "lost in transit?" in claim["content"]
+
+
+def test_hook_mode_bridge_is_terminal_and_gets_nothing(client):
+    with client.websocket_connect("/ws/bridge") as br:
+        br.send_json({"type": "hello", "mode": "hook"})
+        br.send_json({"type": "ready"})
+        assert _status(client)["status"] == "terminal"
+        client.post("/api/threads", json={"text": "hook delivers this"})
+        claim = client.post("/api/channel/claim", json={"consumer": "claude"}).json()
+        assert "hook delivers this" in claim["content"]
+        # Upgrading to channel after the handshake makes it live.
+        br.send_json({"type": "mode", "mode": "channel"})
+        assert _status(client)["status"] == "live"
+
+
+def test_bridge_rejects_frames_before_hello(client):
+    with client.websocket_connect("/ws/bridge") as br:
+        br.send_json({"type": "ready"})
+        with pytest.raises(WebSocketDisconnect) as e:
+            br.receive_json()
+    assert e.value.code == 1003
+
+
+def test_ui_socket_gets_presence_frames(client):
+    with client.websocket_connect("/ws?since=0") as ui:
+        first = ui.receive_json()
+        assert first == {
+            "kind": "presence",
+            "status": "offline",
+            "mode": None,
+            "since_ms": None,
+            "delivered_up_to": 0,
+        }
+        with client.websocket_connect("/ws/bridge") as br:
+            br.send_json({"type": "hello", "mode": "hook"})
+            frame = ui.receive_json()
+            assert frame["kind"] == "presence" and frame["status"] == "terminal"
+        frame = ui.receive_json()
+        assert frame["kind"] == "presence" and frame["status"] == "offline"

@@ -44,6 +44,18 @@ async def test_show_without_question_is_tool_error(tmp_path):
     assert "question" in text_of(s)
 
 
+async def test_show_with_agent_learned_unit(tmp_path):
+    svc = make_service(tmp_path)
+    mcp = build_mcp(svc, "http://x")
+    # "up" has no inferrable suffix; Claude knows the unit from context and passes it
+    await call(mcp, "query", {"expr": "up", "start": "now-2h", "end": "now-1h"})
+    s = await call(mcp, "show", {"dataset": "d1", "question": "Up?", "unit": "boolean"})
+    assert not s.is_error
+    panel = svc.workspace.get_panel("p1")
+    assert panel.spec["y"]["unit"] == "boolean"
+    assert panel.spec["y"]["unit_provenance"] == "provided by claude"
+
+
 async def test_rejected_chart_explains_rule(tmp_path):
     mcp = build_mcp(make_service(tmp_path, FakeSource(n_series=8)), "http://x")
     await call(mcp, "query", {"expr": "up", "start": "now-2h", "end": "now-1h"})

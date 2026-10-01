@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import polars as pl
 
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.charts.spec import ValidationIssue, auto_spec, validate
 from telemetry_nerd.core.events import Actor, EventLog
+from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.summary import summarize
 from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
@@ -54,6 +55,7 @@ class TelemetryService:
     log: EventLog
     ws: WorkspaceService
     clock: Callable[[], int] = now_ms
+    presence: PresenceRegistry = field(default_factory=PresenceRegistry)
 
     async def query(
         self,
@@ -100,9 +102,18 @@ class TelemetryService:
         self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
         return {"dataset": meta.id, "summary": summary}
 
-    def show(self, dataset_id: str, question: str, actor: Actor = "claude") -> ShowResult:
+    def show(
+        self, dataset_id: str, question: str, actor: Actor = "claude", unit: str | None = None
+    ) -> ShowResult:
         meta, result = self.datasets.get(dataset_id)
-        spec = auto_spec(dataset_id, expr=meta.expr)
+        # An agent-provided unit (Claude learned it from the source, the emitting
+        # tool, etc.) wins over suffix inference and records who vouched for it.
+        spec = auto_spec(
+            dataset_id,
+            expr=meta.expr,
+            unit=unit,
+            unit_provenance=f"provided by {actor}" if unit else None,
+        )
         issues = validate(spec, {dataset_id: result.series.num_rows})
         errors = [i for i in issues if i.severity == "error"]
         if errors:

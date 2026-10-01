@@ -150,42 +150,43 @@ class EventLog:
                 log.warning("event subscriber queue full; dropping seq %s", event["seq"])
 
     # channel delivery ---------------------------------------------------
-    def claim(self, consumer: str) -> tuple[list[Event], list[Event]]:
-        db = self._db
-        db.execute("BEGIN IMMEDIATE")
-        try:
-            db.execute("INSERT OR IGNORE INTO consumers (name) VALUES (?)", (consumer,))
-            (cursor,) = db.execute(
-                "SELECT cursor FROM consumers WHERE name = ?", (consumer,)
-            ).fetchone()
-            events = [
-                _event(r)
-                for r in db.execute(
-                    f"SELECT {_COLS} FROM events WHERE seq > ? AND klass != 'internal' "
-                    "ORDER BY seq",
-                    (cursor,),
-                ).fetchall()
-            ]
-            intentional = [e for e in events if e.klass == "intentional"]
-            if not intentional:
-                db.execute("COMMIT")
-                return [], []
-            db.execute("UPDATE consumers SET cursor = ? WHERE name = ?", (events[-1].seq, consumer))
-            db.execute("COMMIT")
-        except Exception:
-            db.execute("ROLLBACK")
-            raise
-        return intentional, [e for e in events if e.klass == "ambient"]
+    def cursor(self, consumer: str) -> int:
+        """Highest seq delivered to (acked by) `consumer`; 0 before the first delivery."""
+        row = self._db.execute(
+            "SELECT cursor FROM consumers WHERE name = ?", (consumer,)
+        ).fetchone()
+        return row[0] if row is not None else 0
 
-    def heartbeat(self, consumer: str) -> None:
+    def peek(self, consumer: str) -> tuple[list[Event], list[Event], int]:
+        """The pending batch past the cursor, without advancing it.
+
+        Returns (intentional, ambient, up_to). Ambient events ride along with the next
+        intentional one; with no intentional event pending the batch is empty and
+        `up_to` is the current cursor."""
+        cursor = self.cursor(consumer)
+        events = [
+            _event(r)
+            for r in self._db.execute(
+                f"SELECT {_COLS} FROM events WHERE seq > ? AND klass != 'internal' ORDER BY seq",
+                (cursor,),
+            ).fetchall()
+        ]
+        intentional = [e for e in events if e.klass == "intentional"]
+        if not intentional:
+            return [], [], cursor
+        return intentional, [e for e in events if e.klass == "ambient"], events[-1].seq
+
+    def ack(self, consumer: str, up_to: int) -> None:
+        """Mark everything up to `up_to` delivered; never moves the cursor back."""
         self._db.execute(
-            "INSERT INTO consumers (name, heartbeat_ms) VALUES (?, ?) "
-            "ON CONFLICT (name) DO UPDATE SET heartbeat_ms = excluded.heartbeat_ms",
-            (consumer, self._clock()),
+            "INSERT INTO consumers (name, cursor) VALUES (?, ?) "
+            "ON CONFLICT (name) DO UPDATE SET cursor = MAX(cursor, excluded.cursor)",
+            (consumer, up_to),
         )
 
-    def channel_active(self, consumer: str, within_ms: int = 60_000) -> bool:
-        row = self._db.execute(
-            "SELECT heartbeat_ms FROM consumers WHERE name = ?", (consumer,)
-        ).fetchone()
-        return row is not None and row[0] is not None and self._clock() - row[0] < within_ms
+    def claim(self, consumer: str) -> tuple[list[Event], list[Event]]:
+        """Peek and ack in one step (hook delivery: printing is the send)."""
+        intentional, ambient, up_to = self.peek(consumer)
+        if intentional:
+            self.ack(consumer, up_to)
+        return intentional, ambient

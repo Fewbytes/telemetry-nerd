@@ -48,12 +48,6 @@ async def _post_json(url: str, **kw: Any) -> Any:
         return (await client.post(url, **kw)).json()
 
 
-async def _channel_active(url: str, consumer: str = "claude") -> bool:
-    return (await _get_json(f"{url}/api/channel/status", params={"consumer": consumer}))[
-        "channel_active"
-    ]
-
-
 def _text(result) -> str:
     block = result.content[0]
     assert isinstance(block, TextContent)
@@ -69,15 +63,14 @@ def test_gate_reads_tn_channel_env():
     assert not ChannelGate(env={}).enabled
 
 
-async def test_gate_wait_unblocks_on_enable():
+def test_gate_enable_notifies_listeners_once():
     gate = ChannelGate(env={})
-    with anyio.fail_after(5):
-        async with anyio.create_task_group() as tg:
-            tg.start_soon(gate.wait_enabled)
-            await anyio.sleep(0.05)
-            assert not gate.enabled
-            gate.enable()
+    calls: list[int] = []
+    gate.on_enable(lambda: calls.append(1))
+    gate.enable()
+    gate.enable()
     assert gate.enabled
+    assert calls == [1]
 
 
 def test_client_advertised_channel():
@@ -133,6 +126,21 @@ async def test_delivery_sends_channel_notification():
     assert wire["method"] == CHANNEL_NOTIFICATION
     assert wire["params"]["content"] == 'user asked in t1: "why?"'
     assert wire["params"]["meta"] == {"event": "thread.message", "seqs": "1"}
+
+
+def test_delivery_fires_ready_once_on_first_observe():
+    delivery = ChannelDelivery(ChannelGate(env={}))
+    calls: list[int] = []
+    delivery.on_ready(lambda: calls.append(1))
+    delivery.observe(_ctx_with(None))
+    delivery.observe(_ctx_with(None))
+    assert calls == [1]
+
+
+async def test_notify_without_session_raises():
+    delivery = ChannelDelivery(ChannelGate(env={}))
+    with pytest.raises(RuntimeError):
+        await delivery.notify("x", {})
 
 
 def test_run_bridge_init_options_declare_channel_only():
@@ -214,57 +222,105 @@ def test_bridge_cli_resolves_url(tmp_path, monkeypatch):
     assert not spawned
 
 
-async def test_pump_delivers_user_thread_once(live_daemon, monkeypatch):
-    monkeypatch.setenv("TN_CHANNEL", "1")
+async def _status(url: str) -> dict[str, Any]:
+    return await _get_json(f"{url}/api/channel/status", params={"consumer": "claude"})
+
+
+async def _ask(url: str, text: str = "why?") -> dict[str, Any]:
+    return await _post_json(f"{url}/api/threads", json={"text": text, "anchor": None})
+
+
+async def test_pump_delivers_only_after_ready_then_acks(live_daemon):
     seen: list[tuple[str, dict[str, Any]]] = []
-    got = anyio.Event()
 
     async def notify(content: str, meta: dict[str, Any]) -> None:
         seen.append((content, meta))
-        got.set()
 
-    pump = ChannelPump(live_daemon.url, notify)
-    tid = ""
+    pump = ChannelPump(live_daemon.url, notify, gate=ChannelGate(env={"TN_CHANNEL": "1"}))
     async with anyio.create_task_group() as tg:
         tg.start_soon(pump.run)
-        # Deterministic start: the pump's /ws subscription exists (so the thread
-        # event cannot be missed) and its heartbeat made the channel active.
-        await _until(lambda: live_daemon.service.log.subscriber_count > 0)
-        await _until(lambda: _channel_active(live_daemon.url))
-        thread = await _post_json(
-            f"{live_daemon.url}/api/threads", json={"text": "why?", "anchor": None}
-        )
-        tid = thread["id"]
-        with anyio.fail_after(10):
-            await got.wait()
-        # A claude-authored reply is internal: it must not trigger a notify.
-        live_daemon.service.ws.post_message(tid, "the cache was cold", "claude")
+        # Connected as a channel bridge, but the MCP session is not observed yet.
+        await _until(lambda: _status_is(live_daemon.url, "terminal"))
+        thread = await _ask(live_daemon.url)  # the jxp window: asked before the handshake
+        await anyio.sleep(0.3)
+        assert seen == []
+        pump.mark_ready()
+        await _until(lambda: len(seen) == 1)
+        await _until(lambda: _status_is(live_daemon.url, "live"))
+        await _until(lambda: _delivered(live_daemon.url, 1))
+        # A claude-authored reply is internal: no second delivery.
+        live_daemon.service.ws.post_message(thread["id"], "the cache was cold", "claude")
         await anyio.sleep(0.3)
         tg.cancel_scope.cancel()
     assert len(seen) == 1
     content, meta = seen[0]
     assert "why?" in content
     assert meta["event"] == "thread.message"
-    assert meta["thread"] == tid
+    assert meta["thread"] == thread["id"]
+    await _until(lambda: _status_is(live_daemon.url, "offline"))
 
 
-async def test_pump_without_channel_does_not_steal(live_daemon, monkeypatch):
-    monkeypatch.delenv("TN_CHANNEL", raising=False)
+async def _status_is(url: str, status: str) -> bool:
+    return (await _status(url))["status"] == status
+
+
+async def _delivered(url: str, seq: int) -> bool:
+    return (await _status(url))["delivered_up_to"] >= seq
+
+
+async def test_hook_mode_pump_is_present_but_never_steals(live_daemon):
     seen: list[tuple[str, dict[str, Any]]] = []
 
     async def notify(content: str, meta: dict[str, Any]) -> None:
         seen.append((content, meta))
 
-    pump = ChannelPump(live_daemon.url, notify)
+    pump = ChannelPump(live_daemon.url, notify, gate=ChannelGate(env={}))
     async with anyio.create_task_group() as tg:
         tg.start_soon(pump.run)
+        pump.mark_ready()
+        await _until(lambda: _status_is(live_daemon.url, "terminal"))
+        await _ask(live_daemon.url)
         await anyio.sleep(0.3)
-        assert live_daemon.service.log.subscriber_count == 0  # fully idle
-        await _post_json(f"{live_daemon.url}/api/threads", json={"text": "why?", "anchor": None})
-        await anyio.sleep(0.3)
+        assert seen == []
+        assert not (await _status(live_daemon.url))["channel_active"]
+        claim = await _post_json(
+            f"{live_daemon.url}/api/channel/claim", json={"consumer": "claude"}
+        )
+        assert "why?" in claim["content"]  # the hook still delivers
         tg.cancel_scope.cancel()
-    assert seen == []
-    # No heartbeat while disabled, and the pending hook can still deliver.
-    assert not await _channel_active(live_daemon.url)
-    claim = await _post_json(f"{live_daemon.url}/api/channel/claim", json={"consumer": "claude"})
-    assert "why?" in claim["content"]  # not stolen
+
+
+async def test_gate_opening_later_makes_pump_live(live_daemon):
+    async def notify(content: str, meta: dict[str, Any]) -> None:
+        pass
+
+    gate = ChannelGate(env={})
+    pump = ChannelPump(live_daemon.url, notify, gate=gate)
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(pump.run)
+        pump.mark_ready()
+        await _until(lambda: _status_is(live_daemon.url, "terminal"))
+        gate.enable()  # the client advertised claude/channel in the handshake
+        await _until(lambda: _status_is(live_daemon.url, "live"))
+        tg.cancel_scope.cancel()
+
+
+async def test_failed_notify_is_redelivered_after_reconnect(live_daemon):
+    attempts: list[str] = []
+
+    async def notify(content: str, meta: dict[str, Any]) -> None:
+        attempts.append(content)
+        if len(attempts) == 1:
+            raise RuntimeError("stdio closed")
+
+    pump = ChannelPump(
+        live_daemon.url, notify, gate=ChannelGate(env={"TN_CHANNEL": "1"}), backoff_s=0.05
+    )
+    pump.mark_ready()
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(pump.run)
+        await _ask(live_daemon.url)
+        await _until(lambda: len(attempts) == 2)
+        await _until(lambda: _delivered(live_daemon.url, 1))
+        tg.cancel_scope.cancel()
+    assert attempts[0] == attempts[1]

@@ -76,15 +76,20 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise ToolError(str(e)) from e
 
     @mcp.tool()
-    def show(dataset: str, question: str) -> str:
+    def show(dataset: str, question: str, unit: str | None = None) -> str:
         """Draw a dataset as a panel (mean line + min/max envelope) in the shared workspace.
 
         question is REQUIRED: the explicit question this graph answers, e.g.
         "Did checkout latency rise after the 14:00 deploy?".
+        unit: optional y-axis unit (e.g. "s", "B", "ms", "items", "req/s"). Pass it
+        when you know the unit from context the metric name doesn't reveal — you read
+        the emitting code, or you know the generating tool's conventions. Your unit
+        overrides suffix inference and is persisted with provenance ("provided by
+        claude"), so only pass a unit you can actually vouch for.
         Returns {panel, url, warnings}.
         """
         try:
-            res = service.show(dataset, question)
+            res = service.show(dataset, question, unit=unit)
         except ChartRejected as e:
             raise ToolError(f"chart rejected: {e}") from e
         except (NotFound, ValueError) as e:

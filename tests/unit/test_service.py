@@ -60,6 +60,20 @@ async def test_show_without_inferable_unit_still_warns(tmp_path):
     assert [i.rule for i in res.issues] == ["units"]
 
 
+async def test_show_agent_learned_unit_overrides_inference_and_persists(tmp_path):
+    svc = make_service(tmp_path)
+    ds = (await svc.query("tn_demo_latency_seconds", start="now-2h", end="now-1h"))["dataset"]
+    res = svc.show(ds, "How slow is it?", unit="ms")  # Claude knows it's actually ms
+    assert res.panel.spec["y"]["unit"] == "ms"
+    assert res.panel.spec["y"]["unit_provenance"] == "provided by claude"
+    assert svc.workspace.get_panel(res.panel.id).spec["y"] == {
+        "range_mode": "data",
+        "unit": "ms",
+        "unit_provenance": "provided by claude",
+        "label": None,
+    }
+
+
 async def test_show_creates_panel_and_publishes_event(tmp_path):
     svc = make_service(tmp_path)
     ds = (await svc.query("up", start="now-2h", end="now-1h"))["dataset"]

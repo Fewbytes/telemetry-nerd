@@ -9,7 +9,7 @@ capability this server declares — NOT claude/channel/permission).
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, cast
 
@@ -67,19 +67,29 @@ class ChannelDelivery:
     def __init__(self, gate: ChannelGate | None = None) -> None:
         self.gate = gate if gate is not None else ChannelGate()
         self.session: ServerSession | None = None
+        self._ready_listeners: list[Callable[[], None]] = []
+
+    def on_ready(self, listener: Callable[[], None]) -> None:
+        """Call `listener` once the first MCP session is observed."""
+        self._ready_listeners.append(listener)
 
     def observe(self, ctx: ServerRequestContext[Any]) -> None:
         """Record the session's standalone outbound channel and any channel support."""
+        first = self.session is None
         self.session = ctx.session
         if client_advertised_channel(ctx.session.client_capabilities):
             self.gate.enable()
+        if first:
+            for listener in self._ready_listeners:
+                listener()
 
     async def notify(self, content: str, meta: dict[str, Any]) -> None:
         """Push one channel event to the client outside any request."""
         session = self.session
         if session is None:
-            log.warning("channel: no MCP session yet; dropping %s event", meta.get("event", "?"))
-            return
+            # The pump reports ready only after observe(), so the daemon never delivers
+            # before a session exists; raising leaves the delivery unacked (requeued).
+            raise RuntimeError("channel: no MCP session yet")
         # ServerNotification's union covers only spec methods; the generic base
         # serializes custom methods fine — send_notification just dumps method+params.
         # Parametrize the generic: bare Notification coerces params through the
@@ -161,6 +171,7 @@ async def run_bridge(daemon_url: str) -> None:
     delivery = ChannelDelivery()
     server = build_bridge(daemon_url, delivery=delivery)
     pump = ChannelPump(daemon_url, delivery.notify, gate=delivery.gate)
+    delivery.on_ready(pump.mark_ready)
     init = server.create_initialization_options(experimental_capabilities=EXPERIMENTAL_CAPABILITIES)
     async with stdio_server() as (read_stream, write_stream), anyio.create_task_group() as tg:
         tg.start_soon(pump.run)

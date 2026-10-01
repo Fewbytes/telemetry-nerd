@@ -4,7 +4,9 @@ Starts a real `telemetry-nerd serve` subprocess against a testcontainer Victoria
 then spawns `telemetry-nerd bridge` over stdio with TN_CHANNEL=1 using the MCP stdio
 client transport and a notification binding. A user thread event must arrive as a
 `notifications/claude/channel` notification within 5 s; Claude's `reply` through the
-bridge lands in that thread and produces no second notification.
+bridge lands in that thread and produces no second notification. Presence follows the
+bridge (offline → live → offline), and a question asked before the handshake is delivered
+exactly once (jxp).
 """
 
 from __future__ import annotations
@@ -137,33 +139,32 @@ async def _post(url: str, json: dict) -> Any:
         return r.json()
 
 
-async def test_channel_round_trip_through_stdio_bridge(daemon_url: str) -> None:
-    url = daemon_url
-    collector = _ChannelCollector()
-    bridge = StdioServerParameters(
+def _bridge_params(url: str) -> StdioServerParameters:
+    return StdioServerParameters(
         command=sys.executable,
         args=["-m", "telemetry_nerd.cli", "bridge", "--daemon-url", url],
         env={"TN_CHANNEL": "1"},
         cwd=REPO_ROOT,
     )
-    async with Client(bridge, mode="legacy", extensions=[collector]) as client:
-        # The pump heartbeats as soon as its gate opens (TN_CHANNEL=1); the channel
-        # reporting active means delivery is live.
-        async def channel_active() -> bool:
-            return (await _get(f"{url}/api/channel/status?consumer=claude"))["channel_active"]
 
-        await _until(channel_active)
+
+async def _status(url: str) -> str:
+    return (await _get(f"{url}/api/channel/status?consumer=claude"))["status"]
+
+
+async def test_channel_round_trip_through_stdio_bridge(daemon_url: str) -> None:
+    url = daemon_url
+    collector = _ChannelCollector()
+    assert await _status(url) == "offline"
+    async with Client(_bridge_params(url), mode="legacy", extensions=[collector]) as client:
+        # TN_CHANNEL=1 and the handshake observed: the bridge reports a ready channel.
+        async def live() -> bool:
+            return await _status(url) == "live"
+
+        await _until(live)
 
         thread = await _post(f"{url}/api/threads", json={"text": "why the dip?"})
         tid = thread["id"]
-
-        # The pump claims only when an intentional event crosses its /ws subscription.
-        # If the subscription raced the first message, one nudge message re-triggers
-        # the claim: the first event is still unclaimed and comes back with it.
-        with anyio.move_on_after(1.0):
-            await collector.received.wait()
-        if not collector.received.is_set():
-            await _post(f"{url}/api/threads/{tid}/messages", json={"text": "still there?"})
         with anyio.fail_after(5.0):
             await collector.received.wait()
 
@@ -185,3 +186,26 @@ async def test_channel_round_trip_through_stdio_bridge(daemon_url: str) -> None:
         # ...and a claude-authored event is internal: no second notification.
         await anyio.sleep(0.5)
         assert len(collector.events) == 1
+
+    async def offline() -> bool:
+        return await _status(url) == "offline"
+
+    await _until(offline)  # bridge exit closes its socket
+
+
+async def test_question_asked_before_handshake_arrives_once(daemon_url: str) -> None:
+    """jxp: an event pending before the MCP session exists is delivered, not dropped."""
+    url = daemon_url
+    await _post(f"{url}/api/threads", json={"text": "asked before the bridge started"})
+    collector = _ChannelCollector()
+    async with Client(_bridge_params(url), mode="legacy", extensions=[collector]):
+        with anyio.fail_after(10.0):
+            await collector.received.wait()
+        await anyio.sleep(0.5)
+        assert len(collector.events) == 1
+        assert "asked before the bridge started" in collector.events[0].content
+        status = await _get(f"{url}/api/channel/status?consumer=claude")
+        assert status["delivered_up_to"] >= 1
+        # The hook has nothing left to deliver.
+        claim = await _post(f"{url}/api/channel/claim", json={"consumer": "claude"})
+        assert claim["content"] is None

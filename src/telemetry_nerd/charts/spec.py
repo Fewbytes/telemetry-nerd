@@ -37,15 +37,22 @@ class ValidationIssue(BaseModel):
     severity: Literal["error", "warning"]
 
 
-def auto_spec(dataset_id: str, expr: str | None = None, unit: str | None = None) -> ChartSpec:
+def auto_spec(
+    dataset_id: str,
+    expr: str | None = None,
+    unit: str | None = None,
+    unit_provenance: str | None = None,
+) -> ChartSpec:
     """No metric catalog yet (M3): units are inferred from metric-name suffixes.
 
-    An explicit `unit` always wins over inference; without one, a consistent
+    An explicit `unit` always wins over inference, recorded with the given
+    provenance (e.g. "provided by claude"); without one, a consistent
     Prometheus suffix across the expression is recorded with its provenance.
     """
     y = YAxis()
     if unit:
         y.unit = unit
+        y.unit_provenance = unit_provenance
     elif expr is not None and (inferred := infer_unit(expr)):
         y.unit = inferred
         y.unit_provenance = "inferred from metric name"

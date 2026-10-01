@@ -92,9 +92,26 @@ def test_claim_cursors_are_per_consumer(log):
     assert len(log.claim("b")[0]) == 1
 
 
-def test_heartbeat_and_channel_active(log, clock):
-    assert not log.channel_active("claude")
-    log.heartbeat("claude")
-    assert log.channel_active("claude")
-    clock.t += 61_000
-    assert not log.channel_active("claude")
+def test_peek_does_not_advance_until_ack(log):
+    log.append("user", "panel.created", "p1")  # ambient
+    log.append("user", "thread.message", "t1", {"text": "hi"})
+    assert log.cursor("claude") == 0
+    intentional, ambient, up_to = log.peek("claude")
+    assert ([e.seq for e in intentional], [e.seq for e in ambient], up_to) == ([2], [1], 2)
+    assert log.peek("claude")[2] == 2  # unacked: same batch again
+    log.ack("claude", up_to)
+    assert log.cursor("claude") == 2
+    assert log.peek("claude") == ([], [], 2)
+
+
+def test_peek_without_intentional_is_empty(log):
+    log.append("user", "panel.created", "p1")
+    assert log.peek("claude") == ([], [], 0)
+
+
+def test_ack_is_monotonic(log):
+    log.append("user", "thread.message", "t1")
+    log.append("user", "thread.message", "t1")
+    log.ack("claude", 2)
+    log.ack("claude", 1)  # a stale ack never moves the cursor back
+    assert log.cursor("claude") == 2

@@ -88,9 +88,9 @@ def test_websocket_receives_panel_created(client):
         for _ in range(5):
             event = ws.receive_json()
             seen.append(event)
-            if event["type"] == "panel.created":
+            if event.get("type") == "panel.created":
                 break
-    assert any(e["type"] == "panel.created" and e["object_id"] == "p1" for e in seen)
+    assert any(e.get("type") == "panel.created" and e["object_id"] == "p1" for e in seen)
 
 
 def test_websocket_disconnect_unsubscribes(tmp_path):
@@ -233,6 +233,7 @@ def test_websocket_since_replays_then_streams_live(tmp_path):
     service.log.append("system", "b", None, {})
     with TestClient(_app(service)) as c, c.websocket_connect("/ws?since=1") as ws:
         assert ws.receive_json()["seq"] == 2
+        assert ws.receive_json()["kind"] == "presence"  # after the replay, before live events
         service.log.append("system", "c", None, {})
         assert ws.receive_json()["seq"] == 3
 
