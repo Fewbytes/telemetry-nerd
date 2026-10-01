@@ -7,7 +7,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from telemetry_nerd.charts.units import infer_unit
+from telemetry_nerd.catalog.rules import facts_from_name
+from telemetry_nerd.charts.units import Lookup, infer_unit_with_provenance
+from telemetry_nerd.charts.yview import MAX_SUGGESTIONS, YView
 
 LINE_SERIES_BUDGET = 5
 Mark = Literal["line+envelope", "heatmap", "histogram", "ecdf"]
@@ -36,6 +38,10 @@ class YAxis(BaseModel):
     # the metric name. None means an unknown unit (UI labels that honestly).
     unit_provenance: str | None = None
     label: str | None = None
+    views: list[YView] = Field(
+        default_factory=list, max_length=MAX_SUGGESTIONS
+    )  # Claude's suggestions
+    selected: YView | None = None  # the user's pick; None = auto
 
 
 class ChartSpec(BaseModel):
@@ -55,20 +61,23 @@ def auto_spec(
     unit: str | None = None,
     unit_provenance: str | None = None,
     representation: str = "bucket_agg",
+    lookup: Lookup = facts_from_name,
 ) -> ChartSpec:
-    """No metric catalog yet (M3): units are inferred from metric-name suffixes.
+    """Units come from the metric catalog via `lookup` (rule-only name facts by default).
 
-    An explicit `unit` always wins over inference, recorded with the given
-    provenance (e.g. "provided by claude"); without one, a consistent
-    Prometheus suffix across the expression is recorded with its provenance.
+    An explicit `unit` always wins, recorded with the given provenance (e.g. "provided by
+    claude"); without one, the unit every metric in the expression agrees on is used, with the
+    origin of the claims behind it (user, claude, source metadata, name rule, ...).
     """
     y = YAxis()
     if unit:
         y.unit = unit
         y.unit_provenance = unit_provenance
-    elif expr is not None and (inferred := infer_unit(expr)):
-        y.unit = inferred
-        y.unit_provenance = "inferred from metric name"
+    elif expr is not None:
+        inferred, why = infer_unit_with_provenance(expr, lookup)
+        if inferred:
+            y.unit = inferred
+            y.unit_provenance = why
     mark = "heatmap" if representation == "distribution" else "line+envelope"
     return ChartSpec(layers=[Layer(mark=mark, data=dataset_id)], y=y)
 

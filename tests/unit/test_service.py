@@ -71,6 +71,8 @@ async def test_show_agent_learned_unit_overrides_inference_and_persists(tmp_path
         "unit": "ms",
         "unit_provenance": "provided by claude",
         "label": None,
+        "views": [],
+        "selected": None,
     }
 
 

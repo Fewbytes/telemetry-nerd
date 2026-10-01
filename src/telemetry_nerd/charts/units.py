@@ -10,6 +10,9 @@ units with real provenance later; until then this is honest best-effort.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
+
+from telemetry_nerd.catalog.rules import Facts, facts_from_name
 
 _IDENT = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*")
 _TOKEN = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*|[()]")
@@ -114,40 +117,22 @@ _KEYWORDS = {
     "mad_over_time",
 }
 
-# Base-unit suffixes (no suffix is a prefix of another; order is for reading).
-_SUFFIX_UNITS = (
-    ("_seconds", "s"),
-    ("_bytes", "B"),
-    ("_ratio", "ratio"),
-    ("_percent", "%"),
-)
-
-# Histogram/summary family suffixes that wrap a base-unit name
-# (e.g. tn_demo_latency_seconds_sum / _bucket carry the base unit).
-_AGG_SUFFIXES = ("_sum", "_bucket")
-
 
 def unit_from_metric_name(name: str) -> str | None:
-    """Map one metric name to a unit via its suffix, or None if unknown."""
-    had_total = name.endswith("_total")
-    base = name[: -len("_total")] if had_total else name
-    if base.endswith("_count"):
-        # A count series counts events regardless of the base unit
-        # (x_seconds_count is a number of observations, not seconds).
-        return "count"
-    for agg in _AGG_SUFFIXES:
-        if base.endswith(agg):
-            base = base[: -len(agg)]
-            break
-    for suffix, unit in _SUFFIX_UNITS:
-        if base.endswith(suffix):
-            return unit
-    if had_total:
-        return "count"  # bare counter suffix: a number of events
-    return None
+    """Rule-only unit for a metric name (the catalog's T0 naming rules)."""
+    return facts_from_name(name).unit
 
 
-def infer_unit(expr: str) -> str | None:
+Lookup = Callable[[str], Facts]
+
+
+def infer_unit(expr: str, lookup: Lookup = facts_from_name) -> str | None:
+    return infer_unit_with_provenance(expr, lookup)[0]
+
+
+def infer_unit_with_provenance(
+    expr: str, lookup: Lookup = facts_from_name
+) -> tuple[str | None, str | None]:
     """Infer the y-axis unit from every metric name in an expression.
 
     Returns the unit only when every metric name that carries a suffix agrees;
@@ -159,7 +144,8 @@ def infer_unit(expr: str) -> str | None:
     """
     text = _STRING.sub(" ", expr)
     transforms: list[str | None] = []  # one entry per open paren: "rate", "quantile", None
-    units = set()
+    units: set[str] = set()
+    provenance: set[str] = set()
     prev_ident = None
     for token in _TOKEN.findall(text):
         if token == "(":
@@ -172,10 +158,14 @@ def infer_unit(expr: str) -> str | None:
         else:
             prev_ident = token
             if token not in _KEYWORDS:
-                unit = _unit_with_transforms(token, transforms)
+                unit, why = _unit_with_transforms(token, transforms, lookup)
                 if unit is not None:
                     units.add(unit)
-    return next(iter(units)) if len(units) == 1 else None
+                    if why:
+                        provenance.add(why)
+    if len(units) != 1:
+        return None, None
+    return next(iter(units)), ", ".join(sorted(provenance)) or None
 
 
 def _transform_of_call(prev_ident: str | None) -> str | None:
@@ -187,13 +177,16 @@ def _transform_of_call(prev_ident: str | None) -> str | None:
     return None  # aggregators (sum/avg/…), scalar math, grouping: unit passes through
 
 
-def _unit_with_transforms(name: str, transforms: list[str | None]) -> str | None:
-    unit = unit_from_metric_name(name)
+def _unit_with_transforms(
+    name: str, transforms: list[str | None], lookup: Lookup
+) -> tuple[str | None, str | None]:
+    facts = lookup(name)
+    unit = facts.unit
     if unit is None:
-        return None
+        return None, None
     if "quantile" in transforms:
-        return unit  # a quantile of the distribution is in the metric's base unit
-    if "rate" in transforms and name.endswith("_total"):
+        return unit, facts.unit_provenance  # a quantile is in the metric's base unit
+    if "rate" in transforms and facts.type == "counter":
         # a per-second rate is only defined for counters (rate of a gauge stays put)
-        return f"{unit}/s"
-    return unit
+        return f"{unit}/s", facts.unit_provenance
+    return unit, facts.unit_provenance
