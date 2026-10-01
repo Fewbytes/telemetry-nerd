@@ -44,6 +44,14 @@ class Prepared:
     skipped: list[dict]
 
 
+def human_period(seconds: float) -> str:
+    """3638 -> "1h", 10530 -> "2.9h": periods are rarely round durations."""
+    for unit, size in (("d", 86_400), ("h", 3_600), ("m", 60)):
+        if seconds >= size:
+            return f"{float(f'{seconds / size:.3g}'):g}{unit}"
+    return f"{float(f'{seconds:.3g}'):g}s"
+
+
 def _labels(series_table) -> dict[str, dict]:
     import json
 
@@ -149,7 +157,7 @@ class SignalOps:
             for pk in sp.peaks[:top]:
                 p_s = float(pk.period_ms / 1000)
                 item = {
-                    "period": format_duration(round(pk.period_ms)),
+                    "period": human_period(p_s),
                     "period_s": float(f"{p_s:.4g}"),
                     "interval_s": [
                         float(f"{pk.lo_ms / 1000:.4g}"),
@@ -183,8 +191,8 @@ class SignalOps:
             "dataset": dataset_id,
             "effective_step": eff,
             "limits": {
-                "shortest": format_duration(first.shortest_ms),
-                "longest": format_duration(first.longest_ms),
+                "shortest": human_period(first.shortest_ms / 1000),
+                "longest": human_period(first.longest_ms / 1000),
             },
             "series": out,
             "skipped": prep.skipped,
