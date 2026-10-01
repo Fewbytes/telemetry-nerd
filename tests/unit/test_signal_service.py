@@ -7,7 +7,8 @@ from tests.unit.fakes import make_service
 M, DAY = 60_000, 86_400_000
 
 
-def put(svc, expr, r, step, rep="bucket_agg", rng=TimeRange(0, 4 * DAY)):
+def put(svc, expr, r, step, rep="bucket_agg", rng=None):
+    rng = rng or TimeRange(0, 4 * DAY)
     return svc.datasets.put(
         source="default", expr=expr, rng=rng, step_ms=step, resolution_ms=15_000,
         result=r, representation=rep,
