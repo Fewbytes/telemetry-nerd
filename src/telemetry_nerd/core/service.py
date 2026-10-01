@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -10,13 +9,7 @@ from dataclasses import dataclass, field
 import polars as pl
 
 from telemetry_nerd.analysis.distlod import (
-    FACET_HEIGHT_MULTI,
     FACET_HEIGHT_SINGLE,
-    HIST_PX_PER_BAR,
-    PX_PER_COLUMN,
-    PX_PER_ROW,
-    merge_values,
-    rebucket_time,
     window_histogram,
 )
 from telemetry_nerd.analysis.exprkind import (
@@ -27,21 +20,12 @@ from telemetry_nerd.analysis.exprkind import (
     looks_like_histogram,
     min_samples,
 )
-from telemetry_nerd.analysis.filters import FilterSpec, removed_table
+from telemetry_nerd.analysis.filters import FilterSpec
 from telemetry_nerd.analysis.fraction import fraction_over, wilson
-from telemetry_nerd.analysis.marginal import (
-    SAMPLE_N_MIN,
-    histogram_of,
-    pooled_window,
-    sample_bins,
-    step_values,
-)
 from telemetry_nerd.analysis.quantile import attach_counts
-from telemetry_nerd.analysis.quantiles import column_quantiles
 from telemetry_nerd.analysis.reference import reference_window
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.charts.dataview import SignalViews, offered_views
-from telemetry_nerd.charts.indexed import shifted, window_baselines
 from telemetry_nerd.charts.spec import (
     SPECTRAL_MARKS,
     WINDOW_MARKS,
@@ -55,13 +39,22 @@ from telemetry_nerd.charts.spec import (
     validate,
 )
 from telemetry_nerd.core.events import Actor, EventLog
+from telemetry_nerd.core.panel_payloads import (
+    heatmap_panel_data,
+    histogram_panel_data,
+    index_payload,
+    marginal_payload,
+    series_labels,
+    series_payload,
+    signal_payload,
+)
 from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.signal_ops import SignalOps
 from telemetry_nerd.core.summary import summarize, summarize_distribution
 from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import DatasetStore
-from telemetry_nerd.model.distribution import DIST_N_MIN, QUANTILE_CHOICES
+from telemetry_nerd.model.distribution import DIST_N_MIN
 from telemetry_nerd.model.time import (
     TimeRange,
     format_duration,
@@ -90,17 +83,6 @@ MAX_BUCKETS_PER_QUERY = 50_000
 DIST_TARGET_COLUMNS = 300
 
 
-def _series_labels(series_table) -> dict[str, dict]:
-    """series_id -> labels; labels are self-produced, so a bad row never blocks a panel."""
-    out: dict[str, dict] = {}
-    for r in series_table.to_pylist():
-        try:
-            out[r["series_id"]] = json.loads(r["labels"])
-        except (TypeError, json.JSONDecodeError):
-            out[r["series_id"]] = {}
-    return out
-
-
 def _align_within_limit(rng: TimeRange, step_ms: int, noun: str) -> TimeRange:
     """Align the range to the step and refuse more than MAX_BUCKETS_PER_QUERY of them."""
     rng = rng.align(step_ms)
@@ -121,15 +103,6 @@ def _round_sig(v: float) -> float:
     return float(f"{v:.4g}")
 
 
-def _series_payload(table, labels: dict[str, dict]) -> list[dict]:
-    out = []
-    for (sid,), group in pl.DataFrame(table).group_by("series_id", maintain_order=True):
-        cols = {c: group[c].to_list() for c in ("ts_ms", "avg", "min", "max", "count")}
-        cols["ts"] = cols.pop("ts_ms")
-        out.append({"id": sid, "labels": labels.get(sid, {}), **cols})
-    return out
-
-
 _NICE_SEGMENTS = [m * 60_000 for m in (5, 10, 15, 30, 60, 120, 180, 360, 720, 1440, 2880)]
 
 
@@ -138,11 +111,6 @@ def _auto_segment(span_ms: int, step_ms: int) -> int:
     want = span_ms / 16
     seg = min(_NICE_SEGMENTS, key=lambda s: abs(s - want))
     return int(min(max(seg, 16 * step_ms), span_ms // 4))
-
-
-def _empty_window(w: dict) -> dict:
-    return {"start_ms": w["start_ms"], "end_ms": w["end_ms"], "n": 0.0, "columns": 0,
-            "lo": [], "hi": [], "c": []}  # fmt: skip
 
 
 class ChartRejected(Exception):
@@ -296,84 +264,11 @@ class TelemetryService:
         caveats = summarize_distribution(
             meta, dist, now_ms=self.clock(), settle_ms=self.cache.settle_ms
         )["caveats"]
-        labels = _series_labels(dist.series)
+        labels = series_labels(dist.series)
         layer = panel.spec["layers"][0]
         if layer["mark"] in WINDOW_MARKS:
-            return self._histogram_panel_data(panel, meta, dist, labels, caveats, width_px)
-        return self._heatmap_panel_data(panel, meta, dist, labels, caveats, width_px)
-
-    @staticmethod
-    def _histogram_panel_data(panel, meta, dist, labels, caveats, width_px) -> dict:
-        layer = panel.spec["layers"][0]
-        raw = pl.from_arrow(dist.rows)
-        rows, value_merge = merge_values(raw, dist.scheme, max(4, width_px // HIST_PX_PER_BAR))
-        cols = pl.from_arrow(dist.columns)
-
-        def hists(frame):
-            return [
-                window_histogram(frame, cols, meta.step_ms, w["start_ms"], w["end_ms"])
-                for w in layer["windows"]
-            ]
-
-        merged = hists(rows)
-        # cumulative views (ecdf, quantile, ccdf) must read source buckets, never merged bars
-        exact = hists(raw) if value_merge > 1 else None
-
-        def window(k, w, sid):
-            out = {"label": w["label"], **(merged[k].get(sid) or _empty_window(w))}
-            if exact is not None:
-                src = exact[k].get(sid) or _empty_window(w)
-                out["source"] = {"lo": src["lo"], "hi": src["hi"], "c": src["c"]}
-            return out
-
-        series = [
-            {
-                "id": sid,
-                "labels": lb,
-                "windows": [window(k, w, sid) for k, w in enumerate(layer["windows"])],
-            }
-            for sid, lb in labels.items()
-        ]
-        n_min = meta.n_min or 0
-        if (
-            any(0 < w["n"] < n_min for s in series for w in s["windows"])
-            and "low_count" not in caveats
-        ):
-            caveats.append("low_count")
-        return {"kind": "histogram", "mark": layer["mark"], "panel": panel.to_dict(),
-                "dataset": meta.to_dict(), "effective_step_ms": meta.step_ms,
-                "value_merge": value_merge, "series": series, "caveats": caveats}  # fmt: skip
-
-    @staticmethod
-    def _heatmap_panel_data(panel, meta, dist, labels, caveats, width_px) -> dict:
-        rows = pl.from_arrow(dist.rows)
-        cols = pl.from_arrow(dist.columns).with_columns(pl.lit(1, pl.Int64).alias("cover"))
-        n_cols = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
-        factor = max(1, math.ceil(n_cols / max(1, width_px // PX_PER_COLUMN)))
-        step = meta.step_ms * factor
-        if factor > 1:
-            rows, cols = rebucket_time(rows, cols, step)
-        # source buckets holding each q: time-summed counts (additive), never value-merged
-        bands = column_quantiles(rows, cols, QUANTILE_CHOICES)
-        facet_h = FACET_HEIGHT_SINGLE if len(labels) <= 1 else FACET_HEIGHT_MULTI
-        rows, value_merge = merge_values(rows, dist.scheme, max(4, facet_h // PX_PER_ROW))
-        series = []
-        for sid, lb in labels.items():
-            c = cols.filter(pl.col("series_id") == sid)
-            r = rows.filter(pl.col("series_id") == sid)
-            series.append({
-                "id": sid, "labels": lb,
-                "ts": c["ts_ms"].to_list(), "n": c["n"].to_list(), "cover": c["cover"].to_list(),
-                "cells": {"ts": r["ts_ms"].to_list(), "lo": r["bucket_lo"].to_list(),
-                          "hi": r["bucket_hi"].to_list(), "c": r["count"].to_list()},
-                "quantiles": bands.get(sid, {}),
-            })  # fmt: skip
-        return {
-            "kind": "heatmap", "mark": panel.spec["layers"][0]["mark"],
-            "panel": panel.to_dict(), "dataset": meta.to_dict(),
-            "effective_step_ms": step, "value_merge": value_merge, "facet_height_px": facet_h,
-            "series": series, "caveats": caveats,
-        }  # fmt: skip
+            return histogram_panel_data(panel, meta, dist, labels, caveats, width_px)
+        return heatmap_panel_data(panel, meta, dist, labels, caveats, width_px)
 
     async def distribution_panel(
         self,
@@ -433,7 +328,7 @@ class TelemetryService:
             raise ValueError("window end must be after its start")
         rows = pl.from_arrow(dist.rows)
         cols = pl.from_arrow(dist.columns)
-        labels = _series_labels(dist.series)
+        labels = series_labels(dist.series)
         if not by_series:
             rows = rows.with_columns(pl.lit("all").alias("series_id"))
             cols = (  # one column per step: counts are additive across series
@@ -542,7 +437,9 @@ class TelemetryService:
         p = self.ws.set_marginal(
             panel_id, Marginal(reference=ref.mode, author=actor, reason=reason), ref, actor
         )  # type: ignore[arg-type]
-        m = self._marginal(ChartSpec.model_validate(p.spec), self.datasets.meta(p.dataset_ids[0]))
+        m = marginal_payload(
+            self.datasets, ChartSpec.model_validate(p.spec), self.datasets.meta(p.dataset_ids[0])
+        )
         assert m is not None
         now, prev = m["windows"]
         return {
@@ -552,119 +449,6 @@ class TelemetryService:
             "reference": ref.label,
             "n": {"now": now["n"], "reference": prev["n"]},
             "datasets": [ref.series, ref.dist],
-        }
-
-    def _marginal(self, spec: ChartSpec, meta) -> dict | None:
-        m = spec.marginal
-        ref = spec.references.get(m.reference) if m else None
-        if m is None or ref is None:
-            return None
-        head = {
-            "reference": {
-                "mode": ref.mode,
-                "label": ref.label,
-                "start_ms": ref.start_ms,
-                "end_ms": ref.end_ms,
-            },
-            "author": m.author,
-            "reason": m.reason,
-        }
-        if ref.dist and ref.dist_current:
-            wins = []
-            for did, label in ((ref.dist_current, "now"), (ref.dist, ref.label)):
-                dm, dist = self.datasets.get_distribution(did)
-                w = pooled_window(pl.from_arrow(dist.rows), pl.from_arrow(dist.columns), dm.step_ms,
-                                  dm.start_ms - dm.step_ms, dm.end_ms)  # fmt: skip
-                wins.append(
-                    {
-                        "label": label,
-                        "start_ms": dm.start_ms,
-                        "end_ms": dm.end_ms,
-                        "n": 0.0,
-                        "columns": 0,
-                        "lo": [],
-                        "hi": [],
-                        "c": [],
-                        **(w or {}),
-                    }
-                )
-            k = max(w.get("series", 1) for w in wins)
-            what = f"observations (requests) of {meta.histogram['selector']}" + (
-                f", {k} series summed" if k > 1 else ""
-            )
-            return {
-                "basis": "distribution",
-                "what": what,
-                "n_min": DIST_N_MIN,
-                "windows": wins,
-                "excluded": [0, 0],
-                **head,
-            }
-        _, cur = self.datasets.get(meta.id)
-        rmeta, rres = self.datasets.get(ref.series)
-        cv, cx, k = step_values(cur.buckets, meta.representation, meta.n_min)
-        rv, rx, _ = step_values(rres.buckets, rmeta.representation, rmeta.n_min)
-        edges = sample_bins(cv, rv)
-        lo, hi = [a for a, _ in edges], [b for _, b in edges]
-        step = format_duration(meta.step_ms)
-        kind = (
-            f"p{meta.quantile * 100:g} values per {step} step (n ≥ {meta.n_min} only): "
-            "a distribution of percentile values, not of requests"
-            if meta.representation == "quantile"
-            else f"per-step values ({step} means of scrape samples): scrape samples, not requests"
-        )
-        what = kind + (f"; {k} series pooled" if k > 1 else "")
-        wins = [{"label": label, "start_ms": s, "end_ms": e, "n": float(len(v)), "columns": len(v),
-                 "lo": lo, "hi": hi, "c": histogram_of(v, edges)}
-                for label, s, e, v in (("now", meta.start_ms, meta.end_ms, cv),
-                                       (ref.label, ref.start_ms, ref.end_ms, rv))]  # fmt: skip
-        return {
-            "basis": "samples",
-            "what": what,
-            "n_min": SAMPLE_N_MIN,
-            "windows": wins,
-            "excluded": [cx, rx],
-            **head,
-        }
-
-    def _index(self, spec: ChartSpec, meta, result, width_px: int) -> dict | None:
-        v = spec.y.selected
-        if v is None or v.mode != "indexed":
-            return None
-        if v.baseline == "window":
-            a, b = iso(meta.start_ms - meta.step_ms)[11:16], iso(meta.end_ms)[11:16]
-            return {
-                "baseline": "window",
-                "label": f"1 = each series' mean over {a}–{b}Z",
-                "values": window_baselines(result.buckets),
-            }
-        ref = spec.references.get(v.baseline)
-        if ref is None:
-            return {
-                "baseline": v.baseline,
-                "label": "",
-                "refused": f"no {v.baseline} reference fetched",
-            }
-        _, rres = self.datasets.get(ref.series)
-        table = shifted(rres.buckets, ref.shift_ms)
-        if (
-            meta.representation != "quantile"
-        ):  # same range and step as the panel => identical LOD grid
-            table, _ = lod(table, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px)
-        series = [
-            {
-                "id": sid,
-                "ts": g["ts_ms"].to_list(),
-                "avg": g["avg"].to_list(),
-                "count": g["count"].to_list(),
-            }
-            for (sid,), g in pl.DataFrame(table).group_by("series_id", maintain_order=True)
-        ]
-        when = "last week" if ref.mode == "week" else "in the previous window"
-        return {
-            "baseline": v.baseline,
-            "label": f"1 = the same series {when} (point by point)",
-            "series": series,
         }
 
     def spectrum(
@@ -723,31 +507,6 @@ class TelemetryService:
             },
         )
         return {"dataset": new.id, "summary": extra["summary"]}
-
-    def _signal_payload(
-        self, panel: Panel, meta, effective_step: int, width_px: int, labels
-    ) -> dict:
-        """raw / removed / filter info for a panel drawn from filter() (bead 4ok.9)."""
-        sig = panel.spec.get("signal")
-        if not sig or len(panel.dataset_ids) < 2 or not meta.derived:
-            return {}
-        _, raw = self.datasets.get(panel.dataset_ids[1])
-        rng = TimeRange(meta.start_ms, meta.end_ms)
-        raw_t, _ = lod(raw.buckets, meta.step_ms, rng, width_px)
-        out = {
-            "raw": _series_payload(raw_t, labels),
-            "filter": {
-                **sig,
-                "edges": meta.derived.get("edges", {}),
-                "period_ms": meta.derived["period_ms"],
-                "period_hi_ms": meta.derived.get("period_hi_ms"),
-            },
-        }
-        if meta.derived["op"] != "lowpass":
-            _, filt = self.datasets.get(panel.dataset_ids[0])
-            removed, _ = lod(removed_table(raw.buckets, filt.buckets), meta.step_ms, rng, width_px)
-            out["removed"] = _series_payload(removed, labels)
-        return out
 
     @staticmethod
     def _refuse_reserved(name: str) -> None:
@@ -919,17 +678,19 @@ class TelemetryService:
             table, effective_step = lod(
                 result.buckets, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px
             )
-        labels = _series_labels(result.series)
-        series = _series_payload(table, labels)
+        labels = series_labels(result.series)
+        series = series_payload(table, labels)
         caveats = self._time_summary(meta, result, self.clock())["caveats"]
-        extra = self._signal_payload(panel, meta, effective_step, width_px, labels)
+        extra = signal_payload(self.datasets, panel, meta, width_px, labels)
         if extra:
             caveats.append("filtered")
         return {
             **extra,
             "kind": "time",
-            "marginal": self._marginal(ChartSpec.model_validate(panel.spec), meta),
-            "index": self._index(ChartSpec.model_validate(panel.spec), meta, result, width_px),
+            "marginal": marginal_payload(self.datasets, ChartSpec.model_validate(panel.spec), meta),
+            "index": index_payload(
+                self.datasets, ChartSpec.model_validate(panel.spec), meta, result, width_px
+            ),
             "panel": panel.to_dict(),
             "dataset": meta.to_dict(),
             "effective_step_ms": effective_step,
