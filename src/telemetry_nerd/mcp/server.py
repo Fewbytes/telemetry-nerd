@@ -74,6 +74,9 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
 - When you tell the user to look at an object ("see p5"), also call `highlight(object, note?)`
   so it is accented in their UI; `unhighlight` clears it. Mention ids like p5/f2 in text: they
   become hoverable chips.
+- Before charting unfamiliar metrics, check what the catalog knows: `catalog_search`/`catalog_get`
+  (run `source_learn` once per source). When you work out what a metric is (unit, type, role,
+  bounds), record it with `catalog_write` and a basis; never claim a unit you cannot justify.
 - `workspace_activity` lists what the user did since a sequence number.
 """
 
@@ -309,6 +312,67 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         except SourceError as e:
             raise _source_error(e) from e
         return _dump({"disconnected": name})
+
+    @mcp.tool()
+    async def source_learn(source: str = "default") -> str:
+        """Discover a source's metrics and learn what is cheap to know (declared metadata, naming
+        conventions, knowledge packs for node_exporter/Kubernetes). Slow on huge sources (it lists
+        every metric name); run it once per source, then use catalog_search. Returns counts,
+        caveats and a family overview (least-reviewed families first)."""
+        try:
+            out = await service.learn(source, "claude")
+            return _dump({**out, "families": service.ws.catalog_overview(source)})
+        except SourceError as e:
+            raise _source_error(e) from e
+
+    @mcp.tool()
+    def catalog_search(
+        source: str,
+        query: str | None = None,
+        prefix: str | None = None,
+        needs_review: bool = False,
+        limit: int = 50,
+    ) -> str:
+        """Find catalogued metrics. `query` matches name or description; `prefix` is a name
+        prefix (a family, e.g. node_cpu). `needs_review` keeps metrics nobody has interpreted yet
+        (no role from pack/claude/user) or whose claims conflict. Metrics this workspace already
+        queried come first (hot). Rows carry the winning type/unit/role/bounds and their origin."""
+        try:
+            return _dump(service.ws.catalog_search(source, query, prefix, needs_review, limit))
+        except (NotFound, ValueError) as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
+    def catalog_get(source: str, metric: str) -> str:
+        """One metric's full catalog entry: resolved fields and every competing claim with its
+        origin, confidence and basis, plus the fields where claims disagree."""
+        try:
+            e = service.ws.catalog_entry(source, metric)
+            return _dump(
+                {
+                    **e.model_dump(exclude={"fields"}),
+                    "resolved": {f: c.value for f, c in e.fields.items()},
+                    "conflicts": {
+                        f: [c.model_dump() for c in cs] for f, cs in e.conflicts().items()
+                    },
+                }
+            )
+        except (NotFound, ValueError) as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
+    def catalog_write(source: str, claims: list[dict[str, Any]]) -> str:
+        """Record what you have learned about metrics, up to 200 claims per call. Each claim:
+        {metric, field, value, confidence, basis}. field is one of type, unit, bounds,
+        additivity_series, additivity_time, role, description, histogram_family, bounded_by.
+        `basis` (required) is one line saying what you checked; confidence is at most 0.9
+        (1.0 is reserved for the user). Writes are origin=claude: they never override a user
+        claim or a higher-ranked origin, and the result says whether each claim is now the
+        winner. Bad claims are rejected individually."""
+        try:
+            return _dump({"results": service.ws.catalog_write_claude(source, claims)})
+        except ValueError as e:
+            raise _fail(e) from e
 
     @mcp.tool()
     def show(

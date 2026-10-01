@@ -114,6 +114,10 @@ class DatasetStore:
             raise NotFound(f"dataset {dataset_id} not found")
         return DatasetMeta(**json.loads(row[0]))
 
+    def list_metas(self) -> list[DatasetMeta]:
+        rows = self._con.execute("SELECT meta FROM datasets").fetchall()
+        return [DatasetMeta(**json.loads(r[0])) for r in rows]
+
     def exists(self, dataset_id: str) -> bool:
         return (
             self._con.execute(

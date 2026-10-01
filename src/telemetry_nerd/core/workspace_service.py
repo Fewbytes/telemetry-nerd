@@ -20,11 +20,14 @@ from telemetry_nerd.catalog.models import (
 )
 from telemetry_nerd.catalog.packs import PackIndex, builtin_packs
 from telemetry_nerd.catalog.rules import Facts, derive_claims, facts_from_claims, facts_from_name
+from telemetry_nerd.catalog.search import overview as family_overview
+from telemetry_nerd.catalog.search import search as search_entries
 from telemetry_nerd.catalog.store import CatalogStore
 from telemetry_nerd.channel.format import describe_event
 from telemetry_nerd.charts.dataview import SignalViews
 from telemetry_nerd.charts.indexed import check_index, shifted
 from telemetry_nerd.charts.spec import ChartSpec, Marginal, Reference
+from telemetry_nerd.charts.units import metric_names
 from telemetry_nerd.charts.yview import (
     BUILTIN_LABELS,
     INDEX_LABELS,
@@ -60,6 +63,9 @@ from telemetry_nerd.workspace.store import Panel, WorkspaceStore
 
 BRIEF_BUDGET_BYTES = 4096
 DEFAULT_HIGHLIGHT_TTL_MS = 300_000
+MAX_CLAUDE_BATCH = 200
+MAX_SEARCH = 200
+CLAUDE_MAX_CONFIDENCE = 0.9
 
 
 def atomic[F: Callable](fn: F) -> F:
@@ -359,6 +365,90 @@ class WorkspaceService:
         }
         self.log.append(actor, "catalog.learned", None, summary)
         return summary
+
+    def catalog_hot(self, source: str) -> set[str]:
+        """Catalogued metrics this workspace has actually queried (any dataset expression)."""
+        known = {e.metric for e in self.catalog.list_entries(source)}
+        used: set[str] = set()
+        for meta in self.datasets.list_metas():
+            if meta.source == source:
+                used |= metric_names(meta.expr)
+        return used & known
+
+    def catalog_search(
+        self,
+        source: str,
+        query: str | None = None,
+        prefix: str | None = None,
+        needs_review: bool = False,
+        limit: int = 50,
+    ) -> dict:
+        entries = self.catalog.list_entries(source)
+        return search_entries(
+            entries,
+            self.catalog_hot(source),
+            query=query,
+            prefix=prefix,
+            needs_review=needs_review,
+            limit=max(1, min(limit, MAX_SEARCH)),
+        )
+
+    def catalog_overview(self, source: str, top: int = 30) -> list[dict]:
+        return family_overview(self.catalog.list_entries(source), top)
+
+    def catalog_write_claude(self, source: str, items: list[dict[str, Any]]) -> list[dict]:
+        """Claude's batched catalog writes. Origin is always `claude`; every claim needs a
+        `basis` and confidence is capped; bad items are rejected one by one, never the batch.
+        A claim that a higher-ranked origin (user, ...) outranks is stored but reported as such."""
+        if len(items) > MAX_CLAUDE_BATCH:
+            raise ValueError(f"at most {MAX_CLAUDE_BATCH} claims per call, got {len(items)}")
+        results = []
+        for item in items:
+            metric, fld = str(item.get("metric")), str(item.get("field"))
+            base = {"metric": metric, "field": fld}
+            try:
+                confidence = item.get("confidence")
+                if (
+                    not isinstance(confidence, int | float)
+                    or not 0 < confidence <= CLAUDE_MAX_CONFIDENCE
+                ):
+                    raise ValueError(
+                        f"confidence must be in (0, {CLAUDE_MAX_CONFIDENCE}]: 1.0 is reserved "
+                        "for what the user verified"
+                    )
+                basis = item.get("basis")
+                if not isinstance(basis, str) or not basis.strip():
+                    raise ValueError("basis is required: one line saying what you checked")
+                self.catalog.entry(source, metric)  # NotFound if never learned
+                self.catalog_claim(
+                    source,
+                    metric,
+                    fld,  # type: ignore[arg-type]
+                    item.get("value"),
+                    "claude",
+                    "claude",
+                    confidence=float(confidence),
+                    citation=basis.strip(),
+                )
+            except NotFound:
+                results.append(
+                    {
+                        **base,
+                        "status": "rejected",
+                        "reason": f"unknown metric {metric!r} on {source!r}; run source_learn first",
+                    }
+                )
+                continue
+            except ValueError as e:
+                results.append({**base, "status": "rejected", "reason": str(e)})
+                continue
+            win = self.catalog.entry(source, metric).fields[fld]
+            effective = win.origin == "claude" and win.value == item.get("value")
+            res = {**base, "status": "accepted", "effective": effective}
+            if not effective:
+                res["outranked_by"] = win.origin
+            results.append(res)
+        return results
 
     def catalog_facts(self, source: str, metric: str) -> Facts:
         """Unit/type for charts: the catalog's winners, else the name rules alone."""

@@ -221,3 +221,12 @@ def raw_counters(expr: str, lookup: Lookup = facts_from_name) -> list[str]:
             ):
                 out.add(token)
     return sorted(out)
+
+
+def metric_names(expr: str) -> set[str]:
+    """Identifiers in an expression that could be metric names (not keywords or functions).
+
+    Over-approximates (label names are included); callers intersect with known metrics."""
+    return {
+        t for t in _TOKEN.findall(_STRING.sub(" ", expr)) if t not in "()" and t not in _KEYWORDS
+    }
