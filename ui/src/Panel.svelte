@@ -14,6 +14,7 @@
   import SelectionMenu from "./components/SelectionMenu.svelte";
   import PanelThread from "./components/PanelThread.svelte";
   import PinButton from "./components/PinButton.svelte";
+  import HeatmapPlot from "./components/HeatmapPlot.svelte";
 
   let { panel, annotations = [], threads = [] }: {
     panel: Panel; annotations?: Annotation[]; threads?: Thread[];
@@ -78,9 +79,28 @@
       ? panelNotes(data.caveats, {
           yScaledToData: panel.spec.y.range_mode === "data",
           nMin: data.dataset.n_min ?? null,
+          representation: data.dataset.representation,
         })
       : [],
   );
+
+
+  // Heatmap facets render independently: report once per fetched dataset, when every facet drew.
+  const facetStats = new Map<number, { ms: number; cells: number }>();
+  let reportedFor: PanelData | null = null;
+  const onFacetRendered = (i: number, total: number, ms: number, cells: number, facetH: number) => {
+    facetStats.set(i, { ms, cells });
+    if (!data || reportedFor === data || facetStats.size < total) return;
+    reportedFor = data;
+    const all = [...facetStats.values()];
+    const cellSum = all.reduce((a, f) => a + f.cells, 0);
+    const msMax = Math.max(...all.map((f) => f.ms));
+    heatCells = cellSum;
+    reportRender({ panel_id: panel.id, render_ms: msMax, points: cellSum, width_px: fetchWidth, height_px: facetH * total })
+      .then((r) => (render = { ms: msMax, exceeded: r.budget_exceeded }))
+      .catch((e) => (error = String(e)));
+  };
+  let heatCells = $state(0);
 
   const close = () => closePanel(panel.id).catch((e) => (error = String(e)));
 
@@ -167,6 +187,7 @@
   id="panel-{panel.id}"
   data-panel-id={panel.id}
   data-annotation-count={annCount}
+  data-heatmap-cells={data?.kind === "heatmap" ? heatCells : undefined}
   data-render-ms={render ? render.ms.toFixed(1) : undefined}
   data-budget-exceeded={render ? String(render.exceeded) : undefined}
 >
@@ -183,6 +204,18 @@
   </header>
   {#if error}<div class="error">{error}</div>{/if}
   <div bind:this={plotEl} class="plot" style="position: relative">
+    {#if data && data.kind === "heatmap"}
+      {@const hm = data}
+      {#each hm.series as s, i (s.id)}
+        <HeatmapPlot
+          data={hm} series={s} width={fetchWidth} height={hm.facet_height_px}
+          unit={hm.panel.spec.y.unit}
+          onRendered={(ms, cells) => onFacetRendered(i, hm.series.length, ms, cells, hm.facet_height_px)}
+          onBrush={(b) => (selection = { ...b, top: i * (hm.facet_height_px + 14) + 4 })}
+        />
+      {/each}
+      <div class="legend">colour: count per bucket per {fmtStep(hm.effective_step_ms)} (log scale) · hatched: no data · dimmed: n &lt; {hm.dataset.n_min}{#if hm.value_merge > 1} · {hm.value_merge} source buckets per row{/if}</div>
+    {/if}
     {#if selection}
       {#key selection}
         <SelectionMenu
@@ -193,6 +226,7 @@
           top={selection.top}
           width={selection.width}
           onCancel={cancelSelection}
+          distribution={data?.kind === "heatmap" || !!data?.dataset.histogram}
         />
       {/key}
     {/if}

@@ -26,3 +26,18 @@ describe("describeShown", () => {
     expect(describeShown({ representation: "bucket_agg" }, "30s")).toContain("min–max envelope");
   });
 });
+
+describe("distribution notes", () => {
+it("explains distribution caveats in plain words", () => {
+  const notes = panelNotes(["gaps", "low_count", "estimated_counts", "overflow"], { yScaledToData: false, nMin: 20, representation: "distribution" });
+  expect(notes.map((n) => n.key)).toEqual(["gaps", "low_count", "estimated_counts", "overflow"]);
+  expect(notes[0].text).toContain("hatched");
+  expect(notes[1].text).toContain("fewer than 20 observations");
+  expect(notes[2].text).toContain("extrapolat");
+  expect(notes[3].text).toContain("largest bucket");
+});
+it("describes a distribution panel", () => {
+  expect(describeShown({ representation: "distribution", quantile: null, scheme: { kind: "classic", edges: [0.1, 1], schema: null, per_decade: null, description: "classic le buckets: 0.1, 1" } }, "1m"))
+    .toContain("classic le buckets: 0.1, 1");
+});
+});

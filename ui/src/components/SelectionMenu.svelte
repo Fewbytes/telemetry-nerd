@@ -10,6 +10,7 @@
     top,
     width,
     onCancel,
+    distribution = false,
   }: {
     panelId: string;
     x0: number; // selection start, seconds
@@ -18,6 +19,7 @@
     top: number; // px, relative to the plot container
     width: number; // px of the brush selection
     onCancel: () => void;
+    distribution?: boolean; // the panel shows a distribution (wired up with the histogram chart)
   } = $props();
 
   // seconds → epoch ms, rounded ($derived: props can update while the menu is open)
