@@ -82,3 +82,23 @@ describe("toUplot legend", () => {
     expect(toUplot([q], undefined, { quantile: true, nMin: 200 }).legendHidden).toEqual([2]);
   });
 });
+
+describe("toUplot filter context", () => {
+  const base = { id: "a", labels: { job: "x" }, ts: [0, 60e3, 120e3], avg: [1, 2, 3], min: [1, 2, 3], max: [1, 2, 3], count: [1, 1, 1] };
+  it("raw context is drawn first and faint; edge spans become a dashed twin", () => {
+    const m = toUplot([base], undefined, {
+      context: { role: "raw", series: [{ ...base, avg: [0, 5, 0], min: [0, 5, 0], max: [0, 5, 0] }] },
+      edges: [[0, 0]],
+    });
+    expect(String(m.series[1].label)).toContain("raw");
+    expect(String(m.series[1].stroke)).toMatch(/rgba\(.*0\.35/);
+    expect(m.series.some((x) => x.dash && String(x.label).includes("edge"))).toBe(true);
+    // the edge point is moved from the solid line to the twin
+    const solid = m.series.findIndex((x) => x.label === '{job="x"}');
+    expect(m.data[solid][0]).toBeNull();
+  });
+  it("removed part is a dashed line over the main series", () => {
+    const m = toUplot([base], undefined, { context: { role: "removed", series: [{ ...base, avg: [9, 9, 9] }] } });
+    expect(m.series.some((x) => x.dash && String(x.label).includes("removed"))).toBe(true);
+  });
+});

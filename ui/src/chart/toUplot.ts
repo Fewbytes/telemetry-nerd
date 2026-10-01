@@ -47,17 +47,31 @@ function gridTimes({ start, end, step }: Grid): number[] {
 export interface ToUplotOpts {
   quantile?: boolean;
   nMin?: number | null;
+  /** another series set drawn with these: the raw behind a filter (faint, underneath) or the removed part (dashed, on top) */
+  context?: { role: "raw" | "removed"; series: SeriesData[] };
+  /** filter edge spans [t0, t1] ms (all series, or per series id): drawn dashed, they are unreliable */
+  edges?: number[][] | Record<string, number[][]>;
 }
 
 export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {}): UplotModel {
   const all = new Set<number>(grid ? gridTimes(grid) : []);
   series.forEach((s) => s.ts.forEach((t) => all.add(t)));
+  opts.context?.series.forEach((s) => s.ts.forEach((t) => all.add(t)));
   const xs = [...all].sort((a, b) => a - b);
   const index = new Map(xs.map((t, i) => [t, i]));
   const data: (number | null)[][] = [xs.map((t) => t / 1000)];
   const uSeries: uPlot.Series[] = [{}];
   const bands: uPlot.Band[] = [];
   const legendHidden: number[] = [];
+
+  const contextColumn = (c: SeriesData, f: "avg" | "min" | "max") => {
+    const out: (number | null)[] = Array(xs.length).fill(null);
+    c.ts.forEach((t, i) => {
+      const idx = index.get(t);
+      if (idx !== undefined) out[idx] = c[f][i];
+    });
+    return out;
+  };
 
   series.forEach((s, k) => {
     const color = PALETTE[k % PALETTE.length];
@@ -92,8 +106,25 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
       }
       return;
     }
+    const ctx = opts.context?.series.find((c) => c.id === s.id);
+    if (ctx && opts.context?.role === "raw") {
+      // the raw series behind a filter: faint and underneath (drawn first)
+      const ci = data.length;
+      data.push(contextColumn(ctx, "avg"), contextColumn(ctx, "min"), contextColumn(ctx, "max"));
+      legendHidden.push(ci + 1, ci + 2);
+      uSeries.push(
+        { label: `${name} raw`, stroke: rgba(color, 0.35), width: 1, spanGaps: false },
+        { label: "", stroke: "transparent", width: 0, points: { show: false } },
+        { label: "", stroke: "transparent", width: 0, points: { show: false } },
+      );
+      bands.push({ series: [ci + 2, ci + 1], fill: rgba(color, 0.08) });
+    }
+    const spans = Array.isArray(opts.edges) ? opts.edges : (opts.edges?.[s.id] ?? []);
+    const inEdge = (t: number) => spans.some(([a, b]) => t >= a && t <= b);
+    const edgeAvg = spans.length ? s.ts.map((t, i) => (inEdge(t) ? s.avg[i] : null)) : null;
+    const mainAvg = edgeAvg ? s.avg.map((v, i) => (inEdge(s.ts[i]) ? null : v)) : s.avg;
     const avgIdx = data.length;
-    data.push(column(s.avg), column(s.min), column(s.max));
+    data.push(column(mainAvg), column(s.min), column(s.max));
     // one legend row per series: the value plus its envelope, instead of separate min/max rows
     const withEnvelope = (_u: uPlot, v: number | null, _si: number, i: number | null) => {
       if (v == null || i == null) return "--";
@@ -107,6 +138,17 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
       { label: `${name} max`, stroke: rgba(color, 0.35), width: 0.5, spanGaps: false, points: { show: false } },
     );
     bands.push({ series: [avgIdx + 2, avgIdx + 1], fill: rgba(color, 0.15) });
+    if (edgeAvg) {
+      // filter edges (series start/end, around gaps): truncated kernel, unreliable: dashed twin
+      data.push(column(edgeAvg));
+      legendHidden.push(uSeries.length);
+      uSeries.push({ label: `${name} (filter edge, unreliable)`, stroke: color, width: 1.5, dash: [4, 4], spanGaps: false });
+    }
+    if (ctx && opts.context?.role === "removed") {
+      // the part a high/band-pass took out, dashed over the raw series
+      data.push(contextColumn(ctx, "avg"));
+      uSeries.push({ label: `${name} removed part`, stroke: rgba(color, 0.8), width: 1, dash: [3, 3], spanGaps: false });
+    }
   });
 
   return { data: data as uPlot.AlignedData, series: uSeries, bands, legendHidden, points: xs.length * series.length };
