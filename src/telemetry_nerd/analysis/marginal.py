@@ -6,6 +6,7 @@ the per-step values drawn on a time panel (scrape-derived samples, NOT requests)
 from __future__ import annotations
 
 import bisect
+import itertools
 
 import polars as pl
 import pyarrow as pa
