@@ -3,6 +3,7 @@
   import FindingCard from "./FindingCard.svelte";
   import GapList from "./GapList.svelte";
   import HypothesisList from "./HypothesisList.svelte";
+  import { orphanedAnnotations } from "../lib/orphans";
 
   let { snapshot }: { snapshot: Snapshot | null } = $props();
 
@@ -10,6 +11,7 @@
   const findings = $derived(snapshot?.findings ?? []);
   const gaps = $derived(snapshot?.gaps ?? []);
   const annotations = $derived(snapshot?.annotations ?? []);
+  const orphans = $derived(orphanedAnnotations(annotations, snapshot?.panels ?? []));
   const openFindings = $derived(findings.filter((f) => f.verdict !== "rejected"));
   const rejectedFindings = $derived(findings.filter((f) => f.verdict === "rejected"));
 
@@ -22,7 +24,7 @@
     {#if hypotheses.length === 0}
       <p class="none">No hypotheses yet.</p>
     {:else}
-      <HypothesisList {hypotheses} />
+      <HypothesisList {hypotheses} {findings} />
     {/if}
   </section>
 
@@ -51,6 +53,20 @@
       {/if}
     {/if}
   </section>
+
+  {#if orphans.length > 0}
+    <section>
+      <h2>Annotations on closed panels</h2>
+      <ul class="orphans">
+        {#each orphans as a (a.id)}
+          <li id="annotation-{a.id}">
+            <span class="obj-id">{a.id}</span> {a.kind}: {a.label}
+            <span class="chip">{a.panel}</span>
+          </li>
+        {/each}
+      </ul>
+    </section>
+  {/if}
 
   <section>
     <h2>Gaps</h2>
