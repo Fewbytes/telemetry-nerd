@@ -63,3 +63,56 @@ export function maxEcdfGapAtEdges(a: WindowHist, b: WindowHist): { gap: number; 
   }
   return best;
 }
+
+/** Cumulative views read source buckets: bars may have been merged for width. */
+export const exactWindow = (w: WindowHist): WindowHist => (w.source ? { ...w, ...w.source } : w);
+
+export interface QuantileBox { q0: number; q1: number; lo: number | null; hi: number | null; faded: boolean }
+/** Inverse ECDF as boxes [F(lo), F(hi)] x [lo, hi]. q is meaningful iff n >= 10/(1-q), i.e. q <= 1 - 10/n. */
+export function quantileBoxes(w: WindowHist): { boxes: QuantileBox[]; qMax: number } {
+  const qMax = w.n > 0 ? Math.max(0, 1 - 10 / w.n) : 0;
+  const boxes: QuantileBox[] = [];
+  for (const s of ecdf(w)) {
+    if (s.f1 <= qMax + 1e-12) boxes.push({ q0: s.f0, q1: s.f1, lo: s.lo, hi: s.hi, faded: false });
+    else if (s.f0 >= qMax - 1e-12) boxes.push({ q0: s.f0, q1: s.f1, lo: s.lo, hi: s.hi, faded: true });
+    else boxes.push({ q0: s.f0, q1: qMax, lo: s.lo, hi: s.hi, faded: false }, { q0: qMax, q1: s.f1, lo: s.lo, hi: s.hi, faded: true });
+  }
+  return { boxes, qMax };
+}
+
+/** x position of q: linear, or "nines" -log10(1-q) capped at log10(n) (q = 1 sits at the end). */
+export function quantileAxis(mode: "linear" | "nines", nMax: number, length: number) {
+  const top = mode === "nines" ? Math.log10(Math.max(nMax, 10)) : 1;
+  const f = (q: number) => (mode === "linear" ? q : Math.min(-Math.log10(1 - q), top));
+  const ticks = mode === "linear" ? [0, 0.25, 0.5, 0.75, 1] : [0.5, 0.9, 0.99, 0.999, 0.9999].filter((q) => -Math.log10(1 - q) <= top + 1e-9);
+  return { pos: (q: number) => (f(q) / top) * length, ticks };
+}
+
+export interface SurvivalStep { lo: number | null; hi: number | null; s0: number; s1: number; above: number; faded: boolean }
+/** P(X > x): exact at each upper edge (s1), a box [s1, s0] inside the bucket; < 10 observations above: faded. */
+export function survival(w: WindowHist): SurvivalStep[] {
+  const t = total(w);
+  if (!(t > 0)) return [];
+  let above = t;
+  return order(w).map((i) => {
+    const s0 = above / t;
+    above -= w.c[i];
+    return { lo: w.lo[i], hi: w.hi[i], s0, s1: above / t, above, faded: above < 10 };
+  });
+}
+
+export type Over =
+  | { exact: true; f: number; count: number }
+  | { exact: false; min: number; max: number; lo: number | null; hi: number | null };
+/** Fraction of observations > x. Exact unless x is strictly inside a non-empty bucket (then bounds). */
+export function fractionOver(w: WindowHist, x: number): Over | null {
+  const t = total(w);
+  if (!(t > 0)) return null;
+  let above = 0, inside = 0, lo: number | null = null, hi: number | null = null;
+  w.c.forEach((c, i) => {
+    const l = w.lo[i] ?? -Infinity, h = w.hi[i] ?? Infinity;
+    if (l >= x) above += c;
+    else if (x < h && c > 0) { inside += c; lo = w.lo[i]; hi = w.hi[i]; }
+  });
+  return inside === 0 ? { exact: true, f: above / t, count: above } : { exact: false, min: above / t, max: (above + inside) / t, lo, hi };
+}

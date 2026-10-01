@@ -1,7 +1,7 @@
 <script lang="ts">
   import { setupCanvas } from "../chart/canvas";
   import { colormap, type ColormapName } from "../chart/colormap";
-  import { hitTest, layoutHeatmap, quantileCells, STRIP_PX, timeAt, type HeatLayout } from "../chart/heatmap";
+  import { cellSpan, hitTest, layoutHeatmap, STRIP_PX, timeAt, timeColumns, type HeatLayout } from "../chart/heatmap";
   import { fmtValue, valueTicks } from "../chart/axis";
   import { seriesName } from "../chart/toUplot";
   import { fmtRange } from "../lib/format";
@@ -56,14 +56,17 @@
     ctx.globalAlpha = 1;
     if (overlayQ !== null) {
       // the quantile's source bucket, outlined: an honest range, never an interpolated line
-      for (const qc of quantileCells(series, overlayQ)) {
-        const r = l.rects.find((x) => x.cell === qc.cell);
-        if (!r) continue;
+      const band = series.quantiles?.[String(overlayQ)];
+      const { col } = timeColumns(data.dataset.start_ms, data.dataset.end_ms, data.effective_step_ms, plotW);
+      band?.ts.forEach((ts, i) => {
+        const c = col(ts);
+        const [p0, p1] = cellSpan(l.axis, band.lo[i], band.hi[i]);
+        const x = c.x, y = plotH - p1, w = c.w, h = p1 - p0;
         ctx.lineWidth = 2; ctx.strokeStyle = "#000";
-        ctx.strokeRect(r.x + 1, r.y + 1, Math.max(r.w - 2, 1), Math.max(r.h - 2, 1));
+        ctx.strokeRect(x + 1, y + 1, Math.max(w - 2, 1), Math.max(h - 2, 1));
         ctx.lineWidth = 1; ctx.strokeStyle = "#fff";
-        ctx.strokeRect(r.x + 1.5, r.y + 1.5, Math.max(r.w - 3, 1), Math.max(r.h - 3, 1));
-      }
+        ctx.strokeRect(x + 1.5, y + 1.5, Math.max(w - 3, 1), Math.max(h - 3, 1));
+      });
     }
     ctx.fillStyle = v("--warn");
     for (const m of l.lowN) ctx.fillRect(m.x, plotH - 3, m.w, 3);

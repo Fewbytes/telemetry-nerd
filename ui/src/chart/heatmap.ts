@@ -61,11 +61,7 @@ export interface HeatLayout {
 export function layoutHeatmap(s: HeatSeries, o: HeatLayoutOpts): HeatLayout {
   const axis = valueAxis(s.cells.lo, s.cells.hi, o.height, o.yMode);
   const k = o.stepMs;
-  const x0Ms = Math.ceil(o.startMs / k) * k - k; // left edge of the first column
-  const x1Ms = Math.ceil(o.endMs / k) * k;
-  const spanMs = x1Ms - x0Ms;
-  const toX = (ms: number) => ((ms - x0Ms) * o.width) / spanMs;
-  const col = (ts: number): Span => ({ x: toX(ts - k), w: toX(ts) - toX(ts - k) });
+  const { x0Ms, x1Ms, spanMs, col } = timeColumns(o.startMs, o.endMs, k, o.width);
   const nAt = new Map(s.ts.map((t, i) => [t, s.n[i]]));
   const missing: Span[] = [];
   for (let t = x0Ms + k; t <= x1Ms; t += k) if (!nAt.has(t)) missing.push(col(t));
@@ -101,31 +97,20 @@ export const timeAt = (l: HeatLayout, px: number): number => l.x0Ms + (px / l.wi
 /** Observations needed for a meaningful quantile: n >= 10/(1-q) (port of exprkind.min_samples). */
 export const minSamples = (q: number): number => Math.ceil(Number((10 / (1 - q)).toFixed(6)));
 
-export interface QuantileCell { ts: number; lo: number | null; hi: number | null; cell: number }
+/** Column geometry: column `ts` covers (ts - step, ts]; the first column's left edge snaps down to the step. */
+export function timeColumns(startMs: number, endMs: number, stepMs: number, width: number) {
+  const k = stepMs;
+  const x0Ms = Math.ceil(startMs / k) * k - k;
+  const x1Ms = Math.ceil(endMs / k) * k;
+  const spanMs = x1Ms - x0Ms;
+  const toX = (ms: number) => ((ms - x0Ms) * width) / spanMs;
+  return { x0Ms, x1Ms, spanMs, col: (ts: number): Span => ({ x: toX(ts - k), w: toX(ts) - toX(ts - k) }) };
+}
 
-/**
- * Per column, the SOURCE bucket that contains quantile q (never an interpolated value),
- * only where the column has enough observations for q to mean anything.
- */
-export function quantileCells(s: HeatSeries, q: number): QuantileCell[] {
-  const need = minSamples(q);
-  const byTs = new Map<number, number[]>();
-  s.cells.ts.forEach((t, i) => byTs.set(t, [...(byTs.get(t) ?? []), i]));
-  const out: QuantileCell[] = [];
-  s.ts.forEach((t, k) => {
-    const n = s.n[k];
-    const idx = byTs.get(t);
-    if (!idx || !(n >= need)) return;
-    idx.sort((a, b) => (s.cells.hi[a] ?? Infinity) - (s.cells.hi[b] ?? Infinity) || (s.cells.lo[a] ?? -Infinity) - (s.cells.lo[b] ?? -Infinity));
-    const total = idx.reduce((acc, i) => acc + s.cells.c[i], 0);
-    let acc = 0;
-    for (const i of idx) {
-      acc += s.cells.c[i];
-      if (acc >= q * total * (1 - 1e-12)) {
-        out.push({ ts: t, lo: s.cells.lo[i], hi: s.cells.hi[i], cell: i });
-        break;
-      }
-    }
-  });
-  return out;
+/** Inverse of `axis.pos`: the value at a pixel offset. */
+export function valueAt(a: ValueAxis, px: number): number {
+  const f = (px - a.body[0]) / (a.body[1] - a.body[0]);
+  if (a.kind === "linear") return a.min + f * (a.max - a.min);
+  const l0 = Math.log10(a.min), l1 = Math.log10(a.max);
+  return 10 ** (l0 + f * (l1 - l0));
 }

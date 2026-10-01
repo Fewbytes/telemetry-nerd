@@ -2,6 +2,7 @@ export interface ChartSpec {
   layers: {
     mark: string; data: string;
     windows?: { start_ms: number; end_ms: number; label: string }[]; color?: "count" | "density";
+    quantiles?: number[];
   }[];
   y: {
     range_mode: "data" | "reference" | "semantic"; unit: string | null; label: string | null;
@@ -31,13 +32,18 @@ export interface DatasetMeta {
 }
 /** Distribution cells. lo === null means -Inf, hi === null means +Inf (JSON has no Infinity). */
 export interface HeatCells { ts: number[]; lo: (number | null)[]; hi: (number | null)[]; c: number[] }
+/** Per column, the source bucket holding a quantile (server-side, n-gated). */
+export interface QuantileBand { ts: number[]; lo: (number | null)[]; hi: (number | null)[] }
 export interface HeatSeries {
   id: string; labels: Record<string, string>;
   ts: number[]; n: number[]; cover: number[]; cells: HeatCells;
+  quantiles?: Record<string, QuantileBand>; // key String(q); band only where n >= minSamples(q)
 }
 export interface WindowHist {
   label: string; start_ms: number; end_ms: number; n: number; columns: number;
   lo: (number | null)[]; hi: (number | null)[]; c: number[];
+  /** source buckets, only present when `lo/hi/c` were value-merged into bars */
+  source?: { lo: (number | null)[]; hi: (number | null)[]; c: number[] };
 }
 export interface BucketSchemeInfo {
   kind: string; edges: number[]; schema: number | null; per_decade: number | null; description: string;
@@ -45,10 +51,10 @@ export interface BucketSchemeInfo {
 interface PanelDataBase { panel: Panel; dataset: DatasetMeta; caveats: string[] }
 export interface TimePanelData extends PanelDataBase { kind: "time"; effective_step_ms: number; series: SeriesData[] }
 export interface HeatmapPanelData extends PanelDataBase {
-  kind: "heatmap"; effective_step_ms: number; value_merge: number; facet_height_px: number; series: HeatSeries[];
+  kind: "heatmap"; mark: "heatmap" | "percentiles"; effective_step_ms: number; value_merge: number; facet_height_px: number; series: HeatSeries[];
 }
 export interface HistogramPanelData extends PanelDataBase {
-  kind: "histogram"; mark: "histogram" | "ecdf"; effective_step_ms: number; value_merge: number;
+  kind: "histogram"; mark: "histogram" | "ecdf" | "quantile_curve" | "ccdf"; effective_step_ms: number; value_merge: number;
   series: { id: string; labels: Record<string, string>; windows: WindowHist[] }[];
 }
 export type PanelData = TimePanelData | HeatmapPanelData | HistogramPanelData;
