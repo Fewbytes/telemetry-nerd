@@ -283,3 +283,9 @@ def test_mcp_rejects_foreign_host(live_daemon):
 
     r = httpx.post(f"{live_daemon.mcp_url}", headers={"Host": "evil.example"}, json={})
     assert r.status_code in (400, 421)
+
+
+def test_list_sources(client):
+    r = client.get("/api/sources")
+    assert r.status_code == 200
+    assert [s["name"] for s in r.json()["sources"]] == ["default"]

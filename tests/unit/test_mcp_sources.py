@@ -1,0 +1,86 @@
+import json
+
+from mcp import Client
+from mcp.types import TextContent
+
+from telemetry_nerd.mcp.server import build_mcp
+from telemetry_nerd.sources.promql import PromQLSource
+from tests.unit.fakes import make_service
+
+URL = "https://play.grafana.org/api/datasources/proxy/uid/grafanacloud-prom"
+
+
+async def call(mcp, name, args):
+    async with Client(mcp) as client:
+        return await client.call_tool(name, args)
+
+
+def text(result) -> str:
+    block = result.content[0]
+    assert isinstance(block, TextContent)
+    return block.text
+
+
+async def test_connect_list_query_disconnect(tmp_path):
+    svc = make_service(tmp_path)
+    mcp = build_mcp(svc, "http://x")
+    r = await call(
+        mcp,
+        "source_connect",
+        {
+            "name": "play",
+            "url": URL,
+            "resolution": "20s",
+            "min_interval": "500ms",
+            "timeout": "60s",
+        },
+    )
+    assert not r.is_error, text(r)
+    out = json.loads(text(r))
+    assert out["source"]["resolution_ms"] == 20_000
+    assert out["source"]["politeness"] == {
+        "max_concurrency": 4,
+        "min_interval_ms": 500,
+        "timeout_s": 60.0,
+    }
+    assert out["status"]["reachable"] is True
+
+    names = [s["name"] for s in json.loads(text(await call(mcp, "source_list", {})))["sources"]]
+    assert names == ["default", "play"]
+
+    q = await call(
+        mcp, "query", {"expr": "up", "start": "now-2h", "end": "now-1h", "source": "play"}
+    )
+    assert not q.is_error, text(q)
+
+    d = await call(mcp, "source_disconnect", {"name": "play"})
+    assert json.loads(text(d)) == {"disconnected": "play"}
+
+
+async def test_token_like_auth_env_is_rejected_with_guidance(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    r = await call(mcp, "source_connect", {"name": "g", "url": URL, "auth_env": "glsa_abcdef0123"})
+    assert r.is_error
+    assert "NAME of an environment variable" in text(r)
+
+
+async def test_url_with_credentials_rejected(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    r = await call(mcp, "source_connect", {"name": "g", "url": "https://u:p@grafana.test"})
+    assert r.is_error
+    assert "credentials in the url" in text(r)
+
+
+async def test_missing_secret_is_a_tool_error_with_hint(tmp_path):
+    mcp = build_mcp(make_service(tmp_path, factory=PromQLSource.from_spec), "http://x")
+    r = await call(
+        mcp, "source_connect", {"name": "g", "url": URL, "auth_env": "TN_SURELY_UNSET_VAR"}
+    )
+    assert r.is_error
+    assert "TN_SURELY_UNSET_VAR" in text(r) and "hint:" in text(r)
+
+
+async def test_status_unknown_source_is_tool_error(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    r = await call(mcp, "source_status", {"name": "ghost"})
+    assert r.is_error and "source_list" in text(r)

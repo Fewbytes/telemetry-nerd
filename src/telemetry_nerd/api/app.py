@@ -375,6 +375,10 @@ def create_app(
         return ws.snapshot()
 
     @_api
+    async def list_sources(request: Request) -> object:
+        return {"sources": service.source_list()}
+
+    @_api
     async def list_events(request: Request) -> object:
         since = _int_param(request, "since", 0)
         limit = min(1000, max(1, _int_param(request, "limit", 1000)))
@@ -461,6 +465,7 @@ def create_app(
     routes = [
         Route("/api/health", health),
         Route("/api/workspace", workspace),
+        Route("/api/sources", list_sources),
         Route("/api/events", list_events),
         Route("/api/annotations", annotation_create, methods=["POST"]),
         Route("/api/annotations/{id}/delete", annotation_delete, methods=["POST"]),
