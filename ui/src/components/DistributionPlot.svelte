@@ -1,6 +1,7 @@
 <script lang="ts">
   import { PALETTE, seriesName } from "../chart/toUplot";
   import { bars, ecdf, maxEcdfGapAtEdges, type BarMode } from "../chart/distribution";
+  import { setupCanvas } from "../chart/canvas";
   import { cellSpan, valueAxis } from "../chart/heatmap";
   import { fmtValue, valueTicks } from "../chart/axis";
   import { fmtRange } from "../lib/format";
@@ -41,15 +42,8 @@
     const el = canvas;
     if (!el) return;
     const t0 = performance.now();
-    const dpr = window.devicePixelRatio || 1;
-    el.width = Math.round(width * dpr);
-    el.height = Math.round(HEIGHT * dpr);
-    el.style.width = `${width}px`;
-    el.style.height = `${HEIGHT}px`;
-    const ctx = el.getContext("2d");
+    const ctx = setupCanvas(el, width, HEIGHT);
     if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, HEIGHT);
     const css = getComputedStyle(el);
     const v = (name: string) => css.getPropertyValue(name).trim();
     const lo = windows.flatMap((w) => w.lo);
@@ -110,11 +104,9 @@
           ctx.beginPath();
           ctx.arc(x1, y(s.f1), 2.5, 0, 2 * Math.PI); // exact at the bucket edge
           ctx.fill();
-          const next = spans[k][i + 1] ?? null;
-          const nextX0 = steps[i + 1] ? cellSpan(axis, steps[i + 1].lo, steps[i + 1].hi)[0] : plotW;
           ctx.beginPath();
           ctx.moveTo(x1, y(s.f1));
-          ctx.lineTo(next ? nextX0 : plotW, y(s.f1));
+          ctx.lineTo(spans[k][i + 1]?.x0 ?? plotW, y(s.f1)); // exact until the next bucket starts
           ctx.stroke();
         });
       }

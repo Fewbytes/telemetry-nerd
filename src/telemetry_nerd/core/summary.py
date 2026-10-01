@@ -18,6 +18,20 @@ def _round(x: float | None) -> float | None:
     return None if x is None else float(f"{x:.4g}")
 
 
+def _labels_by_id(series_table) -> dict[str, dict]:
+    return {r["series_id"]: json.loads(r["labels"]) for r in series_table.to_pylist()}
+
+
+def _empty(base: dict, caveats: list[str]) -> dict:
+    return {
+        **base,
+        "series_count": 0,
+        "series": [],
+        "more_series": 0,
+        "caveats": ["empty", *caveats],
+    }
+
+
 def _base_caveats(meta: DatasetMeta, now_ms: int, settle_ms: int) -> list[str]:
     caveats: list[str] = []
     if meta.step_ms < meta.resolution_ms:
@@ -43,14 +57,8 @@ def summarize(
     if meta.representation == "quantile":
         base |= {"quantile": meta.quantile, "n_min": meta.n_min}
     if result.buckets.num_rows == 0:
-        return {
-            **base,
-            "series_count": 0,
-            "series": [],
-            "more_series": 0,
-            "caveats": ["empty", *caveats],
-        }
-    labels = {r["series_id"]: json.loads(r["labels"]) for r in result.series.to_pylist()}
+        return _empty(base, caveats)
+    labels = _labels_by_id(result.series)
     # The grid is inclusive of both start and end (query_range and cache reads are BETWEEN).
     expected = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
     if meta.representation == "quantile":
@@ -104,7 +112,7 @@ def _summarize_quantile(
     meta: DatasetMeta, result: FetchResult, base: dict, caveats: list[str], expected: int, top: int
 ) -> dict:
     """Percentiles are reported per bucket with their n; never averaged (spec §1.2)."""
-    labels = {r["series_id"]: json.loads(r["labels"]) for r in result.series.to_pylist()}
+    labels = _labels_by_id(result.series)
     df = pl.from_arrow(result.buckets).with_columns(pl.col("avg").fill_nan(None))
     # a value with a missing count (0) is still a value: it is "not meaningful", not a gap
     has_value = pl.col("avg").is_not_null()
@@ -192,16 +200,10 @@ def summarize_distribution(
         "counts": "increase() per step; additive over time and adjacent buckets",
     }
     if dist.columns.num_rows == 0:
-        return {
-            **base,
-            "series_count": 0,
-            "series": [],
-            "more_series": 0,
-            "caveats": ["empty", *caveats],
-        }
+        return _empty(base, caveats)
     expected = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
     n_min = meta.n_min or 0
-    labels = {r["series_id"]: json.loads(r["labels"]) for r in dist.series.to_pylist()}
+    labels = _labels_by_id(dist.series)
     per = (
         pl.from_arrow(dist.columns)
         .group_by("series_id")

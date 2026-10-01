@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { setupCanvas } from "../chart/canvas";
   import { colormap, type ColormapName } from "../chart/colormap";
   import { hitTest, layoutHeatmap, quantileCells, STRIP_PX, timeAt, type HeatLayout } from "../chart/heatmap";
   import { fmtValue, valueTicks } from "../chart/axis";
@@ -35,13 +36,8 @@
     const el = canvas;
     if (!el) return;
     const t0 = performance.now();
-    const dpr = window.devicePixelRatio || 1;
-    el.width = Math.round(width * dpr); el.height = Math.round(height * dpr);
-    el.style.width = `${width}px`; el.style.height = `${height}px`;
-    const ctx = el.getContext("2d");
+    const ctx = setupCanvas(el, width, height);
     if (!ctx) return;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, width, height);
     const css = getComputedStyle(el);
     const v = (name: string) => css.getPropertyValue(name).trim();
     const l = layoutHeatmap(series, {
