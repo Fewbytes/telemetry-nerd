@@ -31,6 +31,11 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   meaningless unless n >= ~10/(1-q) per bucket: p50 ~20, p95 ~200, p99 ~1000, p99.9 ~10000.
   Always query the count behind it (histogram_count(increase(...[window])) or
   increase(..._count[window])) and say where the percentile is not meaningful.
+- NEVER AGGREGATE PERCENTILES — not across series (sum/avg/max of histogram_quantile or of
+  summary {quantile=...} series) and not across time (avg_over_time, rollups, downsampling
+  of a percentile series). Aggregate the underlying histogram first, then take the quantile
+  once: histogram_quantile(q, sum by (...) (rate(x[w]))). Likewise divide sums by counts
+  only after aggregating both: histogram_sum(sum(rate(x[w]))) / histogram_count(sum(...)).
 - Never look at latency alone: show it with throughput, and with concurrency when relevant
   (Little's law: mean concurrency L = throughput λ x mean latency W; W from
   histogram_sum/histogram_count, not from a percentile).
