@@ -398,6 +398,11 @@ class TelemetryService:
             await self._close(old)
         self.log.append(actor, "source.disconnected", name, {})
 
+    async def learn(self, source: str = "default", actor: Actor = "system") -> dict:
+        """Discover a source and (re-)learn its catalog from the result."""
+        discovery = await self._source(source).discover()
+        return self.ws.catalog_learn(source, discovery, actor)
+
     def show(
         self,
         dataset_id: str,
@@ -416,6 +421,7 @@ class TelemetryService:
             unit=unit,
             unit_provenance=f"provided by {actor}" if unit else None,
             representation=meta.representation,
+            lookup=lambda metric: self.ws.catalog_facts(meta.source, metric),
         )
         if mark != "auto":
             for w in windows or []:

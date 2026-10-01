@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from collections import defaultdict
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 
 from telemetry_nerd.catalog.models import CatalogEntry, Claim, RelearnDiff, ordered
 from telemetry_nerd.model.errors import NotFound
@@ -58,6 +58,45 @@ class CatalogStore:
                 claim.ts_ms,
             ),
         )
+
+    def put_claims_bulk(self, source: str, rows: Iterable[tuple[str, Claim]]) -> int:
+        """Upsert many claims; a claim whose value, confidence and citation are unchanged is left
+        alone (its timestamp stays), so re-learning an unchanged source writes nothing.
+        Metrics must already be in the inventory (see `relearn`). Returns rows inserted/changed."""
+        before = self._db.total_changes
+        self._db.executemany(
+            "INSERT INTO catalog_claims "
+            "(source, metric, field, origin, value, confidence, verified_by, citation, ts_ms) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (source, metric, field, origin) DO UPDATE SET "
+            "value = excluded.value, confidence = excluded.confidence, "
+            "verified_by = excluded.verified_by, citation = excluded.citation, "
+            "ts_ms = excluded.ts_ms "
+            "WHERE value IS NOT excluded.value OR confidence IS NOT excluded.confidence "
+            "OR citation IS NOT excluded.citation",
+            [
+                (
+                    source,
+                    metric,
+                    c.field,
+                    c.origin,
+                    json.dumps(c.value),
+                    c.confidence,
+                    c.verified_by,
+                    c.citation,
+                    c.ts_ms,
+                )
+                for metric, c in rows
+            ],
+        )
+        return self._db.total_changes - before
+
+    def claims_for(self, source: str, metric: str) -> list[Claim]:
+        rows = self._db.execute(
+            f"SELECT {_CLAIM_COLS} FROM catalog_claims WHERE source = ? AND metric = ?",
+            (source, metric),
+        ).fetchall()
+        return [_claim(r) for r in rows]
 
     def _entry(self, source: str, metric: str, meta: tuple, claims: list[Claim]) -> CatalogEntry:
         by_field: dict[str, list[Claim]] = defaultdict(list)

@@ -35,6 +35,7 @@ class FakeSource:
         identity=None,
         values=None,
         cumulative=None,
+        discovery=None,
     ):
         self.name = name
         self.identity = identity or f"fake|{name}|{resolution_ms}"
@@ -45,12 +46,13 @@ class FakeSource:
         self.value_exprs: list[str] = []
         self.cumulative = cumulative or {"0.1": 90.0, "1": 99.0, "10": 100.0, "+Inf": 100.0}
         self.hist_selectors: list[str] = []
+        self.discovery = discovery
 
     async def probe(self) -> dict:
         return {"reachable": True, "latency_ms": 0, "version": "fake"}
 
     async def discover(self) -> Discovery:
-        return Discovery((), (), {}, None, 1.0, (), False)
+        return self.discovery or Discovery((), (), {}, None, 1.0, (), False)
 
     async def scrape_interval(self, selector: str) -> int | None:
         return self.resolution_ms

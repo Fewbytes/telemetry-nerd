@@ -18,6 +18,7 @@ from telemetry_nerd.catalog.models import (
     RelearnDiff,
     validate_value,
 )
+from telemetry_nerd.catalog.rules import Facts, derive_claims, facts_from_claims, facts_from_name
 from telemetry_nerd.catalog.store import CatalogStore
 from telemetry_nerd.channel.format import describe_event
 from telemetry_nerd.charts.spec import ChartSpec
@@ -30,6 +31,7 @@ from telemetry_nerd.charts.yview import (
 )
 from telemetry_nerd.core.events import Actor, Event, EventLog, check_actor
 from telemetry_nerd.datasets.store import DatasetStore
+from telemetry_nerd.model.discovery import Discovery
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.time import now_ms
 from telemetry_nerd.workspace.models import (
@@ -320,6 +322,40 @@ class WorkspaceService:
             },
         )
         return diff
+
+    @atomic
+    def catalog_learn(
+        self, source: str, discovery: Discovery, actor: Actor = "system"
+    ) -> dict[str, Any]:
+        """Re-learn a source from its discovery: reconcile the inventory, then write T0 claims
+        (declared metadata + name rules) in bulk. One event, not one per claim."""
+        names = [m.name for m in discovery.metrics]
+        complete = not any(c.startswith("metrics_truncated") for c in discovery.caveats)
+        diff = self.catalog.relearn(source, names, self.clock(), complete=complete)
+        ts = self.clock()
+        rows = [
+            (m.name, spec.to_claim(ts))
+            for m in discovery.metrics
+            for spec in derive_claims(m.name, m, discovery.histograms)
+        ]
+        changed = self.catalog.put_claims_bulk(source, rows)
+        summary = {
+            "source": source,
+            "metrics": len(names),
+            "new": len(diff.new),
+            "removed": len(diff.removed),
+            "returned": len(diff.returned),
+            "claims_changed": changed,
+            "complete": complete,
+            "caveats": list(discovery.caveats),
+        }
+        self.log.append(actor, "catalog.learned", None, summary)
+        return summary
+
+    def catalog_facts(self, source: str, metric: str) -> Facts:
+        """Unit/type for charts: the catalog's winners, else the name rules alone."""
+        claims = self.catalog.claims_for(source, metric)
+        return facts_from_claims(claims) if claims else facts_from_name(metric)
 
     def catalog_entry(self, source: str, metric: str) -> CatalogEntry:
         return self.catalog.entry(source, metric)
