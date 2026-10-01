@@ -80,3 +80,7 @@ class DistResult:
     scheme: BucketScheme
     expr: str = ""
     caveats: tuple[str, ...] = ()
+
+
+QUANTILE_CHOICES = (0.5, 0.9, 0.95, 0.99, 0.999)  # selectable percentile bands
+DEFAULT_QUANTILES = (0.5, 0.9, 0.99)

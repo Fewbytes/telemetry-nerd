@@ -80,3 +80,31 @@ async def test_classic_play_n_equals_inf_bucket_increase(play):
     )  # fmt: skip
     want = sorted(r["avg"] for r in inf.buckets.to_pylist())
     assert sorted(c["n"] for c in dist.columns.to_pylist()) == pytest.approx(want)
+
+
+async def test_percentile_bands_are_the_source_bucket_holding_q(play):
+    from telemetry_nerd.analysis.exprkind import min_samples
+    from telemetry_nerd.analysis.quantiles import column_quantiles, quantile_bucket
+    from telemetry_nerd.model.series import series_id
+
+    dist = await play.fetch_histogram(NATIVE_SEL, ["cloud_region"], NATIVE_RANGE, 60_000)
+    rows, cols = pl.from_arrow(dist.rows), pl.from_arrow(dist.columns)
+    by_col: dict = {}
+    for r in rows.iter_rows(named=True):
+        by_col.setdefault((r["series_id"], r["ts_ms"]), []).append(
+            (r["bucket_lo"], r["bucket_hi"], r["count"])
+        )
+    n_at = {(c["series_id"], c["ts_ms"]): c["n"] for c in cols.iter_rows(named=True)}
+    out = column_quantiles(rows, cols, (0.5, 0.9, 0.99))
+    for q in (0.5, 0.9, 0.99):
+        want = {k for k, n in n_at.items() if n >= min_samples(q) and k in by_col}
+        got = set()
+        for sid, per_q in out.items():
+            b = per_q.get(f"{q:g}", {"ts": [], "lo": [], "hi": []})
+            for t, lo, hi in zip(b["ts"], b["lo"], b["hi"], strict=True):
+                got.add((sid, t))
+                assert (lo, hi) == quantile_bucket(by_col[(sid, t)], q)
+                assert (lo, hi) in {(x[0], x[1]) for x in by_col[(sid, t)]}  # a source bucket
+        assert got == want
+    ap = series_id("play", {"cloud_region": "ap-south-1"})
+    assert 1_790_848_920_000 not in out.get(ap, {}).get("0.5", {"ts": []})["ts"]  # n ~ 8 < 20

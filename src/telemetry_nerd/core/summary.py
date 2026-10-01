@@ -8,6 +8,7 @@ import math
 import polars as pl
 
 from telemetry_nerd.analysis.exprkind import min_samples
+from telemetry_nerd.analysis.quantiles import quantile_bucket
 from telemetry_nerd.datasets.store import DatasetMeta
 from telemetry_nerd.model.distribution import DistResult
 from telemetry_nerd.model.series import FetchResult
@@ -171,15 +172,8 @@ def _edge(x: float) -> float | str:
 
 def _quantile_bucket(buckets: list[tuple[float, float, float]], q: float) -> list | None:
     """The source bucket that contains quantile q: honest bounds, never interpolated."""
-    total = sum(c for _, _, c in buckets)
-    if total <= 0:
-        return None
-    acc = 0.0
-    for lo, hi, c in sorted(buckets, key=lambda b: (b[1], b[0])):
-        acc += c
-        if acc >= q * total * (1 - 1e-12):
-            return [_edge(lo), _edge(hi)]
-    return None
+    b = quantile_bucket(buckets, q)
+    return None if b is None else [_edge(b[0]), _edge(b[1])]
 
 
 def summarize_distribution(
