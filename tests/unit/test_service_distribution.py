@@ -43,3 +43,26 @@ async def test_unknown_source_is_explained(tmp_path):
     svc = make_service(tmp_path)
     with pytest.raises(SourceError, match="unknown source"):
         await svc.query_distribution("x_bucket", source="nope")
+
+
+async def test_heatmap_panel_data_merges_time_and_keeps_every_count(tmp_path):
+    svc = make_service(tmp_path)
+    out = await svc.query_distribution(
+        "lat_bucket", by=["instance"], start="now-6h", end="now-1h", step="1m"
+    )
+    res = svc.show(out["dataset"], "How is latency distributed over time?")
+    assert res.panel.spec["layers"][0]["mark"] == "heatmap"
+    data = svc.panel_data(res.panel.id, width_px=100)  # 301 columns -> <= 50
+    assert data["kind"] == "heatmap"
+    assert data["effective_step_ms"] == 7 * 60_000
+    assert data["facet_height_px"] == 140
+    s = {x["labels"]["instance"]: x for x in data["series"]}["i0"]
+    assert sum(s["n"]) == 100 * 301 and sum(s["cells"]["c"]) == 100 * 301
+    assert sum(s["cover"]) == 301
+    assert len(s["ts"]) <= 50
+
+
+async def test_time_panels_report_their_kind(tmp_path):
+    svc = make_service(tmp_path)
+    out = await svc.query("up", "now-2h", "now-1h", step="1m")
+    assert svc.panel_data(svc.show(out["dataset"], "Up?").panel.id, 800)["kind"] == "time"

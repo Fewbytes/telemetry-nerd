@@ -315,3 +315,10 @@ def test_query_distribution_route(client):
     assert r.status_code == 200 and r.json()["summary"]["representation"] == "distribution"
     bad = client.post("/api/query-distribution", json={"selector": "x_bucket", "by": "instance"})
     assert bad.status_code == 400
+
+
+def test_render_report_heatmap_budget_uses_area(client):
+    ok = {"panel_id": "p1", "render_ms": 20, "points": 2000, "width_px": 400, "height_px": 260}
+    assert client.post("/api/render-report", json=ok).json()["budget_exceeded"] is False
+    bad = ok | {"points": 400 * 260 // 8 + 1}
+    assert client.post("/api/render-report", json=bad).json()["budget_exceeded"] is True

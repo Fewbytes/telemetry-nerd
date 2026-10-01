@@ -3,11 +3,20 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 import polars as pl
 
+from telemetry_nerd.analysis.distlod import (
+    FACET_HEIGHT_MULTI,
+    FACET_HEIGHT_SINGLE,
+    PX_PER_COLUMN,
+    PX_PER_ROW,
+    merge_values,
+    rebucket_time,
+)
 from telemetry_nerd.analysis.exprkind import QUANTILE_HINT, analyze, expand, min_samples
 from telemetry_nerd.analysis.quantile import attach_counts
 from telemetry_nerd.analysis.resample import lod
@@ -185,6 +194,47 @@ class TelemetryService:
         return {"dataset": meta.id, "summary": summary}
 
     @staticmethod
+    def _labels(series_table) -> dict[str, dict]:
+        out: dict[str, dict] = {}
+        for r in series_table.to_pylist():
+            try:
+                out[r["series_id"]] = json.loads(r["labels"])
+            except (TypeError, json.JSONDecodeError):
+                out[r["series_id"]] = {}  # labels are self-produced; never block the panel
+        return out
+
+    def _distribution_panel_data(self, panel: Panel, dataset_id: str, width_px: int) -> dict:
+        meta, dist = self.datasets.get_distribution(dataset_id)
+        caveats = summarize_distribution(
+            meta, dist, now_ms=self.clock(), settle_ms=self.cache.settle_ms
+        )["caveats"]
+        rows = pl.from_arrow(dist.rows)
+        cols = pl.from_arrow(dist.columns).with_columns(pl.lit(1, pl.Int64).alias("cover"))
+        labels = self._labels(dist.series)
+        n_cols = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
+        factor = max(1, math.ceil(n_cols / max(1, width_px // PX_PER_COLUMN)))
+        step = meta.step_ms * factor
+        if factor > 1:
+            rows, cols = rebucket_time(rows, cols, step)
+        facet_h = FACET_HEIGHT_SINGLE if len(labels) <= 1 else FACET_HEIGHT_MULTI
+        rows, value_merge = merge_values(rows, dist.scheme, max(4, facet_h // PX_PER_ROW))
+        series = []
+        for sid, lb in labels.items():
+            c = cols.filter(pl.col("series_id") == sid)
+            r = rows.filter(pl.col("series_id") == sid)
+            series.append({
+                "id": sid, "labels": lb,
+                "ts": c["ts_ms"].to_list(), "n": c["n"].to_list(), "cover": c["cover"].to_list(),
+                "cells": {"ts": r["ts_ms"].to_list(), "lo": r["bucket_lo"].to_list(),
+                          "hi": r["bucket_hi"].to_list(), "c": r["count"].to_list()},
+            })  # fmt: skip
+        return {
+            "kind": "heatmap", "panel": panel.to_dict(), "dataset": meta.to_dict(),
+            "effective_step_ms": step, "value_merge": value_merge, "facet_height_px": facet_h,
+            "series": series, "caveats": caveats,
+        }  # fmt: skip
+
+    @staticmethod
     def _refuse_reserved(name: str) -> None:
         if name in RESERVED_NAMES:
             raise SourceError(
@@ -242,7 +292,7 @@ class TelemetryService:
     def show(
         self, dataset_id: str, question: str, actor: Actor = "claude", unit: str | None = None
     ) -> ShowResult:
-        meta, result = self.datasets.get(dataset_id)
+        meta = self.datasets.meta(dataset_id)
         # An agent-provided unit (Claude learned it from the source, the emitting
         # tool, etc.) wins over suffix inference and records who vouched for it.
         spec = auto_spec(
@@ -250,8 +300,13 @@ class TelemetryService:
             expr=meta.expr,
             unit=unit,
             unit_provenance=f"provided by {actor}" if unit else None,
+            representation=meta.representation,
         )
-        issues = validate(spec, {dataset_id: result.series.num_rows})
+        issues = validate(
+            spec,
+            {dataset_id: self.datasets.series_count(dataset_id)},
+            {dataset_id: meta.representation},
+        )
         errors = [i for i in issues if i.severity == "error"]
         if errors:
             raise ChartRejected(errors)
@@ -262,7 +317,10 @@ class TelemetryService:
 
     def panel_data(self, panel_id: str, width_px: int) -> dict:
         panel = self.workspace.get_panel(panel_id)
-        meta, result = self.datasets.get(panel.dataset_ids[0])
+        dataset_id = panel.dataset_ids[0]
+        if self.datasets.meta(dataset_id).representation == "distribution":
+            return self._distribution_panel_data(panel, dataset_id, width_px)
+        meta, result = self.datasets.get(dataset_id)
         if meta.representation == "quantile":
             # never re-aggregate percentiles over time: serve at their own step
             table, effective_step = result.buckets, meta.step_ms
@@ -285,6 +343,7 @@ class TelemetryService:
             "caveats"
         ]
         return {
+            "kind": "time",
             "panel": panel.to_dict(),
             "dataset": meta.to_dict(),
             "effective_step_ms": effective_step,

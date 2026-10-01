@@ -10,11 +10,23 @@ from pydantic import BaseModel, Field
 from telemetry_nerd.charts.units import infer_unit
 
 LINE_SERIES_BUDGET = 5
+Mark = Literal["line+envelope", "heatmap", "histogram", "ecdf"]
+DISTRIBUTION_MARKS = {"heatmap", "histogram", "ecdf"}
+FACET_BUDGET = 12
+MAX_WINDOWS = 4
+
+
+class Window(BaseModel):
+    start_ms: int
+    end_ms: int
+    label: str = ""
 
 
 class Layer(BaseModel):
-    mark: Literal["line+envelope"]
+    mark: Mark
     data: str
+    windows: list[Window] = Field(default_factory=list)  # histogram/ecdf: windows compared
+    color: Literal["count", "density"] = "count"  # heatmap colour
 
 
 class YAxis(BaseModel):
@@ -42,6 +54,7 @@ def auto_spec(
     expr: str | None = None,
     unit: str | None = None,
     unit_provenance: str | None = None,
+    representation: str = "bucket_agg",
 ) -> ChartSpec:
     """No metric catalog yet (M3): units are inferred from metric-name suffixes.
 
@@ -56,10 +69,15 @@ def auto_spec(
     elif expr is not None and (inferred := infer_unit(expr)):
         y.unit = inferred
         y.unit_provenance = "inferred from metric name"
-    return ChartSpec(layers=[Layer(mark="line+envelope", data=dataset_id)], y=y)
+    mark = "heatmap" if representation == "distribution" else "line+envelope"
+    return ChartSpec(layers=[Layer(mark=mark, data=dataset_id)], y=y)
 
 
-def validate(spec: ChartSpec, series_counts: dict[str, int]) -> list[ValidationIssue]:
+def validate(
+    spec: ChartSpec,
+    series_counts: dict[str, int],
+    representations: dict[str, str] | None = None,
+) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     datasets: list[str] = []
     for layer in spec.layers:
@@ -74,6 +92,31 @@ def validate(spec: ChartSpec, series_counts: dict[str, int]) -> list[ValidationI
                 )
         elif layer.mark == "line+envelope" and layer.data not in datasets:
             datasets.append(layer.data)
+    reps = representations or {}
+    for layer in spec.layers:
+        rep = reps.get(layer.data)
+        if rep is not None and (layer.mark in DISTRIBUTION_MARKS) != (rep == "distribution"):
+            issues.append(ValidationIssue(
+                rule="mark_representation", severity="error",
+                message=(
+                    f"{layer.mark} cannot draw {layer.data} ({rep}): distributions "
+                    "(query_distribution) are drawn as heatmap, histogram or ecdf; "
+                    "series datasets as lines"
+                ),
+            ))  # fmt: skip
+        if layer.mark in ("histogram", "ecdf") and not 1 <= len(layer.windows) <= MAX_WINDOWS:
+            issues.append(ValidationIssue(
+                rule="windows", severity="error",
+                message=f"{layer.mark} needs 1 to {MAX_WINDOWS} time windows to compare",
+            ))  # fmt: skip
+        if layer.mark in DISTRIBUTION_MARKS and series_counts.get(layer.data, 0) > FACET_BUDGET:
+            issues.append(ValidationIssue(
+                rule="series_budget", severity="error",
+                message=(
+                    f"{series_counts[layer.data]} series would be {series_counts[layer.data]} "
+                    f"small multiples; at most {FACET_BUDGET}: group by fewer labels (by=[...])"
+                ),
+            ))  # fmt: skip
     total = sum(series_counts[d] for d in datasets)
     if total > LINE_SERIES_BUDGET:
         issues.append(

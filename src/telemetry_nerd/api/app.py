@@ -23,6 +23,7 @@ from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+from telemetry_nerd.analysis.distlod import PX_PER_CELL
 from telemetry_nerd.channel.dispatch import ChannelDispatcher
 from telemetry_nerd.config import DEFAULT_ALLOWED_HOSTS
 from telemetry_nerd.core.consumer import kind_of
@@ -241,10 +242,13 @@ def create_app(
         except _BadRequest as e:
             return _error(e.status, str(e), hint=e.hint)
         try:
-            exceeded = (
-                body["render_ms"] > RENDER_BUDGET_MS
-                or body["points"] > RENDER_POINTS_PER_PX * body["width_px"]
+            height = body.get("height_px")
+            limit = (
+                body["width_px"] * height / PX_PER_CELL
+                if isinstance(height, int | float) and height > 0
+                else RENDER_POINTS_PER_PX * body["width_px"]
             )
+            exceeded = body["render_ms"] > RENDER_BUDGET_MS or body["points"] > limit
         except (KeyError, TypeError):
             return _error(
                 400,

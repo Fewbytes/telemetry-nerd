@@ -153,3 +153,27 @@ def test_infer_unit_histogram_quantile_base_unit():
 
 def test_infer_unit_rate_mismatch_with_plain_metric_is_unknown():
     assert infer_unit("rate(tn_calls_total[5m]) / tn_calls_total") is None
+
+
+def test_auto_spec_draws_distributions_as_heatmaps():
+    assert auto_spec("d1", representation="distribution").layers[0].mark == "heatmap"
+
+
+def test_marks_must_match_the_representation():
+    lines = validate(auto_spec("d1"), {"d1": 1}, {"d1": "distribution"})
+    assert "mark_representation" in [i.rule for i in lines if i.severity == "error"]
+    heat = validate(auto_spec("d1", representation="distribution"), {"d1": 1}, {"d1": "bucket_agg"})
+    assert "mark_representation" in [i.rule for i in heat if i.severity == "error"]
+
+
+def test_heatmap_small_multiple_budget():
+    spec = auto_spec("d1", representation="distribution")
+    assert [
+        i.rule for i in validate(spec, {"d1": 12}, {"d1": "distribution"}) if i.severity == "error"
+    ] == []
+    assert "series_budget" in [i.rule for i in validate(spec, {"d1": 13}, {"d1": "distribution"})]
+
+
+def test_histogram_needs_windows():
+    spec = ChartSpec(layers=[Layer(mark="histogram", data="d1")])
+    assert "windows" in [i.rule for i in validate(spec, {"d1": 1}, {"d1": "distribution"})]
