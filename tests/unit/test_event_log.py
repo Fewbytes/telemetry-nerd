@@ -115,3 +115,30 @@ def test_ack_is_monotonic(log):
     log.ack("claude", 2)
     log.ack("claude", 1)  # a stale ack never moves the cursor back
     assert log.cursor("claude") == 2
+
+
+def test_claim_does_not_advance_past_trailing_ambient(log):
+    """Ambient after the last intentional event stays pending (spec §7.2 / dql)."""
+    log.append("user", "thread.message", "t1", {"text": "hi"})  # seq 1: intentional
+    log.append("user", "panel.created", "p2")  # seq 2: ambient, trailing
+    intentional, ambient = log.claim("claude")
+    assert [e.seq for e in intentional] == [1]
+    assert ambient == []
+    assert log.cursor("claude") == 1
+    # the trailing ambient attaches to the NEXT intentional event
+    log.append("user", "thread.message", "t2", {"text": "again"})  # seq 3
+    intentional, ambient = log.claim("claude")
+    assert [e.seq for e in intentional] == [3]
+    assert [e.seq for e in ambient] == [2]
+    assert log.cursor("claude") == 3
+
+
+def test_peek_up_to_excludes_trailing_ambient(log):
+    log.append("user", "thread.message", "t1", {"text": "hi"})  # seq 1: intentional
+    log.append("user", "panel.created", "p2")  # seq 2: ambient, trailing
+    intentional, ambient, up_to = log.peek("claude")
+    assert ([e.seq for e in intentional], [e.seq for e in ambient], up_to) == ([1], [], 1)
+    log.ack("claude", up_to)
+    assert log.cursor("claude") == 1
+    # still pending: the trailing ambient was not consumed by the ack
+    assert log.peek("claude") == ([], [], 1)

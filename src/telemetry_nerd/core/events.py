@@ -169,8 +169,10 @@ class EventLog:
         """The pending batch past the cursor, without advancing it.
 
         Returns (intentional, ambient, up_to). Ambient events ride along with the next
-        intentional one; with no intentional event pending the batch is empty and
-        `up_to` is the current cursor."""
+        intentional one: the batch ends at (and `up_to` is) the last intentional event,
+        so ambient events after it stay pending and attach to the next one (spec §7.2).
+        With no intentional event pending the batch is empty and `up_to` is the current
+        cursor."""
         cursor = self.cursor(consumer)
         events = [
             _event(r)
@@ -182,7 +184,10 @@ class EventLog:
         intentional = [e for e in events if e.klass == "intentional"]
         if not intentional:
             return [], [], cursor
-        return intentional, [e for e in events if e.klass == "ambient"], events[-1].seq
+        # Ambient after the last intentional event stays pending: it attaches to the
+        # NEXT intentional one (spec §7.2), so the cursor must not advance past it.
+        up_to = intentional[-1].seq
+        return intentional, [e for e in events if e.klass == "ambient" and e.seq < up_to], up_to
 
     def ack(self, consumer: str, up_to: int) -> None:
         """Mark everything up to `up_to` delivered; never moves the cursor back."""
