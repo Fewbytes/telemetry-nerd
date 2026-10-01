@@ -112,3 +112,44 @@ def test_auto_spec_explicit_unit_overrides_inference():
 def test_inferred_unit_silences_units_warning():
     spec = auto_spec("d1", expr="http_requests_total")
     assert validate(spec, {"d1": 2}) == []
+
+
+def test_infer_unit_rate_transforms_counters():
+    # acceptance (b0v): rate of a counter is per second
+    assert infer_unit("rate(tn_calls_total[5m])") == "count/s"
+    assert infer_unit("irate(tn_calls_total[5m])") == "count/s"
+    assert infer_unit("deriv(tn_calls_total[5m])") == "count/s"
+    assert infer_unit("rate(tn_latency_seconds_total[5m])") == "s/s"
+    assert infer_unit("deriv(tn_latency_seconds_total[5m])") == "s/s"
+    assert infer_unit("rate(tn_bytes_total[5m])") == "B/s"
+
+
+def test_infer_unit_wraps_aggregations_and_groups():
+    # the Grafana Play case that found the bug: aggregators/grouping pass units through
+    assert (
+        infer_unit("sum by (cloud_region)(rate(traces_spanmetrics_calls_total[5m]))") == "count/s"
+    )
+    # nested grouping parens must not swallow the transform
+    assert infer_unit("sum(rate(tn_calls_total[5m])) / sum(rate(tn_total[5m]))") == "count/s"
+
+
+def test_infer_unit_increase_keeps_count():
+    assert infer_unit("increase(tn_calls_total[1h])") == "count"
+    assert infer_unit("delta(tn_latency_seconds_total[1h])") == "s"
+
+
+def test_infer_unit_rate_of_gauge_unchanged():
+    # rate/increase semantics only transform counters; gauges keep their unit
+    assert infer_unit("rate(tn_demo_latency_seconds_sum[5m])") == "s"
+    assert infer_unit("rate(tn_demo_latency_seconds[5m])") == "s"
+
+
+def test_infer_unit_histogram_quantile_base_unit():
+    assert (
+        infer_unit("histogram_quantile(0.9, sum by (le) (rate(tn_latency_seconds_bucket[5m])))")
+        == "s"
+    )
+
+
+def test_infer_unit_rate_mismatch_with_plain_metric_is_unknown():
+    assert infer_unit("rate(tn_calls_total[5m]) / tn_calls_total") is None

@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 
 _IDENT = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*")
+_TOKEN = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*|[()]")
 _STRING = re.compile(r'"[^"]*"|`[^`]*`|\'')
 
 # PromQL/MetricsQL keywords and function names: identifiers that are never
@@ -151,13 +152,48 @@ def infer_unit(expr: str) -> str | None:
 
     Returns the unit only when every metric name that carries a suffix agrees;
     conflicting or absent hints mean None (the UI stays honest).
+
+    Enclosing functions transform the unit (b0v): rate/irate/deriv of a counter is
+    per second (``count/s``, ``s/s``); histogram_quantile returns the metric's base
+    unit whatever wraps its series; increase/delta keep the unit.
     """
     text = _STRING.sub(" ", expr)
+    transforms: list[str | None] = []  # one entry per open paren: "rate", "quantile", None
     units = set()
-    for token in _IDENT.findall(text):
-        if token in _KEYWORDS:
-            continue
-        unit = unit_from_metric_name(token)
-        if unit is not None:
-            units.add(unit)
+    prev_ident = None
+    for token in _TOKEN.findall(text):
+        if token == "(":
+            transforms.append(_transform_of_call(prev_ident))
+            prev_ident = None
+        elif token == ")":
+            if transforms:
+                transforms.pop()
+            prev_ident = None
+        else:
+            prev_ident = token
+            if token not in _KEYWORDS:
+                unit = _unit_with_transforms(token, transforms)
+                if unit is not None:
+                    units.add(unit)
     return next(iter(units)) if len(units) == 1 else None
+
+
+def _transform_of_call(prev_ident: str | None) -> str | None:
+    """The unit transform a call opener applies to everything inside its parens."""
+    if prev_ident == "histogram_quantile":
+        return "quantile"
+    if prev_ident in ("rate", "irate", "deriv"):
+        return "rate"
+    return None  # aggregators (sum/avg/…), scalar math, grouping: unit passes through
+
+
+def _unit_with_transforms(name: str, transforms: list[str | None]) -> str | None:
+    unit = unit_from_metric_name(name)
+    if unit is None:
+        return None
+    if "quantile" in transforms:
+        return unit  # a quantile of the distribution is in the metric's base unit
+    if "rate" in transforms and name.endswith("_total"):
+        # a per-second rate is only defined for counters (rate of a gauge stays put)
+        return f"{unit}/s"
+    return unit
