@@ -24,14 +24,32 @@ _AGGREGATED = (
     "(optionally scaled by a number); wrapping it in sum/avg/max/over_time/arithmetic "
     "aggregates percentiles"
 )
-_QCALL = re.compile(r"\b(histogram_quantile|quantile_over_time)\s*\(")
-_SCALE = re.compile(r"^\s*[*/]\s*[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?\s*$")
+_UNSUPPORTED = (
+    "percentile aggregation refused: quantile()/median()/median_over_time/quantiles_over_time/"
+    "histogram_quantiles aggregate or multiply percentiles; use histogram_quantile(q, "
+    "sum by (...) (rate(x[$__rate_interval]))) or quantile_over_time on a single series"
+)
+_QCALL = re.compile(r"\b(histogram_quantile|quantile_over_time)\s*\(", re.IGNORECASE)
+# percentile functions/operators we cannot evaluate honestly per step: refuse them
+_OTHER_QUANTILES = re.compile(
+    r"\b(?:median_over_time|quantiles_over_time|histogram_quantiles"
+    r"|(?:quantile|median)\s*(?:(?:by|without)\s*\([^()]*\)\s*)?\()",
+    re.IGNORECASE,
+)
+_NUM = r"[0-9]+(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?"
+_SCALE = re.compile(rf"^(?:\s*[*/]\s*{_NUM})+\s*$")
+_LEFT_SCALE = re.compile(rf"^(?:\s*{_NUM}\s*\*)+\s*$")
 _WINDOW = re.compile(r"\[([0-9]+(?:ms|s|m|h|d|w))(?::[^\]]*)?\]")
-_RATE = re.compile(r"\b(?:rate|irate)\s*\(")
-_INCREASE = re.compile(r"\bincrease\s*\(")
+# The only shapes whose observation count we can derive: sum[by|without (..)]((rate|increase)(sel[w]))
+# or a bare (rate|increase)(sel[w]). Anything else (arithmetic, avg/max, irate, subqueries) leaves n unknown.
+_SIMPLE = re.compile(
+    r"^\s*(?:sum\s*(?:(?:by|without)\s*\([^()]*\)\s*)?\(\s*(?P<f1>rate|increase)\s*\([^()]*\)\s*\)"
+    r"(?:\s*(?:by|without)\s*\([^()]*\))?|(?P<f2>rate|increase)\s*\([^()]*\))\s*$",
+    re.IGNORECASE,
+)
 _CLASSIC = re.compile(r"_bucket\b|\ble\b")
-_SUMMARY_Q = re.compile(r"\bquantile\s*=~?\s*[\"'`]")
-_SELECTOR = re.compile(r"^\s*[a-zA-Z_:][a-zA-Z0-9_:]*\s*\{[^{}]*\}\s*$")
+_SUMMARY_Q = re.compile(r"\bquantile\s*(?:=~?|!=|!~)\s*[\"'`]")
+_SELECTOR = re.compile(r"^\s*(?:[a-zA-Z_:][a-zA-Z0-9_:]*\s*)?\{[^{}]*\}\s*$")
 
 
 def min_samples(q: float) -> int:
@@ -63,6 +81,44 @@ class QuantileExpr:
 class ExprAnalysis:
     quantile: QuantileExpr | None = None
     problem: str | None = None
+
+
+def _strip_comments(expr: str) -> str:
+    """Drop `# ...` comments (outside quotes): a quote inside a comment must not open a string."""
+    out: list[str] = []
+    quote: str | None = None
+    i = 0
+    while i < len(expr):
+        c = expr[i]
+        if quote:
+            out.append(c)
+            if c == "\\" and quote != "`" and i + 1 < len(expr):
+                out.append(expr[i + 1])
+                i += 1
+            elif c == quote:
+                quote = None
+        elif c in "\"'`":
+            quote = c
+            out.append(c)
+        elif c == "#":
+            while i < len(expr) and expr[i] != "\n":
+                i += 1
+            continue
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out)
+
+
+def _peel_parens(expr: str) -> str:
+    """Remove redundant outer parentheses: `((x))` -> `x`."""
+    while True:
+        masked = _mask_strings(expr.strip())
+        text = expr.strip()
+        if masked.startswith("(") and masked and _close(masked, 0) == len(masked) - 1:
+            expr = text[1:-1]
+        else:
+            return text
 
 
 def _mask_strings(expr: str) -> str:
@@ -128,21 +184,25 @@ def _count_expr(func: str, inner: str) -> str | None:
     if func == "quantile_over_time":
         return f"count_over_time({inner})"
     masked = _mask_strings(inner)
+    m = _SIMPLE.match(masked)
+    if m is None:
+        return None
     total = (
         f"max without (le) ({inner})" if _CLASSIC.search(masked) else f"histogram_count({inner})"
     )
-    if _INCREASE.search(masked):
+    if (m.group("f1") or m.group("f2")).lower() == "increase":
         return total
-    if _RATE.search(masked):
-        windows = {m.group(1) for m in _WINDOW.finditer(masked)}
-        if len(windows) != 1:
-            return None
-        return f"({total}) * {parse_duration(windows.pop()) / 1000:g}"
-    return None
+    windows = {w.group(1) for w in _WINDOW.finditer(masked)}
+    if len(windows) != 1:
+        return None
+    return f"({total}) * {parse_duration(windows.pop()) / 1000:g}"
 
 
 def analyze(expr: str) -> ExprAnalysis:
+    expr = _peel_parens(_strip_comments(expr))
     masked = _mask_strings(expr)
+    if _OTHER_QUANTILES.search(masked):
+        return ExprAnalysis(problem=_UNSUPPORTED)
     calls = list(_QCALL.finditer(masked))
     if not calls:
         if _SUMMARY_Q.search(masked):
@@ -154,10 +214,14 @@ def analyze(expr: str) -> ExprAnalysis:
     open_idx = first.end() - 1
     close_idx = _close(masked, open_idx)
     head, tail = masked[: first.start()], masked[close_idx + 1 :]
-    if len(calls) > 1 or head.strip() or (tail.strip() and not _SCALE.match(tail)):
+    if (
+        len(calls) > 1
+        or (head.strip() and not _LEFT_SCALE.match(head))
+        or (tail.strip() and not _SCALE.match(tail))
+    ):
         return ExprAnalysis(problem=_AGGREGATED)
+    func = first.group(1).lower()
     args = _split_args(expr, masked, open_idx + 1, close_idx)
     if len(args) != 2:
-        return ExprAnalysis(problem=f"{first.group(1)} takes 2 arguments, got {len(args)}")
-    func = first.group(1)
+        return ExprAnalysis(problem=f"{func} takes 2 arguments, got {len(args)}")
     return ExprAnalysis(QuantileExpr(_literal(args[0]), func, _count_expr(func, args[1])))  # type: ignore[arg-type]

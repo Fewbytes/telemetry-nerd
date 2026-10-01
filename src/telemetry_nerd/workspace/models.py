@@ -11,7 +11,13 @@ from telemetry_nerd.analysis.exprkind import min_samples
 from telemetry_nerd.model.time import parse_duration
 
 Finite = Annotated[float, Field(allow_inf_nan=False)]
-_PERCENTILE = re.compile(r"^(?:p(\d+(?:\.\d+)?)|(median)|quantile|percentile)\b", re.IGNORECASE)
+_PERCENTILE = re.compile(
+    r"(?<![a-z0-9])(?:p|q|pct)(?P<pct>\d+(?:\.\d+)?)(?![0-9])"
+    r"|(?<![a-z])(?P<median>median)(?![a-z])(?!\s+absolute)"
+    r"|(?P<nth>\d+(?:\.\d+)?)(?:st|nd|rd|th)\s*percentile"
+    r"|quantile|percentile",
+    re.IGNORECASE,
+)
 
 
 class _Strict(BaseModel):
@@ -81,17 +87,21 @@ class StatisticRef(_Strict):
             )
         if self.interval is not None and self.interval[0] > self.interval[1]:
             raise ValueError("interval must be [lo, hi] with lo <= hi")
-        m = _PERCENTILE.match(self.name.strip())
+        m = _PERCENTILE.search(self.name.strip())
         if m:
-            if m.group(1):
-                q = float(m.group(1)) / 100
-            elif m.group(2):
+            if m.group("pct"):
+                q = float(m.group("pct")) / 100
+            elif m.group("nth"):
+                q = float(m.group("nth")) / 100
+            elif m.group("median"):
                 q = 0.5
             else:
                 q = self.params.get("q")
             if not isinstance(q, int | float) or not 0 < q < 1:
                 raise ValueError("a quantile statistic needs params.q in (0, 1), e.g. 0.95")
             n = self.params.get("n")
+            if isinstance(n, float) and n.is_integer():
+                n = int(n)
             if not isinstance(n, int) or isinstance(n, bool):
                 raise ValueError(
                     "percentile_without_n: a percentile needs params.n, the number of "

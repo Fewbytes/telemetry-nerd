@@ -107,3 +107,51 @@ def test_quoted_text_does_not_fool_the_scanner():
 def test_non_literal_quantile_is_kept_without_q():
     a = analyze(f"histogram_quantile(scalar(foo), {NATIVE})")
     assert a.quantile.q is None
+
+
+HQ = "histogram_quantile(0.95, sum by (le) (rate(x_bucket[5m])))"
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        f"# p95, don't aggregate\navg({HQ})",  # an apostrophe in a comment must not hide the call
+        f"avg({HQ.upper()})",  # MetricsQL function names are case-insensitive
+        "quantile(0.95, rate(x[5m]))",
+        "quantile by (job) (0.95, rate(x[5m]))",
+        "median(rate(x[5m]))",
+        "median_over_time(x[10m])",
+        'quantiles_over_time("phi", 0.5, 0.9, x[10m])',
+        'sum(x{quantile!="0.99"})',
+        'max_over_time(x{quantile!~"0.5"}[1h])',
+    ],
+)
+def test_review_loopholes_are_refused(expr):
+    a = analyze(expr)
+    assert a.quantile is None and a.problem is not None
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        f"1000 * {HQ}",
+        f"{HQ} # note",
+        f"({HQ})",
+        f"{HQ} * 1000 / 2",
+        "sum(rate(x[5m])) # histogram_quantile(",
+    ],
+)
+def test_review_false_positives_are_accepted(expr):
+    assert analyze(expr).problem is None
+
+
+@pytest.mark.parametrize(
+    "inner",
+    [
+        "sum by (le) (irate(x_bucket[5m]))",  # irate uses ~1 scrape, not the window
+        "sum by (le) (rate(x_bucket[5m])) * 60",  # scaling would inflate n
+        "avg by (le) (rate(x_bucket[5m]))",
+    ],
+)
+def test_count_is_not_derived_when_it_would_be_wrong(inner):
+    assert analyze(f"histogram_quantile(0.9, {inner})").quantile.count_expr is None

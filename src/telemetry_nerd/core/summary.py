@@ -98,7 +98,8 @@ def _summarize_quantile(
     """Percentiles are reported per bucket with their n; never averaged (spec §1.2)."""
     labels = {r["series_id"]: json.loads(r["labels"]) for r in result.series.to_pylist()}
     df = pl.from_arrow(result.buckets).with_columns(pl.col("avg").fill_nan(None))
-    has_value = pl.col("avg").is_not_null() & (pl.col("count") > 0)
+    # a value with a missing count (0) is still a value: it is "not meaningful", not a gap
+    has_value = pl.col("avg").is_not_null()
     meaningful = has_value & (pl.col("count") >= (meta.n_min or 0))
     per = (
         df.group_by("series_id")
@@ -112,7 +113,7 @@ def _summarize_quantile(
         .with_columns(
             pl.max_horizontal(pl.lit(expected) - pl.col("buckets"), pl.lit(0)).alias("gaps")
         )
-        .sort("n_total", descending=True)
+        .sort("n_total" if meta.n_min is not None else "buckets", descending=True)
     )
     if meta.n_min is None:
         caveats.append("n_unknown")
@@ -126,9 +127,10 @@ def _summarize_quantile(
             "min": _round(r["min"]),
             "max": _round(r["max"]),
             "mean": None,
-            "n_total": int(r["n_total"]),
+            # without a derived n the count column is a placeholder: never report it as n
+            "n_total": int(r["n_total"]) if meta.n_min is not None else None,
             "buckets": int(r["buckets"]),
-            "meaningful_buckets": int(r["meaningful_buckets"]),
+            "meaningful_buckets": int(r["meaningful_buckets"]) if meta.n_min is not None else None,
             "gaps": int(r["gaps"]),
         }
         for r in per.head(top).to_dicts()

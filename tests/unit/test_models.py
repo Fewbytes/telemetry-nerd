@@ -204,3 +204,17 @@ def test_percentile_q_from_name_or_params():
 
 def test_non_percentile_statistics_unaffected():
     assert _stat(name="mean_latency", params={})
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["p95_latency", "latency_p99", "median_age", "95th percentile", "q99", "pct99", "quantiles"],
+)
+def test_percentile_names_are_recognised_anywhere(name):
+    with pytest.raises(ValidationError, match="percentile_without_n|params.q"):
+        _stat(name=name)
+
+
+def test_percentile_n_may_be_an_integral_float_and_mad_is_not_a_percentile():
+    assert _stat(params={"n": 5000.0})
+    assert _stat(name="median absolute deviation", params={})

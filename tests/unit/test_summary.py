@@ -170,3 +170,13 @@ def test_quantile_summary_without_n():
     s = summarize(meta, result, now_ms=10**13, settle_ms=0)
     assert "n_unknown" in s["caveats"]
     assert (s["series"][0]["min"], s["series"][0]["max"]) == (0.3, 0.4)
+    # the count column is a placeholder: it must not be reported as n
+    assert s["series"][0]["n_total"] is None and s["series"][0]["meaningful_buckets"] is None
+
+
+def test_quantile_value_with_missing_count_is_low_count_not_a_gap():
+    meta, result = _quantile_inputs([0, 300], [0.3, 0.4])
+    s = summarize(meta, result, now_ms=10**13, settle_ms=0)
+    row = s["series"][0]
+    assert (row["buckets"], row["meaningful_buckets"], row["gaps"]) == (2, 1, 0)
+    assert "low_count" in s["caveats"] and "gaps" not in s["caveats"]
