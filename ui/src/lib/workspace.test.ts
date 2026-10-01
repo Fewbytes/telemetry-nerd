@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { subscribe, type WorkspaceEvent } from "./api";
-import { needsReload } from "./workspace.svelte";
+import { fetchWorkspace, subscribe, type Snapshot, type WorkspaceEvent } from "./api";
+import { createWorkspace, needsReload } from "./workspace.svelte";
+
+vi.mock("./api", async (orig) => ({ ...(await orig<typeof import("./api")>()), fetchWorkspace: vi.fn() }));
 
 const ev = (type: string, klass: WorkspaceEvent["klass"]): WorkspaceEvent => ({
   seq: 1, ts_ms: 0, actor: "claude", type, object_id: null, klass, payload: {},
@@ -84,5 +86,29 @@ describe("subscribe frame routing", () => {
     expect(states).toEqual(["open", "close"]);
     stop();
     vi.useRealTimers();
+  });
+});
+
+describe("snapshot load retry", () => {
+  afterEach(() => vi.useRealTimers());
+  it("retries with backoff after a failed load and recovers", async () => {
+    vi.useFakeTimers();
+    const load = vi.mocked(fetchWorkspace);
+    load.mockReset();
+    load.mockRejectedValueOnce(new Error("down")).mockRejectedValueOnce(new Error("down"))
+      .mockResolvedValue({ last_seq: 3 } as Snapshot);
+    const ws = createWorkspace();
+    await ws.reload();
+    expect(ws.error).toContain("down");
+    await vi.advanceTimersByTimeAsync(1000); // 1st retry fails, next backoff doubles
+    expect(load).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(load).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(load).toHaveBeenCalledTimes(3);
+    expect(ws.error).toBeNull();
+    expect(ws.snapshot?.last_seq).toBe(3);
+    await vi.advanceTimersByTimeAsync(60000); // success stops the retries
+    expect(load).toHaveBeenCalledTimes(3);
   });
 });

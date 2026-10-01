@@ -289,3 +289,16 @@ def test_list_sources(client):
     r = client.get("/api/sources")
     assert r.status_code == 200
     assert [s["name"] for s in r.json()["sources"]] == ["default"]
+
+
+def test_mcp_transport_security_allows_http_and_https_origins_for_each_host():
+    from telemetry_nerd.api.app import mcp_transport_security
+
+    sec = mcp_transport_security(["tn.example.com", "[::1]"])
+    assert {"tn.example.com:*", "tn.example.com", "[::1]:*", "[::1]"} <= set(sec.allowed_hosts)
+    for origin in (
+        "http://tn.example.com", "https://tn.example.com", "https://tn.example.com:*",
+        "https://[::1]", "http://[::1]:*",
+    ):
+        assert origin in sec.allowed_origins
+    assert "https://evil.example" not in sec.allowed_origins

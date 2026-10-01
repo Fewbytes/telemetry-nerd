@@ -30,6 +30,7 @@
   interface Selection { x0: number; x1: number; left: number; top: number; width: number }
   let selection = $state<Selection | null>(null);
   let annCount = $state(0);
+  const RESIZE_MIN_PX = 8;
   let plot: uPlot | null = null;
 
   const cancelSelection = () => {
@@ -61,7 +62,10 @@
     load(Math.round(el.clientWidth || 800));
     const ro = new ResizeObserver(() => {
       const w = Math.round(el.clientWidth);
-      if (w > 0 && Math.abs(w - fetchWidth) / Math.max(fetchWidth, 1) > 0.1) load(w);
+      if (w <= 0) return;
+      if (Math.abs(w - fetchWidth) / Math.max(fetchWidth, 1) > 0.1) load(w);
+      // ignore sub-threshold jitter (scrollbars, sub-pixel layout): each setSize redraws the plot
+      else if (plot && Math.abs(w - plot.width) >= RESIZE_MIN_PX) plot.setSize({ width: w, height: 260 });
     });
     ro.observe(el);
     return () => ro.disconnect();

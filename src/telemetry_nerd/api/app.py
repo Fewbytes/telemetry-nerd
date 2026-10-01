@@ -134,6 +134,25 @@ def _api(handler: Callable[[Request], Awaitable[object]]):
     return wrapped
 
 
+def mcp_transport_security(allowed_hosts: Sequence[str]) -> TransportSecuritySettings:
+    """Host/Origin allowlist for the MCP endpoint, derived from the daemon's allowed hosts.
+
+    Origins cover http and https: a non-loopback daemon behind a TLS-terminating proxy is
+    reached from https:// origins, which an http-only list would reject.
+    """
+    names = [h.strip("[]") for h in allowed_hosts]
+    bracket = lambda h: f"[{h}]" if ":" in h else h
+    return TransportSecuritySettings(
+        allowed_hosts=[f"{bracket(h)}:*" for h in names] + [bracket(h) for h in names],
+        allowed_origins=[
+            f"{scheme}://{bracket(h)}{port}"
+            for scheme in ("http", "https")
+            for h in names
+            for port in (":*", "")
+        ],
+    )
+
+
 def create_app(
     service: TelemetryService,
     ui_dir: Path | None = None,
@@ -503,15 +522,9 @@ def create_app(
         routes.append(Mount("/", app=StaticFiles(directory=ui_dir, html=True)))
     lifespan: Callable[[Starlette], contextlib.AbstractAsyncContextManager[None]] | None = None
     if mcp is not None:
-        names = [h.strip("[]") for h in allowed_hosts]
-        bracket = lambda h: f"[{h}]" if ":" in h else h
         mcp_app = mcp.streamable_http_app(
             streamable_http_path="/mcp",
-            transport_security=TransportSecuritySettings(
-                allowed_hosts=[f"{bracket(h)}:*" for h in names] + [bracket(h) for h in names],
-                allowed_origins=[f"http://{bracket(h)}:*" for h in names]
-                + [f"http://{bracket(h)}" for h in names],
-            ),
+            transport_security=mcp_transport_security(allowed_hosts),
         )
         routes[:0] = list(mcp_app.routes)  # before the static catch-all mount
 

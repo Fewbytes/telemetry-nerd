@@ -2,7 +2,7 @@
   import { getContext } from "svelte";
   import { postJSON, type Presence, type Thread } from "../lib/api";
   import { composeHint, messageStatus } from "../lib/connection";
-  import { fmtTime } from "../lib/format";
+  import { fmtRange } from "../lib/format";
   import { isSendKey, sendHint } from "../lib/keys";
 
   let { thread }: { thread: Thread } = $props();
@@ -29,7 +29,7 @@
     <span class="thread-id">{thread.id}</span>
     {#if thread.selection}
       <span class="selection">
-        selection {fmtTime(thread.selection.start_ms)}–{fmtTime(thread.selection.end_ms)} UTC
+        selection {fmtRange(thread.selection.start_ms, thread.selection.end_ms)} UTC
       </span>
     {/if}
   </header>

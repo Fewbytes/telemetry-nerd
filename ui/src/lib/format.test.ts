@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EvidenceRef, Scope, TimeSpan } from "./api";
-import { fmtTime, refLabel, scopeLine, statLine, type StatisticRef } from "./format";
+import { fmtRange, fmtTime, refLabel, scopeLine, statLine, type StatisticRef } from "./format";
 
 const span = (startMs: number, endMs: number): TimeSpan => ({ start_ms: startMs, end_ms: endMs });
 const minutes = (h: number, m: number) => Date.UTC(2026, 8, 30, h, m);
@@ -30,6 +30,16 @@ describe("fmtTime", () => {
   it("formats epoch ms as HH:MM UTC", () => {
     expect(fmtTime(minutes(14, 5))).toBe("14:05");
     expect(fmtTime(Date.UTC(2026, 8, 30, 23, 59))).toBe("23:59");
+  });
+});
+
+describe("fmtRange", () => {
+  it("omits the date within one UTC day", () => {
+    expect(fmtRange(minutes(14, 0), minutes(14, 30))).toBe("14:00–14:30");
+  });
+  it("prefixes both ends with their date when crossing midnight", () => {
+    expect(fmtRange(Date.UTC(2026, 8, 30, 23, 30), Date.UTC(2026, 9, 1, 0, 30)))
+      .toBe("09-30 23:30–10-01 00:30");
   });
 });
 

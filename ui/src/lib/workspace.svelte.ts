@@ -7,6 +7,9 @@ const RELOAD_TYPES = new Set([
   "hypothesis.status_changed", "gap.created", "thread.message", "panel.closed",
 ]);
 
+const RETRY_BASE_MS = 1000;
+const RETRY_MAX_MS = 15000;
+
 export const needsReload = (e: WorkspaceEvent): boolean =>
   e.klass !== "internal" || RELOAD_TYPES.has(e.type);
 
@@ -17,8 +20,10 @@ export function createWorkspace() {
   let presence = $state.raw<Presence | null>(null);
   let lastSeq = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let failures = 0;
 
-  const load = () =>
+  const load = (): Promise<void> =>
     fetchWorkspace()
       .then((s) => {
         // concurrent loads can return out of order; never apply a stale snapshot
@@ -27,8 +32,14 @@ export function createWorkspace() {
           error = null;
         }
         lastSeq = Math.max(lastSeq, s.last_seq);
+        failures = 0;
       })
-      .catch((e) => (error = String(e)));
+      .catch((e) => {
+        error = String(e);
+        // the daemon may be restarting: keep retrying with backoff until a snapshot lands
+        clearTimeout(retryTimer);
+        retryTimer = setTimeout(load, Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** failures++));
+      });
 
   const schedule = () => {
     clearTimeout(timer);
@@ -66,7 +77,7 @@ export function createWorkspace() {
           },
         });
       });
-      return () => { stopped = true; clearTimeout(timer); stopUnsub(); };
+      return () => { stopped = true; clearTimeout(timer); clearTimeout(retryTimer); stopUnsub(); };
     },
   };
 }
