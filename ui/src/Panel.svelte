@@ -16,6 +16,8 @@
   import PanelThread from "./components/PanelThread.svelte";
   import PinButton from "./components/PinButton.svelte";
   import HeatmapPlot from "./components/HeatmapPlot.svelte";
+  import PercentilePlot from "./components/PercentilePlot.svelte";
+  import { DEFAULT_QUANTILES, QUANTILE_CHOICES, MAX_QUANTILES, overlay, qLabel, toggleQuantile } from "./chart/percentiles";
   import DistributionPlot from "./components/DistributionPlot.svelte";
 
   let { panel, annotations = [], threads = [] }: {
@@ -134,6 +136,12 @@
   let heatColor = $state<"count" | "density">("count");
   let heatCmap = $state<"viridis" | "cividis">("viridis");
   let heatQ = $state<number | null>(null);
+  // percentile-band view of the same payload: no refetch, the server already sent the bands
+  let heatView = $state<"heatmap" | "percentiles">("heatmap");
+  let heatQs = $state<number[]>(panel.spec.layers[0]?.quantiles ?? DEFAULT_QUANTILES);
+  $effect(() => {
+    if (data?.kind === "heatmap") heatView = data.mark === "percentiles" ? "percentiles" : "heatmap";
+  });
 
   const close = () => closePanel(panel.id).catch((e) => (error = String(e)));
 
@@ -244,6 +252,7 @@
   data-panel-id={panel.id}
   data-annotation-count={annCount}
   data-heatmap-cells={data?.kind === "heatmap" ? heatCells : undefined}
+  data-percentile-bands={data?.kind === "heatmap" && heatView === "percentiles" ? heatCells : undefined}
   data-render-ms={render ? render.ms.toFixed(1) : undefined}
   data-budget-exceeded={render ? String(render.exceeded) : undefined}
 >
@@ -262,6 +271,25 @@
   <div bind:this={plotEl} class="plot" style="position: relative">
     {#if data && data.kind === "heatmap"}
       {@const hm = data}
+      {#if heatView === "percentiles"}
+        {#if overlay(hm.series.length, heatQs.length)}
+          <PercentilePlot
+            data={hm} series={hm.series} qs={heatQs} width={fetchWidth} height={hm.facet_height_px}
+            unit={hm.panel.spec.y.unit}
+            onRendered={(ms, cells) => onFacetRendered(0, 1, ms, cells, hm.facet_height_px)}
+            onBrush={(b) => (selection = { ...b, top: 4 })}
+          />
+        {:else}
+          {#each hm.series as s, i (s.id)}
+            <PercentilePlot
+              data={hm} series={[s]} qs={heatQs} width={fetchWidth} height={hm.facet_height_px}
+              unit={hm.panel.spec.y.unit}
+              onRendered={(ms, cells) => onFacetRendered(i, hm.series.length, ms, cells, hm.facet_height_px)}
+              onBrush={(b) => (selection = { ...b, top: i * (hm.facet_height_px + 14) + 4 })}
+            />
+          {/each}
+        {/if}
+      {:else}
       {#each hm.series as s, i (s.id)}
         <HeatmapPlot
           data={hm} series={s} width={fetchWidth} height={hm.facet_height_px}
@@ -271,6 +299,20 @@
           onBrush={(b) => (selection = { ...b, top: i * (hm.facet_height_px + 14) + 4 })}
         />
       {/each}
+      {/if}
+      <div class="legend heat-controls">
+        view:
+        <button type="button" class:on={heatView === "heatmap"} onclick={() => (heatView = "heatmap")}>heatmap</button>
+        <button type="button" class:on={heatView === "percentiles"} onclick={() => (heatView = "percentiles")}>percentile bands</button>
+        {#if heatView === "percentiles"}
+          · bands:
+          {#each QUANTILE_CHOICES as q (q)}
+            <button type="button" class:on={heatQs.includes(q)} disabled={!heatQs.includes(q) && heatQs.length >= MAX_QUANTILES}
+              onclick={() => (heatQs = toggleQuantile(heatQs, q))}>{qLabel(q)}</button>
+          {/each}
+          <span class="hint">bucket holding q per {fmtStep(hm.effective_step_ms)} column, only where n ≥ 10/(1−q); faded lane: too few observations</span>
+        {/if}
+      </div>
       <div class="legend heat-controls">
         colour:
         <button type="button" class:on={heatColor === "count"} onclick={() => (heatColor = "count")}>count</button>
@@ -339,7 +381,7 @@
   {/if}
   {#if data}
     <div class="shown">
-      <p class="what">{describeShown(data.dataset, fmtStep(data.effective_step_ms), data.kind)}</p>
+      <p class="what">{describeShown(data.dataset, fmtStep(data.effective_step_ms), data.kind, "mark" in data ? (data.kind === "heatmap" ? heatView === "percentiles" ? "percentiles" : "" : data.mark) : "")}</p>
       <p class="where">
         {data.dataset.source} · {fmtTime(data.dataset.start_ms)} – {fmtTime(data.dataset.end_ms)} · step
         {fmtStep(data.effective_step_ms)}

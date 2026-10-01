@@ -1,8 +1,11 @@
 <script lang="ts">
   import { PALETTE, seriesName } from "../chart/toUplot";
-  import { bars, ecdf, maxEcdfGapAtEdges, type BarMode } from "../chart/distribution";
+  import {
+    bars, ecdf, exactWindow, fractionOver, maxEcdfGapAtEdges, quantileAxis, quantileBoxes, survival, type BarMode,
+  } from "../chart/distribution";
+  import { qLabel } from "../chart/percentiles";
   import { setupCanvas } from "../chart/canvas";
-  import { cellSpan, valueAxis } from "../chart/heatmap";
+  import { cellSpan, minSamples, valueAt, valueAxis } from "../chart/heatmap";
   import { fmtValue, valueTicks } from "../chart/axis";
   import { fmtRange } from "../lib/format";
   import type { HistogramPanelData, WindowHist } from "../lib/api";
@@ -19,7 +22,11 @@
   const AXIS_LEFT = 40;
   const AXIS_BOTTOM = 28;
   let canvas = $state<HTMLCanvasElement | null>(null);
-  let view = $state<"histogram" | "ecdf">("histogram");
+  type View = "histogram" | "ecdf" | "quantile_curve" | "ccdf";
+  let view = $state<View>("histogram");
+  let qMode = $state<"linear" | "nines">("nines");
+  let yMode = $state<"auto" | "log" | "linear">("auto");
+  let pinned = $state<number | null>(null); // CCDF threshold pinned by a click
   let userMode = $state<BarMode | null>(null);
   let tip = $state<{ x: number; y: number; text: string } | null>(null);
   let spans: { lo: number | null; hi: number | null; x0: number; x1: number }[][] = [];
@@ -32,10 +39,105 @@
   const plotW = $derived(Math.max(10, width - AXIS_LEFT));
   const plotH = HEIGHT - AXIS_BOTTOM;
 
-  const gap = $derived(multi ? maxEcdfGapAtEdges(windows[0], windows[1]) : null);
+
+  const exact = $derived(windows.map(exactWindow));
+  const nMax = $derived(Math.max(10, ...exact.map((w) => w.n)));
+  const logTop = $derived(Math.log10(nMax));
+  const qAxisFor = () => quantileAxis(qMode, nMax, plotW);
+  const edgesLoHi = () => ({ lo: exact.flatMap((w) => w.lo), hi: exact.flatMap((w) => w.hi) });
+  const ccdfMin = $derived(Math.min(1, ...exact.filter((w) => w.n > 0).map((w) => 1 / w.n)));
+  const yS = (f: number) => {
+    const l = Math.log10(Math.max(f, ccdfMin));
+    return plotH - 4 - ((l - Math.log10(ccdfMin)) / (0 - Math.log10(ccdfMin) || 1)) * (plotH - 8);
+  };
+
+  /** Quantile function (boxes over q) and CCDF (log-log). Source buckets only: boxes and exact edge dots. */
+  function drawCumulative(ctx: CanvasRenderingContext2D, v: (n: string) => string): number {
+    ctx.save();
+    ctx.translate(AXIS_LEFT, 0);
+    ctx.strokeStyle = v("--grid");
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, plotH); ctx.lineTo(plotW, plotH); ctx.stroke();
+    const { lo, hi } = edgesLoHi();
+    let count = 0;
+    ctx.fillStyle = v("--muted"); ctx.font = "10px sans-serif";
+    if (view === "quantile_curve") {
+      const qa = qAxisFor();
+      const va = valueAxis(lo, hi, plotH, yMode === "auto" ? "auto" : yMode);
+      exact.forEach((w, k) => {
+        const color = PALETTE[k % PALETTE.length];
+        const { boxes, qMax } = quantileBoxes(w);
+        for (const b of boxes) {
+          const [p0, p1] = cellSpan(va, b.lo, b.hi);
+          const x0 = qa.pos(b.q0), x1 = qa.pos(b.q1);
+          ctx.fillStyle = color; ctx.strokeStyle = color;
+          ctx.globalAlpha = b.faded ? 0.08 : 0.25;
+          ctx.fillRect(x0, plotH - p1, Math.max(x1 - x0, 1), Math.max(p1 - p0, 1));
+          ctx.globalAlpha = b.faded ? 0.3 : 1;
+          ctx.strokeRect(x0 + 0.5, plotH - p1, Math.max(x1 - x0 - 1, 1), Math.max(p1 - p0, 1));
+          ctx.globalAlpha = 1;
+          count++;
+        }
+        if (w.n > 0) {
+          ctx.setLineDash([4, 3]); ctx.strokeStyle = color;
+          ctx.beginPath(); ctx.moveTo(qa.pos(qMax), 0); ctx.lineTo(qa.pos(qMax), plotH); ctx.stroke(); ctx.setLineDash([]);
+        }
+      });
+      ctx.fillStyle = v("--muted"); ctx.textAlign = "center"; ctx.textBaseline = "top";
+      for (const q of qa.ticks) ctx.fillText(qLabel(q), qa.pos(q), plotH + 3);
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (const t of valueTicks(va)) ctx.fillText(fmtValue(t, unit), -4, plotH - va.pos(t));
+    } else {
+      const ha = valueAxis(lo, hi, plotW, "log");
+      exact.forEach((w, k) => {
+        const color = PALETTE[k % PALETTE.length];
+        const steps = survival(w);
+        steps.forEach((st, i) => {
+          if (!(st.s0 > 0)) return;
+          const [x0, x1] = cellSpan(ha, st.lo, st.hi);
+          const yTop = yS(st.s0), yBot = st.s1 > 0 ? yS(st.s1) : plotH - 4;
+          ctx.fillStyle = color; ctx.strokeStyle = color;
+          ctx.globalAlpha = st.faded ? 0.3 : 0.15;
+          ctx.fillRect(x0, yTop, Math.max(x1 - x0, 1), Math.max(yBot - yTop, 1));
+          ctx.globalAlpha = st.faded ? 0.3 : 1;
+          if (st.s1 > 0) {
+            ctx.beginPath(); ctx.arc(x1, yS(st.s1), 2.5, 0, 2 * Math.PI); ctx.fill(); // exact at the edge
+            const next = steps[i + 1];
+            const nx = next ? cellSpan(ha, next.lo, next.hi)[0] : plotW;
+            ctx.beginPath(); ctx.moveTo(x1, yS(st.s1)); ctx.lineTo(nx, yS(st.s1)); ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+          count++;
+        });
+      });
+      if (pinned !== null) {
+        ctx.strokeStyle = v("--fg"); ctx.setLineDash([3, 3]);
+        const x = ha.pos(pinned);
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, plotH); ctx.stroke(); ctx.setLineDash([]);
+      }
+      ctx.fillStyle = v("--muted"); ctx.textAlign = "center"; ctx.textBaseline = "top";
+      for (const t of valueTicks(ha)) ctx.fillText(fmtValue(t, unit), ha.pos(t), plotH + 3);
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      for (let e = 0; e >= Math.log10(ccdfMin) - 1e-9; e--) ctx.fillText(e === 0 ? "1" : `1e${e}`, -4, yS(10 ** e));
+    }
+    ctx.restore();
+    return count;
+  }
+
+  const over = (x: number): string[] =>
+    exact.map((w, k) => {
+      const r = fractionOver(w, x);
+      const name = w.label || `window ${k + 1}`;
+      if (r === null) return `${name}: no data`;
+      if (r.exact) return `${name}: P(X > ${fmtValue(x, unit)}) = ${(100 * r.f).toPrecision(3)}% (${Number(r.count.toPrecision(4))} of ${Number(w.n.toPrecision(4))})`;
+      const edge = (e: number | null, inf: string) => (e === null ? inf : fmtValue(e, unit));
+      return `${name}: between ${(100 * r.min).toPrecision(3)}% and ${(100 * r.max).toPrecision(3)}% (inside (${edge(r.lo, "−∞")}, ${edge(r.hi, "+∞")}])`;
+    });
+
+  const gap = $derived(multi ? maxEcdfGapAtEdges(exactWindow(windows[0]), exactWindow(windows[1])) : null);
 
   $effect(() => {
-    view = data.mark;
+    view = data.mark as View;
   });
 
   $effect(() => {
@@ -44,6 +146,12 @@
     const t0 = performance.now();
     const ctx = setupCanvas(el, width, HEIGHT);
     if (!ctx) return;
+    if (view === "quantile_curve" || view === "ccdf") {
+      const css = getComputedStyle(el);
+      const points = drawCumulative(ctx, (name) => css.getPropertyValue(name).trim());
+      onRendered(performance.now() - t0, points);
+      return;
+    }
     const css = getComputedStyle(el);
     const v = (name: string) => css.getPropertyValue(name).trim();
     const lo = windows.flatMap((w) => w.lo);
@@ -89,7 +197,7 @@
           ctx.strokeRect(x0 + 0.5, top, Math.max(x1 - x0 - 1, 1), plotH - top);
         });
       } else {
-        const steps = ecdf(w);
+        const steps = ecdf(exactWindow(w));
         spans[k] = steps.map((s) => {
           const [x0, x1] = cellSpan(axis, s.lo, s.hi);
           return { lo: s.lo, hi: s.hi, x0, x1 };
@@ -142,6 +250,31 @@
 
   function move(e: MouseEvent) {
     const p = local(e);
+    if (view === "ccdf") {
+      const { lo, hi } = edgesLoHi();
+      const ha = valueAxis(lo, hi, plotW, "log");
+      let x = valueAt(ha, p.x);
+      // snap to a source edge within 4 px: the read-off is then exact
+      const edge = [...new Set([...lo, ...hi])].filter((e): e is number => e !== null && e > 0)
+        .find((e) => Math.abs(ha.pos(e) - p.x) <= 4);
+      if (edge !== undefined) x = edge;
+      tip = { x: p.x + AXIS_LEFT + 8, y: p.y + 8, text: over(x).join("\n") };
+      return;
+    }
+    if (view === "quantile_curve") {
+      const q = qMode === "linear" ? p.x / plotW : 1 - 10 ** (-(p.x / plotW) * logTop);
+      if (!(q > 0 && q < 1)) { tip = null; return; }
+      const lines = exact.map((w, k) => {
+        const { boxes } = quantileBoxes(w);
+        const b = boxes.find((x) => q > x.q0 && q <= x.q1);
+        const name = w.label || `window ${k + 1}`;
+        if (!b) return `${name}: no data`;
+        const edge = (x: number | null, inf: string) => (x === null ? inf : fmtValue(x, unit));
+        return `${name}: ${qLabel(q)} in (${edge(b.lo, "−∞")}, ${edge(b.hi, "+∞")}]${b.faded ? ` · n ${Number(w.n.toPrecision(3))} < ${minSamples(q)}` : ""}`;
+      });
+      tip = { x: p.x + AXIS_LEFT + 8, y: p.y + 8, text: lines.join("\n") };
+      return;
+    }
     const lines: string[] = [];
     windows.forEach((w, k) => {
       const list = spans[k] ?? [];
@@ -165,6 +298,16 @@
   <div class="dist-controls">
     <button type="button" class:on={view === "histogram"} onclick={() => (view = "histogram")}>histogram</button>
     <button type="button" class:on={view === "ecdf"} onclick={() => (view = "ecdf")}>ECDF</button>
+    <button type="button" class:on={view === "quantile_curve"} onclick={() => (view = "quantile_curve")}>quantile</button>
+    <button type="button" class:on={view === "ccdf"} onclick={() => (view = "ccdf")}>CCDF</button>
+    {#if view === "quantile_curve"}
+      {#each ["linear", "nines"] as m (m)}
+        <button type="button" class:on={qMode === m} onclick={() => (qMode = m as "linear" | "nines")}>x: {m}</button>
+      {/each}
+      {#each ["auto", "log", "linear"] as m (m)}
+        <button type="button" class:on={yMode === m} onclick={() => (yMode = m as "auto" | "log" | "linear")}>y: {m}</button>
+      {/each}
+    {/if}
     {#if view === "histogram"}
       {#each ["count", "share", "density"] as m (m)}
         <button
@@ -177,7 +320,19 @@
       {/each}
     {/if}
   </div>
-  <canvas bind:this={canvas} class="distribution" onmousemove={move} onmouseleave={() => (tip = null)}></canvas>
+  <canvas
+    bind:this={canvas}
+    class="distribution"
+    onmousemove={move}
+    onmouseleave={() => (tip = null)}
+    onclick={(e) => {
+      if (view !== "ccdf") return;
+      const { lo, hi } = edgesLoHi();
+      const ha = valueAxis(lo, hi, plotW, "log");
+      const x = valueAt(ha, local(e).x);
+      pinned = pinned === null ? x : null;
+    }}
+  ></canvas>
   {#if tip}<div class="tip" style="left: {tip.x}px; top: {tip.y}px; white-space: pre">{tip.text}</div>{/if}
   <div class="legend">
     {#each windows as w, k (k)}
@@ -190,7 +345,10 @@
     {#if gap}
       <div>max |ΔF| at bucket edges = {gap.gap.toFixed(2)} at {fmtValue(gap.at, unit)} (lower bound, edges where both ECDFs are exact)</div>
     {/if}
-    {#if data.value_merge > 1}<div>{data.value_merge} source buckets per bar</div>{/if}
+    {#if view === "ccdf" && pinned !== null}
+      {#each over(pinned) as line (line)}<div>pinned: {line}</div>{/each}
+    {/if}
+    {#if data.value_merge > 1 && (view === "histogram")}<div>{data.value_merge} source buckets per bar</div>{/if}
   </div>
 </div>
 

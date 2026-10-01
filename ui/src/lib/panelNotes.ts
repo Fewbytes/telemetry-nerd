@@ -73,7 +73,17 @@ export function describeShown(
   d: Pick<DatasetMeta, "representation" | "quantile"> & { scheme?: DatasetMeta["scheme"] },
   step: string,
   kind = "time",
+  mark = "",
 ): string {
+  if (mark === "percentiles") {
+    return `Per ${step} column, the source bucket holding each percentile (never interpolated), only where the column has n ≥ 10/(1−q).`;
+  }
+  if (mark === "quantile_curve") {
+    return "Value at each quantile, as source-bucket boxes [F(lo), F(hi)]; the dashed line marks where n stops supporting a quantile (faded beyond it).";
+  }
+  if (mark === "ccdf") {
+    return "Share of observations above each value (log-log), exact at bucket edges and bounded inside a bucket; hover reads a threshold, click pins it.";
+  }
   if (kind === "histogram") {
     return `Share of observations per value bucket, summed over each selected window (whole ${step} steps); bars are the source buckets (${d.scheme?.description ?? "unknown scheme"}).`;
   }
