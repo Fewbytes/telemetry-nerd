@@ -15,6 +15,7 @@ from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.jsonsafe import dumps
 from telemetry_nerd.model.time import parse_duration, parse_time
 from telemetry_nerd.sources.base import SourceError
+from telemetry_nerd.sources.public import PUBLIC_SOURCES
 from telemetry_nerd.sources.spec import SourceSpec
 from telemetry_nerd.workspace.models import AnnotationIn, FindingIn, GapIn, HypothesisStatus
 
@@ -238,7 +239,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     @mcp.tool()
     async def source_connect(
         name: str,
-        url: str,
+        url: str | None = None,
         flavor: str = "prometheus",
         resolution: str = "15s",
         auth_env: str | None = None,
@@ -251,6 +252,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     ) -> str:
         """Connect a Prometheus-compatible source at runtime (no daemon restart).
 
+        Public demo sources connect by name alone, e.g. source_connect(name="grafana-play"):
+        url, flavor, resolution and politeness come from the registry (see public_sources);
+        only `replace` applies then. Give `url` to connect anything else.
         url: API base without /api/v1, e.g. http://prometheus:9090, a VictoriaMetrics
         /select/0/prometheus path, or a Grafana datasource proxy
         https://<grafana>/api/datasources/proxy/uid/<uid>.
@@ -266,6 +270,14 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         Returns {source, status}.
         """
         try:
+            if url is None:
+                entry = PUBLIC_SOURCES.get(name)
+                if entry is None:
+                    raise ToolError(
+                        f"no url given and {name!r} is not a public source "
+                        f"(known: {', '.join(sorted(PUBLIC_SOURCES))})"
+                    )
+                return _dump(await service.source_connect(entry.to_spec(), replace=replace))
             auth = None
             if auth_env is not None or auth_file is not None:
                 auth = {"env": auth_env, "file": auth_file, "scheme": auth_scheme}
@@ -290,6 +302,14 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise _source_error(e) from e
         except ValueError as e:
             raise ToolError(str(e)) from e
+
+    @mcp.tool()
+    def public_sources() -> str:
+        """Public demo/test sources you can connect by name with source_connect(name=...):
+        backend, flavor, politeness limits (concurrency, min interval, timeout, max query
+        range) and suggested use. None is connected until you ask. They are shared servers
+        run by third parties: interactive volume only, narrow queries, never broad scans."""
+        return _dump({"sources": [e.describe() for e in PUBLIC_SOURCES.values()]})
 
     @mcp.tool()
     def source_list() -> str:

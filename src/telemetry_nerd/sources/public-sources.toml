@@ -1,0 +1,115 @@
+# Public Prometheus-compatible sources for demos and tests (spike: docs/superpowers/specs/
+# 2026-10-01-public-test-sources.md). NOTHING here is connected by default: connect one by
+# name with `source_connect(name="grafana-play")` (no url needed).
+#
+# Politeness (every entry; these are shared services run by third parties):
+#   max_concurrency  parallel requests to the source (all entries: 1)
+#   min_interval_ms  minimum spacing between request starts (the rate limit: <= 1 req/s)
+#   timeout_s        per-request timeout; servers allow ~2 min, broad queries are slow
+#   max_range        longest time range to ask for in ONE query (documented ceiling; keep
+#                    step so a query stays well under the 11,000 points/series limit)
+# Always: descriptive User-Agent (sent by the adapter), interactive volume only, never
+# broad scans such as {__name__=~".+"} or count by (__name__), retry on 5xx with backoff.
+# Wikimedia's robots.txt is "Disallow: /": interactive use only, never crawl.
+#
+# backend:  prometheus | thanos | mimir | victoriametrics (what the server really is)
+# flavor:   prometheus | victoriametrics (query dialect: only VM gets MetricsQL rollup())
+# fixtures: directory under tests/fixtures/ with responses recorded from this source
+#           (scripts/record_public_fixtures.py), replayed offline in CI.
+
+[[source]]
+name = "grafana-play"
+url = "https://play.grafana.org/api/datasources/proxy/uid/grafanacloud-prom"
+backend = "mimir"            # Grafana Cloud Metrics (Mimir)
+flavor = "prometheus"
+resolution_ms = 20000
+fixtures = "play"
+max_range = "7d"
+suggested_use = "Microservices RED without local setup: hosted OpenTelemetry demo (ecommerce-prod/*), banking demo, QuickPizza, k8s, DB exporters; native and classic histograms"
+politeness = { max_concurrency = 1, min_interval_ms = 1000, timeout_s = 60 }
+
+[[source]]
+name = "wikimedia-thanos"
+url = "https://grafana.wikimedia.org/api/datasources/proxy/uid/000000026"
+backend = "thanos"           # Thanos 0.38, global view of all sites, retention >= 1 year
+flavor = "prometheus"
+resolution_ms = 60000
+fixtures = "wikimedia"
+max_range = "30d"
+suggested_use = "Scale and history: 94k metric names, 1y retention; discovery stress; node/envoy/mediawiki. Slow, shared: narrow selectors only (no discovery fixtures: /metadata is 13-20 MB)"
+politeness = { max_concurrency = 1, min_interval_ms = 1000, timeout_s = 90 }
+
+[[source]]
+name = "cern-eos"
+url = "https://monit-grafana-open.cern.ch/api/datasources/proxy/uid/b490b4f4-28d2-4f0b-8fe1-b0bb61c365f6"
+backend = "thanos"           # Thanos 0.32.5
+flavor = "prometheus"
+resolution_ms = 60000        # unverified: assumed
+fixtures = "cern-eos"
+max_range = "30d"
+suggested_use = "Storage domain on a small Thanos: EOS, xrootd, cernbox, node_exporter (1.5k names)"
+politeness = { max_concurrency = 1, min_interval_ms = 1000, timeout_s = 60 }
+
+[[source]]
+name = "cern-openstack"
+url = "https://monit-grafana-open.cern.ch/api/datasources/proxy/uid/bf9ylnkygnnr4c"
+backend = "mimir"            # Mimir 2.15
+flavor = "prometheus"
+resolution_ms = 60000        # unverified: assumed
+fixtures = "cern-openstack"
+max_range = "30d"
+suggested_use = "Mimir backend, cloud infrastructure: OpenStack, RabbitMQ, HAProxy, k8s, libvirt, argocd"
+politeness = { max_concurrency = 1, min_interval_ms = 1000, timeout_s = 60 }
+
+[[source]]
+name = "cern-dbod"
+url = "https://monit-grafana-open.cern.ch/api/datasources/proxy/uid/ff1pt73d7olxcc"
+backend = "mimir"            # Mimir 2.15
+flavor = "prometheus"
+resolution_ms = 60000        # unverified: assumed
+max_range = "30d"
+suggested_use = "Databases (database-on-demand): Nomad, Consul, MySQL, Postgres; name-encoded metric families"
+politeness = { max_concurrency = 1, min_interval_ms = 1000, timeout_s = 60 }
+
+[[source]]
+name = "percona-pmm"
+url = "https://pmmdemo.percona.com/graph/api/datasources/proxy/uid/PA58DA793C7250F1B"
+backend = "victoriametrics"  # rollup() works
+flavor = "victoriametrics"
+resolution_ms = 60000        # unverified: assumed
+max_range = "7d"
+suggested_use = "MetricsQL path and databases: MongoDB, MySQL, ClickHouse, PostgreSQL, ProxySQL, Redis, node (8.3k names)"
+politeness = { max_concurrency = 1, min_interval_ms = 1000, timeout_s = 60 }
+
+[[source]]
+name = "vm-playground"
+url = "https://play.victoriametrics.com/select/0/prometheus"
+backend = "victoriametrics"  # VictoriaMetrics cluster
+flavor = "victoriametrics"
+resolution_ms = 30000        # unverified: assumed
+fixtures = "vm-playground"
+max_range = "7d"
+suggested_use = "MetricsQL path with the best metadata (units on 255 metrics): VM self-monitoring, node, KSM, kafka, otelcol"
+politeness = { max_concurrency = 1, min_interval_ms = 1000, timeout_s = 60 }
+
+[[source]]
+name = "prometheus-demo"
+url = "https://prometheus.demo.prometheus.io"
+backend = "prometheus"       # Prometheus 3.x
+flavor = "prometheus"
+resolution_ms = 15000
+fixtures = "prometheus-demo"
+max_range = "7d"
+suggested_use = "Small stable fixtures: node, cadvisor, blackbox, grafana, caddy, random; 11 targets"
+politeness = { max_concurrency = 1, min_interval_ms = 1000, timeout_s = 30 }
+
+[[source]]
+name = "promlabs-demo"
+url = "https://demo.promlabs.com"
+backend = "prometheus"       # Prometheus 3.x
+flavor = "prometheus"
+resolution_ms = 15000
+fixtures = "promlabs-demo"
+max_range = "7d"
+suggested_use = "Small fixtures and histograms: node, cadvisor, demo API service (latency histograms)"
+politeness = { max_concurrency = 1, min_interval_ms = 1000, timeout_s = 30 }
