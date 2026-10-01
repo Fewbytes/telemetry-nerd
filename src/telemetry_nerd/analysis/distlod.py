@@ -147,3 +147,39 @@ def merge_values(
         return rows, 1
     out = pl.concat(parts).group_by(_KEYS).agg(pl.col("count").sum()).sort(_KEYS)
     return out.select(rows.columns), factor
+
+
+HIST_PX_PER_BAR = 3
+
+
+def window_histogram(
+    rows: pl.DataFrame, cols: pl.DataFrame, step_ms: int, start_ms: int, end_ms: int
+) -> dict[str, dict]:
+    """Sum whole columns (ts - step, ts] that overlap [start, end], per series. The window
+    snaps outward to those columns; n and counts are sums (additive)."""
+    inside = (pl.col("ts_ms") > start_ms) & (pl.col("ts_ms") - step_ms < end_ms)
+    c = (
+        cols.filter(inside)
+        .group_by("series_id")
+        .agg(pl.col("n").sum(), pl.len().alias("columns"),
+             pl.col("ts_ms").min().alias("first"), pl.col("ts_ms").max().alias("last"))
+    )  # fmt: skip
+    r = (
+        rows.filter(inside)
+        .group_by("series_id", "bucket_lo", "bucket_hi")
+        .agg(pl.col("count").sum())
+        .sort("series_id", "bucket_hi", "bucket_lo")
+    )
+    out: dict[str, dict] = {}
+    for row in c.iter_rows(named=True):
+        b = r.filter(pl.col("series_id") == row["series_id"])
+        out[row["series_id"]] = {
+            "start_ms": row["first"] - step_ms,
+            "end_ms": row["last"],
+            "n": row["n"],
+            "columns": row["columns"],
+            "lo": b["bucket_lo"].to_list(),
+            "hi": b["bucket_hi"].to_list(),
+            "c": b["count"].to_list(),
+        }
+    return out

@@ -216,6 +216,27 @@ def create_app(
             return _error(400, str(e))
         return JSONResponse(out)
 
+    async def panel_distribution(request: Request) -> JSONResponse:
+        try:
+            body = await _body(request, start_ms=int, end_ms=int)
+        except _BadRequest as e:
+            return _error(e.status, str(e), hint=e.hint)
+        baseline = body.get("baseline", "previous")
+        try:
+            panel = await service.distribution_panel(
+                request.path_params["id"], body["start_ms"], body["end_ms"],
+                baseline if baseline in ("previous", "none") else "previous",
+            )  # fmt: skip
+        except NotFound as e:
+            return _error(404, str(e))
+        except ChartRejected as e:
+            return _error(422, "chart rejected", issues=[i.model_dump() for i in e.issues])
+        except SourceError as e:
+            return _error(400, str(e), hint=e.hint)
+        except ValueError as e:
+            return _error(400, str(e))
+        return JSONResponse({"panel": panel.to_dict()})
+
     async def show(request: Request) -> JSONResponse:
         try:
             body = await _body(request, dataset=str, question=str)
@@ -554,6 +575,7 @@ def create_app(
         Route("/api/query", query, methods=["POST"]),
         Route("/api/query-distribution", query_distribution, methods=["POST"]),
         Route("/api/show", show, methods=["POST"]),
+        Route("/api/panels/{id}/distribution", panel_distribution, methods=["POST"]),
         Route("/api/render-report", render_report, methods=["POST"]),
         WebSocketRoute("/ws", events),
         WebSocketRoute("/ws/bridge", bridge),

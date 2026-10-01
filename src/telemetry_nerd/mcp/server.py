@@ -8,6 +8,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import TypeAdapter, ValidationError
 
+from telemetry_nerd.charts.spec import Window
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.jsonsafe import dumps
@@ -222,7 +223,13 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         return _dump({"disconnected": name})
 
     @mcp.tool()
-    def show(dataset: str, question: str, unit: str | None = None) -> str:
+    def show(
+        dataset: str,
+        question: str,
+        unit: str | None = None,
+        mark: str = "auto",
+        windows: list[dict] | None = None,
+    ) -> str:
         """Draw a dataset as a panel (mean line + min/max envelope) in the shared workspace.
 
         question is REQUIRED: the explicit question this graph answers, e.g.
@@ -232,10 +239,21 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         the emitting code, or you know the generating tool's conventions. Your unit
         overrides suffix inference and is persisted with provenance ("provided by
         claude"), so only pass a unit you can actually vouch for.
+        mark: auto (heatmap for distributions, lines otherwise), heatmap, histogram, ecdf.
+        windows (histogram/ecdf): 1-4 [{start, end, label}] compared on one chart, e.g. the
+        spike vs the preceding baseline; each window sums whole steps, n is shown per window.
         Returns {panel, url, warnings}.
         """
         try:
-            res = service.show(dataset, question, unit=unit)
+            wins = [
+                Window(
+                    start_ms=parse_time(str(w["start"]), service.clock()),
+                    end_ms=parse_time(str(w["end"]), service.clock()),
+                    label=str(w.get("label", "")),
+                )
+                for w in windows or []
+            ]
+            res = service.show(dataset, question, unit=unit, mark=mark, windows=wins)
         except ChartRejected as e:
             raise ToolError(f"chart rejected: {e}") from e
         except (NotFound, ValueError) as e:

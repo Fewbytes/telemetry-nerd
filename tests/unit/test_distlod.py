@@ -5,7 +5,7 @@ import polars as pl
 from hypothesis import given
 from hypothesis import strategies as st
 
-from telemetry_nerd.analysis.distlod import merge_values, rebucket_time
+from telemetry_nerd.analysis.distlod import merge_values, rebucket_time, window_histogram
 from telemetry_nerd.model.distribution import BucketScheme
 
 INF = math.inf
@@ -90,3 +90,20 @@ def test_vmrange_merge_groups_m_ranges():
     assert out["count"].sum() == 8.0
     finite = [r for r in out.select("bucket_lo", "bucket_hi").rows() if r[0] > 0 and r[1] < INF]
     assert len(finite) == 3
+
+
+def test_window_takes_whole_overlapping_columns():
+    rows = pl.DataFrame(
+        {
+            "series_id": ["a"] * 4,
+            "ts_ms": [60_000, 120_000, 180_000, 240_000],
+            "bucket_lo": [0.0] * 4,
+            "bucket_hi": [1.0] * 4,
+            "count": [1.0, 2.0, 4.0, 8.0],
+        }
+    )
+    cols = pl.DataFrame({"series_id": ["a"] * 4, "ts_ms": [60_000, 120_000, 180_000, 240_000],
+                         "n": [1.0, 2.0, 4.0, 8.0]})  # fmt: skip
+    w = window_histogram(rows, cols, 60_000, 70_000, 150_000)["a"]
+    assert (w["start_ms"], w["end_ms"], w["columns"], w["n"]) == (60_000, 180_000, 2, 6.0)
+    assert (w["lo"], w["hi"], w["c"]) == ([0.0], [1.0], [6.0])

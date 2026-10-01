@@ -322,3 +322,22 @@ def test_render_report_heatmap_budget_uses_area(client):
     assert client.post("/api/render-report", json=ok).json()["budget_exceeded"] is False
     bad = ok | {"points": 400 * 260 // 8 + 1}
     assert client.post("/api/render-report", json=bad).json()["budget_exceeded"] is True
+
+
+def test_distribution_followup_route(client):
+    ds = client.post(
+        "/api/query-distribution", json={"selector": "x_bucket", "start": "now-2h", "end": "now-1h"}
+    ).json()
+    panel = client.post(
+        "/api/show", json={"dataset": ds["dataset"], "question": "Distribution?"}
+    ).json()["panel"]
+    data = client.get(f"/api/panels/{panel['id']}/data?width=600").json()
+    t = data["series"][0]["ts"][10]
+    r = client.post(
+        f"/api/panels/{panel['id']}/distribution", json={"start_ms": t - 120_000, "end_ms": t}
+    )
+    assert r.status_code == 200 and r.json()["panel"]["spec"]["layers"][0]["mark"] == "histogram"
+    assert (
+        client.post(f"/api/panels/{panel['id']}/distribution", json={"start_ms": "x"}).status_code
+        == 400
+    )

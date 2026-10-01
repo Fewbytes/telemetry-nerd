@@ -2,6 +2,8 @@ import json
 
 import pytest
 
+from telemetry_nerd.charts.spec import Window
+from telemetry_nerd.core.service import ChartRejected
 from telemetry_nerd.sources.base import SourceError
 from tests.unit.fakes import FakeSource, make_service
 
@@ -78,3 +80,62 @@ async def test_quantile_datasets_remember_their_histogram(tmp_path):
     assert svc.datasets.meta(q["dataset"]).histogram == {
         "selector": 'lat_seconds_bucket{job="a"}', "by": ["instance"]
     }  # fmt: skip
+
+
+async def test_histogram_panel_sums_whole_columns_in_window(tmp_path):
+    svc = make_service(tmp_path)
+    out = await svc.query_distribution(
+        "lat_bucket", by=["instance"], start="now-2h", end="now-1h", step="1m"
+    )
+    meta = svc.datasets.meta(out["dataset"])
+    a = meta.start_ms + 10 * 60_000 + 5_000
+    res = svc.show(out["dataset"], "How is latency distributed at 10 past?", mark="histogram",
+                   windows=[Window(start_ms=a, end_ms=a + 120_000, label="sel")])  # fmt: skip
+    data = svc.panel_data(res.panel.id, 600)
+    assert data["kind"] == "histogram" and data["mark"] == "histogram"
+    w = {s["labels"]["instance"]: s["windows"][0] for s in data["series"]}["i1"]
+    assert w["columns"] == 3 and w["n"] == 3 * 200
+    assert (w["start_ms"], w["end_ms"]) == (
+        meta.start_ms + 10 * 60_000,
+        meta.start_ms + 13 * 60_000,
+    )
+    assert w["c"] == [3 * 180.0, 3 * 18.0, 3 * 2.0] and w["hi"][0] == 0.1
+
+
+async def test_histogram_marks_are_validated(tmp_path):
+    svc = make_service(tmp_path)
+    out = await svc.query_distribution("lat_bucket", start="now-2h", end="now-1h", step="1m")
+    with pytest.raises(ChartRejected, match="windows"):
+        svc.show(out["dataset"], "q?", mark="ecdf", windows=[])
+    plain = await svc.query("up", "now-2h", "now-1h", step="1m")
+    with pytest.raises(ChartRejected, match="distribution"):
+        svc.show(plain["dataset"], "q?", mark="heatmap")
+    meta = svc.datasets.meta(out["dataset"])
+    with pytest.raises(ValueError, match="outside"):
+        svc.show(out["dataset"], "q?", mark="histogram",
+                 windows=[Window(start_ms=meta.end_ms + 1, end_ms=meta.end_ms + 60_000)])  # fmt: skip
+
+
+async def test_distribution_from_a_quantile_panel_fetches_its_histogram(tmp_path):
+    src = FakeSource(name="default")  # dataset.source is looked up by registry name
+    svc = make_service(tmp_path, src)
+    q = await svc.query(
+        'histogram_quantile(0.95, sum by (le, instance) (rate(lat_seconds_bucket{job="a"}[5m])))',
+        "now-2h", "now-1h", step="1m",
+    )  # fmt: skip
+    panel = svc.show(q["dataset"], "p95 by instance?").panel
+    m = svc.datasets.meta(q["dataset"])
+    new = await svc.distribution_panel(panel.id, m.start_ms + 30 * 60_000, m.start_ms + 35 * 60_000)
+    layer = new.spec["layers"][0]
+    assert layer["mark"] == "histogram"
+    assert [w["label"] for w in layer["windows"]] == ["selection", "previous"]
+    assert src.hist_selectors == ['lat_seconds_bucket{job="a"}']
+    assert "distributed between" in new.question
+
+
+async def test_distribution_from_a_plain_panel_is_refused(tmp_path):
+    svc = make_service(tmp_path)
+    q = await svc.query("up", "now-2h", "now-1h", step="1m")
+    panel = svc.show(q["dataset"], "Up?").panel
+    with pytest.raises(SourceError, match="histogram"):
+        await svc.distribution_panel(panel.id, 0, 60_000)

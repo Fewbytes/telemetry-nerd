@@ -12,10 +12,12 @@ import polars as pl
 from telemetry_nerd.analysis.distlod import (
     FACET_HEIGHT_MULTI,
     FACET_HEIGHT_SINGLE,
+    HIST_PX_PER_BAR,
     PX_PER_COLUMN,
     PX_PER_ROW,
     merge_values,
     rebucket_time,
+    window_histogram,
 )
 from telemetry_nerd.analysis.exprkind import (
     QUANTILE_HINT,
@@ -26,7 +28,7 @@ from telemetry_nerd.analysis.exprkind import (
 )
 from telemetry_nerd.analysis.quantile import attach_counts
 from telemetry_nerd.analysis.resample import lod
-from telemetry_nerd.charts.spec import ValidationIssue, auto_spec, validate
+from telemetry_nerd.charts.spec import Layer, ValidationIssue, Window, auto_spec, validate
 from telemetry_nerd.core.events import Actor, EventLog
 from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.summary import summarize, summarize_distribution
@@ -34,7 +36,14 @@ from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.distribution import DIST_N_MIN
-from telemetry_nerd.model.time import TimeRange, format_duration, now_ms, parse_duration, parse_time
+from telemetry_nerd.model.time import (
+    TimeRange,
+    format_duration,
+    iso,
+    now_ms,
+    parse_duration,
+    parse_time,
+)
 from telemetry_nerd.sources.base import LimitExceeded, Source, SourceError
 from telemetry_nerd.sources.registry import SourceRegistry
 from telemetry_nerd.sources.spec import RESERVED_NAMES, SourceSpec
@@ -218,9 +227,36 @@ class TelemetryService:
         caveats = summarize_distribution(
             meta, dist, now_ms=self.clock(), settle_ms=self.cache.settle_ms
         )["caveats"]
+        labels = self._labels(dist.series)
+        if panel.spec["layers"][0]["mark"] in ("histogram", "ecdf"):
+            rows, value_merge = merge_values(
+                pl.from_arrow(dist.rows), dist.scheme, max(4, width_px // HIST_PX_PER_BAR)
+            )
+            cols = pl.from_arrow(dist.columns)
+            layer = panel.spec["layers"][0]
+            per_window = [
+                (w, window_histogram(rows, cols, meta.step_ms, w["start_ms"], w["end_ms"]))
+                for w in layer["windows"]
+            ]
+            series = []
+            for sid, lb in labels.items():
+                wins = []
+                for w, hist in per_window:
+                    h = hist.get(sid) or {"start_ms": w["start_ms"], "end_ms": w["end_ms"], "n": 0.0,
+                                          "columns": 0, "lo": [], "hi": [], "c": []}  # fmt: skip
+                    wins.append({"label": w["label"], **h})
+                series.append({"id": sid, "labels": lb, "windows": wins})
+            n_min = meta.n_min or 0
+            if (
+                any(0 < w["n"] < n_min for s in series for w in s["windows"])
+                and "low_count" not in caveats
+            ):
+                caveats.append("low_count")
+            return {"kind": "histogram", "mark": layer["mark"], "panel": panel.to_dict(),
+                    "dataset": meta.to_dict(), "effective_step_ms": meta.step_ms,
+                    "value_merge": value_merge, "series": series, "caveats": caveats}  # fmt: skip
         rows = pl.from_arrow(dist.rows)
         cols = pl.from_arrow(dist.columns).with_columns(pl.lit(1, pl.Int64).alias("cover"))
-        labels = self._labels(dist.series)
         n_cols = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
         factor = max(1, math.ceil(n_cols / max(1, width_px // PX_PER_COLUMN)))
         step = meta.step_ms * factor
@@ -243,6 +279,44 @@ class TelemetryService:
             "effective_step_ms": step, "value_merge": value_merge, "facet_height_px": facet_h,
             "series": series, "caveats": caveats,
         }  # fmt: skip
+
+    async def distribution_panel(
+        self,
+        panel_id: str,
+        start_ms: int,
+        end_ms: int,
+        baseline: str = "previous",
+        actor: Actor = "user",
+    ) -> Panel:
+        if end_ms <= start_ms:
+            raise ValueError("selection end must be after its start")
+        panel = self.workspace.get_panel(panel_id)
+        meta = self.datasets.meta(panel.dataset_ids[0])
+        if meta.representation != "distribution":
+            if not meta.histogram:
+                raise SourceError(
+                    "no histogram behind this panel",
+                    hint="distributions come from histograms: use query_distribution on the _bucket or native histogram metric",
+                )
+            src = self._source(meta.source)
+            step = max(meta.step_ms, 2 * src.resolution_ms)
+            out = await self.query_distribution(
+                meta.histogram["selector"], meta.histogram["by"], start=str(meta.start_ms),
+                end=str(meta.end_ms), step=format_duration(step), source=meta.source, actor=actor,
+            )  # fmt: skip
+            meta = self.datasets.meta(out["dataset"])
+        windows = [Window(start_ms=start_ms, end_ms=end_ms, label="selection")]
+        span = end_ms - start_ms
+        if baseline == "previous" and start_ms - span >= meta.start_ms - meta.step_ms:
+            windows.append(Window(start_ms=start_ms - span, end_ms=start_ms, label="previous"))
+        a, b = iso(start_ms)[11:16], iso(end_ms)[11:16]
+        question = f"How are values distributed between {a}Z and {b}Z" + (
+            ", compared with the preceding window?" if len(windows) > 1 else "?"
+        )
+        unit = (panel.spec.get("y") or {}).get("unit")
+        return self.show(
+            meta.id, question, actor=actor, unit=unit, mark="histogram", windows=windows
+        ).panel
 
     @staticmethod
     def _refuse_reserved(name: str) -> None:
@@ -300,7 +374,13 @@ class TelemetryService:
         self.log.append(actor, "source.disconnected", name, {})
 
     def show(
-        self, dataset_id: str, question: str, actor: Actor = "claude", unit: str | None = None
+        self,
+        dataset_id: str,
+        question: str,
+        actor: Actor = "claude",
+        unit: str | None = None,
+        mark: str = "auto",
+        windows: list[Window] | None = None,
     ) -> ShowResult:
         meta = self.datasets.meta(dataset_id)
         # An agent-provided unit (Claude learned it from the source, the emitting
@@ -312,6 +392,13 @@ class TelemetryService:
             unit_provenance=f"provided by {actor}" if unit else None,
             representation=meta.representation,
         )
+        if mark != "auto":
+            for w in windows or []:
+                if not meta.start_ms - meta.step_ms <= w.start_ms < w.end_ms <= meta.end_ms:
+                    raise ValueError(
+                        f"window {iso(w.start_ms)}..{iso(w.end_ms)} is outside the dataset range"
+                    )
+            spec.layers = [Layer(mark=mark, data=dataset_id, windows=windows or [])]  # type: ignore[arg-type]
         issues = validate(
             spec,
             {dataset_id: self.datasets.series_count(dataset_id)},
