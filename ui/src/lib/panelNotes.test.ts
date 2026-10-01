@@ -57,3 +57,13 @@ describe("y view notes", () => {
     expect(notes.map((n) => [n.kind, n.key])).toEqual([["caveat", "y_view_refused"], ["info", "y_scaled_to_data"]]);
   });
 });
+
+describe("marginal notes", () => {
+  it("an active marginal always states its basis, n and who chose it", () => {
+    const notes = panelNotes([], { yScaledToData: false, nMin: null,
+      marginal: { what: "per-step values (1m means of scrape samples): scrape samples, not requests",
+                  ref: "previous window", n: [122, 7], nMin: 20, author: "claude", reason: "did it shift?" } });
+    expect(notes.map((n) => [n.kind, n.key])).toEqual([["info", "marginal"], ["caveat", "marginal_low_n"]]);
+    expect(notes[0].text).toBe("Marginal (right): per-step values (1m means of scrape samples): scrape samples, not requests. Filled = now (n=122), dashed = previous window (n=7). Chosen by Claude: did it shift?");
+  });
+});

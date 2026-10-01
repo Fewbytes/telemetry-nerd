@@ -3,11 +3,13 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import {
-    closePanel, fetchPanelData, reportRender, selectYView,
+    closePanel, fetchPanelData, reportRender, selectYView, setMarginal,
     type Annotation, type Panel, type PanelData, type Thread, type YView,
   } from "./lib/api";
   import { toUplot } from "./chart/toUplot";
   import { describeShown, panelNotes } from "./lib/panelNotes";
+  import { setupCanvas } from "./chart/canvas";
+  import { drawMarginal, marginalHeader } from "./chart/marginal";
   import { badgeText, contextStrip, nonZeroOrigin, offeredViews, resolveY, yStats } from "./chart/yview";
   import { measureFirstDraw } from "./chart/measureDraw";
   import { drawAnnotations, drawOps, readAnnotationColors } from "./chart/annotations";
@@ -75,7 +77,7 @@
       if (w <= 0) return;
       if (Math.abs(w - fetchWidth) / Math.max(fetchWidth, 1) > 0.1) load(w);
       // ignore sub-threshold jitter (scrollbars, sub-pixel layout): each setSize redraws the plot
-      else if (plot && Math.abs(w - plot.width) >= RESIZE_MIN_PX) plot.setSize({ width: w, height: 260 });
+      else if (plot && Math.abs(w - margW - plot.width) >= RESIZE_MIN_PX) plot.setSize({ width: w - margW, height: 260 });
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -104,12 +106,36 @@
     selectYView(panel.id, body).catch((e) => { pending = undefined; error = String(e); });
   };
 
+
+  // marginal histogram (4ok.6): server computes it; the toggle lives in the panel spec
+  const MARGINAL_W = 84;
+  let margEl = $state<HTMLCanvasElement | null>(null);
+  let margBusy = $state(false);
+  const indexedOn = $derived((chosen?.mode as string | undefined) === "indexed");
+  const marg = $derived(data?.kind === "time" && !indexedOn ? (data.marginal ?? null) : null);
+  const margW = $derived(marg ? MARGINAL_W : 0);
+  // refetch panel data when what the server computes for it changes (marginal, indexed baseline)
+  const dataKey = $derived(JSON.stringify([panel.spec.marginal ?? null, (panel.spec.y.selected?.mode as string | undefined) === "indexed" ? panel.spec.y.selected : null]));
+  let lastKey: string | null = null;
+  $effect(() => {
+    const k = dataKey;
+    if (lastKey !== null && k !== lastKey && fetchWidth) untrack(() => load(fetchWidth));
+    lastKey = k;
+  });
+  const toggleMarginal = (ref: "previous" | "week" | null) => {
+    margBusy = true;
+    setMarginal(panel.id, ref).catch((e) => (error = String(e))).finally(() => (margBusy = false));
+  };
+
   const notes = $derived(
     data
       ? panelNotes(data.caveats, {
           yScaledToData: panel.spec.y.range_mode === "data",
           nMin: data.dataset.n_min ?? null,
           representation: data.dataset.representation,
+          marginal: marg
+            ? { what: marg.what, ref: marg.reference.label, n: marg.windows.map((w) => w.n), nMin: marg.n_min, author: marg.author, reason: marg.reason }
+            : null,
           yView:
             chosen || yres?.refused
               ? { label: chosen?.label ?? "", reason: chosen?.reason ?? null, author: chosen?.author ?? "user", refused: yres?.refused ?? null }
@@ -155,6 +181,8 @@
     void annKey; // tracked: rebuild the plot when the annotation set changes
     void viewKey; // tracked: log/linear scale cannot change in place, so rebuild on a view change
     const bandMode = bandPick; // tracked: band pick drags on y instead of x
+    void margW; // tracked: the plot shrinks while the marginal is on
+    const m = untrack(() => marg);
     const yr = untrack(() => yres);
     const anns = untrack(() => panelAnns);
     const mode = theme.effective; // tracked: rebuild the plot when the theme flips
@@ -166,7 +194,7 @@
       { start: d.dataset.start_ms, end: d.dataset.end_ms, step: d.effective_step_ms },
       { quantile: d.dataset.representation === "quantile", nMin: d.dataset.n_min ?? null },
     );
-    const width = el.clientWidth || 800;
+    const width = (el.clientWidth || 800) - margW;
     const unit = d.panel.spec.y.unit;
     const up = measureFirstDraw(
       (onDraw) =>
@@ -202,6 +230,11 @@
                   );
                   annCount = ops.length;
                   originOff = nonZeroOrigin(u.scales.y.min ?? 0, u.scales.y.max ?? 0, !!yr?.log);
+                  if (m && margEl) {
+                    const top = u.bbox.top / dpr, bottom = top + u.bbox.height / dpr;
+                    const mctx = setupCanvas(margEl, MARGINAL_W, el.clientHeight || 260);
+                    if (mctx) drawMarginal(mctx, m.windows, m.n_min, { toPx: (v) => u.valToPos(v, "y"), top, bottom, width: MARGINAL_W, fg: stroke, muted: grid });
+                  }
                   drawAnnotations(u, ops, colors, dpr);
                 },
               ],
@@ -272,6 +305,11 @@
   </header>
   {#if error}<div class="error">{error}</div>{/if}
   <div bind:this={plotEl} class="plot" style="position: relative">
+    {#if marg}
+      <canvas class="marginal" bind:this={margEl} data-marginal data-marginal-basis={marg.basis}
+        title="{marg.what} · filled: now · dashed: {marg.reference.label}"></canvas>
+      <span class="marginal-head" data-marginal-n>{#each marginalHeader(marg.windows, marg.n_min) as line (line)}<span>{line}</span>{/each}</span>
+    {/if}
     {#if data && data.kind === "heatmap"}
       {@const hm = data}
       {#if heatView === "percentiles"}
@@ -393,6 +431,19 @@
         {/each}
       {/if}
       {#if bandPick}<span class="hint">drag vertically on the plot · Esc cancels</span>{/if}
+    </div>
+  {/if}
+  {#if data?.kind === "time"}
+    <div class="legend y-views" role="group" aria-label="Marginal histogram">
+      marginal:
+      <button type="button" class:on={!panel.spec.marginal} onclick={() => toggleMarginal(null)}>off</button>
+      {#each [["previous", "vs previous window"], ["week", "vs last week"]] as [r, label] (r)}
+        <button type="button" disabled={indexedOn || margBusy} title={indexedOn ? "the marginal shows values; it is off in the indexed view" : ""}
+          class:on={panel.spec.marginal?.reference === r} data-marginal-ref={r}
+          onclick={() => toggleMarginal(r as "previous" | "week")}>{label}</button>
+      {/each}
+      {#if panel.spec.marginal?.author === "claude"}<span class="hint">Claude: {panel.spec.marginal.reason}</span>{/if}
+      {#if margBusy}<span class="hint">fetching reference…</span>{/if}
     </div>
   {/if}
   {#if data}

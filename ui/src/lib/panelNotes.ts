@@ -47,6 +47,7 @@ export function panelNotes(
     nMin: number | null;
     representation?: string;
     yView?: { label: string; reason: string | null; author: string; refused: string | null } | null;
+    marginal?: { what: string; ref: string; n: number[]; nMin: number; author: string; reason: string | null } | null;
   },
 ): Note[] {
   const notes: Note[] = caveats.map((key) => ({
@@ -54,6 +55,17 @@ export function panelNotes(
     key,
     text: caveatText(key, opts.nMin, opts.representation),
   }));
+  const mg = opts.marginal;
+  if (mg) {
+    const by = mg.author === "claude" ? ` Chosen by Claude${mg.reason ? `: ${mg.reason}` : ""}` : "";
+    notes.push({
+      kind: "info", key: "marginal",
+      text: `Marginal (right): ${mg.what}. Filled = now (n=${Math.round(mg.n[0])}), dashed = ${mg.ref} (n=${Math.round(mg.n[1])}).${by}`,
+    });
+    if (mg.n.some((n) => n < mg.nMin)) {
+      notes.push({ kind: "caveat", key: "marginal_low_n", text: `The marginal has fewer than ${mg.nMin} values in a window; its shape is noise (drawn faded).` });
+    }
+  }
   const yv = opts.yView;
   if (yv?.refused) {
     notes.push({ kind: "caveat", key: "y_view_refused", text: `The y view ${yv.refused}; showing the automatic range.` });

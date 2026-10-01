@@ -8,6 +8,8 @@ export interface ChartSpec {
     range_mode: "data" | "reference" | "semantic"; unit: string | null; label: string | null;
     views?: YView[]; selected?: YView | null;
   };
+  references?: Record<string, { mode: string; label: string; start_ms: number; end_ms: number; shift_ms: number; series: string; dist?: string | null }>;
+  marginal?: { reference: "previous" | "week"; author?: string; reason?: string | null } | null;
 }
 export interface YView {
   mode: "auto" | "zero" | "data" | "meaningful" | "band" | "log";
@@ -31,6 +33,10 @@ export interface DatasetMeta {
   source_caveats?: string[];
 }
 /** Distribution cells. lo === null means -Inf, hi === null means +Inf (JSON has no Infinity). */
+export interface MarginalData {
+  basis: "distribution" | "samples"; what: string; n_min: number; windows: WindowHist[]; excluded: number[];
+  reference: { mode: string; label: string; start_ms: number; end_ms: number }; author: string; reason: string | null;
+}
 export interface HeatCells { ts: number[]; lo: (number | null)[]; hi: (number | null)[]; c: number[] }
 /** Per column, the source bucket holding a quantile (server-side, n-gated). */
 export interface QuantileBand { ts: number[]; lo: (number | null)[]; hi: (number | null)[] }
@@ -49,7 +55,7 @@ export interface BucketSchemeInfo {
   kind: string; edges: number[]; schema: number | null; per_decade: number | null; description: string;
 }
 interface PanelDataBase { panel: Panel; dataset: DatasetMeta; caveats: string[] }
-export interface TimePanelData extends PanelDataBase { kind: "time"; effective_step_ms: number; series: SeriesData[] }
+export interface TimePanelData extends PanelDataBase { kind: "time"; effective_step_ms: number; series: SeriesData[]; marginal?: MarginalData | null }
 export interface HeatmapPanelData extends PanelDataBase {
   kind: "heatmap"; mark: "heatmap" | "percentiles"; effective_step_ms: number; value_merge: number; facet_height_px: number; series: HeatSeries[];
 }
@@ -201,3 +207,6 @@ export function subscribe(
 
 export const selectYView = (id: string, body: { mode?: string; lo?: number; hi?: number; suggestion?: string }) =>
   postJSON<Panel>(`/api/panels/${id}/y-view`, body);
+
+export const setMarginal = (id: string, reference: "previous" | "week" | null) =>
+  postJSON<Panel>(`/api/panels/${id}/marginal`, { reference });
