@@ -10,10 +10,15 @@ from pydantic import BaseModel, Field
 from telemetry_nerd.catalog.rules import facts_from_name
 from telemetry_nerd.charts.units import Lookup, infer_unit_with_provenance
 from telemetry_nerd.charts.yview import MAX_SUGGESTIONS, YView
+from telemetry_nerd.model.distribution import DEFAULT_QUANTILES, QUANTILE_CHOICES
 
 LINE_SERIES_BUDGET = 5
-Mark = Literal["line+envelope", "heatmap", "histogram", "ecdf"]
-DISTRIBUTION_MARKS = {"heatmap", "histogram", "ecdf"}
+Mark = Literal[
+    "line+envelope", "heatmap", "percentiles", "histogram", "ecdf", "quantile_curve", "ccdf"
+]
+WINDOW_MARKS = {"histogram", "ecdf", "quantile_curve", "ccdf"}
+DISTRIBUTION_MARKS = {"heatmap", "percentiles", *WINDOW_MARKS}
+MAX_QUANTILES = 4
 FACET_BUDGET = 12
 MAX_WINDOWS = 4
 
@@ -29,6 +34,8 @@ class Layer(BaseModel):
     data: str
     windows: list[Window] = Field(default_factory=list)  # histogram/ecdf: windows compared
     color: Literal["count", "density"] = "count"  # heatmap colour
+    # percentiles: which bands (also the initial chips of a heatmap's percentile view)
+    quantiles: list[float] = Field(default_factory=lambda: list(DEFAULT_QUANTILES))
 
 
 class YAxis(BaseModel):
@@ -109,11 +116,23 @@ def validate(
                 rule="mark_representation", severity="error",
                 message=(
                     f"{layer.mark} cannot draw {layer.data} ({rep}): distributions "
-                    "(query_distribution) are drawn as heatmap, histogram or ecdf; "
+                    "(query_distribution) are drawn as heatmap, percentiles, histogram, ecdf, "
+                    "quantile_curve or ccdf; "
                     "series datasets as lines"
                 ),
             ))  # fmt: skip
-        if layer.mark in ("histogram", "ecdf") and not 1 <= len(layer.windows) <= MAX_WINDOWS:
+        if layer.mark == "percentiles" and (
+            not 1 <= len(layer.quantiles) <= MAX_QUANTILES
+            or any(q not in QUANTILE_CHOICES for q in layer.quantiles)
+        ):
+            issues.append(ValidationIssue(
+                rule="quantiles", severity="error",
+                message=(
+                    f"percentiles takes 1 to {MAX_QUANTILES} of "
+                    f"{', '.join(f'{q:g}' for q in QUANTILE_CHOICES)}"
+                ),
+            ))  # fmt: skip
+        if layer.mark in WINDOW_MARKS and not 1 <= len(layer.windows) <= MAX_WINDOWS:
             issues.append(ValidationIssue(
                 rule="windows", severity="error",
                 message=f"{layer.mark} needs 1 to {MAX_WINDOWS} time windows to compare",

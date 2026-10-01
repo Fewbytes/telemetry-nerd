@@ -177,3 +177,36 @@ def test_heatmap_small_multiple_budget():
 def test_histogram_needs_windows():
     spec = ChartSpec(layers=[Layer(mark="histogram", data="d1")])
     assert "windows" in [i.rule for i in validate(spec, {"d1": 1}, {"d1": "distribution"})]
+
+
+def _errors(spec, rep="distribution", n=2):
+    return {i.rule for i in validate(spec, {"d": n}, {"d": rep}) if i.severity == "error"}
+
+
+def test_percentiles_mark_takes_known_quantiles():
+    ok = ChartSpec(layers=[Layer(mark="percentiles", data="d", quantiles=[0.5, 0.99])])
+    assert _errors(ok) == set()
+    assert Layer(mark="percentiles", data="d").quantiles == [0.5, 0.9, 0.99]
+    bad = ChartSpec(layers=[Layer(mark="percentiles", data="d", quantiles=[0.97])])
+    assert _errors(bad) == {"quantiles"}
+    five = [0.5, 0.9, 0.95, 0.99, 0.999]
+    assert _errors(ChartSpec(layers=[Layer(mark="percentiles", data="d", quantiles=five)])) == {
+        "quantiles"
+    }
+    assert _errors(ChartSpec(layers=[Layer(mark="percentiles", data="d", quantiles=[])])) == {
+        "quantiles"
+    }
+
+
+def test_percentiles_only_from_distributions():
+    spec = ChartSpec(layers=[Layer(mark="percentiles", data="d")])
+    assert "mark_representation" in _errors(spec, rep="quantile", n=1)
+
+
+def test_quantile_curve_and_ccdf_compare_windows():
+    from telemetry_nerd.charts.spec import Window
+
+    w = [Window(start_ms=0, end_ms=60_000, label="a")]
+    for mark in ("quantile_curve", "ccdf"):
+        assert _errors(ChartSpec(layers=[Layer(mark=mark, data="d")])) == {"windows"}
+        assert _errors(ChartSpec(layers=[Layer(mark=mark, data="d", windows=w)])) == set()
