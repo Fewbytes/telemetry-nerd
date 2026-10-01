@@ -5,13 +5,25 @@ from __future__ import annotations
 import functools
 import inspect
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
+from typing import Any
 
+from telemetry_nerd.catalog.models import (
+    ORIGIN_RANK,
+    CatalogEntry,
+    Claim,
+    FieldName,
+    Origin,
+    RelearnDiff,
+    validate_value,
+)
+from telemetry_nerd.catalog.store import CatalogStore
 from telemetry_nerd.channel.format import describe_event
 from telemetry_nerd.core.events import Actor, Event, EventLog, check_actor
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.errors import NotFound
+from telemetry_nerd.model.time import now_ms
 from telemetry_nerd.workspace.models import (
     Annotation,
     AnnotationIn,
@@ -56,6 +68,8 @@ class WorkspaceService:
     objects: ObjectStore
     datasets: DatasetStore
     log: EventLog
+    catalog: CatalogStore
+    clock: Callable[[], int] = now_ms
 
     # annotations --------------------------------------------------------
     @atomic
@@ -228,6 +242,82 @@ class WorkspaceService:
         self.log.append(
             actor, "focus.changed", None, {"start_ms": span.start_ms, "end_ms": span.end_ms}
         )
+
+    # catalog ------------------------------------------------------------
+    @atomic
+    def catalog_claim(
+        self,
+        source: str,
+        metric: str,
+        field: FieldName,
+        value: Any,
+        origin: Origin,
+        actor: Actor,
+        *,
+        confidence: float | None = None,
+        verified_by: str | None = None,
+        citation: str | None = None,
+    ) -> Claim:
+        """Record `origin`'s claim on a metric field; the resolved value is computed on read."""
+        if origin not in ORIGIN_RANK:
+            raise ValueError(f"unknown origin {origin!r}; expected one of {sorted(ORIGIN_RANK)}")
+        if (origin == "user") != (actor == "user"):
+            raise ValueError("origin 'user' is reserved for the user's own edits (and vice versa)")
+        if confidence is None:
+            if origin != "user":
+                raise ValueError("confidence is required for non-user claims")
+            confidence = 1.0
+        validate_value(field, value)
+        claim = Claim(
+            field=field,
+            value=value,
+            origin=origin,
+            confidence=confidence,
+            verified_by=verified_by,
+            citation=citation,
+            ts_ms=self.clock(),
+        )
+        self.catalog.put_claim(source, metric, claim)
+        self.log.append(
+            actor,
+            "catalog.claimed",
+            None,
+            {
+                "source": source,
+                "metric": metric,
+                "field": field,
+                "value": value,
+                "origin": origin,
+                "confidence": confidence,
+            },
+        )
+        return claim
+
+    @atomic
+    def catalog_relearn(
+        self, source: str, names: Collection[str], actor: Actor, *, complete: bool = True
+    ) -> RelearnDiff:
+        """Reconcile the inventory with a fresh metric listing; claims survive removal."""
+        diff = self.catalog.relearn(source, names, self.clock(), complete=complete)
+        self.log.append(
+            actor,
+            "catalog.relearned",
+            None,
+            {
+                "source": source,
+                "complete": complete,
+                "new": len(diff.new),
+                "removed": len(diff.removed),
+                "returned": len(diff.returned),
+            },
+        )
+        return diff
+
+    def catalog_entry(self, source: str, metric: str) -> CatalogEntry:
+        return self.catalog.entry(source, metric)
+
+    def catalog_list(self, source: str, *, present_only: bool = True) -> list[CatalogEntry]:
+        return self.catalog.list_entries(source, present_only=present_only)
 
     # highlights (UX only: events, no stored state) -----------------------
     @atomic

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from telemetry_nerd.core.events import Event
 from telemetry_nerd.model.time import iso
 
@@ -38,6 +40,11 @@ def describe_event(e: Event) -> str:
             return f"{who} opened {e.object_id} ({p.get('question', '')})"
         case "panel.closed":
             return f"{who} closed {e.object_id}"
+        case "catalog.claimed":
+            return (
+                f"{who} set {p['field']} of {p['metric']} on {p['source']} "
+                f"to {json.dumps(p['value'], ensure_ascii=False)}"
+            )
         case "object.highlighted":
             note = p.get("note")
             return f"{who} highlighted {e.object_id}" + (f': "{note}"' if note else "")

@@ -38,6 +38,26 @@ CREATE TABLE IF NOT EXISTS objects (
     data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS objects_kind ON objects (kind, anchor);
+CREATE TABLE IF NOT EXISTS catalog_metrics (
+    source TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    first_seen_ms INTEGER NOT NULL,
+    last_seen_ms INTEGER NOT NULL,
+    present INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (source, metric)
+);
+CREATE TABLE IF NOT EXISTS catalog_claims (
+    source TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    field TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    value TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    verified_by TEXT,
+    citation TEXT,
+    ts_ms INTEGER NOT NULL,
+    PRIMARY KEY (source, metric, field, origin)
+);
 CREATE TABLE IF NOT EXISTS sources (
     name TEXT PRIMARY KEY,
     spec TEXT NOT NULL,

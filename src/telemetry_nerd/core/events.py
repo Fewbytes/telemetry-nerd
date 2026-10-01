@@ -21,7 +21,13 @@ Klass = Literal["intentional", "ambient", "internal"]
 _ACTORS = frozenset(get_args(Actor))
 
 INTENTIONAL_TYPES = frozenset(
-    {"thread.message", "finding.verdict", "hypothesis.status_changed", "annotation.created"}
+    {
+        "thread.message",
+        "finding.verdict",
+        "hypothesis.status_changed",
+        "annotation.created",
+        "catalog.claimed",  # a user's catalog edit is a correction Claude must know about
+    }
 )
 AMBIENT_TYPES = frozenset({"panel.created", "panel.closed", "focus.changed"})
 
