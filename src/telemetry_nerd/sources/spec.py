@@ -109,6 +109,15 @@ class SourceSpec(BaseModel):
     resolution_ms: int = Field(15_000, ge=1_000, le=3_600_000)
     auth: AuthRef | None = None
     politeness: Politeness = Field(default_factory=Politeness)
+    #: another registered source with downsampled data of the same series (e.g. Thanos
+    #: downsample-1h) that serves long-window operating profiles (bead 2as.7)
+    profile_source: str | None = Field(default=None, pattern=NAME_PATTERN)
+
+    @model_validator(mode="after")
+    def _profile_source_is_another(self) -> SourceSpec:
+        if self.profile_source == self.name:
+            raise ValueError("profile_source must name another source, not the source itself")
+        return self
 
     @field_validator("url")
     @classmethod

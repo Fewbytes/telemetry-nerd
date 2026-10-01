@@ -41,8 +41,8 @@ def reference_window(start_ms: int, end_ms: int, step_ms: int, mode: str) -> Ref
         shift, label = WEEK_MS, "same window last week"
     elif mode == "profile":
         raise ValueError(
-            "an operating-profile reference needs the learned profile "
-            "(catalog, bead 2as.7); use previous or week for now"
+            "a marginal against the operating profile is not available yet "
+            "(bead 2as.22); use previous or week for now"
         )
     else:
         raise ValueError(f"unknown reference {mode!r}: use previous or week")

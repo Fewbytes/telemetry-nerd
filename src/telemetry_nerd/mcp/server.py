@@ -249,6 +249,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         min_interval: str = "0s",
         timeout: str = "30s",
         replace: bool = False,
+        profile_source: str | None = None,
     ) -> str:
         """Connect a Prometheus-compatible source at runtime (no daemon restart).
 
@@ -266,6 +267,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         NAME; needs a daemon restart if set later). auth_scheme: bearer | basic ("user:pass").
         Politeness for shared/public servers: lower max_concurrency, set min_interval
         (e.g. 500ms), raise timeout (e.g. 60s).
+        profile_source: name of another source with downsampled data of the same series (e.g. a
+        Thanos downsample-1h datasource, connected with resolution=1h); long-window operating
+        profiles are read from it.
         The source is probed before it is saved; it persists across daemon restarts.
         Returns {source, status}.
         """
@@ -293,6 +297,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                         "min_interval_ms": parse_duration(min_interval),
                         "timeout_s": parse_duration(timeout) / 1000,
                     },
+                    "profile_source": profile_source,
                 }
             )
             return _dump(await service.source_connect(spec, replace=replace))
@@ -496,6 +501,22 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                 "bindings": [_bind_dict(b) for b in out["bindings"]],
             }
         )
+
+    @mcp.tool()
+    async def operating_profile(expr: str, source: str = "default", refresh: bool = False) -> str:
+        """What `expr` normally looks like: 1h buckets over 30 days (T1 operating profile).
+        Computed on first use (panels you show are profiled in the background), cached, refreshed
+        daily; refresh=true recomputes now. Counters are profiled as rates; rate windows widen to
+        the 1h step; quantile expressions are profiled as per-hour quantiles (never averaged).
+        Returns kind, coverage, robust range over hourly values (p0.5..p99.5, median, MAD),
+        envelope (robust tails of intra-hour min/max), absolute min/max, and per series the
+        seasonal model chosen by leave-one-out error (none | hour_of_day | hour_of_week, UTC)
+        with its amplitude and band width. Read the caveats: short_history, gaps,
+        low_n_tails, looks_like_counter, quantile_series."""
+        try:
+            return _dump(await service.operating_profile(expr, source, refresh))
+        except SourceError as e:
+            raise _source_error(e) from e
 
     @mcp.tool()
     def show(

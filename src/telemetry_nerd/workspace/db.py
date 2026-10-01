@@ -95,6 +95,17 @@ CREATE TABLE IF NOT EXISTS catalog_binding_gaps (
     gap_id TEXT NOT NULL,
     PRIMARY KEY (level, source, kind, key, role)
 );
+CREATE TABLE IF NOT EXISTS operating_profiles (
+    id TEXT NOT NULL UNIQUE,
+    source TEXT NOT NULL,
+    expr TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('ok', 'failed')),
+    computed_at_ms INTEGER NOT NULL,
+    data TEXT,
+    error TEXT,
+    failed_at_ms INTEGER,
+    PRIMARY KEY (source, expr)
+);
 CREATE TABLE IF NOT EXISTS sources (
     name TEXT PRIMARY KEY,
     spec TEXT NOT NULL,

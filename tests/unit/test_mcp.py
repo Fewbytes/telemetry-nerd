@@ -291,4 +291,4 @@ async def test_show_marginal(tmp_path):
     )
     assert out["basis"] == "samples" and out["n"]["now"] > 0 and "not requests" in out["what"]
     bad = await call(mcp, "show_marginal", {"panel": pid, "reference": "profile", "reason": "r"})
-    assert bad.is_error and "2as.7" in text_of(bad)
+    assert bad.is_error and "2as.22" in text_of(bad)

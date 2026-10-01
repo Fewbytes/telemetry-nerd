@@ -35,7 +35,7 @@ def test_week_refused_when_it_would_overlap_or_misalign():
 
 
 def test_profile_waits_for_the_catalog_and_bad_input_is_refused():
-    with pytest.raises(ValueError, match="2as.7"):
+    with pytest.raises(ValueError, match="2as.22"):
         reference_window(START, END, M, "profile")
     with pytest.raises(ValueError, match="unknown reference"):
         reference_window(START, END, M, "yesterday")

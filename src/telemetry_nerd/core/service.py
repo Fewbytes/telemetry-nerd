@@ -25,6 +25,7 @@ from telemetry_nerd.analysis.fraction import fraction_over, wilson
 from telemetry_nerd.analysis.quantile import attach_counts
 from telemetry_nerd.analysis.reference import reference_window
 from telemetry_nerd.analysis.resample import lod
+from telemetry_nerd.catalog.profiles import ProfileStore
 from telemetry_nerd.charts.dataview import SignalViews, offered_views
 from telemetry_nerd.charts.spec import (
     SPECTRAL_MARKS,
@@ -49,6 +50,7 @@ from telemetry_nerd.core.panel_payloads import (
     signal_payload,
 )
 from telemetry_nerd.core.presence import PresenceRegistry
+from telemetry_nerd.core.profiles import ProfileService
 from telemetry_nerd.core.signal_ops import SignalOps
 from telemetry_nerd.core.summary import summarize, summarize_distribution
 from telemetry_nerd.core.workspace_service import WorkspaceService
@@ -136,9 +138,15 @@ class TelemetryService:
     clock: Callable[[], int] = now_ms
     presence: PresenceRegistry = field(default_factory=PresenceRegistry)
     signal: SignalOps = field(init=False)
+    profiles: ProfileService = field(init=False)
+    #: compute a T1 operating profile in the background when a time-series panel is shown
+    auto_profile: bool = False
 
     def __post_init__(self) -> None:
         self.signal = SignalOps(self.datasets, self.ws.catalog_facts)
+        self.profiles = ProfileService(
+            self.sources, self.cache, ProfileStore(self.workspace.connection), self.ws, self.clock
+        )
 
     def _source(self, name: str) -> Source:
         src = self.sources.get(name)
@@ -644,7 +652,16 @@ class TelemetryService:
         with self.log.transaction():
             panel = self.workspace.create_panel(question, spec.model_dump(), panel_datasets)
             self.log.append(actor, "panel.created", panel.id, {"question": panel.question})
+        if self.auto_profile and spec.layers[0].mark == "line+envelope" and not meta.derived:
+            self.profiles.request(meta.source, meta.expr)  # lazy T1 profile on first view
         return ShowResult(panel, [i for i in issues if i.severity == "warning"])
+
+    async def operating_profile(
+        self, expr: str, source: str = "default", refresh: bool = False
+    ) -> dict:
+        """T1 operating profile of what `expr` shows, computed now if missing or a day old."""
+        p = await self.profiles.ensure(source, expr, force=refresh)
+        return p.summary()
 
     def panel_data(self, panel_id: str, width_px: int) -> dict:
         panel = self.workspace.get_panel(panel_id)

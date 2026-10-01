@@ -44,4 +44,5 @@ def build_service(settings: Settings) -> TelemetryService:
         ws=WorkspaceService(
             workspace, objects, datasets, log, CatalogStore(wcon), RelationStore(wcon)
         ),
+        auto_profile=True,
     )
