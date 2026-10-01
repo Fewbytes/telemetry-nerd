@@ -57,7 +57,11 @@ export function panelNotes(
 export function describeShown(
   d: Pick<DatasetMeta, "representation" | "quantile"> & { scheme?: DatasetMeta["scheme"] },
   step: string,
+  kind = "time",
 ): string {
+  if (kind === "histogram") {
+    return `Share of observations per value bucket, summed over each selected window (whole ${step} steps); bars are the source buckets (${d.scheme?.description ?? "unknown scheme"}).`;
+  }
   if (d.representation === "distribution") {
     return `Counts per ${step} column and value bucket (colour), from increase() of the histogram; bins are the source buckets (${d.scheme?.description ?? "unknown scheme"}).`;
   }

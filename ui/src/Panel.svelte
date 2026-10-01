@@ -15,6 +15,7 @@
   import PanelThread from "./components/PanelThread.svelte";
   import PinButton from "./components/PinButton.svelte";
   import HeatmapPlot from "./components/HeatmapPlot.svelte";
+  import DistributionPlot from "./components/DistributionPlot.svelte";
 
   let { panel, annotations = [], threads = [] }: {
     panel: Panel; annotations?: Annotation[]; threads?: Thread[];
@@ -216,6 +217,15 @@
       {/each}
       <div class="legend">colour: count per bucket per {fmtStep(hm.effective_step_ms)} (log scale) · hatched: no data · dimmed: n &lt; {hm.dataset.n_min}{#if hm.value_merge > 1} · {hm.value_merge} source buckets per row{/if}</div>
     {/if}
+    {#if data && data.kind === "histogram"}
+      {@const hg = data}
+      {#each hg.series as s, i (s.id)}
+        <DistributionPlot
+          data={hg} series={s} width={fetchWidth} unit={hg.panel.spec.y.unit}
+          onRendered={(ms, points) => onFacetRendered(i, hg.series.length, ms, points, 220)}
+        />
+      {/each}
+    {/if}
     {#if selection}
       {#key selection}
         <SelectionMenu
@@ -233,7 +243,7 @@
   </div>
   {#if data}
     <div class="shown">
-      <p class="what">{describeShown(data.dataset, fmtStep(data.effective_step_ms))}</p>
+      <p class="what">{describeShown(data.dataset, fmtStep(data.effective_step_ms), data.kind)}</p>
       <p class="where">
         {data.dataset.source} · {fmtTime(data.dataset.start_ms)} – {fmtTime(data.dataset.end_ms)} · step
         {fmtStep(data.effective_step_ms)}

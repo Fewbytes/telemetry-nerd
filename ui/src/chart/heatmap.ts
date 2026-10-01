@@ -41,7 +41,7 @@ export function valueAxis(lo: (number | null)[], hi: (number | null)[], length: 
   };
 }
 
-function cellSpan(a: ValueAxis, l: number | null, h: number | null): [number, number] {
+export function cellSpan(a: ValueAxis, l: number | null, h: number | null): [number, number] {
   if (h === null) return [a.length - STRIP_PX, a.length];
   if (l === null || (a.kind === "log" && l <= 0)) return [0, STRIP_PX];
   return [a.pos(l), a.pos(h)];

@@ -50,6 +50,8 @@
   const markEvent = () =>
     run(postJSON("/api/annotations", { kind: "event", panel: panelId, t_start_ms: startMs }));
   const focus = () => run(postJSON("/api/focus", { start_ms: startMs, end_ms: endMs }));
+  const showDistribution = () =>
+    run(postJSON(`/api/panels/${panelId}/distribution`, { start_ms: startMs, end_ms: endMs, baseline: "previous" }));
 
   $effect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -77,6 +79,9 @@
     <button type="button" onclick={() => (mode = "region")}>Mark region</button>
     <button type="button" disabled={busy} onclick={markEvent}>Mark event</button>
     <button type="button" disabled={busy} onclick={focus}>Focus</button>
+    {#if distribution}
+      <button type="button" disabled={busy} onclick={showDistribution}>Distribution here</button>
+    {/if}
   {:else if mode === "ask"}
     <textarea
       bind:value={text}
