@@ -1,6 +1,7 @@
 // ui/src/chart/yview.ts — y-views (spec §6.2, bead 2as.17). Pure: no DOM, no uPlot.
 import type { SeriesData, YView } from "../lib/api";
 import { fmtValue } from "./axis";
+import { ratioRange } from "./indexed";
 
 export interface Extent { lo: number; hi: number }
 export interface YStats {
@@ -14,7 +15,7 @@ export interface YResolved {
   spanPct: number | null; // view height as % of the full data extent
   refused: string | null; // view cannot apply: drawn as auto, reason shown as a caveat
 }
-export interface Offer { mode: YView["mode"]; label: string; enabled: boolean; suggest: boolean; title: string }
+export interface Offer { mode: YView["mode"]; label: string; enabled: boolean; suggest: boolean; title: string; baseline?: "window" | "previous" | "week" }
 
 const ok = (v: number | null): v is number => v !== null && Number.isFinite(v);
 const ext = (vs: number[]): Extent | null =>
@@ -63,14 +64,15 @@ export function resolveY(v: YView | null, st: YStats): YResolved {
     case "meaningful": range = pad(st.meaningful!); break;
     case "band": range = [v.lo!, v.hi!]; break;
     case "log": range = [10 ** Math.floor(Math.log10(a.lo)), 10 ** Math.ceil(Math.log10(a.hi))]; break;
+    case "indexed": range = ratioRange(st.values); break;
     default: return { ...AUTO, refused: `${v.label}: unknown view ${v.mode}` };
   }
   const above = st.values.filter((x) => x > range[1]);
   const below = st.values.filter((x) => x < range[0]).length;
-  const zoomed = v.mode === "data" || v.mode === "meaningful" || v.mode === "band" || above.length + below > 0;
+  const zoomed = v.mode === "data" || v.mode === "meaningful" || v.mode === "band" || (v.mode !== "indexed" && above.length + below > 0);
   const spanPct = a.hi > a.lo ? Math.min(100, ((range[1] - range[0]) / (a.hi - a.lo)) * 100) : null;
   return {
-    range, log: v.mode === "log", zoomed, refused: null, spanPct: zoomed ? spanPct : null,
+    range, log: v.mode === "log" || v.mode === "indexed", zoomed, refused: null, spanPct: zoomed ? spanPct : null,
     clipped: { above: above.length, below, maxAbove: above.length ? Math.max(...above) : null },
   };
 }
@@ -87,6 +89,13 @@ export function offeredViews(st: YStats): Offer[] {
       title: `range over buckets with n ≥ n_min only; ${st.lowN} faded bucket(s) may fall outside` });
   out.push({ mode: "log", label: "log", enabled: pos, suggest: pos && d > 2,
     title: pos ? `data spans ${d.toFixed(1)} decades` : "log needs every value > 0" });
+  const idxTitle = "each series as a ratio to a common baseline; log axis, 1 centred (instead of a second y axis)";
+  out.push(
+    { mode: "indexed", baseline: "window", label: "÷ own mean", enabled: !!st.all && !st.quantile, suggest: false,
+      title: st.quantile ? "percentiles cannot be averaged over the window; use ÷ last week" : idxTitle },
+    { mode: "indexed", baseline: "previous", label: "÷ previous window", enabled: !!st.all, suggest: false, title: idxTitle },
+    { mode: "indexed", baseline: "week", label: "÷ last week", enabled: !!st.all, suggest: false, title: idxTitle },
+  );
   out.push({ mode: "band", label: "band…", enabled: !!st.all, suggest: false, title: "drag vertically on the plot to pick a y band" });
   return out;
 }
@@ -99,8 +108,8 @@ export const contextStrip = (all: Extent, r: [number, number]) => {
   return { bottomPct: Number(b.toFixed(2)), heightPct: Number((t - b).toFixed(2)) };
 };
 
-export function badgeText(v: YView, r: YResolved, unit: string | null): string {
-  const parts = [r.zoomed ? "y zoomed" : r.log ? "log y" : "y", v.label];
+export function badgeText(v: YView, r: YResolved, unit: string | null, indexLabel?: string): string {
+  const parts = v.mode === "indexed" ? ["indexed", indexLabel ?? v.label] : [r.zoomed ? "y zoomed" : r.log ? "log y" : "y", v.label];
   const { above, below, maxAbove } = r.clipped;
   if (above) parts.push(`${above} point${above > 1 ? "s" : ""} above view (max ${fmtValue(maxAbove!, unit)})`);
   if (below) parts.push(`${below} below view`);

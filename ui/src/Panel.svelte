@@ -9,6 +9,7 @@
   import { toUplot } from "./chart/toUplot";
   import { describeShown, panelNotes } from "./lib/panelNotes";
   import { setupCanvas } from "./chart/canvas";
+  import { fmtRatio, indexSeries, ratioTicks } from "./chart/indexed";
   import { drawMarginal, marginalHeader } from "./chart/marginal";
   import { badgeText, contextStrip, nonZeroOrigin, offeredViews, resolveY, yStats } from "./chart/yview";
   import { measureFirstDraw } from "./chart/measureDraw";
@@ -90,16 +91,32 @@
   const viewKey = $derived(JSON.stringify(chosen));
   let bandPick = $state(false);
   let originOff = $state(false);
-  const yst = $derived(
-    data?.kind === "time"
-      ? yStats(data.series, { quantile: data.dataset.representation === "quantile", nMin: data.dataset.n_min ?? null })
+  // indexed view: series ÷ baseline (log, 1 centred); everything downstream draws `drawn`
+  const ix = $derived(
+    data?.kind === "time" && (chosen?.mode as string | undefined) === "indexed" && data.index
+      ? indexSeries(data.series, data.index, { quantile: data.dataset.representation === "quantile", nMin: data.dataset.n_min ?? null })
       : null,
   );
-  const yres = $derived(yst ? resolveY(chosen, yst) : null);
+  const drawn = $derived(ix && !ix.refused ? ix.series : data?.kind === "time" ? data.series : []);
+  let idxBusy = $state(false);
+  const yst = $derived(
+    data?.kind === "time"
+      ? yStats(drawn, { quantile: data.dataset.representation === "quantile", nMin: data.dataset.n_min ?? null })
+      : null,
+  );
+  const yres = $derived(
+    yst ? (ix?.refused ? { ...resolveY(null, yst), refused: `${chosen?.label}: ${ix.refused}` } : resolveY(chosen, yst)) : null,
+  );
   $effect(() => {
     void panel.spec.y.selected;
     pending = undefined; // server state wins once it arrives
   });
+  // indexed needs the server's baseline payload: no optimistic state, show progress until it lands
+  const pickIndexed = (baseline: "window" | "previous" | "week") => {
+    idxBusy = true;
+    bandPick = false;
+    selectYView(panel.id, { mode: "indexed", baseline }).catch((e) => (error = String(e))).finally(() => (idxBusy = false));
+  };
   const pick = (body: Parameters<typeof selectYView>[1], optimistic: YView | null) => {
     pending = optimistic;
     bandPick = false;
@@ -133,6 +150,9 @@
           yScaledToData: panel.spec.y.range_mode === "data",
           nMin: data.dataset.n_min ?? null,
           representation: data.dataset.representation,
+          indexed: ix && !ix.refused && data?.kind === "time" && data.index
+            ? { label: data.index.label, skipped: ix.skipped, hidden: ix.hidden, nonPositive: ix.nonPositive }
+            : null,
           marginal: marg
             ? { what: marg.what, ref: marg.reference.label, n: marg.windows.map((w) => w.n), nMin: marg.n_min, author: marg.author, reason: marg.reason }
             : null,
@@ -190,7 +210,7 @@
     const { stroke, grid } = plotColors(el, mode);
     const dpr = window.devicePixelRatio || 1;
     const model = toUplot(
-      d.series,
+      untrack(() => drawn),
       { start: d.dataset.start_ms, end: d.dataset.end_ms, step: d.effective_step_ms },
       { quantile: d.dataset.representation === "quantile", nMin: d.dataset.n_min ?? null },
     );
@@ -209,7 +229,13 @@
             // axis/grid colors from CSS tokens so they follow the theme
             axes: [
               { stroke, grid: { stroke: grid }, ticks: { stroke: grid } },
-              { label: unit ?? "value (unit unknown)", stroke, grid: { stroke: grid }, ticks: { stroke: grid } },
+              yr?.log && d.index
+                ? {
+                    label: "ratio to baseline (log)", stroke, grid: { stroke: grid }, ticks: { stroke: grid },
+                    splits: () => ratioTicks(yr.range![1]),
+                    values: (_u: uPlot, ts: (number | null)[]) => ts.map((t) => (t == null ? "" : fmtRatio(t))),
+                  }
+                : { label: unit ?? "value (unit unknown)", stroke, grid: { stroke: grid }, ticks: { stroke: grid } },
             ],
             // brush = x-only selection; we open a menu instead of zooming
             cursor: { drag: bandMode ? { setScale: false, x: false, y: true } : { setScale: false, x: true, y: false } },
@@ -229,6 +255,14 @@
                     { min: u.scales.y.min ?? 0, max: u.scales.y.max ?? 0 },
                   );
                   annCount = ops.length;
+                  if (d.index && yr?.log) {
+                    const y1 = u.valToPos(1, "y", true);
+                    const c = u.ctx;
+                    c.save(); c.strokeStyle = stroke; c.lineWidth = 1; c.setLineDash([]);
+                    c.beginPath(); c.moveTo(u.bbox.left, y1); c.lineTo(u.bbox.left + u.bbox.width, y1); c.stroke();
+                    c.fillStyle = stroke; c.font = `${10 * dpr}px sans-serif`; c.fillText("1 = baseline", u.bbox.left + 4 * dpr, y1 - 3 * dpr);
+                    c.restore();
+                  }
                   originOff = nonZeroOrigin(u.scales.y.min ?? 0, u.scales.y.max ?? 0, !!yr?.log);
                   if (m && margEl) {
                     const top = u.bbox.top / dpr, bottom = top + u.bbox.height / dpr;
@@ -392,7 +426,7 @@
       {/each}
     {/if}
     {#if data?.kind === "time" && yres && (yres.zoomed || yres.log)}
-      <span class="y-badge" data-y-badge>{badgeText(chosen!, yres, panel.spec.y.unit)}</span>
+      <span class="y-badge" data-y-badge>{badgeText(chosen!, yres, panel.spec.y.unit, data.index?.label)}</span>
     {/if}
     {#if data?.kind === "time" && yres?.zoomed && yres.range && yst?.all}
       {@const cs = contextStrip(yst.all, yres.range)}
@@ -417,11 +451,11 @@
   {#if data?.kind === "time" && yst}
     <div class="legend y-views" role="group" aria-label="Y-axis view">
       y:
-      {#each offeredViews(yst) as o (o.mode)}
+      {#each offeredViews(yst) as o (o.mode + (o.baseline ?? ""))}
         <button
           type="button" disabled={!o.enabled} title={o.title} class:suggest={o.suggest}
-          class:on={o.mode === "band" ? bandPick || (chosen?.mode === "band" && !chosen?.id) : (chosen?.mode ?? "auto") === o.mode && !chosen?.id}
-          onclick={() => o.mode === "band" ? (bandPick = !bandPick) : pick({ mode: o.mode }, o.mode === "auto" ? null : { mode: o.mode, label: o.label })}
+          class:on={o.mode === "band" ? bandPick || (chosen?.mode === "band" && !chosen?.id) : (chosen?.mode ?? "auto") === o.mode && !chosen?.id && (o.baseline ?? null) === (chosen?.baseline ?? null)}
+          onclick={() => o.mode === "band" ? (bandPick = !bandPick) : o.mode === "indexed" ? pickIndexed(o.baseline!) : pick({ mode: o.mode }, o.mode === "auto" ? null : { mode: o.mode, label: o.label })}
         >{o.label}</button>
       {/each}
       {#if (panel.spec.y.views ?? []).length}
@@ -431,6 +465,7 @@
         {/each}
       {/if}
       {#if bandPick}<span class="hint">drag vertically on the plot · Esc cancels</span>{/if}
+      {#if idxBusy}<span class="hint">fetching baseline…</span>{/if}
     </div>
   {/if}
   {#if data?.kind === "time"}

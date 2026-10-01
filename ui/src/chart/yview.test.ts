@@ -48,4 +48,12 @@ describe("yview", () => {
     expect(nonZeroOrigin(0.3, 1.4, true)).toBe(false); // log axes have no zero
     expect(contextStrip({ lo: 0, hi: 100 }, [10, 30])).toEqual({ bottomPct: 10, heightPct: 20 });
   });
+  it("indexed: log, symmetric around 1, badge says what 1 means", () => {
+    const st = yStats([q([0.8, 1.4], [500, 500])], { quantile: false, nMin: null });
+    const r = resolveY(view("indexed", { baseline: "window" }), st);
+    expect(r).toMatchObject({ log: true, zoomed: false, refused: null });
+    expect(r.range![1]).toBe(1.5);
+    expect(badgeText(view("indexed", { baseline: "window" }), r, null, "1 = each series' mean over 12:00–15:00Z"))
+      .toBe("indexed · 1 = each series' mean over 12:00–15:00Z");
+  });
 });

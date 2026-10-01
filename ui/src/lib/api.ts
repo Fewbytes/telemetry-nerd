@@ -12,7 +12,8 @@ export interface ChartSpec {
   marginal?: { reference: "previous" | "week"; author?: string; reason?: string | null } | null;
 }
 export interface YView {
-  mode: "auto" | "zero" | "data" | "meaningful" | "band" | "log";
+  mode: "auto" | "zero" | "data" | "meaningful" | "band" | "log" | "indexed";
+  baseline?: "window" | "previous" | "week" | null;
   label: string; reason?: string | null; lo?: number | null; hi?: number | null;
   id?: string | null; author?: string | null;
 }
@@ -33,6 +34,11 @@ export interface DatasetMeta {
   source_caveats?: string[];
 }
 /** Distribution cells. lo === null means -Inf, hi === null means +Inf (JSON has no Infinity). */
+export interface IndexPayload {
+  baseline: "window" | "previous" | "week"; label: string; refused?: string;
+  values?: Record<string, number | null>;
+  series?: { id: string; ts: number[]; avg: (number | null)[]; count: (number | null)[] }[];
+}
 export interface MarginalData {
   basis: "distribution" | "samples"; what: string; n_min: number; windows: WindowHist[]; excluded: number[];
   reference: { mode: string; label: string; start_ms: number; end_ms: number }; author: string; reason: string | null;
@@ -55,7 +61,7 @@ export interface BucketSchemeInfo {
   kind: string; edges: number[]; schema: number | null; per_decade: number | null; description: string;
 }
 interface PanelDataBase { panel: Panel; dataset: DatasetMeta; caveats: string[] }
-export interface TimePanelData extends PanelDataBase { kind: "time"; effective_step_ms: number; series: SeriesData[]; marginal?: MarginalData | null }
+export interface TimePanelData extends PanelDataBase { kind: "time"; effective_step_ms: number; series: SeriesData[]; marginal?: MarginalData | null; index?: IndexPayload | null }
 export interface HeatmapPanelData extends PanelDataBase {
   kind: "heatmap"; mark: "heatmap" | "percentiles"; effective_step_ms: number; value_merge: number; facet_height_px: number; series: HeatSeries[];
 }
@@ -205,7 +211,7 @@ export function subscribe(
   return () => { stopped = true; socket?.close(); };
 }
 
-export const selectYView = (id: string, body: { mode?: string; lo?: number; hi?: number; suggestion?: string }) =>
+export const selectYView = (id: string, body: { mode?: string; lo?: number; hi?: number; suggestion?: string; baseline?: string }) =>
   postJSON<Panel>(`/api/panels/${id}/y-view`, body);
 
 export const setMarginal = (id: string, reference: "previous" | "week" | null) =>

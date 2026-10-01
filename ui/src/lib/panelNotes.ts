@@ -47,6 +47,7 @@ export function panelNotes(
     nMin: number | null;
     representation?: string;
     yView?: { label: string; reason: string | null; author: string; refused: string | null } | null;
+    indexed?: { label: string; skipped: string[]; hidden: number; nonPositive: number } | null;
     marginal?: { what: string; ref: string; n: number[]; nMin: number; author: string; reason: string | null } | null;
   },
 ): Note[] {
@@ -55,6 +56,16 @@ export function panelNotes(
     key,
     text: caveatText(key, opts.nMin, opts.representation),
   }));
+  const ix = opts.indexed;
+  if (ix) {
+    notes.push({ kind: "info", key: "indexed", text: `Indexed: ${ix.label}. Log ratio axis, 1 = no change; ×2 and ×0.5 are equally far from 1.` });
+    if (ix.skipped.length) {
+      notes.push({ kind: "caveat", key: "indexed_skipped", text: `Not indexed (baseline missing or ≤ 0): ${ix.skipped.join(", ")}.` });
+    }
+    if (ix.hidden + ix.nonPositive > 0) {
+      notes.push({ kind: "caveat", key: "indexed_gaps", text: `${ix.hidden} step(s) without a usable baseline and ${ix.nonPositive} value(s) ≤ 0 are not drawn (a ratio needs both > 0 on a log axis).` });
+    }
+  }
   const mg = opts.marginal;
   if (mg) {
     const by = mg.author === "claude" ? ` Chosen by Claude${mg.reason ? `: ${mg.reason}` : ""}` : "";
