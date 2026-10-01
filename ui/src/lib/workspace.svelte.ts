@@ -5,7 +5,7 @@ import { applyHighlightEvent, expire, nextExpiry, type Highlights } from "./high
 const RELOAD_TYPES = new Set([
   "panel.created", "panel.answered", "finding.created", "finding.verdict",
   "annotation.created", "annotation.deleted", "hypothesis.created",
-  "hypothesis.status_changed", "gap.created", "thread.message", "panel.closed",
+  "hypothesis.status_changed", "gap.created", "thread.message", "panel.closed", "panel.y_context",
   "panel.y_view_suggested", "panel.marginal_set",
 ]);
 

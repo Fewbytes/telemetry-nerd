@@ -1,4 +1,5 @@
-import type { DatasetMeta } from "./api";
+import type { DatasetMeta, YContext } from "./api";
+import { fmtValue } from "../chart/axis";
 
 export interface Note {
   kind: "caveat" | "info";
@@ -55,6 +56,8 @@ export function panelNotes(
   caveats: string[],
   opts: {
     yScaledToData: boolean;
+    yContext?: YContext | null;
+    unit?: string | null;
     nMin: number | null;
     representation?: string;
     yView?: { label: string; reason: string | null; author: string; refused: string | null } | null;
@@ -92,6 +95,7 @@ export function panelNotes(
       notes.push({ kind: "caveat", key: "marginal_low_n", text: `The marginal has fewer than ${mg.nMin} values in a window; its shape is noise (drawn faded).` });
     }
   }
+  notes.push(...contextNotes(opts.yContext ?? null, opts.unit ?? null));
   const yv = opts.yView;
   if (yv?.refused) {
     notes.push({ kind: "caveat", key: "y_view_refused", text: `The y view ${yv.refused}; showing the automatic range.` });
@@ -104,6 +108,25 @@ export function panelNotes(
     notes.push({ kind: "info", key: "y_scaled_to_data", text: "The y-axis is scaled to the data (no reference range yet)." });
   }
   return notes;
+}
+
+/** What the catalog contributed to the y range, and what it could not (bead 2as.10). */
+export function contextNotes(c: YContext | null, unit: string | null = null): Note[] {
+  if (!c) return [];
+  const out: Note[] = [];
+  const parts = [];
+  if (c.profile) parts.push(`${c.profile.label} ${fmtValue(c.profile.lo, unit)}–${fmtValue(c.profile.hi, unit)}`);
+  if (c.limit) parts.push(`physical limit ${c.limit.metric} (${fmtValue(c.limit.hi, unit)})`);
+  if (parts.length) out.push({ kind: "info", key: "y_reference", text: `The y range is the reference range: it includes the ${parts.join(" and the ")}, so small changes look small.` });
+  for (const n of c.notes) {
+    const i = n.indexOf(": ");
+    const key = i < 0 ? n : n.slice(0, i), text = i < 0 ? "" : n.slice(i + 2);
+    if (key === "profile_pending") out.push({ kind: "info", key, text: "The normal range is still being computed; it will join the y range shortly." });
+    else if (key === "profile_unavailable") out.push({ kind: "info", key, text: `No normal range yet: ${text}` });
+    else if (key === "limit_unavailable") out.push({ kind: "caveat", key, text: `Physical limit not applied: ${text}` });
+    // natural_bounds_unknown is the common case for derived expressions: not worth a note
+  }
+  return out;
 }
 
 /** One sentence on what the plotted lines are. */

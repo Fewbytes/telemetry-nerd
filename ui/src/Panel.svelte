@@ -3,7 +3,7 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import {
-    closePanel, fetchPanelData, reportRender, selectYView, setMarginal, selectDataView,
+    closePanel, fetchPanelData, refreshYContext, reportRender, selectYView, setMarginal, selectDataView,
     type Annotation, type Panel, type PanelData, type Thread, type YView,
   } from "./lib/api";
   import { toUplot } from "./chart/toUplot";
@@ -14,7 +14,7 @@
   import SpectrogramPlot from "./components/SpectrogramPlot.svelte";
   import { fmtRatio, indexSeries, ratioTicks } from "./chart/indexed";
   import { drawMarginal, marginalHeader } from "./chart/marginal";
-  import { badgeText, contextStrip, nonZeroOrigin, offeredViews, resolveY, yStats } from "./chart/yview";
+  import { badgeText, contextStrip, hasReference, nonZeroOrigin, offeredViews, refExtent, resolveY, yStats } from "./chart/yview";
   import { measureFirstDraw } from "./chart/measureDraw";
   import { drawAnnotations, drawOps, readAnnotationColors } from "./chart/annotations";
   import { plotColors, theme } from "./lib/theme.svelte";
@@ -123,9 +123,21 @@
       ? yStats(drawn, { quantile: data.dataset.representation === "quantile", nMin: data.dataset.n_min ?? null })
       : null,
   );
+  // catalog-derived y inputs (2as.10): natural bounds, physical limit, normal range
+  const yctx = $derived(panel.spec.y.context ?? null);
   const yres = $derived(
-    yst ? (ix?.refused ? { ...resolveY(null, yst), refused: `${chosen?.label}: ${ix.refused}` } : resolveY(chosen, yst)) : null,
+    yst ? (ix?.refused ? { ...resolveY(null, yst, yctx), refused: `${chosen?.label}: ${ix.refused}` } : resolveY(chosen, yst, yctx)) : null,
   );
+  // the operating profile is computed on first view: look again a few times until it lands
+  $effect(() => {
+    if (!yctx?.notes.some((n) => n.startsWith("profile_pending"))) return;
+    let tries = 0;
+    const t = setInterval(() => {
+      if (++tries > 4) return clearInterval(t);
+      refreshYContext(panel.id).catch(() => {});
+    }, 6000);
+    return () => clearInterval(t);
+  });
   $effect(() => {
     void panel.spec.y.selected;
     pending = undefined; // server state wins once it arrives
@@ -167,6 +179,8 @@
     data
       ? panelNotes(data.caveats, {
           yScaledToData: panel.spec.y.range_mode === "data",
+          yContext: yctx,
+          unit: panel.spec.y.unit,
           nMin: data.dataset.n_min ?? null,
           representation: data.dataset.representation,
           filter: data?.kind === "time" && data.filter ? { label: data.filter.filter, reason: data.filter.reason } : null,
@@ -462,11 +476,11 @@
         />
       {/each}
     {/if}
-    {#if data?.kind === "time" && yres && (yres.zoomed || yres.log)}
-      <span class="y-badge" data-y-badge>{badgeText(chosen!, yres, panel.spec.y.unit, data.index?.label)}</span>
+    {#if data?.kind === "time" && yres && yres.effective && (yres.zoomed || yres.log || (yres.reference && chosen?.mode === "reference"))}
+      <span class="y-badge" data-y-badge>{badgeText(yres.effective, yres, panel.spec.y.unit, data.index?.label, yctx)}</span>
     {/if}
     {#if data?.kind === "time" && yres?.zoomed && yres.range && yst?.all}
-      {@const cs = contextStrip(yst.all, yres.range)}
+      {@const cs = contextStrip(hasReference(yctx) ? refExtent(yst.all, yctx) : yst.all, yres.range)}
       <span class="y-strip" title="where this view sits within the full data range"><i style="bottom:{cs.bottomPct}%;height:{cs.heightPct}%"></i></span>
     {/if}
     {#if data?.kind === "time" && originOff}<span class="y-origin" data-y-origin>y ≠ 0</span>{/if}
@@ -488,7 +502,7 @@
   {#if data?.kind === "time" && yst}
     <div class="legend y-views" role="group" aria-label="Y-axis view">
       y:
-      {#each offeredViews(yst) as o (o.mode + (o.baseline ?? ""))}
+      {#each offeredViews(yst, yctx) as o (o.mode + (o.baseline ?? ""))}
         <button
           type="button" disabled={!o.enabled} title={o.title} class:suggest={o.suggest}
           class:on={o.mode === "band" ? bandPick || (chosen?.mode === "band" && !chosen?.id) : (chosen?.mode ?? "auto") === o.mode && !chosen?.id && (o.baseline ?? null) === (chosen?.baseline ?? null)}

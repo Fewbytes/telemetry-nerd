@@ -22,7 +22,11 @@ test("query → show → panel renders envelope within budget, peak preserved", 
   const el = page.locator(`[data-panel-id="${panel.id}"]`);
   await expect(el.getByText(question)).toBeVisible();
   await expect(el.locator("canvas").first()).toBeVisible();
-  await expect(el.getByText("y scaled to data")).toBeVisible();
+  // 2as.10: either the honest "no reference range yet" note, or, once the operating profile has
+  // arrived, the note saying what the reference range includes
+  await expect(
+    el.locator('[data-note="y_scaled_to_data"], [data-note="y_reference"]').first(),
+  ).toBeVisible();
   await expect(el).toHaveAttribute("data-budget-exceeded", "false");
 });
 

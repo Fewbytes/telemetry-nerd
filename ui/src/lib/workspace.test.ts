@@ -23,7 +23,7 @@ describe("needsReload", () => {
   it("reloads for listed types even when internal", () => {
     for (const t of ["panel.created", "panel.answered", "finding.created", "finding.verdict",
       "annotation.created", "annotation.deleted", "hypothesis.created",
-      "hypothesis.status_changed", "gap.created", "thread.message", "panel.closed"]) {
+      "hypothesis.status_changed", "gap.created", "thread.message", "panel.closed", "panel.y_context"]) {
       expect(needsReload(ev(t, "internal"))).toBe(true);
     }
   });

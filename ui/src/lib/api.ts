@@ -6,14 +6,21 @@ export interface ChartSpec {
   }[];
   y: {
     range_mode: "data" | "reference" | "semantic"; unit: string | null; label: string | null;
-    views?: YView[]; selected?: YView | null;
+    views?: YView[]; selected?: YView | null; context?: YContext | null;
   };
   signal?: { filter: string; kind: string; reason: string; offered: string[]; default: string; selected?: string | null } | null;
   references?: Record<string, { mode: string; label: string; start_ms: number; end_ms: number; shift_ms: number; series: string; dist?: string | null }>;
   marginal?: { reference: "previous" | "week"; author?: string; reason?: string | null } | null;
 }
+/** What the catalog says about the y axis (bead 2as.10). */
+export interface YContext {
+  natural_lo: number | null; natural_hi: number | null; bounds: string | null; bounds_origin: string | null;
+  limit: { metric: string; dataset: string; hi: number; basis: string } | null;
+  profile: { lo: number; hi: number; label: string } | null;
+  notes: string[];
+}
 export interface YView {
-  mode: "auto" | "zero" | "data" | "meaningful" | "band" | "log" | "indexed";
+  mode: "auto" | "zero" | "data" | "reference" | "semantic" | "meaningful" | "band" | "log" | "indexed";
   baseline?: "window" | "previous" | "week" | null;
   label: string; reason?: string | null; lo?: number | null; hi?: number | null;
   id?: string | null; author?: string | null;
@@ -236,3 +243,6 @@ export const setMarginal = (id: string, reference: "previous" | "week" | null) =
   postJSON<Panel>(`/api/panels/${id}/marginal`, { reference });
 
 export const selectDataView = (id: string, view: string) => postJSON<Panel>(`/api/panels/${id}/data-view`, { view });
+
+/** Recompute a panel's y context, e.g. once its operating profile has finished computing. */
+export const refreshYContext = (id: string) => postJSON<unknown>(`/api/panels/${id}/y-context`);

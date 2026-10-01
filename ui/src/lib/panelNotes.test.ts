@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { caveatText, describeShown, panelNotes } from "./panelNotes";
+import type { YContext } from "./api";
+import { caveatText, contextNotes, describeShown, panelNotes } from "./panelNotes";
 
 describe("panelNotes", () => {
   it("turns caveat keys into sentences and keeps unknown keys visible", () => {
@@ -15,6 +16,31 @@ describe("panelNotes", () => {
   });
   it("has no notes when there is nothing to warn about", () => {
     expect(panelNotes([], { yScaledToData: false, nMin: null })).toEqual([]);
+  });
+});
+
+describe("contextNotes (2as.10)", () => {
+  const ctx = (o: Partial<YContext> = {}): YContext => ({
+    natural_lo: null, natural_hi: null, bounds: null, bounds_origin: null, limit: null, profile: null, notes: [], ...o,
+  });
+  it("says what the reference range includes", () => {
+    const [n] = contextNotes(ctx({ limit: { metric: "size_bytes", dataset: "d2", hi: 100, basis: "bounded_by" }, profile: { lo: 1, hi: 5, label: "normal range (30d)" } }));
+    expect(n.key).toBe("y_reference");
+    expect(n.text).toMatch(/normal range \(30d\).*physical limit size_bytes/);
+  });
+  it("reports what could not be applied, in plain words", () => {
+    const notes = contextNotes(ctx({ notes: ["profile_pending: still computing", "limit_unavailable: size could not be fetched (boom)", "profile_unavailable: a histogram has no single operating range"] }));
+    expect(notes.map((n) => n.key)).toEqual(["profile_pending", "limit_unavailable", "profile_unavailable"]);
+    expect(notes[1].kind).toBe("caveat");
+    expect(notes[2].text).toMatch(/histogram has no single operating range/);
+  });
+  it("stays quiet for derived expressions and for no context", () => {
+    expect(contextNotes(ctx({ notes: ["natural_bounds_unknown: the expression is not a single metric"] }))).toEqual([]);
+    expect(contextNotes(null)).toEqual([]);
+  });
+  it("replaces the no-reference note once a reference exists (the panel sets yScaledToData off)", () => {
+    const notes = panelNotes([], { yScaledToData: false, nMin: null, yContext: ctx({ profile: { lo: 0, hi: 9, label: "normal" } }) });
+    expect(notes.map((n) => n.key)).toEqual(["y_reference"]);
   });
 });
 
