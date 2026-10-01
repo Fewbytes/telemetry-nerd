@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 
 import polars as pl
 
+from telemetry_nerd.analysis.exprkind import QUANTILE_HINT, analyze, expand, min_samples
+from telemetry_nerd.analysis.quantile import attach_counts
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.charts.spec import ValidationIssue, auto_spec, validate
 from telemetry_nerd.core.events import Actor, EventLog
@@ -92,9 +94,36 @@ class TelemetryService:
                 f"{buckets} buckets exceeds {MAX_BUCKETS_PER_QUERY} per query",
                 hint="use a coarser step or a shorter range",
             )
-        result = await self.cache.get(
-            src.identity, expr, rng, step_ms, lambda r: src.fetch(expr, r, step_ms)
-        )
+        expr = expand(expr, step_ms, src.resolution_ms)
+        info = analyze(expr)
+        if info.problem:
+            raise SourceError(info.problem, hint=QUANTILE_HINT)
+        representation, q, n_min = "bucket_agg", None, None
+        if info.quantile is None:
+            result = await self.cache.get(
+                src.identity, expr, rng, step_ms, lambda r: src.fetch(expr, r, step_ms)
+            )
+        else:
+            qx = info.quantile
+            representation, q = "quantile", qx.q
+            result = await self.cache.get(
+                src.identity,
+                f"values|{expr}",
+                rng,
+                step_ms,
+                lambda r: src.fetch_values(expr, r, step_ms),
+            )
+            if qx.count_expr is not None:
+                count_expr = qx.count_expr
+                counts = await self.cache.get(
+                    src.identity,
+                    f"values|{count_expr}",
+                    rng,
+                    step_ms,
+                    lambda r: src.fetch_values(count_expr, r, step_ms),
+                )
+                result = attach_counts(result, counts)
+                n_min = min_samples(q) if q is not None else None
         meta = self.datasets.put(
             source=src.name,
             expr=expr,
@@ -102,6 +131,9 @@ class TelemetryService:
             step_ms=step_ms,
             resolution_ms=src.resolution_ms,
             result=result,
+            representation=representation,
+            quantile=q,
+            n_min=n_min,
         )
         summary = summarize(meta, result, now_ms=now, settle_ms=self.cache.settle_ms)
         self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
@@ -186,9 +218,13 @@ class TelemetryService:
     def panel_data(self, panel_id: str, width_px: int) -> dict:
         panel = self.workspace.get_panel(panel_id)
         meta, result = self.datasets.get(panel.dataset_ids[0])
-        table, effective_step = lod(
-            result.buckets, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px
-        )
+        if meta.representation == "quantile":
+            # never re-aggregate percentiles over time: serve at their own step
+            table, effective_step = result.buckets, meta.step_ms
+        else:
+            table, effective_step = lod(
+                result.buckets, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px
+            )
         labels = {}
         for r in result.series.to_pylist():
             try:

@@ -26,6 +26,8 @@ class DatasetMeta:
     representation: str = "bucket_agg"
     created_at_ms: int = 0
     partial: int = 0  # incomplete source cells dropped while fetching
+    quantile: float | None = None  # q of a quantile dataset
+    n_min: int | None = None  # observations per bucket for a meaningful quantile
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -51,6 +53,9 @@ class DatasetStore:
         step_ms: int,
         resolution_ms: int,
         result: FetchResult,
+        representation: str = "bucket_agg",
+        quantile: float | None = None,
+        n_min: int | None = None,
     ) -> DatasetMeta:
         meta = DatasetMeta(
             id=self._new_id("d"),
@@ -62,6 +67,9 @@ class DatasetStore:
             resolution_ms=resolution_ms,
             created_at_ms=self._clock(),
             partial=result.partial,
+            representation=representation,
+            quantile=quantile,
+            n_min=n_min,
         )
         con = self._con
         con.begin()
