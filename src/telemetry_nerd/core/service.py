@@ -65,6 +65,34 @@ MAX_BUCKETS_PER_QUERY = 50_000
 DIST_TARGET_COLUMNS = 300
 
 
+def _series_labels(series_table) -> dict[str, dict]:
+    """series_id -> labels; labels are self-produced, so a bad row never blocks a panel."""
+    out: dict[str, dict] = {}
+    for r in series_table.to_pylist():
+        try:
+            out[r["series_id"]] = json.loads(r["labels"])
+        except (TypeError, json.JSONDecodeError):
+            out[r["series_id"]] = {}
+    return out
+
+
+def _align_within_limit(rng: TimeRange, step_ms: int, noun: str) -> TimeRange:
+    """Align the range to the step and refuse more than MAX_BUCKETS_PER_QUERY of them."""
+    rng = rng.align(step_ms)
+    count = (rng.end_ms - rng.start_ms) // step_ms + 1
+    if count > MAX_BUCKETS_PER_QUERY:
+        raise LimitExceeded(
+            f"{count} {noun} exceeds {MAX_BUCKETS_PER_QUERY} per query",
+            hint="use a coarser step or a shorter range",
+        )
+    return rng
+
+
+def _empty_window(w: dict) -> dict:
+    return {"start_ms": w["start_ms"], "end_ms": w["end_ms"], "n": 0.0, "columns": 0,
+            "lo": [], "hi": [], "c": []}  # fmt: skip
+
+
 class ChartRejected(Exception):
     def __init__(self, issues: list[ValidationIssue]) -> None:
         super().__init__("; ".join(f"[{i.rule}] {i.message}" for i in issues))
@@ -118,13 +146,7 @@ class TelemetryService:
                 f"step must be positive, got {step!r}",
                 hint="use `auto` or a positive duration like 30s, 1m, 5m",
             )
-        rng = rng.align(step_ms)
-        buckets = (rng.end_ms - rng.start_ms) // step_ms + 1
-        if buckets > MAX_BUCKETS_PER_QUERY:
-            raise LimitExceeded(
-                f"{buckets} buckets exceeds {MAX_BUCKETS_PER_QUERY} per query",
-                hint="use a coarser step or a shorter range",
-            )
+        rng = _align_within_limit(rng, step_ms, "buckets")
         expr = expand(expr, step_ms, src.resolution_ms)
         info = analyze(expr)
         if info.problem:
@@ -170,11 +192,15 @@ class TelemetryService:
             n_min=n_min,
             histogram=histogram,
         )
+        summary = self._time_summary(meta, result, now)
+        self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
+        return {"dataset": meta.id, "summary": summary}
+
+    def _time_summary(self, meta, result, now: int) -> dict:
         summary = summarize(meta, result, now_ms=now, settle_ms=self.cache.settle_ms)
         if meta.representation == "bucket_agg" and looks_like_histogram(meta.expr):
             summary["caveats"].append("histogram_as_lines")
-        self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
-        return {"dataset": meta.id, "summary": summary}
+        return summary
 
     async def query_distribution(
         self,
@@ -199,13 +225,7 @@ class TelemetryService:
                 f"({format_duration(floor)})",
                 hint=f"counts come from increase() per step; use step >= {format_duration(floor)} or auto",
             )
-        rng = rng.align(step_ms)
-        columns = (rng.end_ms - rng.start_ms) // step_ms + 1
-        if columns > MAX_BUCKETS_PER_QUERY:
-            raise LimitExceeded(
-                f"{columns} columns exceeds {MAX_BUCKETS_PER_QUERY} per query",
-                hint="use a coarser step or a shorter range",
-            )
+        rng = _align_within_limit(rng, step_ms, "columns")
         dist = await src.fetch_histogram(selector, tuple(by), rng, step_ms)
         meta = self.datasets.put_distribution(
             source=src.name, rng=rng, step_ms=step_ms, resolution_ms=src.resolution_ms,
@@ -215,49 +235,51 @@ class TelemetryService:
         self.log.append(actor, "dataset.created", meta.id, {"expr": meta.expr})
         return {"dataset": meta.id, "summary": summary}
 
-    @staticmethod
-    def _labels(series_table) -> dict[str, dict]:
-        out: dict[str, dict] = {}
-        for r in series_table.to_pylist():
-            try:
-                out[r["series_id"]] = json.loads(r["labels"])
-            except (TypeError, json.JSONDecodeError):
-                out[r["series_id"]] = {}  # labels are self-produced; never block the panel
-        return out
-
     def _distribution_panel_data(self, panel: Panel, dataset_id: str, width_px: int) -> dict:
         meta, dist = self.datasets.get_distribution(dataset_id)
         caveats = summarize_distribution(
             meta, dist, now_ms=self.clock(), settle_ms=self.cache.settle_ms
         )["caveats"]
-        labels = self._labels(dist.series)
-        if panel.spec["layers"][0]["mark"] in ("histogram", "ecdf"):
-            rows, value_merge = merge_values(
-                pl.from_arrow(dist.rows), dist.scheme, max(4, width_px // HIST_PX_PER_BAR)
-            )
-            cols = pl.from_arrow(dist.columns)
-            layer = panel.spec["layers"][0]
-            per_window = [
-                (w, window_histogram(rows, cols, meta.step_ms, w["start_ms"], w["end_ms"]))
-                for w in layer["windows"]
-            ]
-            series = []
-            for sid, lb in labels.items():
-                wins = []
-                for w, hist in per_window:
-                    h = hist.get(sid) or {"start_ms": w["start_ms"], "end_ms": w["end_ms"], "n": 0.0,
-                                          "columns": 0, "lo": [], "hi": [], "c": []}  # fmt: skip
-                    wins.append({"label": w["label"], **h})
-                series.append({"id": sid, "labels": lb, "windows": wins})
-            n_min = meta.n_min or 0
-            if (
-                any(0 < w["n"] < n_min for s in series for w in s["windows"])
-                and "low_count" not in caveats
-            ):
-                caveats.append("low_count")
-            return {"kind": "histogram", "mark": layer["mark"], "panel": panel.to_dict(),
-                    "dataset": meta.to_dict(), "effective_step_ms": meta.step_ms,
-                    "value_merge": value_merge, "series": series, "caveats": caveats}  # fmt: skip
+        labels = _series_labels(dist.series)
+        layer = panel.spec["layers"][0]
+        if layer["mark"] in ("histogram", "ecdf"):
+            return self._histogram_panel_data(panel, meta, dist, labels, caveats, width_px)
+        return self._heatmap_panel_data(panel, meta, dist, labels, caveats, width_px)
+
+    @staticmethod
+    def _histogram_panel_data(panel, meta, dist, labels, caveats, width_px) -> dict:
+        layer = panel.spec["layers"][0]
+        rows, value_merge = merge_values(
+            pl.from_arrow(dist.rows), dist.scheme, max(4, width_px // HIST_PX_PER_BAR)
+        )
+        cols = pl.from_arrow(dist.columns)
+        per_window = [
+            (w, window_histogram(rows, cols, meta.step_ms, w["start_ms"], w["end_ms"]))
+            for w in layer["windows"]
+        ]
+        series = [
+            {
+                "id": sid,
+                "labels": lb,
+                "windows": [
+                    {"label": w["label"], **(hist.get(sid) or _empty_window(w))}
+                    for w, hist in per_window
+                ],
+            }
+            for sid, lb in labels.items()
+        ]
+        n_min = meta.n_min or 0
+        if (
+            any(0 < w["n"] < n_min for s in series for w in s["windows"])
+            and "low_count" not in caveats
+        ):
+            caveats.append("low_count")
+        return {"kind": "histogram", "mark": layer["mark"], "panel": panel.to_dict(),
+                "dataset": meta.to_dict(), "effective_step_ms": meta.step_ms,
+                "value_merge": value_merge, "series": series, "caveats": caveats}  # fmt: skip
+
+    @staticmethod
+    def _heatmap_panel_data(panel, meta, dist, labels, caveats, width_px) -> dict:
         rows = pl.from_arrow(dist.rows)
         cols = pl.from_arrow(dist.columns).with_columns(pl.lit(1, pl.Int64).alias("cover"))
         n_cols = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
@@ -428,22 +450,13 @@ class TelemetryService:
             table, effective_step = lod(
                 result.buckets, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px
             )
-        labels = {}
-        for r in result.series.to_pylist():
-            try:
-                labels[r["series_id"]] = json.loads(r["labels"])
-            except (TypeError, json.JSONDecodeError):
-                labels[r["series_id"]] = {}  # labels are self-produced; never block the panel
+        labels = _series_labels(result.series)
         series = []
         for (sid,), group in pl.DataFrame(table).group_by("series_id", maintain_order=True):
             cols = {c: group[c].to_list() for c in ("ts_ms", "avg", "min", "max", "count")}
             cols["ts"] = cols.pop("ts_ms")
             series.append({"id": sid, "labels": labels.get(sid, {}), **cols})
-        caveats = summarize(meta, result, now_ms=self.clock(), settle_ms=self.cache.settle_ms)[
-            "caveats"
-        ]
-        if meta.representation == "bucket_agg" and looks_like_histogram(meta.expr):
-            caveats.append("histogram_as_lines")
+        caveats = self._time_summary(meta, result, self.clock())["caveats"]
         return {
             "kind": "time",
             "panel": panel.to_dict(),
