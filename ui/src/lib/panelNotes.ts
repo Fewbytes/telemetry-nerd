@@ -108,7 +108,7 @@ export function panelNotes(
 
 /** One sentence on what the plotted lines are. */
 export function describeShown(
-  d: Pick<DatasetMeta, "representation" | "quantile"> & { scheme?: DatasetMeta["scheme"] },
+  d: Pick<DatasetMeta, "representation" | "quantile"> & { scheme?: DatasetMeta["scheme"]; histogram?: DatasetMeta["histogram"] },
   step: string,
   kind = "time",
   mark = "",
@@ -116,7 +116,7 @@ export function describeShown(
   if (kind === "spectrum") return "Periodogram (Lomb-Scargle): the share of variance a sinusoid of each period explains, with the 1% false-alarm level; peaks carry intervals.";
   if (kind === "spectrogram") return "Spectrogram: how the periodicity changes over time, one window per column; the window sets the period resolution.";
   if (mark === "percentiles") {
-    return `Per ${step} column, the source bucket holding each percentile (never interpolated), only where the column has n ≥ 10/(1−q).`;
+    return `Per ${step} column, the source bucket holding each percentile (estimator: bucket-edge bounds, never interpolated), only where the column has n ≥ 10/(1−q).`;
   }
   if (mark === "quantile_curve") {
     return "Value at each quantile, as source-bucket boxes [F(lo), F(hi)]; the dashed line marks where n stops supporting a quantile (faded beyond it).";
@@ -132,7 +132,10 @@ export function describeShown(
   }
   if (d.representation === "quantile") {
     const q = d.quantile != null ? `p${Number((d.quantile * 100).toFixed(2))}` : "Percentile";
-    return `${q} per ${step} window, computed from the histogram at each step and never aggregated.`;
+    const est = d.histogram
+      ? "estimator: histogram_quantile, linear interpolation within the bucket holding q (the source's definition)"
+      : "estimator: as computed by the source (e.g. quantile_over_time or a summary's own quantile)";
+    return `${q} per ${step} window, computed at each step and never aggregated; ${est}.`;
   }
   return `Average per ${step} bucket (line) with its min–max envelope (band).`;
 }

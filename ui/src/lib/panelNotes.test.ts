@@ -67,3 +67,10 @@ describe("marginal notes", () => {
     expect(notes[0].text).toBe("Marginal (right): per-step values (1m means of scrape samples): scrape samples, not requests. Filled = now (n=122), dashed = previous window (n=7). Chosen by Claude: did it shift?");
   });
 });
+
+describe("quantile estimator provenance", () => {
+  it("names the estimator behind a percentile panel", () => {
+    expect(describeShown({ representation: "quantile", quantile: 0.95, histogram: { selector: "x", by: [] } }, "1m")).toContain("histogram_quantile, linear interpolation");
+    expect(describeShown({ representation: "quantile", quantile: 0.95 }, "1m")).toContain("as computed by the source");
+  });
+});
