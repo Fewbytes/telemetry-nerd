@@ -28,11 +28,11 @@ test("brush-select → Ask Claude → thread visible and claimable exactly once"
   // no bridge is attached to this daemon, so the question is still pending for the
   // UserPromptSubmit hook path: one claim returns it, the next finds nothing new.
   const claim = await (
-    await request.post("/api/channel/claim", { data: { consumer: "claude" } })
+    await request.post("/api/channel/claim", { data: { consumer: "e2e-brush" } })
   ).json();
   expect(claim.content).toContain("why the dip here?");
   const again = await (
-    await request.post("/api/channel/claim", { data: { consumer: "claude" } })
+    await request.post("/api/channel/claim", { data: { consumer: "e2e-brush" } })
   ).json();
   expect(again.content).toBeNull();
 });
@@ -74,7 +74,7 @@ test("Claude finding answers the panel; user verdict rejects it", async ({ page,
   await expect(card).toBeHidden();
 
   const claim = await (
-    await request.post("/api/channel/claim", { data: { consumer: "claude" } })
+    await request.post("/api/channel/claim", { data: { consumer: "e2e-verdict" } })
   ).json();
   expect(claim.content).toContain("rejected");
 });

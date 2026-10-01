@@ -2,6 +2,9 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "e2e",
+  // serialize: tests share one daemon (channel claim cursors, channel state)
+  // and global UI state (theme flips rebuild every plot on every page)
+  workers: 1,
   globalSetup: "./e2e/global-setup.ts",
   use: { baseURL: "http://127.0.0.1:7071" },
   webServer: {

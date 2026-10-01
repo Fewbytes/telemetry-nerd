@@ -47,11 +47,11 @@ test("⌘/Ctrl+Enter sends from the Ask-Claude box", async ({ page, request }) =
 
   // exactly once: one claim returns it, the next finds nothing new
   const claim = await (
-    await request.post("/api/channel/claim", { data: { consumer: "claude" } })
+    await request.post("/api/channel/claim", { data: { consumer: "e2e-kbd" } })
   ).json();
   expect(claim.content).toContain("e2e keyboard send");
   const again = await (
-    await request.post("/api/channel/claim", { data: { consumer: "claude" } })
+    await request.post("/api/channel/claim", { data: { consumer: "e2e-kbd" } })
   ).json();
   expect(again.content).toBeNull();
 });

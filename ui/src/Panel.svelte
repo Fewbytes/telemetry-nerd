@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import {
@@ -19,6 +20,10 @@
   const panelAnns = $derived(
     annotations.filter((a) => !a.deleted && (a.panel === null || a.panel === panel.id)),
   );
+  // content key: the plot effect rebuilds only when this changes — a new
+  // annotations ARRAY from an unrelated panel/event must not tear down the
+  // plot (it would clear an in-progress brush selection and detach the menu)
+  const annKey = $derived(panelAnns.map((a) => `${a.id}:${a.deleted ? "d" : "v"}`).join("|"));
   const panelThreads = $derived(threads.filter((t) => t.anchor === panel.id));
 
   // Brush selection: x range in seconds (from uPlot scales) + px position over the plot.
@@ -67,7 +72,8 @@
   $effect(() => {
     const el = plotEl;
     if (!data || !el) return;
-    const anns = panelAnns; // tracked: rebuild the plot when annotations change
+    void annKey; // tracked: rebuild the plot when the annotation set changes
+    const anns = untrack(() => panelAnns);
     const mode = theme.effective; // tracked: rebuild the plot when the theme flips
     const colors = readAnnotationColors(el);
     const { stroke, grid } = plotColors(el, mode);

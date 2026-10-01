@@ -1,6 +1,11 @@
 <script lang="ts">
   import { createWorkspace } from "./lib/workspace.svelte";
-  import { theme, type Theme } from "./lib/theme.svelte";
+  import { theme } from "./lib/theme.svelte";
+
+  // runtime validation instead of a template cast
+  const setTheme = (v: string): void => {
+    if (v === "light" || v === "dark" || v === "system") theme.set(v);
+  };
   import PanelView from "./Panel.svelte";
   import Sidebar from "./components/Sidebar.svelte";
 
@@ -31,7 +36,7 @@
       class="theme-toggle"
       value={theme.setting}
       aria-label="Theme"
-      onchange={(e) => theme.set(e.currentTarget.value as Theme)}
+      onchange={(e) => setTheme(e.currentTarget.value)}
     >
       <option value="system">system</option>
       <option value="light">light</option>
