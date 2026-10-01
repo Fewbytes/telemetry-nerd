@@ -32,6 +32,17 @@ const CAVEATS: Record<string, Describe> = {
     "The histogram has no +Inf bucket: observations above the largest bucket are missing and n is a lower bound.",
   histogram_as_lines: () =>
     "This looks like histogram buckets drawn as lines; use query_distribution for a heatmap of counts.",
+  filtered: () => "Values are filtered, not raw: cite the filter, not the metric.",
+  filter_edges: () => "Dashed spans saw a truncated kernel (series start/end, around gaps): unreliable.",
+  mostly_edge: () => "Most of this series is within the filter's edge zone: use a shorter cutoff or a longer range.",
+  weak_filter: () => "The cutoff is under 8 steps: it barely smooths.",
+  coarsened: () => "Averaged to a coarser step first (point cap): shorter periods were not examined.",
+  red_noise: () => "Long periods are overstated: the series is autocorrelated, so false-alarm odds are optimistic there.",
+  sampling_artifact: () => "A peak matches the sampling pattern (periodic gaps), not the signal.",
+  too_few_points: () => "Some series have too few points for a spectrum and were skipped.",
+  too_gappy: () => "Some series are more than half gaps and were skipped.",
+  constant: () => "Some series are constant and were skipped.",
+  skipped_series: () => "Some series did not qualify and were skipped.",
   overflow: () => "Some observations are above the largest bucket edge; their values are unknown (top strip).",
 };
 
@@ -47,6 +58,7 @@ export function panelNotes(
     nMin: number | null;
     representation?: string;
     yView?: { label: string; reason: string | null; author: string; refused: string | null } | null;
+    filter?: { label: string; reason: string } | null;
     indexed?: { label: string; skipped: string[]; hidden: number; nonPositive: number } | null;
     marginal?: { what: string; ref: string; n: number[]; nMin: number; author: string; reason: string | null } | null;
   },
@@ -56,6 +68,9 @@ export function panelNotes(
     key,
     text: caveatText(key, opts.nMin, opts.representation),
   }));
+  if (opts.filter) {
+    notes.push({ kind: "info", key: "filter", text: `Filtered: ${opts.filter.label} — ${opts.filter.reason}. Raw is one click away.` });
+  }
   const ix = opts.indexed;
   if (ix) {
     notes.push({ kind: "info", key: "indexed", text: `Indexed: ${ix.label}. Log ratio axis, 1 = no change; ×2 and ×0.5 are equally far from 1.` });
@@ -98,6 +113,8 @@ export function describeShown(
   kind = "time",
   mark = "",
 ): string {
+  if (kind === "spectrum") return "Periodogram (Lomb-Scargle): the share of variance a sinusoid of each period explains, with the 1% false-alarm level; peaks carry intervals.";
+  if (kind === "spectrogram") return "Spectrogram: how the periodicity changes over time, one window per column; the window sets the period resolution.";
   if (mark === "percentiles") {
     return `Per ${step} column, the source bucket holding each percentile (never interpolated), only where the column has n ≥ 10/(1−q).`;
   }

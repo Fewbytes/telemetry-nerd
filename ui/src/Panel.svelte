@@ -3,12 +3,15 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import {
-    closePanel, fetchPanelData, reportRender, selectYView, setMarginal,
+    closePanel, fetchPanelData, reportRender, selectYView, setMarginal, selectDataView,
     type Annotation, type Panel, type PanelData, type Thread, type YView,
   } from "./lib/api";
   import { toUplot } from "./chart/toUplot";
   import { describeShown, panelNotes } from "./lib/panelNotes";
   import { setupCanvas } from "./chart/canvas";
+  import { drawnFor, VIEW_LABELS, type DataViewName } from "./chart/dataview";
+  import SpectrumPlot from "./components/SpectrumPlot.svelte";
+  import SpectrogramPlot from "./components/SpectrogramPlot.svelte";
   import { fmtRatio, indexSeries, ratioTicks } from "./chart/indexed";
   import { drawMarginal, marginalHeader } from "./chart/marginal";
   import { badgeText, contextStrip, nonZeroOrigin, offeredViews, resolveY, yStats } from "./chart/yview";
@@ -97,7 +100,23 @@
       ? indexSeries(data.series, data.index, { quantile: data.dataset.representation === "quantile", nMin: data.dataset.n_min ?? null })
       : null,
   );
-  const drawn = $derived(ix && !ix.refused ? ix.series : data?.kind === "time" ? data.series : []);
+  // filtered/raw data views (4ok.9): the user's pick, else Claude's default; optimistic until the snapshot catches up
+  let pendingView = $state<DataViewName | null>(null);
+  $effect(() => {
+    void panel.spec.signal?.selected;
+    pendingView = null;
+  });
+  const viewNow = $derived<DataViewName | null>(
+    ((pendingView ?? panel.spec.signal?.selected ?? panel.spec.signal?.default) as DataViewName | undefined) ?? null,
+  );
+  const filtDrawn = $derived(data?.kind === "time" && data.filter && viewNow ? drawnFor(viewNow, data) : null);
+  const pickView = (v: DataViewName) => {
+    pendingView = v;
+    selectDataView(panel.id, v).catch((e) => { pendingView = null; error = String(e); });
+  };
+  const drawn = $derived(
+    ix && !ix.refused ? ix.series : filtDrawn ? filtDrawn.series : data?.kind === "time" ? data.series : [],
+  );
   let idxBusy = $state(false);
   const yst = $derived(
     data?.kind === "time"
@@ -150,6 +169,7 @@
           yScaledToData: panel.spec.y.range_mode === "data",
           nMin: data.dataset.n_min ?? null,
           representation: data.dataset.representation,
+          filter: data?.kind === "time" && data.filter ? { label: data.filter.filter, reason: data.filter.reason } : null,
           indexed: ix && !ix.refused && data?.kind === "time" && data.index
             ? { label: data.index.label, skipped: ix.skipped, hidden: ix.hidden, nonPositive: ix.nonPositive }
             : null,
@@ -199,6 +219,7 @@
     const d = data;
     if (!d || d.kind !== "time" || !el) return;
     void annKey; // tracked: rebuild the plot when the annotation set changes
+    void viewNow; // tracked: filtered/raw switches the drawn series
     void viewKey; // tracked: log/linear scale cannot change in place, so rebuild on a view change
     const bandMode = bandPick; // tracked: band pick drags on y instead of x
     void margW; // tracked: the plot shrinks while the marginal is on
@@ -212,7 +233,12 @@
     const model = toUplot(
       untrack(() => drawn),
       { start: d.dataset.start_ms, end: d.dataset.end_ms, step: d.effective_step_ms },
-      { quantile: d.dataset.representation === "quantile", nMin: d.dataset.n_min ?? null },
+      {
+        quantile: d.dataset.representation === "quantile",
+        nMin: d.dataset.n_min ?? null,
+        context: untrack(() => filtDrawn?.context),
+        edges: untrack(() => (viewNow === "raw" ? undefined : d.filter?.edges)),
+      },
     );
     const width = (el.clientWidth || 800) - margW;
     const unit = d.panel.spec.y.unit;
@@ -416,6 +442,17 @@
         · no values trimmed · hatched: no data · dimmed: n &lt; {hm.dataset.n_min}{#if hm.value_merge > 1} · {hm.value_merge} source buckets per row{/if}
       </div>
     {/if}
+    {#if data && data.kind === "spectrum"}
+      <SpectrumPlot data={data} width={fetchWidth} onRendered={(ms, pts) => onFacetRendered(0, 1, ms, pts, 240)} />
+    {/if}
+    {#if data && data.kind === "spectrogram"}
+      {@const sg = data}
+      {#each sg.series as s, i (s.id)}
+        <SpectrogramPlot data={sg} series={s} width={fetchWidth} height={260}
+          onRendered={(ms, cells) => onFacetRendered(i, sg.series.length, ms, cells, 260)} />
+      {/each}
+      <div class="legend">window {fmtStep(sg.segment_ms)} · hop {fmtStep(sg.hop_ms)} ({Math.round(sg.overlap * 100)}% overlap): each column summarizes one window · period resolution 1/{fmtStep(sg.segment_ms)}, rows show the max within the row · periods {Math.round(sg.limits.shortest_s)}s–{Math.round(sg.limits.longest_s)}s · colour: share of window variance, linear 0–1 · faint: below the 1% false-alarm level · hatched: window under 50% covered</div>
+    {/if}
     {#if data && data.kind === "histogram"}
       {@const hg = data}
       {#each hg.series as s, i (s.id)}
@@ -466,6 +503,17 @@
       {/if}
       {#if bandPick}<span class="hint">drag vertically on the plot · Esc cancels</span>{/if}
       {#if idxBusy}<span class="hint">fetching baseline…</span>{/if}
+    </div>
+  {/if}
+  {#if data?.kind === "time" && data.filter}
+    <div class="legend y-views" role="group" aria-label="Data view">
+      data:
+      {#each data.filter.offered as v (v)}
+        <button type="button" class:on={viewNow === v} data-view={v}
+          title={v === data.filter.default ? `Claude's pick: ${data.filter.reason}` : ""}
+          onclick={() => pickView(v)}>{VIEW_LABELS[v]}{v === data.filter.default ? " · Claude" : ""}</button>
+      {/each}
+      <span class="hint">{data.filter.filter}; dashed: filter edge (unreliable)</span>
     </div>
   {/if}
   {#if data?.kind === "time"}
