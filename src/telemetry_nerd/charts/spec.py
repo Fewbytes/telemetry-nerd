@@ -7,6 +7,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from telemetry_nerd.charts.units import infer_unit
+
 LINE_SERIES_BUDGET = 5
 
 
@@ -18,6 +20,9 @@ class Layer(BaseModel):
 class YAxis(BaseModel):
     range_mode: Literal["data", "reference", "semantic"] = "data"
     unit: str | None = None
+    # Where `unit` came from: an explicit caller value, or a suffix hint from
+    # the metric name. None means an unknown unit (UI labels that honestly).
+    unit_provenance: str | None = None
     label: str | None = None
 
 
@@ -32,9 +37,19 @@ class ValidationIssue(BaseModel):
     severity: Literal["error", "warning"]
 
 
-def auto_spec(dataset_id: str) -> ChartSpec:
-    # M1 has no catalog: no unit, no reference range. The UI labels "data" mode honestly.
-    return ChartSpec(layers=[Layer(mark="line+envelope", data=dataset_id)])
+def auto_spec(dataset_id: str, expr: str | None = None, unit: str | None = None) -> ChartSpec:
+    """No metric catalog yet (M3): units are inferred from metric-name suffixes.
+
+    An explicit `unit` always wins over inference; without one, a consistent
+    Prometheus suffix across the expression is recorded with its provenance.
+    """
+    y = YAxis()
+    if unit:
+        y.unit = unit
+    elif expr is not None and (inferred := infer_unit(expr)):
+        y.unit = inferred
+        y.unit_provenance = "inferred from metric name"
+    return ChartSpec(layers=[Layer(mark="line+envelope", data=dataset_id)], y=y)
 
 
 def validate(spec: ChartSpec, series_counts: dict[str, int]) -> list[ValidationIssue]:

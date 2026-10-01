@@ -101,8 +101,8 @@ class TelemetryService:
         return {"dataset": meta.id, "summary": summary}
 
     def show(self, dataset_id: str, question: str, actor: Actor = "claude") -> ShowResult:
-        _, result = self.datasets.get(dataset_id)
-        spec = auto_spec(dataset_id)
+        meta, result = self.datasets.get(dataset_id)
+        spec = auto_spec(dataset_id, expr=meta.expr)
         issues = validate(spec, {dataset_id: result.series.num_rows})
         errors = [i for i in issues if i.severity == "error"]
         if errors:
@@ -118,9 +118,14 @@ class TelemetryService:
         table, effective_step = lod(
             result.buckets, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px
         )
-        labels = {r["series_id"]: json.loads(r["labels"]) for r in result.series.to_pylist()}
+        labels = {}
+        for r in result.series.to_pylist():
+            try:
+                labels[r["series_id"]] = json.loads(r["labels"])
+            except (TypeError, json.JSONDecodeError):
+                labels[r["series_id"]] = {}  # labels are self-produced; never block the panel
         series = []
-        for (sid,), group in pl.from_arrow(table).group_by("series_id", maintain_order=True):
+        for (sid,), group in pl.DataFrame(table).group_by("series_id", maintain_order=True):
             cols = {c: group[c].to_list() for c in ("ts_ms", "avg", "min", "max", "count")}
             cols["ts"] = cols.pop("ts_ms")
             series.append({"id": sid, "labels": labels.get(sid, {}), **cols})

@@ -38,7 +38,26 @@ async def test_unknown_source_has_hint(tmp_path):
     svc = make_service(tmp_path)
     with pytest.raises(SourceError) as exc:
         await svc.query("up", source="nope")
-    assert "default" in exc.value.hint
+    assert "default" in (exc.value.hint or "")
+
+
+async def test_show_infers_unit_from_metric_name_and_persists_it(tmp_path):
+    svc = make_service(tmp_path)
+    ds = (await svc.query("tn_demo_latency_seconds", start="now-2h", end="now-1h"))["dataset"]
+    res = svc.show(ds, "How slow is it?")
+    assert res.panel.spec["y"]["unit"] == "s"
+    assert res.panel.spec["y"]["unit_provenance"] == "inferred from metric name"
+    assert res.issues == []  # no "units" warning when the unit is known
+    # the unit is persisted: reloaded from the workspace DB, not just in memory
+    assert svc.workspace.get_panel(res.panel.id).spec["y"]["unit"] == "s"
+
+
+async def test_show_without_inferable_unit_still_warns(tmp_path):
+    svc = make_service(tmp_path)
+    ds = (await svc.query("up", start="now-2h", end="now-1h"))["dataset"]
+    res = svc.show(ds, "Up?")
+    assert res.panel.spec["y"]["unit"] is None
+    assert [i.rule for i in res.issues] == ["units"]
 
 
 async def test_show_creates_panel_and_publishes_event(tmp_path):
@@ -118,5 +137,5 @@ async def test_too_many_buckets_is_limit_exceeded_before_any_fetch(tmp_path):
     svc = make_service(tmp_path, src)
     with pytest.raises(LimitExceeded) as exc:
         await svc.query("up", start="now-30d", end="now", step="1s")
-    assert "coarser step" in exc.value.hint
+    assert "coarser step" in (exc.value.hint or "")
     assert src.calls == 0
