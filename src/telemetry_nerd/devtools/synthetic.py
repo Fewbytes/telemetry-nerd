@@ -8,6 +8,15 @@ import time
 from collections.abc import Iterable
 
 import httpx
+import pyarrow as pa
+
+from telemetry_nerd.model.series import (
+    BUCKET_SCHEMA,
+    SERIES_SCHEMA,
+    FetchResult,
+    labels_json,
+    series_id,
+)
 
 
 def exposition(metric: str, labels: dict[str, str], samples: Iterable[tuple[int, float]]) -> str:
@@ -91,3 +100,48 @@ def demo_text(start_ms: int, end_ms: int, interval_ms: int = 15_000, seed: int =
             histogram_text("tn_demo_request_duration_seconds", {"instance": instance}, scrapes)
         )
     return "".join(parts)
+
+
+def periodic_buckets(
+    start_ms,
+    end_ms,
+    step_ms,
+    components,
+    *,
+    base=0.0,
+    noise=0.0,
+    seed=0,
+    gaps=(),
+    labels=None,
+    source="synthetic",
+) -> FetchResult:
+    """Ground truth for spectrum/filter tests. components: (period_ms, amplitude, onset_ms|None).
+    gaps: [(t0, t1)) with no rows at all (never zero-filled)."""
+    rnd = random.Random(seed)
+    lb = labels or {"job": "synthetic"}
+    sid = series_id(source, lb)
+    ts, vals = [], []
+    for t in range(start_ms, end_ms + 1, step_ms):
+        if any(a <= t < b for a, b in gaps):
+            continue
+        v = base + rnd.gauss(0, noise) if noise else base
+        for period, amp, onset in components:
+            if onset is None or t >= onset:
+                v += amp * math.sin(2 * math.pi * t / period)
+        ts.append(t)
+        vals.append(v)
+    n = len(ts)
+    table = pa.table(
+        {
+            "ts_ms": ts,
+            "series_id": [sid] * n,
+            "avg": vals,
+            "min": vals,
+            "max": vals,
+            "count": [1] * n,
+        },
+        schema=BUCKET_SCHEMA,
+    )
+    return FetchResult(
+        table, pa.table({"series_id": [sid], "labels": [labels_json(lb)]}, schema=SERIES_SCHEMA)
+    )

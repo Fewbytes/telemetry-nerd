@@ -1,4 +1,4 @@
-from telemetry_nerd.devtools.synthetic import demo_text, exposition
+from telemetry_nerd.devtools.synthetic import demo_text, exposition, periodic_buckets
 
 
 def test_exposition_format():
@@ -33,3 +33,19 @@ def test_demo_histogram_is_cumulative_and_counts_every_request():
     for cum in by_ts.values():
         ordered = [cum[k] for k in sorted(cum, key=lambda k: float(k))]  # "+Inf" sorts last
         assert ordered == sorted(ordered)
+
+
+def test_periodic_buckets_known_components_gaps_and_onset():
+    r = periodic_buckets(
+        0,
+        3_600_000,
+        60_000,
+        [(600_000, 2.0, None), (120_000, 1.0, 1_800_000)],
+        base=10.0,
+        gaps=[(600_000, 900_000)],
+    )
+    ts = r.buckets.column("ts_ms").to_pylist()
+    assert 660_000 not in ts and 600_000 not in ts and 0 in ts and 3_600_000 in ts
+    avg = dict(zip(ts, r.buckets.column("avg").to_pylist()))
+    assert abs(avg[0] - 10.0) < 1e-9  # sin(0)=0, onset not reached
+    assert r.buckets.column("min").to_pylist() == r.buckets.column("avg").to_pylist()
