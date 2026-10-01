@@ -44,6 +44,9 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   native histogram, no functions) and `show` it (heatmap). Use `show(mark="histogram",
   windows=[spike, baseline])` to compare windows and cite n per window. Quantiles only on
   request; distribution summaries give them as the BUCKET holding them, never a value.
+  For "p95 over time" when a histogram exists, prefer `query_distribution` +
+  `show(mark="percentiles", quantiles=[0.5, 0.95])` over `histogram_quantile`: each step shows
+  the bucket holding q, only where n is enough. For tails use `show(mark="ccdf", windows=[...])`.
 - Write $__rate_interval as the rate window for quantiles so each value covers one display step.
 - Never look at latency alone: show it with throughput, and with concurrency when relevant
   (Little's law: mean concurrency L = throughput λ x mean latency W; W from
@@ -236,6 +239,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         unit: str | None = None,
         mark: str = "auto",
         windows: list[dict] | None = None,
+        quantiles: list[float] | None = None,
     ) -> str:
         """Draw a dataset as a panel (mean line + min/max envelope) in the shared workspace.
 
@@ -246,7 +250,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         the emitting code, or you know the generating tool's conventions. Your unit
         overrides suffix inference and is persisted with provenance ("provided by
         claude"), so only pass a unit you can actually vouch for.
-        mark: auto (heatmap for distributions, lines otherwise), heatmap, histogram, ecdf.
+        mark: auto (heatmap for distributions, lines otherwise). For distributions also:
+        percentiles (per step, the SOURCE bucket holding each of `quantiles`, 1-4 of 0.5, 0.9,
+        0.95, 0.99, 0.999, drawn only where n >= 10/(1-q); never interpolated), histogram,
+        ecdf, quantile_curve (inverse ECDF as bucket boxes), ccdf (P(X > x), log-log, exact at
+        bucket edges). The last four need windows.
         windows (histogram/ecdf): 1-4 [{start, end, label}] compared on one chart, e.g. the
         spike vs the preceding baseline; each window sums whole steps, n is shown per window.
         Returns {panel, url, warnings}.
@@ -260,7 +268,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                 )
                 for w in windows or []
             ]
-            res = service.show(dataset, question, unit=unit, mark=mark, windows=wins)
+            res = service.show(
+                dataset, question, unit=unit, mark=mark, windows=wins, quantiles=quantiles
+            )
         except ChartRejected as e:
             raise ToolError(f"chart rejected: {e}") from e
         except (NotFound, ValueError) as e:

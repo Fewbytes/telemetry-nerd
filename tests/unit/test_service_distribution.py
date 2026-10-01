@@ -1,4 +1,5 @@
 import json
+import math
 
 import pytest
 
@@ -147,3 +148,51 @@ async def test_histogram_buckets_drawn_as_lines_are_flagged(tmp_path):
     assert "histogram_as_lines" in out["summary"]["caveats"]
     panel = svc.show(out["dataset"], "Buckets over time?").panel
     assert "histogram_as_lines" in svc.panel_data(panel.id, 600)["caveats"]
+
+
+async def test_percentile_view_carries_source_buckets_per_column(tmp_path):
+    svc = make_service(tmp_path)
+    out = await svc.query_distribution(
+        "lat_bucket", by=["instance"], start="now-2h", end="now-1h", step="1m"
+    )
+    res = svc.show(
+        out["dataset"], "How did p50 and p99 move?", mark="percentiles", quantiles=[0.5, 0.99]
+    )
+    assert res.panel.spec["layers"][0]["quantiles"] == [0.5, 0.99]
+    data = svc.panel_data(res.panel.id, width_px=800)  # 61 columns, no time LOD
+    assert data["kind"] == "heatmap" and data["mark"] == "percentiles"
+    i1 = {s["labels"]["instance"]: s for s in data["series"]}["i1"]  # 180/18/2 per column, n=200
+    assert i1["quantiles"]["0.5"]["lo"][0] == -math.inf and i1["quantiles"]["0.5"]["hi"][0] == 0.1
+    assert "0.99" not in i1["quantiles"]  # n=200 < 1000 in every 1m column
+    assert len(i1["quantiles"]["0.9"]["ts"]) == 61
+    # zoomed out: 7m columns sum counts (additive), n=1400 >= 1000, p99 is in (0.1, 1]
+    wide = svc.panel_data(res.panel.id, width_px=20)
+    p99 = {s["labels"]["instance"]: s for s in wide["series"]}["i1"]["quantiles"]["0.99"]
+    assert p99["ts"] and set(zip(p99["lo"], p99["hi"], strict=True)) == {(0.1, 1.0)}
+
+
+async def test_cumulative_views_get_source_buckets_when_bars_are_merged(tmp_path):
+    cum = {f"{2.0**k:g}": 5.0 * (k + 1) for k in range(20)} | {"+Inf": 100.0}
+    svc = make_service(tmp_path, FakeSource(cumulative=cum))
+    out = await svc.query_distribution("lat_bucket", start="now-2h", end="now-1h", step="1m")
+    meta = svc.datasets.meta(out["dataset"])
+    w0 = Window(start_ms=meta.start_ms, end_ms=meta.start_ms + 600_000, label="w")
+    res = svc.show(out["dataset"], "How heavy is the tail?", mark="ccdf", windows=[w0])
+    data = svc.panel_data(res.panel.id, width_px=12)  # 4 bars max -> merged
+    assert data["mark"] == "ccdf" and data["value_merge"] > 1
+    w = data["series"][0]["windows"][0]
+    assert len(w["source"]["c"]) > len(w["c"])
+    assert sum(w["source"]["c"]) == sum(w["c"]) == w["n"]
+
+
+async def test_unmerged_windows_have_no_source_copy(tmp_path):
+    svc = make_service(tmp_path)
+    out = await svc.query_distribution("lat_bucket", start="now-2h", end="now-1h", step="1m")
+    meta = svc.datasets.meta(out["dataset"])
+    res = svc.show(
+        out["dataset"],
+        "q?",
+        mark="quantile_curve",
+        windows=[Window(start_ms=meta.start_ms, end_ms=meta.end_ms)],
+    )
+    assert "source" not in svc.panel_data(res.panel.id, 600)["series"][0]["windows"][0]

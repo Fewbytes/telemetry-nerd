@@ -28,15 +28,23 @@ from telemetry_nerd.analysis.exprkind import (
     min_samples,
 )
 from telemetry_nerd.analysis.quantile import attach_counts
+from telemetry_nerd.analysis.quantiles import column_quantiles
 from telemetry_nerd.analysis.resample import lod
-from telemetry_nerd.charts.spec import Layer, ValidationIssue, Window, auto_spec, validate
+from telemetry_nerd.charts.spec import (
+    WINDOW_MARKS,
+    Layer,
+    ValidationIssue,
+    Window,
+    auto_spec,
+    validate,
+)
 from telemetry_nerd.core.events import Actor, EventLog
 from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.summary import summarize, summarize_distribution
 from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import DatasetStore
-from telemetry_nerd.model.distribution import DIST_N_MIN
+from telemetry_nerd.model.distribution import DIST_N_MIN, QUANTILE_CHOICES
 from telemetry_nerd.model.time import (
     TimeRange,
     format_duration,
@@ -242,29 +250,39 @@ class TelemetryService:
         )["caveats"]
         labels = _series_labels(dist.series)
         layer = panel.spec["layers"][0]
-        if layer["mark"] in ("histogram", "ecdf"):
+        if layer["mark"] in WINDOW_MARKS:
             return self._histogram_panel_data(panel, meta, dist, labels, caveats, width_px)
         return self._heatmap_panel_data(panel, meta, dist, labels, caveats, width_px)
 
     @staticmethod
     def _histogram_panel_data(panel, meta, dist, labels, caveats, width_px) -> dict:
         layer = panel.spec["layers"][0]
-        rows, value_merge = merge_values(
-            pl.from_arrow(dist.rows), dist.scheme, max(4, width_px // HIST_PX_PER_BAR)
-        )
+        raw = pl.from_arrow(dist.rows)
+        rows, value_merge = merge_values(raw, dist.scheme, max(4, width_px // HIST_PX_PER_BAR))
         cols = pl.from_arrow(dist.columns)
-        per_window = [
-            (w, window_histogram(rows, cols, meta.step_ms, w["start_ms"], w["end_ms"]))
-            for w in layer["windows"]
-        ]
+
+        def hists(frame):
+            return [
+                window_histogram(frame, cols, meta.step_ms, w["start_ms"], w["end_ms"])
+                for w in layer["windows"]
+            ]
+
+        merged = hists(rows)
+        # cumulative views (ecdf, quantile, ccdf) must read source buckets, never merged bars
+        exact = hists(raw) if value_merge > 1 else None
+
+        def window(k, w, sid):
+            out = {"label": w["label"], **(merged[k].get(sid) or _empty_window(w))}
+            if exact is not None:
+                src = exact[k].get(sid) or _empty_window(w)
+                out["source"] = {"lo": src["lo"], "hi": src["hi"], "c": src["c"]}
+            return out
+
         series = [
             {
                 "id": sid,
                 "labels": lb,
-                "windows": [
-                    {"label": w["label"], **(hist.get(sid) or _empty_window(w))}
-                    for w, hist in per_window
-                ],
+                "windows": [window(k, w, sid) for k, w in enumerate(layer["windows"])],
             }
             for sid, lb in labels.items()
         ]
@@ -287,6 +305,8 @@ class TelemetryService:
         step = meta.step_ms * factor
         if factor > 1:
             rows, cols = rebucket_time(rows, cols, step)
+        # source buckets holding each q: time-summed counts (additive), never value-merged
+        bands = column_quantiles(rows, cols, QUANTILE_CHOICES)
         facet_h = FACET_HEIGHT_SINGLE if len(labels) <= 1 else FACET_HEIGHT_MULTI
         rows, value_merge = merge_values(rows, dist.scheme, max(4, facet_h // PX_PER_ROW))
         series = []
@@ -298,9 +318,11 @@ class TelemetryService:
                 "ts": c["ts_ms"].to_list(), "n": c["n"].to_list(), "cover": c["cover"].to_list(),
                 "cells": {"ts": r["ts_ms"].to_list(), "lo": r["bucket_lo"].to_list(),
                           "hi": r["bucket_hi"].to_list(), "c": r["count"].to_list()},
+                "quantiles": bands.get(sid, {}),
             })  # fmt: skip
         return {
-            "kind": "heatmap", "panel": panel.to_dict(), "dataset": meta.to_dict(),
+            "kind": "heatmap", "mark": panel.spec["layers"][0]["mark"],
+            "panel": panel.to_dict(), "dataset": meta.to_dict(),
             "effective_step_ms": step, "value_merge": value_merge, "facet_height_px": facet_h,
             "series": series, "caveats": caveats,
         }  # fmt: skip
@@ -411,6 +433,7 @@ class TelemetryService:
         unit: str | None = None,
         mark: str = "auto",
         windows: list[Window] | None = None,
+        quantiles: list[float] | None = None,
     ) -> ShowResult:
         meta = self.datasets.meta(dataset_id)
         # An agent-provided unit (Claude learned it from the source, the emitting
@@ -429,7 +452,10 @@ class TelemetryService:
                     raise ValueError(
                         f"window {iso(w.start_ms)}..{iso(w.end_ms)} is outside the dataset range"
                     )
-            spec.layers = [Layer(mark=mark, data=dataset_id, windows=windows or [])]  # type: ignore[arg-type]
+            layer = Layer(mark=mark, data=dataset_id, windows=windows or [])  # type: ignore[arg-type]
+            if quantiles is not None:
+                layer.quantiles = [float(q) for q in quantiles]
+            spec.layers = [layer]
         issues = validate(
             spec,
             {dataset_id: self.datasets.series_count(dataset_id)},
