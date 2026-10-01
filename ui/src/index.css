@@ -28,7 +28,18 @@ main { max-width: 1200px; margin: 0 auto; padding: 16px; }
 a.obj-id:hover { text-decoration: underline; }
 .panel header .question { flex: 1; }
 .panel .badge { display: inline-block; background: var(--badge); font-size: 12px; padding: 2px 6px; border-radius: 4px; }
-.panel footer { font-size: 12px; color: var(--muted); margin-top: 6px; }
+/* what the graph shows, then the query (folded), then warnings: three distinct blocks */
+.panel .shown { margin-top: 8px; font-size: 13px; }
+.panel .shown p { margin: 0; }
+.panel .shown .where { font-size: 12px; color: var(--muted); }
+.panel details.query { margin-top: 6px; font-size: 12px; color: var(--muted); }
+.panel details.query summary { cursor: pointer; }
+.panel details.query pre { margin: 4px 0 0; padding: 6px 8px; background: var(--badge); border-radius: 4px; white-space: pre-wrap; word-break: break-word; color: var(--fg); }
+.panel ul.notes { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.panel .note { font-size: 12px; padding: 4px 8px; border-left: 3px solid var(--off); background: var(--badge); border-radius: 0 4px 4px 0; }
+.panel .note.caveat { border-left-color: var(--warn); }
+.panel .note .tag { font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; margin-right: 6px; color: var(--warn); }
+.panel .note.info .tag { color: var(--off); }
 .error { color: var(--error); }
 .empty { color: var(--muted); }
 .panel a.answered-by { color: var(--muted); font-size: 0.85em; text-decoration: none; }

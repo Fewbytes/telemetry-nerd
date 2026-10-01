@@ -7,6 +7,7 @@
     type Annotation, type Panel, type PanelData, type Thread,
   } from "./lib/api";
   import { toUplot } from "./chart/toUplot";
+  import { describeShown, panelNotes } from "./lib/panelNotes";
   import { measureFirstDraw } from "./chart/measureDraw";
   import { drawAnnotations, drawOps, readAnnotationColors } from "./chart/annotations";
   import { plotColors, theme } from "./lib/theme.svelte";
@@ -70,6 +71,15 @@
     ro.observe(el);
     return () => ro.disconnect();
   });
+
+  const notes = $derived(
+    data
+      ? panelNotes(data.caveats, {
+          yScaledToData: panel.spec.y.range_mode === "data",
+          nMin: data.dataset.n_min ?? null,
+        })
+      : [],
+  );
 
   const close = () => closePanel(panel.id).catch((e) => (error = String(e)));
 
@@ -168,9 +178,6 @@
     {/if}
     <button class="close" type="button" aria-label="Close panel" onclick={close}>×</button>
   </header>
-  {#if panel.spec.y.range_mode === "data"}
-    <div class="badge">y scaled to data (no reference range yet)</div>
-  {/if}
   {#if error}<div class="error">{error}</div>{/if}
   <div bind:this={plotEl} class="plot" style="position: relative">
     {#if selection}
@@ -188,17 +195,27 @@
     {/if}
   </div>
   {#if data}
-    <footer>
-      {data.dataset.source} · <code>{data.dataset.expr}</code> ·
-      {fmtTime(data.dataset.start_ms)} – {fmtTime(data.dataset.end_ms)} · step
-      {fmtStep(data.effective_step_ms)} ·
-      {#if data.dataset.representation === "quantile"}
-        quantile per {fmtStep(data.effective_step_ms)} window (never aggregated){#if data.dataset.n_min}; faded: n &lt; {data.dataset.n_min}, not meaningful{:else}; n unknown{/if}
-      {:else}
-        {data.dataset.representation}, min/max envelope
-      {/if}
-      {#if data.caveats.length > 0}&nbsp;· caveats: {data.caveats.join(", ")}{/if}
-    </footer>
+    <div class="shown">
+      <p class="what">{describeShown(data.dataset, fmtStep(data.effective_step_ms))}</p>
+      <p class="where">
+        {data.dataset.source} · {fmtTime(data.dataset.start_ms)} – {fmtTime(data.dataset.end_ms)} · step
+        {fmtStep(data.effective_step_ms)}
+      </p>
+    </div>
+    <details class="query">
+      <summary>Query</summary>
+      <pre><code>{data.dataset.expr}</code></pre>
+    </details>
+    {#if notes.length > 0}
+      <ul class="notes" aria-label="Notes and warnings">
+        {#each notes as note (note.key)}
+          <li class="note {note.kind}" data-note={note.key}>
+            <span class="tag">{note.kind === "caveat" ? "Caveat" : "Note"}</span>
+            {note.text}
+          </li>
+        {/each}
+      </ul>
+    {/if}
   {/if}
   {#if panelThreads.length > 0}
     <div class="threads">
