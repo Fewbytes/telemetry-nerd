@@ -66,3 +66,15 @@ async def test_time_panels_report_their_kind(tmp_path):
     svc = make_service(tmp_path)
     out = await svc.query("up", "now-2h", "now-1h", step="1m")
     assert svc.panel_data(svc.show(out["dataset"], "Up?").panel.id, 800)["kind"] == "time"
+
+
+# test_service_distribution.py (append)
+async def test_quantile_datasets_remember_their_histogram(tmp_path):
+    svc = make_service(tmp_path)
+    q = await svc.query(
+        'histogram_quantile(0.95, sum by (le, instance) (rate(lat_seconds_bucket{job="a"}[5m])))',
+        "now-2h", "now-1h", step="1m",
+    )  # fmt: skip
+    assert svc.datasets.meta(q["dataset"]).histogram == {
+        "selector": 'lat_seconds_bucket{job="a"}', "by": ["instance"]
+    }  # fmt: skip

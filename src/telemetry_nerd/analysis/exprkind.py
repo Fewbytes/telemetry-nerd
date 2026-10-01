@@ -225,3 +225,51 @@ def analyze(expr: str) -> ExprAnalysis:
     if len(args) != 2:
         return ExprAnalysis(problem=f"{func} takes 2 arguments, got {len(args)}")
     return ExprAnalysis(QuantileExpr(_literal(args[0]), func, _count_expr(func, args[1])))  # type: ignore[arg-type]
+
+
+_SUM = re.compile(r"^\s*sum\s*(?:by\s*\(([^()]*)\)\s*)?\(")
+_WINDOWED_CALL = re.compile(r"^\s*(?:rate|increase)\s*\(")
+_ANY_SELECTOR = re.compile(r"^\s*[a-zA-Z_:][a-zA-Z0-9_:]*\s*(\{[^{}]*\})?\s*$")
+
+
+@dataclass(frozen=True)
+class HistogramSource:
+    selector: str
+    by: tuple[str, ...]
+
+
+def _unwrap(text: str, masked: str, pattern: re.Pattern) -> tuple[re.Match, str, str] | None:
+    m = pattern.match(masked)
+    if not m:
+        return None
+    open_idx = m.end() - 1
+    close_idx = _close(masked, open_idx)
+    if masked[close_idx + 1 :].strip():
+        return None
+    return m, text[open_idx + 1 : close_idx], masked[open_idx + 1 : close_idx]
+
+
+def histogram_source(expr: str) -> HistogramSource | None:
+    """The histogram behind histogram_quantile(q, sum by (L) (rate|increase(SEL[w]))), so a
+    percentile panel can open the distribution it was computed from."""
+    info = analyze(expr)
+    if info.quantile is None or info.quantile.func != "histogram_quantile" or info.problem:
+        return None
+    masked = _mask_strings(expr)
+    call = _QCALL.search(masked)
+    open_idx = call.end() - 1
+    args = _split_args(expr, masked, open_idx + 1, _close(masked, open_idx))
+    inner = args[1]
+    summed = _unwrap(inner, _mask_strings(inner), _SUM)
+    if summed is None:
+        return None
+    m, body, mbody = summed
+    by = tuple(x.strip() for x in (m.group(1) or "").split(",") if x.strip() and x.strip() != "le")
+    windowed = _unwrap(body.strip(), mbody.strip(), _WINDOWED_CALL)
+    if windowed is None:
+        return None
+    _, arg, marg = windowed
+    bracket = marg.rfind("[")
+    if bracket < 0 or not _ANY_SELECTOR.match(marg[:bracket]):
+        return None
+    return HistogramSource(arg[:bracket].strip(), by)

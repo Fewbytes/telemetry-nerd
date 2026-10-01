@@ -60,6 +60,7 @@ class DatasetStore:
         representation: str = "bucket_agg",
         quantile: float | None = None,
         n_min: int | None = None,
+        histogram: dict | None = None,
     ) -> DatasetMeta:
         meta = DatasetMeta(
             id=self._new_id("d"),
@@ -74,6 +75,7 @@ class DatasetStore:
             representation=representation,
             quantile=quantile,
             n_min=n_min,
+            histogram=histogram,
         )
         con = self._con
         con.begin()

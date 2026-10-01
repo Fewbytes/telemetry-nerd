@@ -17,7 +17,13 @@ from telemetry_nerd.analysis.distlod import (
     merge_values,
     rebucket_time,
 )
-from telemetry_nerd.analysis.exprkind import QUANTILE_HINT, analyze, expand, min_samples
+from telemetry_nerd.analysis.exprkind import (
+    QUANTILE_HINT,
+    analyze,
+    expand,
+    histogram_source,
+    min_samples,
+)
 from telemetry_nerd.analysis.quantile import attach_counts
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.charts.spec import ValidationIssue, auto_spec, validate
@@ -114,6 +120,7 @@ class TelemetryService:
         if info.problem:
             raise SourceError(info.problem, hint=QUANTILE_HINT)
         representation, q, n_min = "bucket_agg", None, None
+        histogram = None
         if info.quantile is None:
             result = await self.cache.get(
                 src.identity, expr, rng, step_ms, lambda r: src.fetch(expr, r, step_ms)
@@ -121,6 +128,8 @@ class TelemetryService:
         else:
             qx = info.quantile
             representation, q = "quantile", qx.q
+            if hs := histogram_source(expr):
+                histogram = {"selector": hs.selector, "by": list(hs.by)}
             result = await self.cache.get(
                 src.identity,
                 f"values|{expr}",
@@ -149,6 +158,7 @@ class TelemetryService:
             representation=representation,
             quantile=q,
             n_min=n_min,
+            histogram=histogram,
         )
         summary = summarize(meta, result, now_ms=now, settle_ms=self.cache.settle_ms)
         self.log.append(actor, "dataset.created", meta.id, {"expr": expr})

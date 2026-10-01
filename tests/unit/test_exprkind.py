@@ -1,8 +1,10 @@
 import pytest
 
 from telemetry_nerd.analysis.exprkind import (
+    HistogramSource,
     analyze,
     expand,
+    histogram_source,
     min_samples,
     rate_interval_ms,
 )
@@ -155,3 +157,22 @@ def test_review_false_positives_are_accepted(expr):
 )
 def test_count_is_not_derived_when_it_would_be_wrong(inner):
     assert analyze(f"histogram_quantile(0.9, {inner})").quantile.count_expr is None
+
+
+@pytest.mark.parametrize(
+    ("expr", "want"),
+    [
+        ('histogram_quantile(0.95, sum by (cloud_region) (rate(lat{svc="c"}[5m])))',
+         HistogramSource('lat{svc="c"}', ("cloud_region",))),
+        ("histogram_quantile(0.99, sum by (le, region) (increase(x_bucket[2m])))",
+         HistogramSource("x_bucket", ("region",))),
+        ("histogram_quantile(0.5, sum(rate(x_bucket[1m])))", HistogramSource("x_bucket", ())),
+        ("histogram_quantile(0.5, rate(x_bucket[1m]))", None),  # no sum: per-series, cannot express as by
+        ("quantile_over_time(0.9, q[5m])", None),
+        ("sum(rate(x[5m]))", None),
+        ('histogram_quantile(0.9, sum by (le) (rate(x_bucket{p="a[1m]"}[1m])))',
+         HistogramSource('x_bucket{p="a[1m]"}', ())),
+    ],
+)  # fmt: skip
+def test_histogram_source(expr, want):
+    assert histogram_source(expr) == want
