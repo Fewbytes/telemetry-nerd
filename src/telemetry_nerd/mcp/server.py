@@ -36,6 +36,7 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   of a percentile series). Aggregate the underlying histogram first, then take the quantile
   once: histogram_quantile(q, sum by (...) (rate(x[w]))). Likewise divide sums by counts
   only after aggregating both: histogram_sum(sum(rate(x[w]))) / histogram_count(sum(...)).
+- Write $__rate_interval as the rate window for quantiles so each value covers one display step.
 - Never look at latency alone: show it with throughput, and with concurrency when relevant
   (Little's law: mean concurrency L = throughput λ x mean latency W; W from
   histogram_sum/histogram_count, not from a percentile).
@@ -86,6 +87,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         source: a name from source_list (default "default").
         start/end: `now`, `now-<dur>` (e.g. now-6h), epoch ms, or ISO-8601 with timezone.
         step: `auto` (~600 buckets) or a duration like 30s, 1m, 5m.
+        Quantiles: write histogram_quantile(q, sum by (...) (rate(x[$__rate_interval])))
+        as the WHOLE expression. It is evaluated per step (never rolled up) and each bucket
+        carries n, the observations behind it; buckets with n < 10/(1-q) are flagged
+        low_count. Wrapping a quantile in sum/avg/max/*_over_time is refused.
+        $__rate_interval expands to max(4 x scrape interval, step + scrape interval).
         Returns {dataset, summary}. The summary is compact; raw series stay on the server.
         """
         try:
