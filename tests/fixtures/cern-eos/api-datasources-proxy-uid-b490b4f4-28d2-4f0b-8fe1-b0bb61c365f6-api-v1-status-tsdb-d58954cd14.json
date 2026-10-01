@@ -1,0 +1,21 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/api/datasources/proxy/uid/b490b4f4-28d2-4f0b-8fe1-b0bb61c365f6/api/v1/status/tsdb",
+  "params": [
+   [
+    "limit",
+    "100"
+   ],
+   [
+    "topN",
+    "100"
+   ]
+  ]
+ },
+ "response": {
+  "status": 404,
+  "content_type": "text/plain; charset=utf-8",
+  "body": "404 page not found\n"
+ }
+}

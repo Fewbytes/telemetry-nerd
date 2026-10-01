@@ -1,0 +1,21 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/api/v1/status/tsdb",
+  "params": [
+   [
+    "limit",
+    "100"
+   ],
+   [
+    "topN",
+    "100"
+   ]
+  ]
+ },
+ "response": {
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"success\",\"data\":{\"headStats\":{\"numSeries\":16091,\"numLabelPairs\":2978,\"chunkCount\":62035,\"minTime\":1790877600259,\"maxTime\":1790883363280},\"seriesCountByMetricName\":[{\"name\":\"grafana_http_response_size_bytes_bucket\",\"value\":1326},{\"name\":\"grafana_http_request_duration_seconds_bucket\",\"value\":1014},{\"name\":\"node_systemd_unit_state\",\"value\":830},{\"name\":\"caddy_http_request_duration_seconds_bucket\",\"value\":660},{\"name\":\"caddy_http_response_duration_seconds_bucket\",\"value\":636},{\"name\":\"alertmanager_http_request_duration_seconds_bucket\",\"value\":504},{\"name\":\"caddy_http_request_size_bytes_bucket\",\"value\":495},{\"name\":\"caddy_http_response_size_bytes_bucket\",\"value\":495},{\"name\":\"prometheus_http_request_duration_seconds_bucket\",\"value\":490},{\"name\":\"prometheus_http_response_size_bytes_bucket\",\"value\":441}],\"labelValueCountByLabelName\":[{\"name\":\"__name__\",\"value\":1374},{\"name\":\"name\",\"value\":543},{\"name\":\"le\",\"value\":237},{\"name\":\"handler\",\"value\":141},{\"name\":\"resource\",\"value\":61},{\"name\":\"collector\",\"value\":49},{\"name\":\"method\",\"value\":47},{\"name\":\"id\",\"value\":45},{\"name\":\"plugin_id\",\"value\":23},{\"name\":\"version\",\"value\":21}],\"memoryInBytesByLabelName\":[{\"name\":\"__name__\",\"value\":796046},{\"name\":\"instance\",\"value\":505768},{\"name\":\"job\",\"value\":197377},{\"name\":\"handler\",\"value\":154705},{\"name\":\"id\",\"value\":95536},{\"name\":\"le\",\"value\":79008},{\"name\":\"method\",\"value\":75418},{\"name\":\"status_source\",\"value\":55692},{\"name\":\"slo_group\",\"value\":53040},{\"name\":\"status_code\",\"value\":44727}],\"seriesCountByLabelValuePair\":[{\"name\":\"instance=demo.prometheus.io:3000\",\"value\":6069},{\"name\":\"job=grafana\",\"value\":6069},{\"name\":\"env=demo\",\"value\":4943},{\"name\":\"job=caddy\",\"value\":2791},{\"name\":\"instance=localhost:2019\",\"value\":2791},{\"name\":\"method=GET\",\"value\":2743},{\"name\":\"status_source=server\",\"value\":2652},{\"name\":\"slo_group=high-fast\",\"value\":2584},{\"name\":\"instance=demo.prometheus.io:8080\",\"value\":2426},{\"name\":\"job=cadvisor\",\"value\":2426}]}}"
+ }
+}

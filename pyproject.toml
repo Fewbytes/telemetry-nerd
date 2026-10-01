@@ -31,7 +31,7 @@ packages = ["src/telemetry_nerd"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-markers = ["integration: requires Docker"]
+markers = ["integration: requires Docker or the public internet"]
 addopts = "-m 'not integration'"
 
 [tool.ruff]

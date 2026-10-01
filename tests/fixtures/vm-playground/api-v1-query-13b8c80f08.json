@@ -1,0 +1,21 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/select/0/prometheus/api/v1/query",
+  "params": [
+   [
+    "query",
+    "count by (le, job) (alertmanager_http_request_duration_seconds_bucket)"
+   ],
+   [
+    "time",
+    "1790877600.000"
+   ]
+  ]
+ },
+ "response": {
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"success\",\"isPartial\":false,\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{\"job\":\"vmalertmanager-play-otel\",\"le\":\"+Inf\"},\"value\":[1790877600,\"10\"]},{\"metric\":{\"job\":\"vmalertmanager-play-otel\",\"le\":\"0.005\"},\"value\":[1790877600,\"10\"]},{\"metric\":{\"job\":\"vmalertmanager-play-otel\",\"le\":\"0.01\"},\"value\":[1790877600,\"10\"]},{\"metric\":{\"job\":\"vmalertmanager-play-otel\",\"le\":\"0.025\"},\"value\":[1790877600,\"10\"]},{\"metric\":{\"job\":\"vmalertmanager-play-otel\",\"le\":\"0.05\"},\"value\":[1790877600,\"10\"]},{\"metric\":{\"job\":\"vmalertmanager-play-otel\",\"le\":\"0.1\"},\"value\":[1790877600,\"10\"]},{\"metric\":{\"job\":\"vmalertmanager-play-otel\",\"le\":\"0.25\"},\"value\":[1790877600,\"10\"]},{\"metric\":{\"job\":\"vmalertmanager-play-otel\",\"le\":\"0.5\"},\"value\":[1790877600,\"10\"]},{\"metric\":{\"job\":\"vmalertmanager-play-otel\",\"le\":\"1\"},\"value\":[1790877600,\"10\"]},{\"metric\":{\"job\":\"vmalertmanager-play-otel\",\"le\":\"10\"},\"value\":[1790877600,\"10\"]},{\"metric\":{\"job\":\"vmalertmanager-play-otel\",\"le\":\"2.5\"},\"value\":[1790877600,\"10\"]},{\"metric\":{\"job\":\"vmalertmanager-play-otel\",\"le\":\"5\"},\"value\":[1790877600,\"10\"]}]},\"stats\":{\"seriesFetched\": \"120\",\"executionTimeMsec\":3}}"
+ }
+}

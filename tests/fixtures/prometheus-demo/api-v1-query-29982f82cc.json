@@ -1,0 +1,21 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/api/v1/query",
+  "params": [
+   [
+    "query",
+    "count by (le, job) (alertmanager_http_request_duration_seconds_bucket)"
+   ],
+   [
+    "time",
+    "1790877600.000"
+   ]
+  ]
+ },
+ "response": {
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{\"job\":\"alertmanager\",\"le\":\"+Inf\"},\"value\":[1790877600,\"42\"]},{\"metric\":{\"job\":\"alertmanager\",\"le\":\"0.005\"},\"value\":[1790877600,\"42\"]},{\"metric\":{\"job\":\"alertmanager\",\"le\":\"0.01\"},\"value\":[1790877600,\"42\"]},{\"metric\":{\"job\":\"alertmanager\",\"le\":\"0.025\"},\"value\":[1790877600,\"42\"]},{\"metric\":{\"job\":\"alertmanager\",\"le\":\"0.05\"},\"value\":[1790877600,\"42\"]},{\"metric\":{\"job\":\"alertmanager\",\"le\":\"0.1\"},\"value\":[1790877600,\"42\"]},{\"metric\":{\"job\":\"alertmanager\",\"le\":\"0.25\"},\"value\":[1790877600,\"42\"]},{\"metric\":{\"job\":\"alertmanager\",\"le\":\"0.5\"},\"value\":[1790877600,\"42\"]},{\"metric\":{\"job\":\"alertmanager\",\"le\":\"1.0\"},\"value\":[1790877600,\"42\"]},{\"metric\":{\"job\":\"alertmanager\",\"le\":\"10.0\"},\"value\":[1790877600,\"42\"]},{\"metric\":{\"job\":\"alertmanager\",\"le\":\"2.5\"},\"value\":[1790877600,\"42\"]},{\"metric\":{\"job\":\"alertmanager\",\"le\":\"5.0\"},\"value\":[1790877600,\"42\"]}]}}"
+ }
+}

@@ -1,0 +1,12 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/api/v1/labels",
+  "params": []
+ },
+ "response": {
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"success\",\"data\":[\"__name__\",\"active\",\"address\",\"adminstate\",\"alertmanager\",\"alertname\",\"alertstate\",\"allowed\",\"asset_source\",\"backend\",\"bios_date\",\"bios_release\",\"bios_vendor\",\"bios_version\",\"board_asset_tag\",\"board_name\",\"board_vendor\",\"boot_id\",\"branch\",\"broadcast\",\"cadvisorRevision\",\"cadvisorVersion\",\"call\",\"cause\",\"channel_type\",\"chassis_vendor\",\"check_count\",\"client\",\"clocksource\",\"code\",\"code_path\",\"collector\",\"commit\",\"component\",\"compression\",\"config\",\"cpu\",\"datasource\",\"datasource_type\",\"db_name\",\"deprecated_version\",\"device\",\"device_error\",\"dialer_name\",\"direction\",\"domainname\",\"duplex\",\"edition\",\"endpoint\",\"env\",\"event\",\"failure_type\",\"field_validation\",\"file\",\"filename\",\"filesystem_type\",\"filter\",\"fstype\",\"goarch\",\"goos\",\"goversion\",\"group\",\"handler\",\"hit\",\"id\",\"index_storage\",\"instance\",\"integration\",\"interface\",\"interval\",\"ip\",\"job\",\"kernelVersion\",\"kind\",\"le\",\"level\",\"listener_name\",\"machine\",\"machine_id\",\"major\",\"method\",\"minor\",\"mode\",\"model\",\"mountpoint\",\"name\",\"nodename\",\"operation\",\"operstate\",\"org\",\"osVersion\",\"path\",\"phase\",\"plugin_id\",\"plugin_type\",\"pretty_name\",\"product_name\",\"quantile\",\"queue\",\"reason\",\"release\",\"request_kind\",\"resource\",\"result\",\"revision\",\"role\",\"rotational\",\"rule_group\",\"scope\",\"scrape_job\",\"secure_socks_ds_proxy_enabled\",\"serial\",\"served_by\",\"server\",\"service\",\"severity\",\"signature_status\",\"slice\",\"slo_group\",\"stability_level\",\"stage\",\"state\",\"status\",\"status_code\",\"status_source\",\"subscriber\",\"success\",\"sysname\",\"system_uuid\",\"system_vendor\",\"tags\",\"target\",\"time_zone\",\"type\",\"upstream\",\"username\",\"verb\",\"version\",\"version_codename\",\"version_id\",\"virtualization_type\"]}"
+ }
+}

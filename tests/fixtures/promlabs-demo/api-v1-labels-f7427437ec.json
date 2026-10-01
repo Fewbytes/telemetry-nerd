@@ -1,0 +1,12 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/api/v1/labels",
+  "params": []
+ },
+ "response": {
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"success\",\"data\":[\"__name__\",\"address\",\"adminstate\",\"alertmanager\",\"alertname\",\"alertstate\",\"bios_date\",\"bios_release\",\"bios_vendor\",\"bios_version\",\"board_name\",\"board_vendor\",\"board_version\",\"boot_id\",\"branch\",\"broadcast\",\"cadvisorRevision\",\"cadvisorVersion\",\"call\",\"cause\",\"chassis_vendor\",\"chassis_version\",\"clocksource\",\"code\",\"collector\",\"compression\",\"config\",\"container_label_com_docker_compose_config_hash\",\"container_label_com_docker_compose_container_number\",\"container_label_com_docker_compose_image\",\"container_label_com_docker_compose_oneoff\",\"container_label_com_docker_compose_project\",\"container_label_com_docker_compose_project_config_files\",\"container_label_com_docker_compose_project_working_dir\",\"container_label_com_docker_compose_replace\",\"container_label_com_docker_compose_service\",\"container_label_com_docker_compose_version\",\"container_label_io_prometheus_image_variant\",\"container_label_maintainer\",\"container_label_org_opencontainers_image_authors\",\"container_label_org_opencontainers_image_description\",\"container_label_org_opencontainers_image_documentation\",\"container_label_org_opencontainers_image_licenses\",\"container_label_org_opencontainers_image_source\",\"container_label_org_opencontainers_image_title\",\"container_label_org_opencontainers_image_url\",\"container_label_org_opencontainers_image_vendor\",\"container_label_org_opencontainers_image_version\",\"container_label_restartcount\",\"cpu\",\"device\",\"device_error\",\"dialer_name\",\"domainname\",\"duplex\",\"endpoint\",\"event\",\"failure_type\",\"fstype\",\"goarch\",\"goos\",\"goversion\",\"handler\",\"id\",\"id_like\",\"image\",\"instance\",\"interface\",\"interval\",\"ip\",\"job\",\"kernelVersion\",\"le\",\"listener_name\",\"machine\",\"machine_id\",\"major\",\"method\",\"minor\",\"mode\",\"mountpoint\",\"name\",\"nodename\",\"operation\",\"operstate\",\"osVersion\",\"path\",\"pretty_name\",\"product_family\",\"product_name\",\"product_sku\",\"product_version\",\"quantile\",\"queue\",\"reason\",\"release\",\"revision\",\"role\",\"rotational\",\"rule_group\",\"scope\",\"scrape_job\",\"severity\",\"slice\",\"state\",\"status\",\"sysname\",\"system_uuid\",\"system_vendor\",\"tags\",\"time_zone\",\"type\",\"version\",\"version_codename\",\"version_id\"]}"
+ }
+}

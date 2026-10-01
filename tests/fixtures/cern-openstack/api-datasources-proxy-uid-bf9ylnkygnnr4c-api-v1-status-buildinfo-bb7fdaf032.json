@@ -1,0 +1,12 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/api/datasources/proxy/uid/bf9ylnkygnnr4c/api/v1/status/buildinfo",
+  "params": []
+ },
+ "response": {
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"success\",\"data\":{\"application\":\"Grafana Mimir\",\"version\":\"2.15.0\",\"revision\":\"24e4281\",\"branch\":\"HEAD\",\"goVersion\":\"go1.23.2\",\"features\":{\"ruler_config_api\":\"true\",\"alertmanager_config_api\":\"true\",\"query_sharding\":\"true\",\"federated_rules\":\"false\"}}}"
+ }
+}

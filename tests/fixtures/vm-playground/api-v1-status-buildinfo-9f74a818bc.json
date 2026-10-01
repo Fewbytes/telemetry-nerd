@@ -1,0 +1,12 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/select/0/prometheus/api/v1/status/buildinfo",
+  "params": []
+ },
+ "response": {
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"success\",\"data\":{\"version\":\"2.24.0\"}}"
+ }
+}

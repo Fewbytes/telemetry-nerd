@@ -1,0 +1,21 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/api/datasources/proxy/uid/b490b4f4-28d2-4f0b-8fe1-b0bb61c365f6/api/v1/query",
+  "params": [
+   [
+    "query",
+    "count by (le, job) (go_gc_pauses_seconds_bucket)"
+   ],
+   [
+    "time",
+    "1790877600.000"
+   ]
+  ]
+ },
+ "response": {
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"vector\",\"result\":[{\"metric\":{\"job\":\"thanos-compact\",\"le\":\"+Inf\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-compact\",\"le\":\"0.0009175039999999999\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-compact\",\"le\":\"0.010485759999999998\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-compact\",\"le\":\"0.11744051199999998\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-compact\",\"le\":\"6.399999999999999e-07\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-compact\",\"le\":\"6.399999999999999e-08\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-compact\",\"le\":\"7.167999999999999e-06\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-compact\",\"le\":\"8.191999999999999e-05\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-query\",\"le\":\"+Inf\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-query\",\"le\":\"0.0009175039999999999\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-query\",\"le\":\"0.010485759999999998\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-query\",\"le\":\"0.11744051199999998\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-query\",\"le\":\"6.399999999999999e-07\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-query\",\"le\":\"6.399999999999999e-08\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-query\",\"le\":\"7.167999999999999e-06\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-query\",\"le\":\"8.191999999999999e-05\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-sidecar\",\"le\":\"+Inf\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-sidecar\",\"le\":\"0.0009175039999999999\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-sidecar\",\"le\":\"0.010485759999999998\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-sidecar\",\"le\":\"0.11744051199999998\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-sidecar\",\"le\":\"6.399999999999999e-07\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-sidecar\",\"le\":\"6.399999999999999e-08\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-sidecar\",\"le\":\"7.167999999999999e-06\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-sidecar\",\"le\":\"8.191999999999999e-05\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-store\",\"le\":\"+Inf\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-store\",\"le\":\"0.0009175039999999999\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-store\",\"le\":\"0.010485759999999998\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-store\",\"le\":\"0.11744051199999998\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-store\",\"le\":\"6.399999999999999e-07\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-store\",\"le\":\"6.399999999999999e-08\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-store\",\"le\":\"7.167999999999999e-06\"},\"value\":[1790877600,\"1\"]},{\"metric\":{\"job\":\"thanos-store\",\"le\":\"8.191999999999999e-05\"},\"value\":[1790877600,\"1\"]}]}}\n"
+ }
+}

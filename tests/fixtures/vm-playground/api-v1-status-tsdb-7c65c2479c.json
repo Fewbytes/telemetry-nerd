@@ -1,0 +1,21 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/select/0/prometheus/api/v1/status/tsdb",
+  "params": [
+   [
+    "limit",
+    "100"
+   ],
+   [
+    "topN",
+    "100"
+   ]
+  ]
+ },
+ "response": {
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"success\",\"isPartial\":false,\"data\":{\"totalSeries\":219069,\"totalLabelValuePairs\":2914490,\"seriesCountByMetricName\":[{\"name\":\"github_downloads_total\",\"value\":31840,\"requestsCount\":27179064,\"lastRequestTimestamp\":1790696297},{\"name\":\"flag\",\"value\":21360,\"requestsCount\":99610765,\"lastRequestTimestamp\":1790863087},{\"name\":\"vm_http_request_duration_seconds_bucket\",\"value\":5928,\"requestsCount\":8447105,\"lastRequestTimestamp\":1790798692},{\"name\":\"go_gc_pauses_seconds_bucket\",\"value\":4526,\"requestsCount\":2774174,\"lastRequestTimestamp\":1790798692},{\"name\":\"go_sched_latencies_seconds_bucket\",\"value\":4526,\"requestsCount\":3484741651,\"lastRequestTimestamp\":1790883374},{\"name\":\"vm_http_requests_total\",\"value\":2534,\"requestsCount\":40645721,\"lastRequestTimestamp\":1790870919},{\"name\":\"vm_log_messages_total\",\"value\":2404,\"requestsCount\":41496357,\"lastRequestTimestamp\":1790883374},{\"name\":\"cardinality_churn_ratio\",\"value\":2212,\"requestsCount\":3352974,\"lastRequestTimestamp\":1790883360},{\"name\":\"node_cpu_seconds_total\",\"value\":1664,\"requestsCount\":301907587,\"lastRequestTimestamp\":1790883381},{\"name\":\"vl_storage_per_query_uncompressed_values_processed_bytes_bucket\",\"value\":1520,\"requestsCount\":644762,\"lastRequestTimestamp\":1790609228}],\"seriesCountByLabelName\":[{\"name\":\"__name__\",\"value\":219069},{\"name\":\"job\",\"value\":204274},{\"name\":\"namespace\",\"value\":204246},{\"name\":\"prometheus\",\"value\":204246},{\"name\":\"container\",\"value\":203718},{\"name\":\"endpoint\",\"value\":203407},{\"name\":\"service\",\"value\":193308},{\"name\":\"pod\",\"value\":171613},{\"name\":\"instance\",\"value\":171405},{\"name\":\"cluster\",\"value\":120680}],\"seriesCountByFocusLabelValue\":[],\"seriesCountByLabelValuePair\":[{\"name\":\"endpoint=http\",\"value\":158085},{\"name\":\"cluster=sandbox\",\"value\":120680},{\"name\":\"prometheus=monitoring/monitoring-vmagent\",\"value\":120680},{\"name\":\"victoriametrics_app=true\",\"value\":117980},{\"name\":\"namespace=play-otel\",\"value\":84654},{\"name\":\"prometheus=play-otel/play-monitoring\",\"value\":83566},{\"name\":\"namespace=benchmark\",\"value\":46682},{\"name\":\"endpoint=metrics\",\"value\":40264},{\"name\":\"container=node-exporter\",\"value\":36004},{\"name\":\"job=node-exporter\",\"value\":36004}],\"labelValueCountByLabelName\":[{\"name\":\"asset\",\"value\":10584},{\"name\":\"__name__\",\"value\":1652},{\"name\":\"name\",\"value\":890},{\"name\":\"group_by_values\",\"value\":776},{\"name\":\"by__name__\",\"value\":688},{\"name\":\"version\",\"value\":571},{\"name\":\"id\",\"value\":302},{\"name\":\"vmrange\",\"value\":290},{\"name\":\"location\",\"value\":232},{\"name\":\"device\",\"value\":215}]}}"
+ }
+}

@@ -1,0 +1,12 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/api/datasources/proxy/uid/b490b4f4-28d2-4f0b-8fe1-b0bb61c365f6/api/v1/status/buildinfo",
+  "params": []
+ },
+ "response": {
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"success\",\"data\":{\"version\":\"0.32.5\",\"revision\":\"750e8a94eed5226cd4562117295d540a968c163c\",\"branch\":\"HEAD\",\"buildUser\":\"root@053ebc7b5322\",\"buildDate\":\"20231019-04:13:41\",\"goVersion\":\"go1.21.3\"}}\n"
+ }
+}

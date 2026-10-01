@@ -1,0 +1,21 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/api/v1/status/tsdb",
+  "params": [
+   [
+    "limit",
+    "100"
+   ],
+   [
+    "topN",
+    "100"
+   ]
+  ]
+ },
+ "response": {
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"success\",\"data\":{\"headStats\":{\"numSeries\":5300,\"numLabelPairs\":1220,\"chunkCount\":19444,\"minTime\":1790877600016,\"maxTime\":1790883352977},\"seriesCountByMetricName\":[{\"name\":\"demo_api_request_duration_seconds_bucket\",\"value\":702},{\"name\":\"prometheus_http_response_size_bytes_bucket\",\"value\":513},{\"name\":\"container_tasks_state\",\"value\":215},{\"name\":\"container_memory_failures_total\",\"value\":172},{\"name\":\"prometheus_http_requests_total\",\"value\":99},{\"name\":\"container_fs_reads_total\",\"value\":72},{\"name\":\"container_fs_writes_total\",\"value\":72},{\"name\":\"container_blkio_device_usage_total\",\"value\":62},{\"name\":\"prometheus_http_response_size_bytes_count\",\"value\":57},{\"name\":\"prometheus_http_response_size_bytes_sum\",\"value\":57}],\"labelValueCountByLabelName\":[{\"name\":\"__name__\",\"value\":647},{\"name\":\"le\",\"value\":85},{\"name\":\"handler\",\"value\":64},{\"name\":\"device\",\"value\":51},{\"name\":\"collector\",\"value\":46},{\"name\":\"id\",\"value\":44},{\"name\":\"name\",\"value\":15},{\"name\":\"code\",\"value\":13},{\"name\":\"address\",\"value\":12},{\"name\":\"mode\",\"value\":10}],\"memoryInBytesByLabelName\":[{\"name\":\"__name__\",\"value\":227074},{\"name\":\"instance\",\"value\":134993},{\"name\":\"id\",\"value\":87599},{\"name\":\"job\",\"value\":64634},{\"name\":\"container_label_com_docker_compose_image\",\"value\":50398},{\"name\":\"container_label_com_docker_compose_config_hash\",\"value\":49952},{\"name\":\"container_label_com_docker_compose_project_config_files\",\"value\":43262},{\"name\":\"device\",\"value\":41568},{\"name\":\"container_label_com_docker_compose_project_working_dir\",\"value\":34342},{\"name\":\"container_label_com_docker_compose_project\",\"value\":26314}],\"seriesCountByLabelValuePair\":[{\"name\":\"instance=cadvisor:8080\",\"value\":2180},{\"name\":\"job=cadvisor\",\"value\":2180},{\"name\":\"instance=prometheus:9090\",\"value\":1369},{\"name\":\"job=prometheus\",\"value\":1369},{\"name\":\"job=demo\",\"value\":1010},{\"name\":\"instance=node-exporter:9100\",\"value\":741},{\"name\":\"job=node\",\"value\":741},{\"name\":\"__name__=demo_api_request_duration_seconds_bucket\",\"value\":702},{\"name\":\"id=/\",\"value\":546},{\"name\":\"__name__=prometheus_http_response_size_bytes_bucket\",\"value\":513}]}}"
+ }
+}
