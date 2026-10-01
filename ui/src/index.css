@@ -21,13 +21,14 @@
 body { margin: 0; background: var(--bg); }
 main { max-width: 1200px; margin: 0 auto; padding: 16px; }
 .panel { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 16px; }
-.panel header { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 6px; }
+.panel header { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; font-weight: 600; margin-bottom: 6px; }
 .panel .status { font-weight: 400; color: var(--muted); }
 .panel .badge { display: inline-block; background: var(--badge); font-size: 12px; padding: 2px 6px; border-radius: 4px; }
 .panel footer { font-size: 12px; color: var(--muted); margin-top: 6px; }
 .error { color: var(--error); }
 .empty { color: var(--muted); }
-.panel .answered-by { color: var(--muted); font-size: 0.85em; margin-left: 0.5em; }
+.panel a.answered-by { color: var(--muted); font-size: 0.85em; text-decoration: none; }
+.panel a.answered-by:hover { text-decoration: underline; }
 .panel button.close { margin-left: auto; background: none; border: none; font-size: 1.2em; cursor: pointer; color: var(--muted); }
 
 /* App header (title + theme toggle) */

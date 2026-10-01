@@ -1,6 +1,6 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 
-export const DAEMON = "http://127.0.0.1:7071";
+export const DAEMON = `http://127.0.0.1:${process.env.E2E_PORT ?? 7071}`;
 
 /** query + show a demo panel, as the skeleton spec does. */
 export async function seedPanel(

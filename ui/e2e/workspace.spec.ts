@@ -62,7 +62,7 @@ test("Claude finding answers the panel; user verdict rejects it", async ({ page,
   const card = page.locator(`#finding-${finding}`);
   await expect(card).toBeVisible();
   await expect(card.locator(".scope")).toContainText("tn_demo_latency_seconds");
-  await expect(page.locator(`[data-panel-id="${panel.id}"] .answered-by`)).toHaveText(
+  await expect(page.locator(`[data-panel-id="${panel.id}"] .status.answered-by`)).toHaveText(
     `answered → ${finding}`,
   );
 
