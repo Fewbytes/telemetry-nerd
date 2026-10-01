@@ -20,6 +20,11 @@ _SCHEMA = [
     """CREATE TABLE IF NOT EXISTS dataset_rows (
         dataset_id VARCHAR, ts_ms BIGINT, series_id VARCHAR,
         avg DOUBLE, min DOUBLE, max DOUBLE, count BIGINT)""",
+    """CREATE TABLE IF NOT EXISTS dist_rows (
+        dataset_id VARCHAR, ts_ms BIGINT, series_id VARCHAR,
+        bucket_lo DOUBLE, bucket_hi DOUBLE, count DOUBLE)""",
+    """CREATE TABLE IF NOT EXISTS dist_columns (
+        dataset_id VARCHAR, ts_ms BIGINT, series_id VARCHAR, n DOUBLE)""",
 ]
 
 

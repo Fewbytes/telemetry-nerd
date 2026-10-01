@@ -1,8 +1,10 @@
 import itertools
+import math
 
 import pyarrow as pa
 import pytest
 
+from telemetry_nerd.analysis.histogram import from_matrix
 from telemetry_nerd.datasets.db import open_duckdb
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.errors import NotFound
@@ -75,3 +77,34 @@ def test_datasets_are_immutable_snapshots(store):
 def test_unknown_dataset(store):
     with pytest.raises(NotFound):
         store.get("d404")
+
+
+def _dist():
+    return from_matrix(
+        "s",
+        [
+            {"metric": {"le": "1"}, "values": [[60, "3"]]},
+            {"metric": {"le": "+Inf"}, "values": [[60, "5"], [120, "0"]]},
+            {"metric": {"le": "1"}, "values": [[120, "0"]]},
+        ],
+        expr="e",
+    )
+
+
+def test_distribution_round_trip_keeps_infinite_edges_and_zero_columns(store):
+    meta = store.put_distribution(
+        source="s", rng=TimeRange(60_000, 120_000), step_ms=60_000, resolution_ms=15_000,
+        dist=_dist(), histogram={"selector": "x_bucket", "by": []}, n_min=20,
+    )  # fmt: skip
+    m2, d2 = store.get_distribution(meta.id)
+    assert m2.representation == "distribution" and m2.n_min == 20
+    assert m2.scheme["kind"] == "classic" and m2.histogram == {"selector": "x_bucket", "by": []}
+    assert [(r["bucket_lo"], r["bucket_hi"], r["count"]) for r in d2.rows.to_pylist()] == [
+        (-math.inf, 1.0, 3.0),
+        (1.0, math.inf, 2.0),
+    ]
+    assert [(c["ts_ms"], c["n"]) for c in d2.columns.to_pylist()] == [(60_000, 5.0), (120_000, 0.0)]
+    assert d2.scheme.edges == (1.0,)
+    assert store.series_count(meta.id) == 1
+    with pytest.raises(ValueError, match="distribution"):
+        store.get(meta.id)
