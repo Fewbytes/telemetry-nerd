@@ -74,6 +74,11 @@ class WorkspaceStore:
         )
         return panel
 
+    def set_spec(self, panel_id: str, spec: dict) -> Panel:
+        self.get_panel(panel_id)
+        self._db.execute("UPDATE panels SET spec = ? WHERE id = ?", (json.dumps(spec), panel_id))
+        return self.get_panel(panel_id)
+
     def get_panel(self, panel_id: str) -> Panel:
         row = self._db.execute(
             f"SELECT {_PANEL_COLS} FROM panels WHERE id = ?", (panel_id,)

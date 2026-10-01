@@ -4,6 +4,7 @@ import json
 import pytest
 
 from telemetry_nerd.channel.format import describe_event
+from telemetry_nerd.charts.yview import YView
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.workspace.models import AnnotationIn, FindingIn, GapIn, TimeSpan
 
@@ -366,3 +367,64 @@ def test_highlight_and_unhighlight_events(svc):
     assert u.klass == "intentional" and u.payload["ttl_ms"] is None
     c = svc.ws.unhighlight(h.id, "user")
     assert (c.type, c.object_id, c.klass) == ("object.unhighlighted", h.id, "internal")
+
+
+async def _panel(svc):
+    ds = (await svc.query("up", start="now-2h", end="now-1h"))["dataset"]
+    return svc.show(ds, "Is it up?").panel.id
+
+
+async def test_claude_suggests_and_user_selects_a_view(svc):
+    pid = await _panel(svc)
+    v, warnings = svc.ws.suggest_y_view(
+        pid,
+        YView(
+            mode="band",
+            label="steady band",
+            reason="ignore the spike",
+            lo=0.4,
+            hi=1.0,
+            author="claude",
+        ),
+        "claude",
+    )
+    assert v.id == "v1" and warnings == ["band extends below the data (min 0.5)"]
+    p = svc.ws.select_y_view(pid, "user", suggestion="v1")
+    assert p.spec["y"]["selected"]["label"] == "steady band"
+    ev = svc.log.since(0)[-1]
+    assert (ev.type, ev.klass) == ("panel.y_view_selected", "ambient")
+    assert 'switched p1 y-view to "steady band"' in describe_event(ev)
+    assert svc.ws.brief()["panels"][0]["y_view"] == "steady band"
+
+
+async def test_builtin_selection_and_auto_clears(svc):
+    pid = await _panel(svc)
+    assert (
+        svc.ws.select_y_view(pid, "user", mode="log").spec["y"]["selected"]["label"] == "log scale"
+    )
+    assert svc.ws.select_y_view(pid, "user", mode="auto").spec["y"]["selected"] is None
+
+
+async def test_suggestion_limits_and_replace(svc):
+    pid = await _panel(svc)
+    for i in range(4):
+        svc.ws.suggest_y_view(
+            pid, YView(mode="data", label=f"v{i}", reason="r", author="claude"), "claude"
+        )
+    with pytest.raises(ValueError, match="replace"):
+        svc.ws.suggest_y_view(
+            pid, YView(mode="zero", label="z", reason="r", author="claude"), "claude"
+        )
+    v, _ = svc.ws.suggest_y_view(
+        pid, YView(mode="zero", label="z", reason="r", author="claude"), "claude", replace=True
+    )
+    assert [x["id"] for x in svc.workspace.get_panel(pid).spec["y"]["views"]] == [v.id] == ["v5"]
+
+
+async def test_refusals(svc):
+    pid = await _panel(svc)
+    with pytest.raises(ValueError, match="percentile"):
+        svc.ws.select_y_view(pid, "user", mode="meaningful")
+    with pytest.raises(NotFound):
+        svc.ws.select_y_view(pid, "user", suggestion="v9")
+    assert svc.log.since(0)[-1].type == "panel.created"  # nothing logged on refusal

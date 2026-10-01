@@ -38,6 +38,12 @@ def describe_event(e: Event) -> str:
             return f"{who} added {p['kind']} {e.object_id}{on}{label}"
         case "panel.created":
             return f"{who} opened {e.object_id} ({p.get('question', '')})"
+        case "panel.y_view_selected":
+            via = f" (Claude's {p['suggestion']}: {p['reason']})" if p.get("suggestion") else ""
+            return f'{who} switched {e.object_id} y-view to "{p["label"]}"{via}'
+        case "panel.y_view_suggested":
+            v = p["view"]
+            return f'{who} suggested y-view {v["id"]} "{v["label"]}" on {e.object_id}: {v.get("reason", "")}'
         case "panel.closed":
             return f"{who} closed {e.object_id}"
         case "catalog.claimed":

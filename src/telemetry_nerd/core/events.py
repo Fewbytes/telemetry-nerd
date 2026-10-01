@@ -29,7 +29,9 @@ INTENTIONAL_TYPES = frozenset(
         "catalog.claimed",  # a user's catalog edit is a correction Claude must know about
     }
 )
-AMBIENT_TYPES = frozenset({"panel.created", "panel.closed", "focus.changed"})
+AMBIENT_TYPES = frozenset(
+    {"panel.created", "panel.closed", "focus.changed", "panel.y_view_selected"}
+)
 
 
 def check_actor(actor: str) -> None:

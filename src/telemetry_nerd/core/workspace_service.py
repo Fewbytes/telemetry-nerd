@@ -20,6 +20,14 @@ from telemetry_nerd.catalog.models import (
 )
 from telemetry_nerd.catalog.store import CatalogStore
 from telemetry_nerd.channel.format import describe_event
+from telemetry_nerd.charts.spec import ChartSpec
+from telemetry_nerd.charts.yview import (
+    BUILTIN_LABELS,
+    MAX_SUGGESTIONS,
+    YView,
+    check_view,
+    value_stats,
+)
 from telemetry_nerd.core.events import Actor, Event, EventLog, check_actor
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.errors import NotFound
@@ -364,6 +372,84 @@ class WorkspaceService:
                 m["seq"] = seqs.get(m["id"])
         return threads
 
+    # y-views (spec §6.2, bead 2as.17) ----------------------------------
+    def _time_spec(self, panel_id: str) -> tuple[Panel, ChartSpec]:
+        p = self.workspace.get_panel(panel_id)
+        spec = ChartSpec.model_validate(p.spec)
+        if any(layer.mark != "line+envelope" for layer in spec.layers):
+            raise ValueError(
+                f"y-views apply to time-series panels; {p.id} is a heatmap/histogram "
+                "with its own value-axis controls"
+            )
+        return p, spec
+
+    def _check(self, p: Panel, view: YView) -> list[str]:
+        meta, result = self.datasets.get(p.dataset_ids[0])
+        return check_view(view, value_stats(result.buckets, meta.representation, meta.n_min))
+
+    @atomic
+    def suggest_y_view(
+        self, panel_id: str, view: YView, actor: Actor, replace: bool = False
+    ) -> tuple[YView, list[str]]:
+        p, spec = self._time_spec(panel_id)
+        warnings = self._check(p, view)
+        keep = [] if replace else [v for v in spec.y.views if v.label != view.label]
+        if len(keep) >= MAX_SUGGESTIONS:
+            raise ValueError(
+                f"{p.id} already has {MAX_SUGGESTIONS} suggested views; pass replace=true to start over"
+            )
+        n = 1 + max((int(v.id[1:]) for v in spec.y.views if v.id), default=0)
+        saved = YView.model_validate({**view.model_dump(), "id": f"v{n}", "author": actor})
+        spec.y.views = [*keep, saved]
+        self.workspace.set_spec(p.id, spec.model_dump())
+        self.log.append(
+            actor,
+            "panel.y_view_suggested",
+            p.id,
+            {"view": saved.model_dump(exclude_none=True), "warnings": warnings},
+        )
+        return saved, warnings
+
+    @atomic
+    def select_y_view(
+        self,
+        panel_id: str,
+        actor: Actor,
+        *,
+        mode: str | None = None,
+        lo: float | None = None,
+        hi: float | None = None,
+        suggestion: str | None = None,
+    ) -> Panel:
+        p, spec = self._time_spec(panel_id)
+        if suggestion is not None:
+            view = next((v for v in spec.y.views if v.id == suggestion), None)
+            if view is None:
+                raise NotFound(f"view {suggestion} not found on {p.id}")
+        elif mode is None:
+            raise ValueError("give a mode or a suggestion id")
+        else:
+            view = YView.model_validate(
+                {"mode": mode, "label": BUILTIN_LABELS.get(mode, mode), "lo": lo, "hi": hi}
+            )
+        self._check(p, view)  # refusals raise; band warnings are shown in the UI as clipping
+        spec.y.selected = None if view.mode == "auto" else view
+        p = self.workspace.set_spec(p.id, spec.model_dump())
+        self.log.append(
+            actor,
+            "panel.y_view_selected",
+            p.id,
+            {
+                "mode": view.mode,
+                "label": view.label,
+                "lo": view.lo,
+                "hi": view.hi,
+                "suggestion": view.id,
+                "reason": view.reason,
+            },
+        )
+        return p
+
     def brief(self) -> dict:
         """Compact state for Claude: newest first, truncated to BRIEF_BUDGET_BYTES."""
         hyps = [
@@ -380,7 +466,14 @@ class WorkspaceService:
             if t.messages and t.messages[-1].author == "user"
         ]
         panels = [
-            {"id": p.id, "question": p.question, "status": p.status}
+            {
+                "id": p.id,
+                "question": p.question,
+                "status": p.status,
+                **(
+                    {"y_view": sel["label"]} if (sel := p.spec.get("y", {}).get("selected")) else {}
+                ),
+            }
             for p in self.workspace.list_panels()
         ]
         out: dict = {
