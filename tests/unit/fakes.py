@@ -14,6 +14,8 @@ from telemetry_nerd.model.series import (
     series_id,
 )
 from telemetry_nerd.model.time import TimeRange
+from telemetry_nerd.sources.registry import SourceRegistry
+from telemetry_nerd.sources.spec import SourceSpec
 from telemetry_nerd.workspace.db import open_workspace_db
 from telemetry_nerd.workspace.objects import ObjectStore
 from telemetry_nerd.workspace.store import WorkspaceStore
@@ -75,7 +77,13 @@ class PartialSource(FakeSource):
         return FetchResult(res.buckets, res.series, partial=1)
 
 
-def make_service(tmp_path, source=None, clock=lambda: NOW) -> TelemetryService:
+def fake_factory(spec: SourceSpec) -> FakeSource:
+    return FakeSource(name=spec.name, identity=f"fake|{spec.url}")
+
+
+def make_service(
+    tmp_path, source=None, clock=lambda: NOW, factory=fake_factory
+) -> TelemetryService:
     source = source or FakeSource()
     con = open_duckdb(tmp_path / "series.duckdb")
     wcon = open_workspace_db(tmp_path / "workspace.db")
@@ -83,8 +91,10 @@ def make_service(tmp_path, source=None, clock=lambda: NOW) -> TelemetryService:
     datasets = DatasetStore(con, workspace.next_id, clock=clock)
     log = EventLog(wcon, clock=clock)
     objects = ObjectStore(wcon, workspace.next_id, clock=clock)
+    sources = SourceRegistry(wcon, factory, clock=clock)
+    sources.attach("default", source)
     return TelemetryService(
-        sources={"default": source},
+        sources=sources,
         cache=SeriesCache(con, clock=clock),
         datasets=datasets,
         workspace=workspace,

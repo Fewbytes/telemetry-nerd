@@ -38,6 +38,11 @@ CREATE TABLE IF NOT EXISTS objects (
     data TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS objects_kind ON objects (kind, anchor);
+CREATE TABLE IF NOT EXISTS sources (
+    name TEXT PRIMARY KEY,
+    spec TEXT NOT NULL,
+    created_at_ms INTEGER NOT NULL
+);
 """
 
 _PANEL_COLUMNS = {

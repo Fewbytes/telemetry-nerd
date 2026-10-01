@@ -17,7 +17,9 @@ from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.time import TimeRange, now_ms, parse_duration, parse_time
-from telemetry_nerd.sources.base import LimitExceeded, Source, SourceError
+from telemetry_nerd.sources.base import LimitExceeded, SourceError
+from telemetry_nerd.sources.registry import SourceRegistry
+from telemetry_nerd.sources.spec import RESERVED_NAMES, SourceSpec
 from telemetry_nerd.workspace.store import Panel, WorkspaceStore
 
 _NICE_STEPS = [
@@ -48,7 +50,7 @@ class ShowResult:
 
 @dataclass
 class TelemetryService:
-    sources: dict[str, Source]
+    sources: SourceRegistry
     cache: SeriesCache
     datasets: DatasetStore
     workspace: WorkspaceStore
@@ -70,7 +72,10 @@ class TelemetryService:
         if src is None:
             raise SourceError(
                 f"unknown source {source!r}",
-                hint=f"available sources: {', '.join(sorted(self.sources))}",
+                hint=(
+                    f"available sources: {', '.join(sorted(self.sources)) or 'none'}; "
+                    "connect one with source_connect"
+                ),
             )
         now = self.clock()
         rng = TimeRange(parse_time(start, now), parse_time(end, now))
@@ -101,6 +106,61 @@ class TelemetryService:
         summary = summarize(meta, result, now_ms=now, settle_ms=self.cache.settle_ms)
         self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
         return {"dataset": meta.id, "summary": summary}
+
+    @staticmethod
+    def _refuse_reserved(name: str) -> None:
+        if name in RESERVED_NAMES:
+            raise SourceError(
+                f"source name {name!r} is reserved for the daemon's configured source",
+                hint="choose another name, e.g. the host or Grafana datasource name",
+            )
+
+    @staticmethod
+    async def _close(source: object) -> None:
+        aclose = getattr(source, "aclose", None)
+        if aclose is not None:
+            await aclose()
+
+    async def source_connect(
+        self, spec: SourceSpec, *, replace: bool = False, actor: Actor = "claude"
+    ) -> dict:
+        self._refuse_reserved(spec.name)
+        if self.sources.spec(spec.name) is not None and not replace:
+            raise SourceError(
+                f"source {spec.name!r} already exists",
+                hint="pass replace=true to reconfigure it, or choose another name",
+            )
+        source = self.sources.build(spec)  # raises MissingSecret before any network call
+        try:
+            status = await source.probe()
+        except SourceError:
+            await self._close(source)
+            raise
+        old = self.sources.add(spec, source, replace=replace)
+        if old is not None:
+            await self._close(old)
+        public = spec.public()
+        self.log.append(actor, "source.connected", spec.name, {"source": public})
+        return {"source": public, "status": status}
+
+    def source_list(self) -> list[dict]:
+        return self.sources.describe()
+
+    async def source_status(self, name: str) -> dict:
+        source = self.sources.get(name)
+        if source is None:
+            raise SourceError(f"unknown source {name!r}", hint="see source_list for names")
+        try:
+            return await source.probe()
+        except SourceError as e:
+            return {"reachable": False, "error": str(e), "hint": e.hint}
+
+    async def source_disconnect(self, name: str, actor: Actor = "claude") -> None:
+        self._refuse_reserved(name)
+        old = self.sources.remove(name)
+        if old is not None:
+            await self._close(old)
+        self.log.append(actor, "source.disconnected", name, {})
 
     def show(
         self, dataset_id: str, question: str, actor: Actor = "claude", unit: str | None = None
