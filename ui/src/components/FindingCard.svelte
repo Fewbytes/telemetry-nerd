@@ -1,6 +1,7 @@
 <script lang="ts">
   import { postJSON, type Annotation, type Finding } from "../lib/api";
   import { refLabel, scopeLine, statLine } from "../lib/format";
+  import PinButton from "./PinButton.svelte";
 
   let {
     finding,
@@ -26,7 +27,7 @@
 </script>
 
 <article class="finding" id="finding-{finding.id}" data-verdict={finding.verdict ?? "none"}>
-  <h3 class="claim"><span class="obj-id">{finding.id}</span> {finding.claim}</h3>
+  <h3 class="claim"><span class="obj-id">{finding.id}</span> {finding.claim} <PinButton object={finding.id} /></h3>
   <p class="scope">{scopeLine(finding.scope)}</p>
 
   {#if finding.evidence.length > 0}

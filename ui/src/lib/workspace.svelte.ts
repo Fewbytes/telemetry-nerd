@@ -1,5 +1,6 @@
 import { fetchWorkspace, subscribe, type Presence, type Snapshot, type WorkspaceEvent } from "./api";
 import type { DaemonState } from "./connection";
+import { applyHighlightEvent, expire, nextExpiry, type Highlights } from "./highlights";
 
 const RELOAD_TYPES = new Set([
   "panel.created", "panel.answered", "finding.created", "finding.verdict",
@@ -10,14 +11,17 @@ const RELOAD_TYPES = new Set([
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 15000;
 
+// highlights are transient UI state folded from the stream; they never change the snapshot
 export const needsReload = (e: WorkspaceEvent): boolean =>
-  e.klass !== "internal" || RELOAD_TYPES.has(e.type);
+  !e.type.startsWith("object.") && (e.klass !== "internal" || RELOAD_TYPES.has(e.type));
 
 export function createWorkspace() {
   let snapshot = $state.raw<Snapshot | null>(null);
   let error = $state.raw<string | null>(null);
   let daemon = $state<DaemonState>("connecting");
   let presence = $state.raw<Presence | null>(null);
+  let highlights = $state.raw<Highlights>(new Map());
+  let expiryTimer: ReturnType<typeof setTimeout> | undefined;
   let lastSeq = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -41,6 +45,16 @@ export function createWorkspace() {
         retryTimer = setTimeout(load, Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** failures++));
       });
 
+  const armExpiry = () => {
+    clearTimeout(expiryTimer);
+    const at = nextExpiry(highlights);
+    if (at === null) return;
+    expiryTimer = setTimeout(() => {
+      highlights = expire(highlights, Date.now());
+      armExpiry();
+    }, Math.max(0, at - Date.now()));
+  };
+
   const schedule = () => {
     clearTimeout(timer);
     timer = setTimeout(load, 100);
@@ -53,6 +67,8 @@ export function createWorkspace() {
     get daemon() { return daemon; },
     /** latest presence frame; null until known and while the daemon is unreachable */
     get presence() { return presence; },
+    /** active highlights (Claude's and the user's), expired ones already dropped */
+    get highlights() { return highlights; },
     reload: load,
     start(): () => void {
       let stopUnsub = () => {};
@@ -62,6 +78,11 @@ export function createWorkspace() {
         let dropped = false;
         stopUnsub = subscribe((e) => {
           lastSeq = Math.max(lastSeq, e.seq);
+          const next = applyHighlightEvent(highlights, e, Date.now());
+          if (next !== highlights) {
+            highlights = next;
+            armExpiry();
+          }
           if (needsReload(e)) schedule();
         }, () => lastSeq, {
           onPresence: (p) => (presence = p),
@@ -77,7 +98,7 @@ export function createWorkspace() {
           },
         });
       });
-      return () => { stopped = true; clearTimeout(timer); clearTimeout(retryTimer); stopUnsub(); };
+      return () => { stopped = true; clearTimeout(timer); clearTimeout(retryTimer); clearTimeout(expiryTimer); stopUnsub(); };
     },
   };
 }

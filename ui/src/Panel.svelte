@@ -13,6 +13,7 @@
   import { plotColors, theme } from "./lib/theme.svelte";
   import SelectionMenu from "./components/SelectionMenu.svelte";
   import PanelThread from "./components/PanelThread.svelte";
+  import PinButton from "./components/PinButton.svelte";
 
   let { panel, annotations = [], threads = [] }: {
     panel: Panel; annotations?: Annotation[]; threads?: Thread[];
@@ -176,6 +177,7 @@
     {:else}
       <span class="status {panel.status}">{panel.status}</span>
     {/if}
+    <PinButton object={panel.id} />
     <button class="close" type="button" aria-label="Close panel" onclick={close}>×</button>
   </header>
   {#if error}<div class="error">{error}</div>{/if}

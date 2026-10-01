@@ -167,3 +167,18 @@ ul.gaps { list-style: none; margin: 0; padding: 0; }
 @keyframes ref-flash { 0%, 60% { box-shadow: 0 0 0 4px var(--ann-claude); } 100% { box-shadow: 0 0 0 0 transparent; } }
 .ref-flash { animation: ref-flash 1.2s ease-out; }
 @media (prefers-reduced-motion: reduce) { .ref-flash { animation: none; outline: 2px solid var(--ann-claude); } }
+
+/* Highlights: strip + accent on targets (Claude purple, user orange) */
+.highlight-strip { list-style: none; margin: 0 0 12px; padding: 6px 8px; display: flex; flex-wrap: wrap; gap: 8px; border: 1px dashed var(--border); border-radius: 8px; font-size: 13px; }
+.highlight-item { display: flex; gap: 6px; align-items: baseline; }
+.highlight-item .dismiss { border: 0; background: none; color: var(--muted); cursor: pointer; font-size: 14px; padding: 0 2px; }
+.highlighted { outline: 2px solid var(--ann-claude); outline-offset: 2px; }
+.highlighted[data-highlight-author="user"] { outline-color: var(--ann-user); }
+.highlight-item[data-highlight-author="user"] .ref-chip { outline: 1px solid var(--ann-user); }
+.highlight-item[data-highlight-author="claude"] .ref-chip { outline: 1px solid var(--ann-claude); }
+.pin { display: inline-flex; gap: 4px; align-items: baseline; font-weight: 400; }
+.pin-btn { border: 0; background: none; cursor: pointer; font-size: 12px; opacity: 0.45; padding: 0 2px; }
+.pin-btn:hover, .pin-btn.active { opacity: 1; }
+.pin-note { display: inline-flex; gap: 4px; }
+.pin-note input { font: inherit; font-size: 12px; min-width: 220px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); }
+.pin-note button { font: inherit; font-size: 12px; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); cursor: pointer; }

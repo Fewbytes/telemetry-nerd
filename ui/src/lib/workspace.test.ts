@@ -16,6 +16,10 @@ describe("needsReload", () => {
   it("ignores unknown internal events", () => {
     expect(needsReload(ev("cache.warm", "internal"))).toBe(false);
   });
+  it("never reloads for highlight events, whatever their class", () => {
+    expect(needsReload(ev("object.highlighted", "intentional"))).toBe(false);
+    expect(needsReload(ev("object.unhighlighted", "ambient"))).toBe(false);
+  });
   it("reloads for listed types even when internal", () => {
     for (const t of ["panel.created", "panel.answered", "finding.created", "finding.verdict",
       "annotation.created", "annotation.deleted", "hypothesis.created",

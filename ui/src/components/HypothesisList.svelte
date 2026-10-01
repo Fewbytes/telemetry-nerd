@@ -2,6 +2,7 @@
   import { postJSON, type Finding, type Hypothesis } from "../lib/api";
   import { supportingCaveats } from "../lib/caveats";
   import { isSendKey } from "../lib/keys";
+  import PinButton from "./PinButton.svelte";
 
   let { hypotheses = [], findings = [] }: { hypotheses?: Hypothesis[]; findings?: Finding[] } = $props();
 
@@ -27,7 +28,7 @@
 
 {#snippet item(h: Hypothesis)}
   <li class="hypothesis" id="hypothesis-{h.id}" data-status={h.status}>
-    <div class="statement"><span class="obj-id">{h.id}</span> {h.statement}</div>
+    <div class="statement"><span class="obj-id">{h.id}</span> {h.statement} <PinButton object={h.id} /></div>
     <div class="evidence">
       <span class="for">
         for {h.evidence_for.length}

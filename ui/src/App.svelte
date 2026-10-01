@@ -11,13 +11,32 @@
   import ConnectionPill from "./components/ConnectionPill.svelte";
   import { setContext } from "svelte";
   import { refTargets } from "./lib/refs";
+  import HighlightStrip from "./components/HighlightStrip.svelte";
+  import { scrollIfOffscreen, syncHighlightClasses } from "./lib/refHighlight";
+  import type { Highlight } from "./lib/highlights";
 
   const ws = createWorkspace();
   // threads read presence for per-message delivery state without prop drilling
   setContext("presence", () => ws.presence);
   // message text resolves object ids (p3, f2) to hover/click chips
   setContext("refs", () => (ws.snapshot ? refTargets(ws.snapshot) : new Map()));
+  setContext("highlights", () => ws.highlights);
   $effect(() => ws.start());
+
+  // accent every highlighted target; re-runs on snapshot change so re-rendered DOM keeps it
+  let seen = new Map<string, Highlight>();
+  $effect(() => {
+    const targets = ws.snapshot ? refTargets(ws.snapshot) : new Map();
+    const current = ws.highlights;
+    syncHighlightClasses(
+      [...current.values()].map((h) => ({ domId: targets.get(h.id)?.domId ?? null, author: h.author })),
+    );
+    // bring a new Claude highlight into view once; the user's own pins are where they already are
+    for (const h of current.values()) {
+      if (seen.get(h.id) !== h && h.author === "claude") scrollIfOffscreen(targets.get(h.id)?.domId ?? null);
+    }
+    seen = new Map(current);
+  });
 
   const panels = $derived((ws.snapshot?.panels ?? []).filter((p) => !p.closed));
   const threads = $derived(ws.snapshot?.threads ?? []); // anchored ones render inside Panel
@@ -54,6 +73,7 @@
     </div>
   </div>
   {#if ws.error}<div class="error">{ws.error}</div>{/if}
+  <HighlightStrip highlights={ws.highlights} />
   <div class="layout">
     <div class="panels">
       {#if panels.length === 0}
