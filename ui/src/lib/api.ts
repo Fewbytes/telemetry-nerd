@@ -192,3 +192,6 @@ export function subscribe(
   connect();
   return () => { stopped = true; socket?.close(); };
 }
+
+export const selectYView = (id: string, body: { mode?: string; lo?: number; hi?: number; suggestion?: string }) =>
+  postJSON<Panel>(`/api/panels/${id}/y-view`, body);

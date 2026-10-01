@@ -42,13 +42,26 @@ export const caveatText = (key: string, nMin: number | null = null, representati
 /** Warnings and notes about the graph, kept apart from what the graph displays. */
 export function panelNotes(
   caveats: string[],
-  opts: { yScaledToData: boolean; nMin: number | null; representation?: string },
+  opts: {
+    yScaledToData: boolean;
+    nMin: number | null;
+    representation?: string;
+    yView?: { label: string; reason: string | null; author: string; refused: string | null } | null;
+  },
 ): Note[] {
   const notes: Note[] = caveats.map((key) => ({
     kind: "caveat",
     key,
     text: caveatText(key, opts.nMin, opts.representation),
   }));
+  const yv = opts.yView;
+  if (yv?.refused) {
+    notes.push({ kind: "caveat", key: "y_view_refused", text: `The y view ${yv.refused}; showing the automatic range.` });
+  } else if (yv) {
+    const by = yv.author === "claude" ? " (suggested by Claude)" : "";
+    notes.push({ kind: "info", key: "y_view", text: `Y view "${yv.label}"${by}${yv.reason ? `: ${yv.reason}` : ""}` });
+    return notes;
+  }
   if (opts.yScaledToData && opts.representation !== "distribution") {
     notes.push({ kind: "info", key: "y_scaled_to_data", text: "The y-axis is scaled to the data (no reference range yet)." });
   }

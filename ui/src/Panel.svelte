@@ -3,11 +3,12 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import {
-    closePanel, fetchPanelData, reportRender,
-    type Annotation, type Panel, type PanelData, type Thread,
+    closePanel, fetchPanelData, reportRender, selectYView,
+    type Annotation, type Panel, type PanelData, type Thread, type YView,
   } from "./lib/api";
   import { toUplot } from "./chart/toUplot";
   import { describeShown, panelNotes } from "./lib/panelNotes";
+  import { badgeText, contextStrip, nonZeroOrigin, offeredViews, resolveY, yStats } from "./chart/yview";
   import { measureFirstDraw } from "./chart/measureDraw";
   import { drawAnnotations, drawOps, readAnnotationColors } from "./chart/annotations";
   import { plotColors, theme } from "./lib/theme.svelte";
@@ -75,12 +76,39 @@
     return () => ro.disconnect();
   });
 
+
+  // y-views (2as.17): the user's pick lives in the panel spec; `pending` is the optimistic value until the snapshot catches up
+  let pending = $state<YView | null | undefined>(undefined);
+  const chosen = $derived(pending !== undefined ? pending : (panel.spec.y.selected ?? null));
+  const viewKey = $derived(JSON.stringify(chosen));
+  let bandPick = $state(false);
+  let originOff = $state(false);
+  const yst = $derived(
+    data?.kind === "time"
+      ? yStats(data.series, { quantile: data.dataset.representation === "quantile", nMin: data.dataset.n_min ?? null })
+      : null,
+  );
+  const yres = $derived(yst ? resolveY(chosen, yst) : null);
+  $effect(() => {
+    void panel.spec.y.selected;
+    pending = undefined; // server state wins once it arrives
+  });
+  const pick = (body: Parameters<typeof selectYView>[1], optimistic: YView | null) => {
+    pending = optimistic;
+    bandPick = false;
+    selectYView(panel.id, body).catch((e) => { pending = undefined; error = String(e); });
+  };
+
   const notes = $derived(
     data
       ? panelNotes(data.caveats, {
           yScaledToData: panel.spec.y.range_mode === "data",
           nMin: data.dataset.n_min ?? null,
           representation: data.dataset.representation,
+          yView:
+            chosen || yres?.refused
+              ? { label: chosen?.label ?? "", reason: chosen?.reason ?? null, author: chosen?.author ?? "user", refused: yres?.refused ?? null }
+              : null,
         })
       : [],
   );
@@ -114,6 +142,9 @@
     const d = data;
     if (!d || d.kind !== "time" || !el) return;
     void annKey; // tracked: rebuild the plot when the annotation set changes
+    void viewKey; // tracked: log/linear scale cannot change in place, so rebuild on a view change
+    const bandMode = bandPick; // tracked: band pick drags on y instead of x
+    const yr = untrack(() => yres);
     const anns = untrack(() => panelAnns);
     const mode = theme.effective; // tracked: rebuild the plot when the theme flips
     const colors = readAnnotationColors(el);
@@ -132,14 +163,17 @@
           {
             width, height: 260, series: model.series, bands: model.bands,
             tzDate: (ts: number) => uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"),
-            scales: { x: { time: true } },
+            scales: {
+              x: { time: true },
+              y: yr?.range ? { distr: yr.log ? 3 : 1, log: 10, range: () => yr.range! } : {},
+            },
             // axis/grid colors from CSS tokens so they follow the theme
             axes: [
               { stroke, grid: { stroke: grid }, ticks: { stroke: grid } },
               { label: unit ?? "value (unit unknown)", stroke, grid: { stroke: grid }, ticks: { stroke: grid } },
             ],
             // brush = x-only selection; we open a menu instead of zooming
-            cursor: { drag: { setScale: false, x: true, y: false } },
+            cursor: { drag: bandMode ? { setScale: false, x: false, y: true } : { setScale: false, x: true, y: false } },
             hooks: {
               ready: [
                 (u: uPlot) => {
@@ -156,12 +190,21 @@
                     { min: u.scales.y.min ?? 0, max: u.scales.y.max ?? 0 },
                   );
                   annCount = ops.length;
+                  originOff = nonZeroOrigin(u.scales.y.min ?? 0, u.scales.y.max ?? 0, !!yr?.log);
                   drawAnnotations(u, ops, colors, dpr);
                 },
               ],
               setSelect: [
                 (u: uPlot) => {
                   const s = u.select;
+                  if (bandMode) {
+                    if (s.height >= 3) {
+                      const hi = u.posToVal(s.top, "y"), lo = u.posToVal(s.top + s.height, "y");
+                      pick({ mode: "band", lo, hi }, { mode: "band", label: "y band", lo, hi });
+                    }
+                    u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
+                    return;
+                  }
                   if (s.width < 3) return;
                 selection = {
                   x0: u.posToVal(s.left, "x"),
@@ -192,6 +235,8 @@
     };
   });
 </script>
+
+<svelte:window onkeydown={(e) => { if (e.key === "Escape") bandPick = false; }} />
 
 <section
   class="panel"
@@ -250,6 +295,14 @@
         />
       {/each}
     {/if}
+    {#if data?.kind === "time" && yres && (yres.zoomed || yres.log)}
+      <span class="y-badge" data-y-badge>{badgeText(chosen!, yres, panel.spec.y.unit)}</span>
+    {/if}
+    {#if data?.kind === "time" && yres?.zoomed && yres.range && yst?.all}
+      {@const cs = contextStrip(yst.all, yres.range)}
+      <span class="y-strip" title="where this view sits within the full data range"><i style="bottom:{cs.bottomPct}%;height:{cs.heightPct}%"></i></span>
+    {/if}
+    {#if data?.kind === "time" && originOff}<span class="y-origin" data-y-origin>y ≠ 0</span>{/if}
     {#if selection}
       {#key selection}
         <SelectionMenu
@@ -265,6 +318,25 @@
       {/key}
     {/if}
   </div>
+  {#if data?.kind === "time" && yst}
+    <div class="legend y-views" role="group" aria-label="Y-axis view">
+      y:
+      {#each offeredViews(yst) as o (o.mode)}
+        <button
+          type="button" disabled={!o.enabled} title={o.title} class:suggest={o.suggest}
+          class:on={o.mode === "band" ? bandPick || (chosen?.mode === "band" && !chosen?.id) : (chosen?.mode ?? "auto") === o.mode && !chosen?.id}
+          onclick={() => o.mode === "band" ? (bandPick = !bandPick) : pick({ mode: o.mode }, o.mode === "auto" ? null : { mode: o.mode, label: o.label })}
+        >{o.label}</button>
+      {/each}
+      {#if (panel.spec.y.views ?? []).length}
+        · Claude:
+        {#each panel.spec.y.views ?? [] as v (v.id)}
+          <button type="button" class="suggested" class:on={chosen?.id === v.id} title={v.reason ?? ""} data-y-suggestion={v.id} onclick={() => pick({ suggestion: v.id! }, v)}>{v.label}</button>
+        {/each}
+      {/if}
+      {#if bandPick}<span class="hint">drag vertically on the plot · Esc cancels</span>{/if}
+    </div>
+  {/if}
   {#if data}
     <div class="shown">
       <p class="what">{describeShown(data.dataset, fmtStep(data.effective_step_ms), data.kind)}</p>

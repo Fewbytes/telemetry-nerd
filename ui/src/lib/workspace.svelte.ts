@@ -6,6 +6,7 @@ const RELOAD_TYPES = new Set([
   "panel.created", "panel.answered", "finding.created", "finding.verdict",
   "annotation.created", "annotation.deleted", "hypothesis.created",
   "hypothesis.status_changed", "gap.created", "thread.message", "panel.closed",
+  "panel.y_view_suggested",
 ]);
 
 const RETRY_BASE_MS = 1000;

@@ -41,3 +41,19 @@ it("describes a distribution panel", () => {
     .toContain("classic le buckets: 0.1, 1");
 });
 });
+
+describe("y view notes", () => {
+  it("a selected y-view replaces the scaled-to-data note and carries Claude's reason", () => {
+    const notes = panelNotes([], {
+      yScaledToData: true, nMin: 200,
+      yView: { label: "meaningful", reason: "one n=13 bucket squashes the rest", author: "claude", refused: null },
+    });
+    expect(notes.map((n) => n.key)).toEqual(["y_view"]);
+    expect(notes[0].text).toBe('Y view "meaningful" (suggested by Claude): one n=13 bucket squashes the rest');
+  });
+  it("a refused view is a caveat", () => {
+    const notes = panelNotes([], { yScaledToData: true, nMin: null,
+      yView: { label: "log", reason: null, author: "user", refused: "log: log needs every value > 0 (min 0)" } });
+    expect(notes.map((n) => [n.kind, n.key])).toEqual([["caveat", "y_view_refused"], ["info", "y_scaled_to_data"]]);
+  });
+});
