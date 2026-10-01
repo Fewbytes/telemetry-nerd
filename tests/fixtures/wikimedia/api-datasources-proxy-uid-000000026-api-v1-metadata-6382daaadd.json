@@ -1,0 +1,17 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/api/datasources/proxy/uid/000000026/api/v1/metadata",
+  "params": [
+   [
+    "metric",
+    "node_load1"
+   ]
+  ]
+ },
+ "response": {
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"success\",\"data\":{\"node_load1\":[{\"type\":\"gauge\",\"help\":\"1m load average.\",\"unit\":\"\"}]}}"
+ }
+}

@@ -1,0 +1,17 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/api/datasources/proxy/uid/000000026/api/v1/metadata",
+  "params": [
+   [
+    "metric",
+    "node_network_receive_bytes_total"
+   ]
+  ]
+ },
+ "response": {
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"success\",\"data\":{\"node_network_receive_bytes_total\":[{\"type\":\"counter\",\"help\":\"Network device statistic receive_bytes.\",\"unit\":\"\"}]}}"
+ }
+}
