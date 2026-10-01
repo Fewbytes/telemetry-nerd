@@ -33,6 +33,34 @@ def push(base_url: str, text: str, attempts: int = 40) -> None:
         client.get(f"{base_url}/internal/force_flush").raise_for_status()
 
 
+LATENCY_LE = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0)
+
+
+def _lognormal_cdf(x: float, median: float, sigma: float) -> float:
+    return 0.5 * (1 + math.erf(math.log(x / median) / (sigma * math.sqrt(2))))
+
+
+def histogram_text(
+    metric: str, labels: dict[str, str], scrapes: list[tuple[int, int, float]], sigma: float = 0.6
+) -> str:
+    """Classic cumulative _bucket counters. scrapes: (ts, requests since last scrape, median
+    latency). Deterministic: per-bucket counts are rounded expectations, so cumulative
+    counts never decrease across le."""
+    edges = (*LATENCY_LE, math.inf)
+    cum = dict.fromkeys(edges, 0)
+    samples: dict[float, list[tuple[int, float]]] = {e: [] for e in edges}
+    for ts, k, median in scrapes:
+        for e in edges:
+            cum[e] += k if math.isinf(e) else round(k * _lognormal_cdf(e, median, sigma))
+            samples[e].append((ts, float(cum[e])))
+    return "".join(
+        exposition(
+            f"{metric}_bucket", {**labels, "le": "+Inf" if math.isinf(e) else f"{e:g}"}, samples[e]
+        )
+        for e in edges
+    )
+
+
 def demo_text(start_ms: int, end_ms: int, interval_ms: int = 15_000, seed: int = 7) -> str:
     """Latency gauge (hourly sine + noise) for instances a,b,c; c spikes to 1.5
     for 5 minutes starting at 2/3 of the range. Request counter per instance."""
@@ -44,6 +72,7 @@ def demo_text(start_ms: int, end_ms: int, interval_ms: int = 15_000, seed: int =
     for instance in ("a", "b", "c"):
         latency: list[tuple[int, float]] = []
         requests: list[tuple[int, float]] = []
+        scrapes: list[tuple[int, int, float]] = []
         total = 0.0
         for ts in range(start_ms, end_ms, interval_ms):
             if instance == "c" and spike_start <= ts < spike_end:
@@ -52,8 +81,13 @@ def demo_text(start_ms: int, end_ms: int, interval_ms: int = 15_000, seed: int =
                 phase = 2 * math.pi * (ts % 3_600_000) / 3_600_000
                 value = round(0.05 + 0.02 * math.sin(phase) + rng.uniform(0, 0.01), 6)
             latency.append((ts, value))
-            total += rng.randint(600, 900)
+            increment = rng.randint(600, 900)
+            total += increment
             requests.append((ts, total))
+            scrapes.append((ts, increment, value))
         parts.append(exposition("tn_demo_latency_seconds", {"instance": instance}, latency))
         parts.append(exposition("tn_demo_requests_total", {"instance": instance}, requests))
+        parts.append(
+            histogram_text("tn_demo_request_duration_seconds", {"instance": instance}, scrapes)
+        )
     return "".join(parts)
