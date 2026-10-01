@@ -232,6 +232,58 @@ class PromQLSource:
             )
         return body
 
+    async def fetch_values(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
+        """The expression's own value at each step: no rollup, no *_over_time.
+        For quantiles and other non-additive values that must never be re-aggregated."""
+        steps = (rng.end_ms - rng.start_ms) // step_ms + 1
+        if steps > MAX_STEPS_PER_QUERY:
+            raise LimitExceeded(
+                f"{steps} steps exceeds {MAX_STEPS_PER_QUERY} per query",
+                hint="use a coarser step or a shorter range",
+            )
+        result = await self._query_range(expr.strip(), rng, step_ms)
+        rows: list[tuple[int, str, float | None]] = []
+        labels_by_sid: dict[str, dict[str, str]] = {}
+        for item in result:
+            try:
+                labels = dict(item["metric"])
+                samples = list(item["values"])
+            except (KeyError, TypeError, ValueError) as e:
+                raise _malformed(f"malformed series {item!r} in query result") from e
+            labels.pop("__name__", None)
+            sid = series_id(self.name, labels)
+            labels_by_sid[sid] = labels
+            for sample in samples:
+                try:
+                    ts, value = float(sample[0]), float(sample[1])
+                except (IndexError, TypeError, ValueError) as e:
+                    raise _malformed(f"malformed sample {sample!r} in query result") from e
+                rows.append((round(ts * 1000), sid, value if math.isfinite(value) else None))
+        if len(labels_by_sid) > self.limits.max_series:
+            raise LimitExceeded(
+                f"query returned {len(labels_by_sid)} series (limit {self.limits.max_series})",
+                hint="narrow the selector with label filters or aggregate the histogram by fewer labels",
+            )
+        rows.sort(key=lambda r: (r[1], r[0]))
+        vals = [r[2] for r in rows]
+        buckets = pa.table(
+            {
+                "ts_ms": [r[0] for r in rows],
+                "series_id": [r[1] for r in rows],
+                "avg": vals,
+                "min": vals,
+                "max": vals,
+                "count": [1] * len(rows),
+            },
+            schema=BUCKET_SCHEMA,
+        )
+        sids = sorted(labels_by_sid)
+        series = pa.table(
+            {"series_id": sids, "labels": [labels_json(labels_by_sid[s]) for s in sids]},
+            schema=SERIES_SCHEMA,
+        )
+        return FetchResult(buckets, series)
+
     async def _query_range(self, query: str, rng: TimeRange, step_ms: int) -> list[dict]:
         params = {
             "query": query,

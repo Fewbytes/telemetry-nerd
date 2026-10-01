@@ -24,12 +24,14 @@ NOW = 6_000_000_000
 
 
 class FakeSource:
-    def __init__(self, name="fake", n_series=2, resolution_ms=15_000, identity=None):
+    def __init__(self, name="fake", n_series=2, resolution_ms=15_000, identity=None, values=None):
         self.name = name
         self.identity = identity or f"fake|{name}|{resolution_ms}"
         self.n_series = n_series
         self.resolution_ms = resolution_ms
         self.calls = 0
+        self.values = values or {}
+        self.value_exprs: list[str] = []
 
     async def probe(self) -> dict:
         return {"reachable": True, "latency_ms": 0, "version": "fake"}
@@ -48,6 +50,30 @@ class FakeSource:
                 "min": [r[2] - 0.5 for r in rows],
                 "max": [r[2] + 0.5 for r in rows],
                 "count": [4] * len(rows),
+            },
+            schema=BUCKET_SCHEMA,
+        )
+        series = pa.table(
+            {"series_id": sids, "labels": [labels_json(lb) for lb in labels]}, schema=SERIES_SCHEMA
+        )
+        return FetchResult(buckets, series)
+
+    async def fetch_values(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
+        self.calls += 1
+        self.value_exprs.append(expr)
+        v = next((val for key, val in self.values.items() if key in expr), 1.0)
+        ts = list(range(rng.start_ms, rng.end_ms + 1, step_ms))
+        labels = [{"instance": f"i{k}"} for k in range(self.n_series)]
+        sids = [series_id(self.name, lb) for lb in labels]
+        rows = [(t, sid) for sid in sids for t in ts]
+        buckets = pa.table(
+            {
+                "ts_ms": [r[0] for r in rows],
+                "series_id": [r[1] for r in rows],
+                "avg": [v] * len(rows),
+                "min": [v] * len(rows),
+                "max": [v] * len(rows),
+                "count": [1] * len(rows),
             },
             schema=BUCKET_SCHEMA,
         )
