@@ -256,3 +256,19 @@ def test_highlight_routes(client, service):
     assert service.ws.log.since(0)[-1].type == "object.unhighlighted"
     assert client.post("/api/highlights", json={"object": "p99"}).status_code == 404
     assert client.post("/api/highlights", json={}).status_code == 400
+
+
+def _seed_panel(client):
+    ds = client.post("/api/query", json={"expr": "up", "start": "now-2h", "end": "now-1h"}).json()[
+        "dataset"
+    ]
+    return client.post("/api/show", json={"dataset": ds, "question": "Up?"}).json()["panel"]["id"]
+
+
+def test_select_y_view_route(client):
+    pid = _seed_panel(client)
+    r = client.post(f"/api/panels/{pid}/y-view", json={"mode": "band", "lo": 1.0, "hi": 2.0})
+    assert r.status_code == 200 and r.json()["spec"]["y"]["selected"]["mode"] == "band"
+    assert client.post(f"/api/panels/{pid}/y-view", json={"mode": "meaningful"}).status_code == 400
+    assert client.post(f"/api/panels/{pid}/y-view", json={"mode": 3}).status_code == 400
+    assert client.post("/api/panels/p99/y-view", json={"mode": "zero"}).status_code == 404

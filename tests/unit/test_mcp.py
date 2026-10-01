@@ -236,3 +236,38 @@ async def test_highlight_and_unhighlight_tools(tmp_path):
     assert not (await call(mcp, "unhighlight", {"object": h.id})).is_error
     assert (await call(mcp, "highlight", {"object": "p99"})).is_error
     assert (await call(mcp, "highlight", {"object": h.id, "seconds": -1})).is_error
+
+
+# tests/unit/test_mcp.py
+async def test_suggest_y_view(tmp_path):
+    svc = make_service(tmp_path)
+    mcp = build_mcp(svc, "http://127.0.0.1:7070")
+    ds = json.loads(
+        text_of(await call(mcp, "query", {"expr": "up", "start": "now-2h", "end": "now-1h"}))
+    )["dataset"]
+    pid = json.loads(text_of(await call(mcp, "show", {"dataset": ds, "question": "Up?"})))["panel"]
+    out = json.loads(
+        text_of(
+            await call(
+                mcp,
+                "suggest_y_view",
+                {
+                    "panel": pid,
+                    "mode": "zero",
+                    "label": "from zero",
+                    "reason": "show the dip in proportion",
+                },
+            )
+        )
+    )
+    assert out == {"panel": pid, "view": "v1", "warnings": []}
+    bad = await call(
+        mcp, "suggest_y_view", {"panel": pid, "mode": "zero", "label": "z", "reason": ""}
+    )
+    assert bad.is_error and "reason" in text_of(bad)
+    log = await call(
+        mcp,
+        "suggest_y_view",
+        {"panel": pid, "mode": "log", "label": "log", "reason": "r", "lo": 1, "hi": 2},
+    )
+    assert log.is_error and "band" in text_of(log)

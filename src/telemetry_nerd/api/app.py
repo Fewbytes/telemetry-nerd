@@ -438,6 +438,30 @@ def create_app(
         return ws.snapshot()
 
     @_api
+    async def panel_y_view(request: Request) -> object:
+        body = await _body(request)
+        for key, typ in (
+            ("mode", str),
+            ("suggestion", str),
+            ("lo", (int, float)),
+            ("hi", (int, float)),
+        ):
+            if body.get(key) is not None and (
+                not isinstance(body[key], typ) or isinstance(body[key], bool)
+            ):
+                raise _BadRequest(
+                    f"invalid field {key!r}", "mode/suggestion are strings, lo/hi numbers"
+                )
+        return ws.select_y_view(
+            request.path_params["id"],
+            "user",
+            mode=body.get("mode"),
+            suggestion=body.get("suggestion"),
+            lo=body.get("lo"),
+            hi=body.get("hi"),
+        ).to_dict()
+
+    @_api
     async def list_sources(request: Request) -> object:
         return {"sources": service.source_list()}
 
@@ -571,6 +595,7 @@ def create_app(
         Route("/api/channel/status", channel_status),
         Route("/api/channel/sessions", channel_sessions),
         Route("/api/panels", list_panels),
+        Route("/api/panels/{id}/y-view", panel_y_view, methods=["POST"]),
         Route("/api/panels/{id}/data", panel_data),
         Route("/api/query", query, methods=["POST"]),
         Route("/api/query-distribution", query_distribution, methods=["POST"]),

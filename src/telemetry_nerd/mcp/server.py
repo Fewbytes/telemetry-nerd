@@ -9,6 +9,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import TypeAdapter, ValidationError
 
 from telemetry_nerd.charts.spec import Window
+from telemetry_nerd.charts.yview import YView
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.jsonsafe import dumps
@@ -27,6 +28,8 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   `query(source=...)` picks the source.
 - `show` draws a dataset as a panel. Every panel must answer an explicit question; phrase
   it as the question the graph answers. Share the returned URL with the user.
+- When one outlier or a faded low-n bucket squashes a panel's y range, `suggest_y_view` (e.g.
+  mode=meaningful) with a one-line reason; do not re-query to hide data.
 - Report caveats from summaries (gaps, settling, fake_resolution) when you describe data.
 - NEVER present a percentile without its sample count. A quantile over n samples is
   meaningless unless n >= ~10/(1-q) per bucket: p50 ~20, p95 ~200, p99 ~1000, p99.9 ~10000.
@@ -274,6 +277,34 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
     def _t(text: str | None) -> int | None:
         return None if text is None else parse_time(str(text), service.clock())
+
+    @mcp.tool()
+    def suggest_y_view(
+        panel: str,
+        mode: str,
+        label: str,
+        reason: str,
+        lo: float | None = None,
+        hi: float | None = None,
+        replace: bool = False,
+    ) -> str:
+        """Offer the user another y-axis view of a time-series panel; the USER picks.
+
+        mode: zero (include 0), data (fit the data), meaningful (percentile panels: range
+        only over buckets with n >= n_min, so a faded low-n outlier does not squash the
+        real values), band (lo..hi), log (all values must be > 0; good when data spans
+        more than 2 decades). label: short button text (<=40 chars). reason: ONE line
+        shown to the user, e.g. "one n=13 bucket at 34 s squashes the 0.4-1.3 s p95".
+        At most 4 per panel; same label replaces; replace=true clears the others.
+        Never a second y-axis: for p50 vs p99 on separate scales, show two panels.
+        Returns {panel, view, warnings}. The user's choice arrives as ambient
+        panel.y_view_selected."""
+        try:
+            v = YView(mode=mode, label=label, reason=reason or None, lo=lo, hi=hi, author="claude")  # type: ignore[arg-type]
+            saved, warnings = ws.suggest_y_view(panel, v, "claude", replace=replace)
+            return _dump({"panel": panel, "view": saved.id, "warnings": warnings})
+        except (ValidationError, NotFound, ValueError) as e:
+            raise _fail(e) from e
 
     @mcp.tool()
     def annotate(
