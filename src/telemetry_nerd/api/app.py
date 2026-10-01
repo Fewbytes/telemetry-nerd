@@ -255,9 +255,20 @@ def create_app(
             return _error(404, str(e))
         except ValueError as e:
             return _error(400, str(e))
+        await service.y_context(res.panel.id, "user")
         return JSONResponse(
-            {"panel": res.panel.to_dict(), "issues": [i.model_dump() for i in res.issues]}
+            {
+                "panel": service.workspace.get_panel(res.panel.id).to_dict(),
+                "issues": [i.model_dump() for i in res.issues],
+            }
         )
+
+    @_api
+    async def panel_y_context(request: Request) -> object:
+        """Recompute a panel's y context (e.g. once its operating profile has finished)."""
+        await _body(request)
+        await service.y_context(request.path_params["id"], "user")
+        return service.workspace.get_panel(request.path_params["id"]).to_dict()
 
     async def render_report(request: Request) -> JSONResponse:
         try:
@@ -630,6 +641,7 @@ def create_app(
         Route("/api/channel/sessions", channel_sessions),
         Route("/api/panels", list_panels),
         Route("/api/panels/{id}/y-view", panel_y_view, methods=["POST"]),
+        Route("/api/panels/{id}/y-context", panel_y_context, methods=["POST"]),
         Route("/api/panels/{id}/marginal", panel_marginal, methods=["POST"]),
         Route("/api/panels/{id}/data-view", panel_data_view, methods=["POST"]),
         Route("/api/panels/{id}/data", panel_data),

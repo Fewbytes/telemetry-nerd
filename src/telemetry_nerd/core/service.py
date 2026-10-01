@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -36,9 +37,19 @@ from telemetry_nerd.charts.spec import (
     Reference,
     ValidationIssue,
     Window,
+    YContext,
+    YLimit,
+    YProfile,
     auto_spec,
     validate,
 )
+from telemetry_nerd.charts.ycontext import (
+    counter_rate_metric,
+    limit_expr,
+    natural_range,
+    selector_parts,
+)
+from telemetry_nerd.charts.yview import value_stats
 from telemetry_nerd.core.events import Actor, EventLog
 from telemetry_nerd.core.panel_payloads import (
     heatmap_panel_data,
@@ -55,7 +66,7 @@ from telemetry_nerd.core.signal_ops import SignalOps
 from telemetry_nerd.core.summary import summarize, summarize_distribution
 from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
-from telemetry_nerd.datasets.store import DatasetStore
+from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
 from telemetry_nerd.model.distribution import DIST_N_MIN
 from telemetry_nerd.model.time import (
     TimeRange,
@@ -82,6 +93,7 @@ def auto_step(rng: TimeRange, resolution_ms: int, target_buckets: int = 600) -> 
 
 
 MAX_BUCKETS_PER_QUERY = 50_000
+PROFILE_WAIT_S = 8.0  # how long `show` waits for a first-view operating profile
 DIST_TARGET_COLUMNS = 300
 
 
@@ -378,6 +390,88 @@ class TelemetryService:
                 res["inside_bucket"] = [_edge_text(r.bucket[0]), _edge_text(r.bucket[1])]
             out.append(res)
         return {"dataset": dataset_id, "x": x, "series": out}
+
+    async def y_context(self, panel_id: str, actor: Actor = "system") -> YContext | None:
+        """Work out what the catalog says about a time panel's y axis and record it (bead 2as.10).
+
+        Natural bounds come from the metric's catalog `bounds` claim; the physical limit is the
+        `bounded_by` metric fetched under the same label matchers. Only plain selectors (and
+        rate/increase of one counter) qualify: bounds of a mixed expression belong to no single
+        metric. A source failure degrades to a note: the panel still renders."""
+        p = self.workspace.get_panel(panel_id)
+        spec = ChartSpec.model_validate(p.spec)
+        if any(layer.mark != "line+envelope" for layer in spec.layers) or spec.signal:
+            return None
+        meta = self.datasets.meta(p.dataset_ids[0])
+        ctx = YContext()
+        parts = selector_parts(meta.expr)
+        metric = parts[0] if parts else counter_rate_metric(meta.expr)
+        if metric is None:
+            ctx.notes.append("natural_bounds_unknown: the expression is not a single metric")
+        elif parts is not None:
+            if found := self.ws.catalog_bounds(meta.source, metric):
+                ctx.bounds, ctx.bounds_origin = found
+                ctx.natural_lo, ctx.natural_hi = natural_range(found[0])
+        elif self.ws.catalog_facts(meta.source, metric).type == "counter":
+            # a rate of a counter is never negative, whatever the counter's own bounds say
+            ctx.natural_lo, ctx.bounds, ctx.bounds_origin = 0.0, "≥0", "counter rate"
+        if parts is not None:
+            if targets := self.ws.catalog_bounded_by(meta.source, parts[0]):
+                ctx.limit = await self._fetch_limit(meta, parts[1], targets[0], ctx.notes)
+        elif metric is not None and self.ws.catalog_bounded_by(meta.source, metric):
+            ctx.notes.append(
+                "limit_unavailable: the physical limit bounds the metric itself, not its rate"
+            )
+        ctx.profile = await self._fetch_profile(meta, ctx.notes)
+        self.ws.set_y_context(p.id, ctx, actor)
+        return ctx
+
+    async def _fetch_profile(self, meta: DatasetMeta, notes: list[str]) -> YProfile | None:
+        """The operating range of what the panel shows, if it is (or soon will be) known.
+
+        The first view computes the profile (a long-window query): wait briefly, then let the
+        computation finish in the background and tell the panel to look again."""
+        try:
+            prof = await asyncio.wait_for(
+                self.profiles.ensure(meta.source, meta.expr), PROFILE_WAIT_S
+            )
+        except TimeoutError:
+            notes.append("profile_pending: the operating profile is still being computed")
+            return None
+        except (SourceError, ValueError) as e:
+            notes.append(f"profile_unavailable: {e}")
+            return None
+        r = prof.pooled
+        lo, hi = (r.envelope_lo, r.envelope_hi) if prof.extremes else (r.p005, r.p995)
+        if lo is None or hi is None or not lo < hi:
+            notes.append("profile_unavailable: the profile has no usable range")
+            return None
+        return YProfile(lo=lo, hi=hi, label=f"normal range ({format_duration(prof.window_ms)})")
+
+    async def _fetch_limit(
+        self, meta: DatasetMeta, matchers: str, target: str, notes: list[str]
+    ) -> YLimit | None:
+        expr = limit_expr(matchers, target)
+        try:
+            ds = (
+                await self.query(
+                    expr,
+                    start=str(meta.start_ms),
+                    end=str(meta.end_ms),
+                    step=format_duration(meta.step_ms),
+                    source=meta.source,
+                    actor="system",
+                )
+            )["dataset"]
+            m, result = self.datasets.get(ds)
+            hi = value_stats(result.buckets, m.representation, m.n_min).hi
+        except (SourceError, ValueError) as e:
+            notes.append(f"limit_unavailable: {target} could not be fetched ({e})")
+            return None
+        if hi is None:
+            notes.append(f"limit_unavailable: {target} has no data under these labels")
+            return None
+        return YLimit(metric=target, dataset=ds, hi=hi)
 
     async def ensure_reference(self, panel_id: str, mode: str, actor: Actor) -> Reference:
         p = self.workspace.get_panel(panel_id)

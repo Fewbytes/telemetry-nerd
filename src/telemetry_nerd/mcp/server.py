@@ -519,7 +519,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise _source_error(e) from e
 
     @mcp.tool()
-    def show(
+    async def show(
         dataset: str,
         question: str,
         unit: str | None = None,
@@ -549,7 +549,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         drawn from filter(): the default view (overlay | filtered | removed | raw).
         windows (histogram/ecdf): 1-4 [{start, end, label}] compared on one chart, e.g. the
         spike vs the preceding baseline; each window sums whole steps, n is shown per window.
-        Returns {panel, url, warnings}.
+        Returns {panel, url, warnings, y_range_notes?}: the y range defaults to the reference
+        range (data, normal range, physical limit); y_range_notes says what was not available.
         """
         try:
             wins = [
@@ -575,13 +576,15 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise ToolError(f"chart rejected: {e}") from e
         except (NotFound, ValueError) as e:
             raise ToolError(str(e)) from e
-        return _dump(
-            {
-                "panel": res.panel.id,
-                "url": f"{ui_url}/#/panel/{res.panel.id}",
-                "warnings": [i.message for i in res.issues],
-            }
-        )
+        ctx = await service.y_context(res.panel.id, "claude")  # catalog bounds, limit, normal range
+        out: dict[str, Any] = {
+            "panel": res.panel.id,
+            "url": f"{ui_url}/#/panel/{res.panel.id}",
+            "warnings": [i.message for i in res.issues],
+        }
+        if ctx is not None and ctx.notes:
+            out["y_range_notes"] = ctx.notes
+        return _dump(out)
 
     ws = service.ws
 

@@ -5,18 +5,25 @@ Pure: no I/O. 2as.10 adds `reference` and `semantic` to YMode through this same 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import polars as pl
 import pyarrow as pa
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-YMode = Literal["auto", "zero", "data", "meaningful", "band", "log", "indexed"]
+if TYPE_CHECKING:
+    from telemetry_nerd.charts.spec import YContext
+
+YMode = Literal[
+    "auto", "zero", "data", "reference", "semantic", "meaningful", "band", "log", "indexed"
+]
 MAX_SUGGESTIONS = 4
 BUILTIN_LABELS: dict[str, str] = {
     "auto": "auto",
     "zero": "from zero",
     "data": "y zoomed to data",
+    "reference": "reference range",
+    "semantic": "natural bounds",
     "meaningful": "meaningful buckets only",
     "band": "y band",
     "log": "log scale",
@@ -84,10 +91,17 @@ def value_stats(buckets: pa.Table, representation: str, n_min: int | None) -> Va
     return ValueStats(lo, hi, True, mlo, mhi, int((~ok).sum()))
 
 
-def check_view(view: YView, st: ValueStats) -> list[str]:
+def check_view(view: YView, st: ValueStats, ctx: YContext | None = None) -> list[str]:
     """Refusals raise ValueError (they reach Claude/the user as errors); warnings are returned."""
     if view.mode in ("auto", "indexed"):  # indexed needs the data: charts.indexed.check_index
         return []
+    if view.mode == "semantic" and (
+        ctx is None or (ctx.natural_lo is None and ctx.natural_hi is None)
+    ):
+        raise ValueError(
+            "no natural bounds are known for this metric (no catalog bounds claim); "
+            "semantic needs them: learn the source or record a bounds claim"
+        )
     if st.lo is None or st.hi is None:
         raise ValueError("the panel has no drawn values; only the auto view applies")
     if view.mode == "log" and st.lo <= 0:

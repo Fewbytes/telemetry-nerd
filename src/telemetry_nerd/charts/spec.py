@@ -53,6 +53,39 @@ class Layer(BaseModel):
     max_period_ms: int | None = None
 
 
+class YLimit(BaseModel):
+    """A physical limit from a `bounded_by` relation: the bounding metric's own dataset."""
+
+    metric: str
+    dataset: str  # time dataset of the bounding metric over the panel's window and step
+    hi: float
+    basis: str = "bounded_by"
+
+
+class YProfile(BaseModel):
+    """Operating range (robust, long window); filled by the T1 operating profile (2as.7)."""
+
+    lo: float
+    hi: float
+    label: str = "normal range"
+
+
+class YContext(BaseModel):
+    """Catalog-derived inputs to the y range. A reference exists when a limit or profile does."""
+
+    natural_lo: float | None = None
+    natural_hi: float | None = None
+    bounds: str | None = None  # the catalog claim the natural bounds came from
+    bounds_origin: str | None = None
+    limit: YLimit | None = None
+    profile: YProfile | None = None
+    notes: list[str] = Field(default_factory=list)  # honest gaps, shown to the user
+
+    @property
+    def has_reference(self) -> bool:
+        return self.limit is not None or self.profile is not None
+
+
 class YAxis(BaseModel):
     range_mode: Literal["data", "reference", "semantic"] = "data"
     unit: str | None = None
@@ -64,6 +97,7 @@ class YAxis(BaseModel):
         default_factory=list, max_length=MAX_SUGGESTIONS
     )  # Claude's suggestions
     selected: YView | None = None  # the user's pick; None = auto
+    context: YContext | None = None
 
 
 class Reference(BaseModel):

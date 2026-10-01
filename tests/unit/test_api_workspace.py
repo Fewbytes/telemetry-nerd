@@ -288,3 +288,15 @@ def test_marginal_route(client):
         is None
     )
     assert client.post("/api/panels/p99/marginal", json={"reference": "week"}).status_code == 404
+
+
+def test_show_records_the_y_context_and_it_can_be_refreshed(client):
+    ds = client.post(
+        "/api/query", json={"expr": "tn_demo_latency_seconds", "start": "now-2h", "end": "now-1h"}
+    ).json()["dataset"]
+    shown = client.post("/api/show", json={"dataset": ds, "question": "q?"}).json()["panel"]
+    ctx = shown["spec"]["y"]["context"]
+    assert ctx is not None and ctx["natural_lo"] == 0.0 and ctx["bounds_origin"] == "rule"
+    again = client.post(f"/api/panels/{shown['id']}/y-context", json={})
+    assert again.status_code == 200 and again.json()["spec"]["y"]["context"] is not None
+    assert client.post("/api/panels/p99/y-context", json={}).status_code == 404

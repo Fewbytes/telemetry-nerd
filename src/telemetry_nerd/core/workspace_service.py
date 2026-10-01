@@ -16,6 +16,7 @@ from telemetry_nerd.catalog.models import (
     FieldName,
     Origin,
     RelearnDiff,
+    resolve,
     validate_value,
 )
 from telemetry_nerd.catalog.packs import PackIndex, builtin_packs
@@ -40,7 +41,7 @@ from telemetry_nerd.catalog.store import CatalogStore
 from telemetry_nerd.channel.format import describe_event
 from telemetry_nerd.charts.dataview import SignalViews
 from telemetry_nerd.charts.indexed import check_index, shifted
-from telemetry_nerd.charts.spec import ChartSpec, Marginal, Reference
+from telemetry_nerd.charts.spec import ChartSpec, Marginal, Reference, YContext
 from telemetry_nerd.charts.units import metric_names
 from telemetry_nerd.charts.yview import (
     BUILTIN_LABELS,
@@ -757,6 +758,41 @@ class WorkspaceService:
             results.append(res)
         return results
 
+    def catalog_bounds(self, source: str, metric: str) -> tuple[str, str] | None:
+        """(bounds claim, origin) for a metric: the catalog winner, else the name rules alone."""
+        claims = self.catalog.claims_for(source, metric)
+        if not claims:
+            claims = [c.to_claim(0) for c in derive_claims(metric)]
+        win = resolve(c for c in claims if c.field == "bounds")
+        return (win.value, win.origin) if win else None
+
+    def catalog_bounded_by(self, source: str, metric: str) -> list[str]:
+        """Metrics `metric` never exceeds (at the same labels), strongest claim first."""
+        rels = self.relations.relations("catalog", source, metric=metric, kind="bounded_by")
+        rels = [r for r in rels if r.subject == metric]
+        rels.sort(key=lambda r: (-r.winner.confidence, r.object))
+        return [r.object for r in rels]
+
+    @atomic
+    def set_y_context(self, panel_id: str, ctx: YContext, actor: Actor) -> Panel:
+        """Record the catalog inputs to a time panel's y range (bead 2as.10)."""
+        p, spec = self._time_spec(panel_id)
+        spec.y.context = ctx
+        spec.y.range_mode = "reference" if ctx.has_reference else "data"
+        p = self.workspace.set_spec(p.id, spec.model_dump())
+        self.log.append(
+            actor,
+            "panel.y_context",
+            p.id,
+            {
+                "bounds": ctx.bounds,
+                "limit": ctx.limit.metric if ctx.limit else None,
+                "profile": ctx.profile is not None,
+                "notes": ctx.notes,
+            },
+        )
+        return p
+
     def catalog_facts(self, source: str, metric: str) -> Facts:
         """Unit/type for charts: the catalog's winners, else the name rules alone."""
         claims = self.catalog.claims_for(source, metric)
@@ -840,7 +876,11 @@ class WorkspaceService:
             return check_index(
                 view.baseline, meta.representation, meta.n_min, result.buckets, on_grid, labels
             )
-        return check_view(view, value_stats(result.buckets, meta.representation, meta.n_min))
+        return check_view(
+            view,
+            value_stats(result.buckets, meta.representation, meta.n_min),
+            spec.y.context if spec else None,
+        )
 
     @atomic
     def suggest_y_view(
