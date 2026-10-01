@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import math
 
 import polars as pl
 
+from telemetry_nerd.analysis.exprkind import min_samples
 from telemetry_nerd.datasets.store import DatasetMeta
+from telemetry_nerd.model.distribution import DistResult
 from telemetry_nerd.model.series import FetchResult
 from telemetry_nerd.model.time import format_duration, iso
 
@@ -15,14 +18,19 @@ def _round(x: float | None) -> float | None:
     return None if x is None else float(f"{x:.4g}")
 
 
-def summarize(
-    meta: DatasetMeta, result: FetchResult, *, now_ms: int, settle_ms: int, top: int = 5
-) -> dict:
+def _base_caveats(meta: DatasetMeta, now_ms: int, settle_ms: int) -> list[str]:
     caveats: list[str] = []
     if meta.step_ms < meta.resolution_ms:
         caveats.append("fake_resolution")
     if meta.end_ms > now_ms - settle_ms:
         caveats.append("settling")
+    return caveats
+
+
+def summarize(
+    meta: DatasetMeta, result: FetchResult, *, now_ms: int, settle_ms: int, top: int = 5
+) -> dict:
+    caveats = _base_caveats(meta, now_ms, settle_ms)
     if meta.partial > 0:
         caveats.append("partial")
     base = {
@@ -135,6 +143,116 @@ def _summarize_quantile(
         }
         for r in per.head(top).to_dicts()
     ]
+    return {
+        **base,
+        "series_count": per.height,
+        "series": series,
+        "more_series": max(0, per.height - top),
+        "caveats": caveats,
+    }
+
+
+QUANTILE_BOUNDS = (0.5, 0.9, 0.99)
+
+
+def _edge(x: float) -> float | str:
+    if math.isinf(x):
+        return "+Inf" if x > 0 else "-Inf"
+    return _round(x)
+
+
+def _quantile_bucket(buckets: list[tuple[float, float, float]], q: float) -> list | None:
+    """The source bucket that contains quantile q: honest bounds, never interpolated."""
+    total = sum(c for _, _, c in buckets)
+    if total <= 0:
+        return None
+    acc = 0.0
+    for lo, hi, c in sorted(buckets, key=lambda b: (b[1], b[0])):
+        acc += c
+        if acc >= q * total * (1 - 1e-12):
+            return [_edge(lo), _edge(hi)]
+    return None
+
+
+def summarize_distribution(
+    meta: DatasetMeta, dist: DistResult, *, now_ms: int, settle_ms: int, top: int = 5
+) -> dict:
+    """Counts per bucket per step: n, coverage, low-n columns, and where the quantiles lie
+    (bucket bounds, only where n is enough). Never a percentile value."""
+    caveats = _base_caveats(meta, now_ms, settle_ms)
+    caveats += [c for c in meta.source_caveats if c not in caveats]
+    base = {
+        "dataset": meta.id,
+        "expr": meta.expr,
+        "range": [iso(meta.start_ms), iso(meta.end_ms)],
+        "step": format_duration(meta.step_ms),
+        "representation": meta.representation,
+        "buckets": (meta.scheme or {}).get("description", "no buckets"),
+        "n_min": meta.n_min,
+        "counts": "increase() per step; additive over time and adjacent buckets",
+    }
+    if dist.columns.num_rows == 0:
+        return {
+            **base,
+            "series_count": 0,
+            "series": [],
+            "more_series": 0,
+            "caveats": ["empty", *caveats],
+        }
+    expected = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
+    n_min = meta.n_min or 0
+    labels = {r["series_id"]: json.loads(r["labels"]) for r in dist.series.to_pylist()}
+    per = (
+        pl.from_arrow(dist.columns)
+        .group_by("series_id")
+        .agg(
+            pl.col("n").sum().alias("n_total"),
+            pl.len().alias("columns"),
+            (pl.col("n") == 0).sum().alias("zero_columns"),
+            ((pl.col("n") > 0) & (pl.col("n") < n_min)).sum().alias("low_n_columns"),
+            pl.col("ts_ms").sort_by("n").last().alias("busiest_ts"),
+            pl.col("n").max().alias("busiest_n"),
+        )
+        .with_columns(
+            pl.max_horizontal(pl.lit(expected) - pl.col("columns"), pl.lit(0)).alias(
+                "missing_columns"
+            )
+        )
+        .sort("n_total", descending=True)
+    )
+    merged: dict[str, list[tuple[float, float, float]]] = {}
+    for r in (
+        pl.from_arrow(dist.rows)
+        .group_by("series_id", "bucket_lo", "bucket_hi")
+        .agg(pl.col("count").sum())
+        .iter_rows(named=True)
+    ):
+        merged.setdefault(r["series_id"], []).append((r["bucket_lo"], r["bucket_hi"], r["count"]))
+    if per["missing_columns"].sum() > 0:
+        caveats.insert(0, "gaps")
+    if per["low_n_columns"].sum() > 0:
+        caveats.append("low_count")
+    if any(hi == math.inf for b in merged.values() for _, hi, _ in b):
+        caveats.append("overflow")
+    series = []
+    for r in per.head(top).to_dicts():
+        buckets = merged.get(r["series_id"], [])
+        series.append(
+            {
+                "labels": labels.get(r["series_id"], {}),
+                "n_total": _round(r["n_total"]),
+                "columns": int(r["columns"]),
+                "zero_columns": int(r["zero_columns"]),
+                "missing_columns": int(r["missing_columns"]),
+                "low_n_columns": int(r["low_n_columns"]),
+                "busiest": {"at": iso(r["busiest_ts"]), "n": _round(r["busiest_n"])},
+                "quantile_buckets": {
+                    f"p{q * 100:g}": _quantile_bucket(buckets, q)
+                    for q in QUANTILE_BOUNDS
+                    if r["n_total"] >= min_samples(q)
+                },
+            }
+        )
     return {
         **base,
         "series_count": per.height,

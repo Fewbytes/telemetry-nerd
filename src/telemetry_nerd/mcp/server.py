@@ -105,6 +105,39 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         except ValueError as e:
             raise ToolError(str(e)) from e
 
+    @mcp.tool()
+    async def query_distribution(
+        selector: str,
+        by: list[str] | None = None,
+        start: str = "now-1h",
+        end: str = "now",
+        step: str = "auto",
+        source: str = "default",
+    ) -> str:
+        """Fetch a histogram as a distribution dataset: counts per value bucket per step.
+
+        selector: the histogram metric with label filters, no functions:
+          classic   http_server_request_duration_seconds_bucket{job="api"}   (le buckets)
+          VictoriaMetrics  x_bucket{...}                                      (vmrange buckets)
+          native    traces_spanmetrics_latency{service="checkout"}           (no _bucket suffix)
+        by: labels kept as separate series (e.g. ["cloud_region"]); all others are summed.
+        Counts are increase() over a window equal to the step (never from quantiles), so
+        they add up over time and across adjacent buckets. step: auto (~300 columns), never
+        shorter than two scrape intervals.
+        Returns {dataset, summary}: n per series, columns with/without data, low-n columns,
+        the bucket scheme (the resolution limit) and the BUCKET holding p50/p90/p99 where n
+        is large enough. Draw it with `show` (heatmap), or `show(mark="histogram",
+        windows=[...])` to compare windows.
+        """
+        try:
+            return _dump(
+                await service.query_distribution(selector, by or [], start, end, step, source)
+            )
+        except SourceError as e:
+            raise ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e)) from e
+        except ValueError as e:
+            raise ToolError(str(e)) from e
+
     def _source_error(e: SourceError) -> ToolError:
         return ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e))
 

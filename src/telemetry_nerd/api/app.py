@@ -198,6 +198,23 @@ def create_app(
             return _error(400, str(e))
         return JSONResponse(out)
 
+    async def query_distribution(request: Request) -> JSONResponse:
+        try:
+            body = await _body(request, selector=str)
+        except _BadRequest as e:
+            return _error(e.status, str(e), hint=e.hint)
+        by = body.get("by", [])
+        if not isinstance(by, list) or not all(isinstance(x, str) for x in by):
+            return _error(400, "by must be a list of label names", hint='e.g. ["cloud_region"]')
+        args = {k: body[k] for k in ("start", "end", "step", "source") if k in body}
+        try:
+            out = await service.query_distribution(body["selector"], by, **args, actor="user")
+        except SourceError as e:
+            return _error(400, str(e), hint=e.hint)
+        except ValueError as e:
+            return _error(400, str(e))
+        return JSONResponse(out)
+
     async def show(request: Request) -> JSONResponse:
         try:
             body = await _body(request, dataset=str, question=str)
@@ -531,6 +548,7 @@ def create_app(
         Route("/api/panels", list_panels),
         Route("/api/panels/{id}/data", panel_data),
         Route("/api/query", query, methods=["POST"]),
+        Route("/api/query-distribution", query_distribution, methods=["POST"]),
         Route("/api/show", show, methods=["POST"]),
         Route("/api/render-report", render_report, methods=["POST"]),
         WebSocketRoute("/ws", events),

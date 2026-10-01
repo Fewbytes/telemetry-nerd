@@ -305,3 +305,13 @@ def test_mcp_transport_security_allows_http_and_https_origins_for_each_host():
     ):
         assert origin in sec.allowed_origins
     assert "https://evil.example" not in sec.allowed_origins
+
+
+def test_query_distribution_route(client):
+    r = client.post(
+        "/api/query-distribution",
+        json={"selector": "x_bucket", "by": ["instance"], "start": "now-2h", "end": "now-1h"},
+    )
+    assert r.status_code == 200 and r.json()["summary"]["representation"] == "distribution"
+    bad = client.post("/api/query-distribution", json={"selector": "x_bucket", "by": "instance"})
+    assert bad.status_code == 400

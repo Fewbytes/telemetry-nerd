@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 import polars as pl
@@ -14,12 +14,13 @@ from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.charts.spec import ValidationIssue, auto_spec, validate
 from telemetry_nerd.core.events import Actor, EventLog
 from telemetry_nerd.core.presence import PresenceRegistry
-from telemetry_nerd.core.summary import summarize
+from telemetry_nerd.core.summary import summarize, summarize_distribution
 from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import DatasetStore
-from telemetry_nerd.model.time import TimeRange, now_ms, parse_duration, parse_time
-from telemetry_nerd.sources.base import LimitExceeded, SourceError
+from telemetry_nerd.model.distribution import DIST_N_MIN
+from telemetry_nerd.model.time import TimeRange, format_duration, now_ms, parse_duration, parse_time
+from telemetry_nerd.sources.base import LimitExceeded, Source, SourceError
 from telemetry_nerd.sources.registry import SourceRegistry
 from telemetry_nerd.sources.spec import RESERVED_NAMES, SourceSpec
 from telemetry_nerd.workspace.store import Panel, WorkspaceStore
@@ -36,6 +37,7 @@ def auto_step(rng: TimeRange, resolution_ms: int, target_buckets: int = 600) -> 
 
 
 MAX_BUCKETS_PER_QUERY = 50_000
+DIST_TARGET_COLUMNS = 300
 
 
 class ChartRejected(Exception):
@@ -61,6 +63,18 @@ class TelemetryService:
     clock: Callable[[], int] = now_ms
     presence: PresenceRegistry = field(default_factory=PresenceRegistry)
 
+    def _source(self, name: str) -> Source:
+        src = self.sources.get(name)
+        if src is None:
+            raise SourceError(
+                f"unknown source {name!r}",
+                hint=(
+                    f"available sources: {', '.join(sorted(self.sources)) or 'none'}; "
+                    "connect one with source_connect"
+                ),
+            )
+        return src
+
     async def query(
         self,
         expr: str,
@@ -70,15 +84,7 @@ class TelemetryService:
         source: str = "default",
         actor: Actor = "claude",
     ) -> dict:
-        src = self.sources.get(source)
-        if src is None:
-            raise SourceError(
-                f"unknown source {source!r}",
-                hint=(
-                    f"available sources: {', '.join(sorted(self.sources)) or 'none'}; "
-                    "connect one with source_connect"
-                ),
-            )
+        src = self._source(source)
         now = self.clock()
         rng = TimeRange(parse_time(start, now), parse_time(end, now))
         step_ms = auto_step(rng, src.resolution_ms) if step == "auto" else parse_duration(step)
@@ -137,6 +143,45 @@ class TelemetryService:
         )
         summary = summarize(meta, result, now_ms=now, settle_ms=self.cache.settle_ms)
         self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
+        return {"dataset": meta.id, "summary": summary}
+
+    async def query_distribution(
+        self,
+        selector: str,
+        by: Sequence[str] = (),
+        start: str = "now-1h",
+        end: str = "now",
+        step: str = "auto",
+        source: str = "default",
+        actor: Actor = "claude",
+    ) -> dict:
+        src = self._source(source)
+        now = self.clock()
+        rng = TimeRange(parse_time(start, now), parse_time(end, now))
+        floor = 2 * src.resolution_ms  # increase() needs two samples per window
+        step_ms = (
+            auto_step(rng, floor, DIST_TARGET_COLUMNS) if step == "auto" else parse_duration(step)
+        )
+        if step_ms < floor:
+            raise SourceError(
+                f"step {format_duration(step_ms)} is shorter than two scrape intervals "
+                f"({format_duration(floor)})",
+                hint=f"counts come from increase() per step; use step >= {format_duration(floor)} or auto",
+            )
+        rng = rng.align(step_ms)
+        columns = (rng.end_ms - rng.start_ms) // step_ms + 1
+        if columns > MAX_BUCKETS_PER_QUERY:
+            raise LimitExceeded(
+                f"{columns} columns exceeds {MAX_BUCKETS_PER_QUERY} per query",
+                hint="use a coarser step or a shorter range",
+            )
+        dist = await src.fetch_histogram(selector, tuple(by), rng, step_ms)
+        meta = self.datasets.put_distribution(
+            source=src.name, rng=rng, step_ms=step_ms, resolution_ms=src.resolution_ms,
+            dist=dist, histogram={"selector": selector.strip(), "by": list(by)}, n_min=DIST_N_MIN,
+        )  # fmt: skip
+        summary = summarize_distribution(meta, dist, now_ms=now, settle_ms=self.cache.settle_ms)
+        self.log.append(actor, "dataset.created", meta.id, {"expr": meta.expr})
         return {"dataset": meta.id, "summary": summary}
 
     @staticmethod

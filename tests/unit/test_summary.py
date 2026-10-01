@@ -180,3 +180,47 @@ def test_quantile_value_with_missing_count_is_low_count_not_a_gap():
     row = s["series"][0]
     assert (row["buckets"], row["meaningful_buckets"], row["gaps"]) == (2, 1, 0)
     assert "low_count" in s["caveats"] and "gaps" not in s["caveats"]
+
+
+def _dist(cum_by_ts, *, start=60_000, end=180_000, step=60_000):
+    from telemetry_nerd.analysis.histogram import from_matrix
+
+    by_le: dict[str, list] = {}
+    for t, cum in cum_by_ts.items():
+        for le, v in cum.items():
+            by_le.setdefault(le, []).append([t / 1000, str(v)])
+    dist = from_matrix("s", [{"metric": {"le": le}, "values": v} for le, v in by_le.items()], "e")
+    m = DatasetMeta(
+        id="d1", source="s", expr="e", start_ms=start, end_ms=end, step_ms=step,
+        resolution_ms=15_000, representation="distribution", n_min=20,
+        scheme=dist.scheme.to_dict(), source_caveats=list(dist.caveats),
+    )  # fmt: skip
+    return m, dist
+
+
+def test_distribution_summary_counts_columns_and_bounds_quantiles():
+    from telemetry_nerd.core.summary import summarize_distribution
+
+    m, dist = _dist({60_000: {"1": 15, "+Inf": 30}, 120_000: {"1": 0, "+Inf": 0}})
+    s = summarize_distribution(m, dist, now_ms=NOW, settle_ms=0)
+    [row] = s["series"]
+    assert s["buckets"] == "classic le buckets: 1"
+    assert (row["n_total"], row["columns"], row["zero_columns"], row["missing_columns"]) == (
+        30,
+        2,
+        1,
+        1,
+    )
+    assert row["quantile_buckets"] == {"p50": ["-Inf", 1.0]}  # p90 needs n >= 100
+    assert s["caveats"][0] == "gaps"
+    assert "overflow" in s["caveats"]
+
+
+def test_distribution_summary_flags_low_n_columns():
+    from telemetry_nerd.core.summary import summarize_distribution
+
+    m, dist = _dist({60_000: {"1": 3, "+Inf": 5}}, end=60_000)
+    s = summarize_distribution(m, dist, now_ms=NOW, settle_ms=0)
+    assert s["series"][0]["low_n_columns"] == 1
+    assert s["series"][0]["quantile_buckets"] == {}
+    assert "low_count" in s["caveats"]
