@@ -1,7 +1,14 @@
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
-from telemetry_nerd.workspace.models import AnnotationIn, EvidenceRef, FindingIn, GapIn, Scope
+from telemetry_nerd.workspace.models import (
+    AnnotationIn,
+    EvidenceRef,
+    FindingIn,
+    GapIn,
+    Scope,
+    StatisticRef,
+)
 
 SCOPE = {
     "source": "default",
@@ -162,3 +169,38 @@ def test_inputs_reject_server_fields():
 def test_unknown_evidence_kind_rejected():
     with pytest.raises(ValidationError):
         ref.validate_python({"kind": "vibes", "panel": "p1"})
+
+
+def _stat(**kw):
+    base = {
+        "kind": "statistic",
+        "dataset": "d1",
+        "name": "p95",
+        "value": 0.7,
+        "interval": [0.6, 0.8],
+        "method": "histogram_quantile",
+    }
+    return StatisticRef.model_validate(base | kw)
+
+
+def test_percentile_statistic_requires_n():
+    with pytest.raises(ValidationError, match="percentile_without_n"):
+        _stat()
+
+
+def test_percentile_statistic_requires_meaningful_n():
+    with pytest.raises(ValidationError, match="percentile_not_meaningful"):
+        _stat(params={"n": 13})
+    assert _stat(params={"n": 2328}).params["n"] == 2328
+
+
+def test_percentile_q_from_name_or_params():
+    with pytest.raises(ValidationError, match="percentile_not_meaningful"):
+        _stat(name="p99.9", params={"n": 2000})  # needs 10000
+    with pytest.raises(ValidationError, match="params.q"):
+        _stat(name="quantile", params={"n": 5000})
+    assert _stat(name="quantile", params={"n": 5000, "q": 0.99})
+
+
+def test_non_percentile_statistics_unaffected():
+    assert _stat(name="mean_latency", params={})

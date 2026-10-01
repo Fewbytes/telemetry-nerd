@@ -42,3 +42,27 @@ describe("seriesName", () => {
     expect(seriesName({})).toBe("{}");
   });
 });
+
+describe("toUplot quantile mode", () => {
+  it("draws quantiles without envelope and fades low-n buckets", () => {
+    const q: SeriesData = {
+      id: "a", labels: { r: "x" }, ts: [1000, 2000, 3000],
+      avg: [34, 0.6, 0.7], min: [34, 0.6, 0.7], max: [34, 0.6, 0.7], count: [13, 2328, 400],
+    };
+    const m = toUplot([q], undefined, { quantile: true, nMin: 200 });
+    expect(m.series.length).toBe(3); // x + solid + faded
+    expect(m.bands).toEqual([]);
+    expect(m.data[1]).toEqual([null, 0.6, 0.7]);
+    expect(m.data[2]).toEqual([34, null, null]);
+    expect(String(m.series[2].label)).toContain("n<200");
+  });
+
+  it("without nMin draws every value solid", () => {
+    const q: SeriesData = {
+      id: "a", labels: {}, ts: [1000], avg: [1], min: [1], max: [1], count: [1],
+    };
+    const m = toUplot([q], undefined, { quantile: true, nMin: null });
+    expect(m.series.length).toBe(2);
+    expect(m.data[1]).toEqual([1]);
+  });
+});

@@ -14,6 +14,7 @@ export interface SeriesData {
 export interface DatasetMeta {
   id: string; source: string; expr: string; start_ms: number; end_ms: number;
   step_ms: number; resolution_ms: number; representation: string;
+  quantile?: number | null; n_min?: number | null;
 }
 export interface PanelData {
   panel: Panel; dataset: DatasetMeta; effective_step_ms: number;

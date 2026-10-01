@@ -82,9 +82,11 @@
     const colors = readAnnotationColors(el);
     const { stroke, grid } = plotColors(el, mode);
     const dpr = window.devicePixelRatio || 1;
-    const model = toUplot(data.series, {
-      start: data.dataset.start_ms, end: data.dataset.end_ms, step: data.effective_step_ms,
-    });
+    const model = toUplot(
+      data.series,
+      { start: data.dataset.start_ms, end: data.dataset.end_ms, step: data.effective_step_ms },
+      { quantile: data.dataset.representation === "quantile", nMin: data.dataset.n_min ?? null },
+    );
     const width = el.clientWidth || 800;
     const unit = data.panel.spec.y.unit;
     const up = measureFirstDraw(
@@ -189,7 +191,12 @@
     <footer>
       {data.dataset.source} · <code>{data.dataset.expr}</code> ·
       {fmtTime(data.dataset.start_ms)} – {fmtTime(data.dataset.end_ms)} · step
-      {fmtStep(data.effective_step_ms)} · {data.dataset.representation}, min/max envelope
+      {fmtStep(data.effective_step_ms)} ·
+      {#if data.dataset.representation === "quantile"}
+        quantile per {fmtStep(data.effective_step_ms)} window (never aggregated){#if data.dataset.n_min}; faded: n &lt; {data.dataset.n_min}, not meaningful{:else}; n unknown{/if}
+      {:else}
+        {data.dataset.representation}, min/max envelope
+      {/if}
       {#if data.caveats.length > 0}&nbsp;· caveats: {data.caveats.join(", ")}{/if}
     </footer>
   {/if}

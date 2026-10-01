@@ -40,7 +40,12 @@ function gridTimes({ start, end, step }: Grid): number[] {
   return out;
 }
 
-export function toUplot(series: SeriesData[], grid?: Grid): UplotModel {
+export interface ToUplotOpts {
+  quantile?: boolean;
+  nMin?: number | null;
+}
+
+export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {}): UplotModel {
   const all = new Set<number>(grid ? gridTimes(grid) : []);
   series.forEach((s) => s.ts.forEach((t) => all.add(t)));
   const xs = [...all].sort((a, b) => a - b);
@@ -60,9 +65,29 @@ export function toUplot(series: SeriesData[], grid?: Grid): UplotModel {
       });
       return out;
     };
+    const name = seriesName(s.labels);
+    if (opts.quantile) {
+      // Percentiles are never aggregated: no min/max envelope. Buckets with too few
+      // observations are drawn faded so they are not read as real percentiles.
+      const nMin = opts.nMin ?? null;
+      const ok = s.avg.map((v, i) => (nMin === null || (s.count[i] ?? 0) >= nMin ? v : null));
+      data.push(column(ok));
+      uSeries.push({ label: name, stroke: color, width: 1.5, spanGaps: false });
+      if (nMin !== null) {
+        const low = s.avg.map((v, i) => ((s.count[i] ?? 0) < nMin ? v : null));
+        data.push(column(low));
+        uSeries.push({
+          label: `${name} (n<${nMin}, not meaningful)`,
+          stroke: rgba(color, 0.35),
+          width: 1,
+          dash: [4, 4],
+          spanGaps: false,
+        });
+      }
+      return;
+    }
     const avgIdx = data.length;
     data.push(column(s.avg), column(s.min), column(s.max));
-    const name = seriesName(s.labels);
     uSeries.push(
       { label: name, stroke: color, width: 1.5, spanGaps: false },
       { label: `${name} min`, stroke: rgba(color, 0.35), width: 0.5, spanGaps: false, points: { show: false } },
