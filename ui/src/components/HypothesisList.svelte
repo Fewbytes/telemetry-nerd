@@ -25,8 +25,8 @@
 </script>
 
 {#snippet item(h: Hypothesis)}
-  <li class="hypothesis" data-status={h.status}>
-    <div class="statement">{h.statement}</div>
+  <li class="hypothesis" id="hypothesis-{h.id}" data-status={h.status}>
+    <div class="statement"><span class="obj-id">{h.id}</span> {h.statement}</div>
     <div class="evidence">
       <span class="for">
         for {h.evidence_for.length}

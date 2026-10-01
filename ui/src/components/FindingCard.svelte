@@ -26,7 +26,7 @@
 </script>
 
 <article class="finding" id="finding-{finding.id}" data-verdict={finding.verdict ?? "none"}>
-  <h3 class="claim">{finding.claim}</h3>
+  <h3 class="claim"><span class="obj-id">{finding.id}</span> {finding.claim}</h3>
   <p class="scope">{scopeLine(finding.scope)}</p>
 
   {#if finding.evidence.length > 0}

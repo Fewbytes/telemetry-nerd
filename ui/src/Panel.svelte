@@ -153,6 +153,7 @@
   data-budget-exceeded={render ? String(render.exceeded) : undefined}
 >
   <header>
+    <a class="obj-id" href="#/panel/{panel.id}" title="Panel {panel.id}">{panel.id}</a>
     <span class="question">Q: {panel.question}</span>
     {#if panel.answered_by}
       <a class="status answered-by" href="#finding-{panel.answered_by}">answered → {panel.answered_by}</a>
