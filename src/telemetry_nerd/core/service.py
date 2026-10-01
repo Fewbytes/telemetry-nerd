@@ -24,6 +24,7 @@ from telemetry_nerd.analysis.exprkind import (
     analyze,
     expand,
     histogram_source,
+    looks_like_histogram,
     min_samples,
 )
 from telemetry_nerd.analysis.quantile import attach_counts
@@ -170,6 +171,8 @@ class TelemetryService:
             histogram=histogram,
         )
         summary = summarize(meta, result, now_ms=now, settle_ms=self.cache.settle_ms)
+        if meta.representation == "bucket_agg" and looks_like_histogram(meta.expr):
+            summary["caveats"].append("histogram_as_lines")
         self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
         return {"dataset": meta.id, "summary": summary}
 
@@ -439,6 +442,8 @@ class TelemetryService:
         caveats = summarize(meta, result, now_ms=self.clock(), settle_ms=self.cache.settle_ms)[
             "caveats"
         ]
+        if meta.representation == "bucket_agg" and looks_like_histogram(meta.expr):
+            caveats.append("histogram_as_lines")
         return {
             "kind": "time",
             "panel": panel.to_dict(),

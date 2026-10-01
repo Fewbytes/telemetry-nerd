@@ -139,3 +139,11 @@ async def test_distribution_from_a_plain_panel_is_refused(tmp_path):
     panel = svc.show(q["dataset"], "Up?").panel
     with pytest.raises(SourceError, match="histogram"):
         await svc.distribution_panel(panel.id, 0, 60_000)
+
+
+async def test_histogram_buckets_drawn_as_lines_are_flagged(tmp_path):
+    svc = make_service(tmp_path)
+    out = await svc.query("sum by (le) (rate(x_bucket[5m]))", "now-2h", "now-1h", step="1m")
+    assert "histogram_as_lines" in out["summary"]["caveats"]
+    panel = svc.show(out["dataset"], "Buckets over time?").panel
+    assert "histogram_as_lines" in svc.panel_data(panel.id, 600)["caveats"]

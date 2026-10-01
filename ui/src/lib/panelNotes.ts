@@ -30,6 +30,8 @@ const CAVEATS: Record<string, Describe> = {
     "Some cumulative bucket counts decreased (independent extrapolation or a reset); the running maximum was used, as histogram_quantile does.",
   missing_inf: () =>
     "The histogram has no +Inf bucket: observations above the largest bucket are missing and n is a lower bound.",
+  histogram_as_lines: () =>
+    "This looks like histogram buckets drawn as lines; use query_distribution for a heatmap of counts.",
   overflow: () => "Some observations are above the largest bucket edge; their values are unknown (top strip).",
 };
 

@@ -273,3 +273,14 @@ def histogram_source(expr: str) -> HistogramSource | None:
     if bracket < 0 or not _ANY_SELECTOR.match(marg[:bracket]):
         return None
     return HistogramSource(arg[:bracket].strip(), by)
+
+
+_HISTOGRAM_HINT = re.compile(r"_bucket\b|\bvmrange\b|\bby\s*\([^()]*\ble\b[^()]*\)", re.IGNORECASE)
+
+
+def looks_like_histogram(expr: str) -> bool:
+    """A non-quantile expression over histogram buckets: it will be drawn as lines, which
+    hides the distribution (query_distribution draws a heatmap of counts)."""
+    if analyze(expr).quantile is not None:
+        return False
+    return bool(_HISTOGRAM_HINT.search(_mask_strings(_strip_comments(expr))))

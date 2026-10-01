@@ -176,3 +176,20 @@ def test_count_is_not_derived_when_it_would_be_wrong(inner):
 )  # fmt: skip
 def test_histogram_source(expr, want):
     assert histogram_source(expr) == want
+
+
+@pytest.mark.parametrize(
+    ("expr", "want"),
+    [
+        ('sum(rate(lat_seconds_bucket{job="a"}[5m]))', True),
+        ("sum by (le) (rate(x[5m]))", True),
+        ("sum by (vmrange) (histogram_over_time(x[5m]))", True),
+        ("histogram_quantile(0.95, sum by (le) (rate(x_bucket[5m])))", False),
+        ("sum(rate(http_requests_total[5m]))", False),
+        ('up{path="/metrics_bucket"}', False),
+    ],
+)
+def test_looks_like_histogram(expr, want):
+    from telemetry_nerd.analysis.exprkind import looks_like_histogram
+
+    assert looks_like_histogram(expr) is want
