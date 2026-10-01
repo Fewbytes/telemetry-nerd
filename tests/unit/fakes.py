@@ -7,6 +7,7 @@ from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.db import open_duckdb
 from telemetry_nerd.datasets.store import DatasetStore
+from telemetry_nerd.model.discovery import Discovery
 from telemetry_nerd.model.series import (
     BUCKET_SCHEMA,
     SERIES_SCHEMA,
@@ -46,6 +47,12 @@ class FakeSource:
 
     async def probe(self) -> dict:
         return {"reachable": True, "latency_ms": 0, "version": "fake"}
+
+    async def discover(self) -> Discovery:
+        return Discovery((), (), {}, None, 1.0, (), False)
+
+    async def scrape_interval(self, selector: str) -> int | None:
+        return self.resolution_ms
 
     async def fetch(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
         self.calls += 1

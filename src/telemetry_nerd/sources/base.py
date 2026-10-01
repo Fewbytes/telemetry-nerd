@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from telemetry_nerd.model.discovery import Discovery
 from telemetry_nerd.model.distribution import DistResult
 from telemetry_nerd.model.series import FetchResult
 from telemetry_nerd.model.time import TimeRange
@@ -32,6 +33,8 @@ class Limits:
     max_series: int = 500
     max_points: int = 2_000_000
     timeout_s: float = 30.0
+    max_metrics: int = 200_000
+    discover_timeout_s: float = 120.0  # name/metadata listings are large (Wikimedia: ~9 MB)
 
 
 class Source(Protocol):
@@ -48,3 +51,7 @@ class Source(Protocol):
     async def fetch_histogram(
         self, selector: str, by: Sequence[str], rng: TimeRange, step_ms: int
     ) -> DistResult: ...
+
+    async def discover(self) -> Discovery: ...
+
+    async def scrape_interval(self, selector: str) -> int | None: ...

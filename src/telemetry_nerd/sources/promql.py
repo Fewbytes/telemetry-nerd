@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import math
 import os
 import re
@@ -15,6 +16,7 @@ import httpx
 import pyarrow as pa
 
 from telemetry_nerd.analysis.histogram import from_matrix, histogram_expr
+from telemetry_nerd.model.discovery import Discovery, MetricInfo
 from telemetry_nerd.model.distribution import DistResult
 from telemetry_nerd.model.series import (
     BUCKET_SCHEMA,
@@ -214,16 +216,19 @@ class PromQLSource:
         )
         return FetchResult(buckets, series, partial=partial)
 
-    async def _get_json(self, path: str, params: dict[str, str]) -> dict:
+    async def _get_json(
+        self, path: str, params: dict[str, str], timeout_s: float | None = None
+    ) -> dict:
         url = f"{self.base_url}{path}"
+        timeout_s = timeout_s or self.limits.timeout_s
         try:
             async with self._gate.slot():
                 resp = await self._client.get(
-                    url, params=params, headers=self._headers, timeout=self.limits.timeout_s
+                    url, params=params, headers=self._headers, timeout=timeout_s
                 )
         except httpx.TimeoutException as e:
             raise SourceUnavailable(
-                f"query timed out after {self.limits.timeout_s}s",
+                f"query timed out after {timeout_s}s",
                 hint="narrow the selector, shorten the range, or use a coarser step",
             ) from e
         except httpx.HTTPError as e:
@@ -375,3 +380,149 @@ class PromQLSource:
         except SourceError:
             await self._get_json("/api/v1/query", {"query": "1"})
         return {"reachable": True, "latency_ms": round((time.monotonic() - t0) * 1000), **info}
+
+    # discovery (spec §4.1) -------------------------------------------------
+    async def _listing(self, path: str, params: dict[str, str] | None = None) -> object:
+        body = await self._get_json(path, params or {}, self.limits.discover_timeout_s)
+        return body.get("data")
+
+    async def discover(self) -> Discovery:
+        """Names, metadata, label names and top cardinalities in a handful of cheap calls.
+
+        Never loops per metric. Optional steps degrade to a caveat; only names are fatal.
+        """
+        caveats: list[str] = []
+        partial = False
+
+        names = await self._listing("/api/v1/label/__name__/values")
+        if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+            raise _malformed("label values for __name__ are not a list of strings")
+        if len(names) > self.limits.max_metrics:
+            caveats.append(f"metrics_truncated:{self.limits.max_metrics}/{len(names)}")
+            names = names[: self.limits.max_metrics]
+            partial = True
+        name_set = set(names)
+
+        meta = await self._discover_metadata(name_set)
+        if meta is None:
+            caveats.append("metadata_unavailable")
+            partial = True
+            meta = {}
+        coverage = sum(1 for n in names if n in meta) / len(names) if names else 1.0
+        if meta and coverage < 1.0:
+            caveats.append(f"metadata_coverage:{coverage:.0%}")
+
+        try:
+            labels = await self._listing("/api/v1/labels")
+            if not isinstance(labels, list):
+                raise _malformed("labels is not a list")
+            label_names = tuple(str(x) for x in labels)
+        except SourceError:
+            label_names = ()
+            caveats.append("labels_unavailable")
+            partial = True
+
+        cardinality = await self._discover_cardinality()
+        if cardinality is None:
+            caveats.append("cardinality_unavailable")
+            partial = True
+        else:
+            caveats.append("cardinality_top_only")
+
+        metrics = tuple(
+            MetricInfo(
+                n,
+                meta[n]["type"] if n in meta else None,
+                meta[n]["help"] if n in meta else None,
+                meta[n]["unit"] if n in meta else None,
+            )
+            for n in names
+        )
+        return Discovery(
+            metrics=metrics,
+            label_names=label_names,
+            histograms=_histogram_families(name_set, meta),
+            cardinality=cardinality,
+            metadata_coverage=coverage,
+            caveats=tuple(caveats),
+            partial=partial,
+        )
+
+    async def _discover_metadata(self, names: set[str]) -> dict[str, dict] | None:
+        """Union of /metadata responses: Thanos returns a different subset per call, so retry
+        until every name is covered or attempts run out. None if no call succeeded."""
+        union: dict[str, dict] = {}
+        succeeded = False
+        for _ in range(_METADATA_ATTEMPTS):
+            try:
+                data = await self._listing("/api/v1/metadata")
+            except SourceError:
+                continue
+            if not isinstance(data, dict):
+                continue
+            succeeded = True
+            for name, entries in data.items():
+                if name in union or not entries or not isinstance(entries, list):
+                    continue
+                e = entries[0]
+                kind = e.get("type")
+                union[name] = {
+                    "type": kind if kind in _METRIC_TYPES else None,
+                    "help": e.get("help") or None,
+                    "unit": e.get("unit") or None,
+                }
+            if names <= union.keys():
+                break
+        return union if succeeded else None
+
+    async def _discover_cardinality(self) -> dict[str, int] | None:
+        """Top metrics by series count (Prometheus/VM tsdb status); None if unsupported."""
+        try:
+            data = await self._listing("/api/v1/status/tsdb", {"limit": "100", "topN": "100"})
+            rows = data["seriesCountByMetricName"] if isinstance(data, dict) else None
+            if not isinstance(rows, list):
+                return None
+            return {str(r["name"]): int(r["value"]) for r in rows}
+        except (SourceError, KeyError, TypeError, ValueError):
+            return None
+
+    async def scrape_interval(self, selector: str) -> int | None:
+        """Median sample spacing of one series over the last 10m (ms); None if < 3 samples.
+
+        Per metric, not per source: native resolution differs per job (15/20/30/60s)."""
+        body = await self._get_json(
+            "/api/v1/query", {"query": f"{selector.strip()}[10m]", "limit": "1"}
+        )
+        result = (body.get("data") or {}).get("result")
+        if not isinstance(result, list) or not result:
+            return None
+        values = result[0].get("values")
+        if not isinstance(values, list) or len(values) < 3:
+            return None
+        ts = [float(v[0]) for v in values]
+        gaps = sorted(b - a for a, b in itertools.pairwise(ts))
+        return round(gaps[len(gaps) // 2] * 1000)
+
+
+_METADATA_ATTEMPTS = 3
+_METRIC_TYPES = frozenset(
+    {"counter", "gauge", "histogram", "summary", "gaugehistogram", "info", "stateset"}
+)
+
+
+def _histogram_families(names: set[str], meta: dict[str, dict]) -> dict[str, str]:
+    """Classic: _bucket with _sum and _count series. Native: typed histogram with no _bucket."""
+    out: dict[str, str] = {}
+    for n in names:
+        if n.endswith("_bucket"):
+            base = n[: -len("_bucket")]
+            if f"{base}_sum" in names and f"{base}_count" in names:
+                out[base] = "classic"
+    for key, m in meta.items():
+        if m["type"] != "histogram":
+            continue
+        base = key.removesuffix("_bucket")
+        if base in out:
+            continue
+        out[base] = "classic" if f"{base}_bucket" in names else "native"
+    return out
