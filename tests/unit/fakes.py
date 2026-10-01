@@ -1,6 +1,7 @@
 import pyarrow as pa
 
 from telemetry_nerd.analysis.histogram import from_matrix, histogram_expr
+from telemetry_nerd.catalog.relation_store import RelationStore
 from telemetry_nerd.catalog.store import CatalogStore
 from telemetry_nerd.core.events import EventLog
 from telemetry_nerd.core.service import TelemetryService
@@ -162,6 +163,8 @@ def make_service(
         datasets=datasets,
         workspace=workspace,
         log=log,
-        ws=WorkspaceService(workspace, objects, datasets, log, CatalogStore(wcon), clock),
+        ws=WorkspaceService(
+            workspace, objects, datasets, log, CatalogStore(wcon), RelationStore(wcon), clock
+        ),
         clock=clock,
     )

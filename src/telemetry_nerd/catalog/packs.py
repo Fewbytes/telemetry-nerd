@@ -55,7 +55,6 @@ _VALUE_FIELDS = (
     "additivity_time",
     "role",
     "description",
-    "bounded_by",
 )
 
 
@@ -97,6 +96,10 @@ class PackEntry(BaseModel):
         for f in _VALUE_FIELDS:
             if (v := getattr(self, f)) is not None:
                 validate_value(f, v)
+        if self.bounded_by is not None and (
+            not self.bounded_by or not all(isinstance(t, str) and t for t in self.bounded_by)
+        ):
+            raise ValueError("bounded_by must be a non-empty list of metric names")
         return self
 
     def values(self) -> dict[str, Any]:
@@ -116,6 +119,14 @@ class Pack(BaseModel):
     name: str
     version: str
     citation: str
+
+
+@dataclass(frozen=True)
+class RelationSpec:
+    kind: str
+    object: str
+    confidence: float
+    basis: str
 
 
 @dataclass(frozen=True)
@@ -149,6 +160,19 @@ def parse_pack(text: str) -> LoadedPack:
 @dataclass
 class PackIndex:
     packs: tuple[LoadedPack, ...] = field(default_factory=tuple)
+
+    def relations_for(self, metric: str) -> list[RelationSpec]:
+        """`bounded_by` shorthand entries as relation claims (metric <= target, same labels)."""
+        out: dict[str, RelationSpec] = {}
+        for lp in self.packs:
+            cite = f"pack {lp.pack.name}@{lp.pack.version}: {lp.pack.citation}"
+            for e in lp.entries:
+                if e.bounded_by and e.matches(metric):
+                    for target in e.bounded_by:
+                        out.setdefault(
+                            target, RelationSpec("bounded_by", target, PACK_CONFIDENCE, cite)
+                        )
+        return list(out.values())
 
     def claims_for(self, metric: str) -> list[ClaimSpec]:
         """Pack claims for a metric. Within a pack an exact entry beats a regex entry on the

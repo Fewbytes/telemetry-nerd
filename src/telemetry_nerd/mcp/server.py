@@ -77,6 +77,8 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
 - Before charting unfamiliar metrics, check what the catalog knows: `catalog_search`/`catalog_get`
   (run `source_learn` once per source). When you work out what a metric is (unit, type, role,
   bounds), record it with `catalog_write` and a basis; never claim a unit you cannot justify.
+  Relations (`catalog_relate`: bounded_by, part_of, ...) and model bindings (`catalog_bind`:
+  littles_law, RED, USE) go the same way; a binding role with no signal raises a Gap.
 - `workspace_activity` lists what the user did since a sequence number.
 """
 
@@ -348,8 +350,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         origin, confidence and basis, plus the fields where claims disagree."""
         try:
             e = service.ws.catalog_entry(source, metric)
+            rels = service.ws.catalog_relations(source, metric)
             return _dump(
                 {
+                    "relations": [_rel_dict(r) for r in rels["relations"]],
+                    "bindings": [_bind_dict(b) for b in rels["bindings"]],
                     **e.model_dump(exclude={"fields"}),
                     "resolved": {f: c.value for f, c in e.fields.items()},
                     "conflicts": {
@@ -364,7 +369,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     def catalog_write(source: str, claims: list[dict[str, Any]]) -> str:
         """Record what you have learned about metrics, up to 200 claims per call. Each claim:
         {metric, field, value, confidence, basis}. field is one of type, unit, bounds,
-        additivity_series, additivity_time, role, description, histogram_family, bounded_by.
+        additivity_series, additivity_time, role, description, histogram_family. Relations between
+        metrics (bounded_by, part_of, ...) go through catalog_relate.
         `basis` (required) is one line saying what you checked; confidence is at most 0.9
         (1.0 is reserved for the user). Writes are origin=claude: they never override a user
         claim or a higher-ranked origin, and the result says whether each claim is now the
@@ -373,6 +379,103 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             return _dump({"results": service.ws.catalog_write_claude(source, claims)})
         except ValueError as e:
             raise _fail(e) from e
+
+    def _rel_dict(r: Any) -> dict:
+        w = r.winner
+        out: dict[str, Any] = {
+            "subject": r.subject, "kind": r.kind, "object": r.object, "origin": w.origin,
+            "confidence": w.confidence, "contested": r.contested,
+        }  # fmt: skip
+        if w.params:
+            out["params"] = w.params
+        if w.basis:
+            out["basis"] = w.basis
+        if w.retracted:
+            out["retracted"] = True
+        return out
+
+    def _bind_dict(b: Any) -> dict:
+        w = b.winner
+        out: dict[str, Any] = {
+            "kind": b.kind, "key": b.key, "roles": w.roles, "join_on": w.join_on,
+            "origin": w.origin, "confidence": w.confidence, "contested": b.contested,
+        }  # fmt: skip
+        if w.basis:
+            out["basis"] = w.basis
+        if w.retracted:
+            out["retracted"] = True
+        return out
+
+    @mcp.tool()
+    def catalog_relate(source: str, claims: list[dict[str, Any]], level: str = "catalog") -> str:
+        """Record typed edges between metrics (level=catalog) or datasets (level=workspace), up to
+        200 per call. Each claim: {subject, kind, object, confidence, basis, params?, retract?}.
+        kinds: derived_from, part_of (errors part_of requests), same_quantity, upstream_of,
+        bounded_by (subject never exceeds object at the same labels: avail bounded_by size),
+        correlated (needs params {coefficient, lag_ms, scope}; evidence, capped at 0.7).
+        `basis` is required; confidence at most 0.9. Set retract=true to say an edge does not hold
+        (it removes a wrong pack edge without erasing history). Origin is always claude: user
+        claims outrank you, and the result says whether each claim is now the winner."""
+        try:
+            return _dump({"results": service.ws.relate_claude(source, claims, level)})  # type: ignore[arg-type]
+        except ValueError as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
+    def catalog_bind(
+        source: str,
+        kind: str,
+        key: str,
+        roles: dict[str, str | None],
+        confidence: float,
+        basis: str,
+        join_on: list[str] | None = None,
+        retract: bool = False,
+        level: str = "catalog",
+    ) -> str:
+        """Bind signals to the roles of a model for one service/resource `key`. kinds and roles:
+        littles_law {arrival_rate, latency, concurrency}; RED {rate, errors, duration};
+        USE {utilization, saturation, errors}. Give every role: a metric name, or null when no
+        such signal exists: each null raises a Gap recommending the missing instrumentation.
+        `join_on` lists the labels that tie the signals together. Same basis/confidence rules as
+        catalog_relate; origin is claude."""
+        try:
+            return _dump(
+                service.ws.bind_claude(
+                    source,
+                    kind,
+                    key,
+                    roles,
+                    join_on=join_on,
+                    confidence=confidence,
+                    basis=basis,
+                    retract=retract,
+                    level=level,  # type: ignore[arg-type]
+                )
+            )
+        except (NotFound, ValueError) as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
+    def catalog_relations(
+        source: str,
+        metric: str | None = None,
+        kind: str | None = None,
+        level: str = "catalog",
+        include_retracted: bool = False,
+    ) -> str:
+        """Resolved relations and bindings, optionally only those touching `metric` or of one
+        `kind`. `contested` means a lower-ranked claim disagrees with the winner."""
+        try:
+            out = service.ws.catalog_relations(source, metric, kind, level, include_retracted)  # type: ignore[arg-type]
+        except ValueError as e:
+            raise _fail(e) from e
+        return _dump(
+            {
+                "relations": [_rel_dict(r) for r in out["relations"]],
+                "bindings": [_bind_dict(b) for b in out["bindings"]],
+            }
+        )
 
     @mcp.tool()
     def show(

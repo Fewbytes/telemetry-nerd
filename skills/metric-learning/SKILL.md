@@ -54,8 +54,9 @@ Rules that keep the catalog honest:
   Check monotonicity/resets before claiming `counter`, or cite documentation.
 - **Bounds are physical, not typical.** `[0,1]` only if it cannot exceed 1 (CPU percent summed
   over cores can exceed 100). A tall peak is not a bound.
-- **`bounded_by`** names a metric at the same label set that this one never exceeds
-  (available <= total). Do not use it for usage-vs-limit across different label sets.
+- **`bounded_by`** is a relation (`catalog_relate`), not a field: this metric never exceeds the
+  object at the same label set (available <= total). Do not use it for usage-vs-limit across
+  different label sets.
 - **Additivity.** `additive` means summing across series (or over time, for increases) is
   meaningful. Ratios, percentages, averages and per-host gauges like load are `intensive`.
 - **Prefer fixing over adding.** A correct unit on a metric the investigation uses is worth more
@@ -68,3 +69,18 @@ Rules that keep the catalog honest:
 `catalog_write` returns per-claim `accepted`/`rejected` with a reason. Fix rejected claims
 (unknown metric: run `source_learn`; invalid value; missing basis). `effective: false` with
 `outranked_by` means your claim is stored but another origin decides the value.
+
+## Relations and bindings
+
+Relations (`catalog_relate`) are edges between metrics: `derived_from`, `part_of` (errors are part
+of requests, which enables a ratio), `same_quantity`, `upstream_of`, `bounded_by`, `correlated`.
+- A relation needs evidence of the same kind as a field: documentation, code, or a physical limit.
+  `correlated` is observation, never truth: give coefficient, lag and the scope you measured in
+  (it is capped at 0.7), and never use it to justify another claim.
+- If a pack edge is wrong, write the same edge with `retract: true` and your evidence; it removes
+  the edge without erasing history. Do not retract to make a chart convenient.
+
+Bindings (`catalog_bind`) tie signals to the roles of a model for one service or resource:
+`littles_law`, `RED`, `USE`. Bind only metrics that really play the role, with the labels that
+join them in `join_on`. If a role has no signal, pass `null`: the Gap that results tells the
+user which metric to add, which is more useful than a stand-in that does not measure the thing.

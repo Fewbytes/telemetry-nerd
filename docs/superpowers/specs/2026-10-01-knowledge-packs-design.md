@@ -12,6 +12,7 @@ role vocabulary (`ROLES`), valid catalog values, no duplicate exact names, valid
 entries beat regex entries on the same field.
 
 ## `bounded_by`
+(Superseded by 2as.8: now a relation kind, not a field; packs emit relation claims. Original text:)
 New catalog field: the metric never exceeds the target at the same label set (avail <= size,
 MemAvailable <= MemTotal, replicas_available <= status_replicas). Usage-vs-limit relations that
 need label matching are 2as.8.

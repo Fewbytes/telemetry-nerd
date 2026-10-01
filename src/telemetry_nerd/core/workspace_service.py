@@ -19,6 +19,20 @@ from telemetry_nerd.catalog.models import (
     validate_value,
 )
 from telemetry_nerd.catalog.packs import PackIndex, builtin_packs
+from telemetry_nerd.catalog.relation_store import RelationStore
+from telemetry_nerd.catalog.relations import (
+    CORRELATED_MAX_CONFIDENCE,
+    SUGGESTIONS,
+    BindingClaim,
+    Level,
+    RelationClaim,
+    ResolvedBinding,
+    ResolvedRelation,
+    canonical_ends,
+    metric_slug,
+    validate_binding,
+    validate_relation,
+)
 from telemetry_nerd.catalog.rules import Facts, derive_claims, facts_from_claims, facts_from_name
 from telemetry_nerd.catalog.search import overview as family_overview
 from telemetry_nerd.catalog.search import search as search_entries
@@ -52,6 +66,7 @@ from telemetry_nerd.workspace.models import (
     Hypothesis,
     HypothesisStatus,
     Message,
+    MetricSuggestion,
     PanelRef,
     StatisticRef,
     Thread,
@@ -82,6 +97,23 @@ def atomic[F: Callable](fn: F) -> F:
     return wrapper  # type: ignore[return-value]
 
 
+def _claude_gate(item: dict[str, Any], cap: float) -> tuple[float, str]:
+    """Confidence and basis rules for anything Claude writes into the catalog."""
+    confidence = item.get("confidence")
+    if (
+        not isinstance(confidence, int | float)
+        or isinstance(confidence, bool)
+        or not 0 < confidence <= cap
+    ):
+        raise ValueError(
+            f"confidence must be in (0, {cap}]: 1.0 is reserved for what the user verified"
+        )
+    basis = item.get("basis")
+    if not isinstance(basis, str) or not basis.strip():
+        raise ValueError("basis is required: one line saying what you checked")
+    return float(confidence), basis.strip()
+
+
 @dataclass
 class WorkspaceService:
     workspace: WorkspaceStore
@@ -89,6 +121,7 @@ class WorkspaceService:
     datasets: DatasetStore
     log: EventLog
     catalog: CatalogStore
+    relations: RelationStore
     clock: Callable[[], int] = now_ms
     packs: PackIndex = field(default_factory=builtin_packs)
 
@@ -265,6 +298,18 @@ class WorkspaceService:
         )
 
     # catalog ------------------------------------------------------------
+    @staticmethod
+    def _claim_confidence(origin: str, actor: str, confidence: float | None) -> float:
+        if origin not in ORIGIN_RANK:
+            raise ValueError(f"unknown origin {origin!r}; expected one of {sorted(ORIGIN_RANK)}")
+        if (origin == "user") != (actor == "user"):
+            raise ValueError("origin 'user' is reserved for the user's own edits (and vice versa)")
+        if confidence is None:
+            if origin != "user":
+                raise ValueError("confidence is required for non-user claims")
+            return 1.0
+        return confidence
+
     @atomic
     def catalog_claim(
         self,
@@ -280,14 +325,7 @@ class WorkspaceService:
         citation: str | None = None,
     ) -> Claim:
         """Record `origin`'s claim on a metric field; the resolved value is computed on read."""
-        if origin not in ORIGIN_RANK:
-            raise ValueError(f"unknown origin {origin!r}; expected one of {sorted(ORIGIN_RANK)}")
-        if (origin == "user") != (actor == "user"):
-            raise ValueError("origin 'user' is reserved for the user's own edits (and vice versa)")
-        if confidence is None:
-            if origin != "user":
-                raise ValueError("confidence is required for non-user claims")
-            confidence = 1.0
+        confidence = self._claim_confidence(origin, actor, confidence)
         validate_value(field, value)
         claim = Claim(
             field=field,
@@ -353,6 +391,23 @@ class WorkspaceService:
             ]
         ]
         changed = self.catalog.put_claims_bulk(source, rows)
+        name_set = set(names)
+        pack_relations = [
+            RelationClaim(
+                source=source,
+                subject=m.name,
+                kind=spec.kind,  # type: ignore[arg-type]
+                object=spec.object,
+                origin="pack",
+                confidence=spec.confidence,
+                basis=spec.basis,
+                ts_ms=ts,
+            )
+            for m in discovery.metrics
+            for spec in self.packs.relations_for(m.name)
+            if spec.object in name_set and spec.object != m.name
+        ]
+        relations_changed = self.relations.put_relations(pack_relations)
         summary = {
             "source": source,
             "metrics": len(names),
@@ -360,11 +415,263 @@ class WorkspaceService:
             "removed": len(diff.removed),
             "returned": len(diff.returned),
             "claims_changed": changed,
+            "relations_changed": relations_changed,
             "complete": complete,
             "caveats": list(discovery.caveats),
         }
         self.log.append(actor, "catalog.learned", None, summary)
         return summary
+
+    # relations and bindings --------------------------------------------
+    def _check_endpoint(self, level: str, source: str, name: str) -> None:
+        if level == "catalog":
+            if not self.catalog.has_metric(source, name):
+                raise NotFound(f"unknown metric {name!r} on {source!r}; run source_learn first")
+        elif level == "workspace":
+            if not self.datasets.exists(name):
+                raise NotFound(f"dataset {name!r} not found")
+        else:
+            raise ValueError(f"unknown level {level!r}; expected 'catalog' or 'workspace'")
+
+    @atomic
+    def relate(
+        self,
+        source: str,
+        subject: str,
+        kind: str,
+        target: str,
+        origin: Origin,
+        actor: Actor,
+        *,
+        confidence: float | None = None,
+        basis: str | None = None,
+        params: dict[str, Any] | None = None,
+        retract: bool = False,
+        level: Level = "catalog",
+    ) -> ResolvedRelation:
+        """Claim (or retract) a typed edge between two metrics (catalog) or datasets (workspace)."""
+        confidence = self._claim_confidence(origin, actor, confidence)
+        params = dict(params or {})
+        validate_relation(kind, subject, target, params)
+        subject, target = canonical_ends(kind, subject, target)
+        for end in (subject, target):
+            self._check_endpoint(level, source, end)
+        scope = source if level == "catalog" else ""
+        self.relations.put_relations(
+            [
+                RelationClaim(
+                    level=level,
+                    source=scope,
+                    subject=subject,
+                    kind=kind,  # type: ignore[arg-type]
+                    object=target,
+                    origin=origin,
+                    confidence=confidence,
+                    retracted=retract,
+                    params=params,
+                    basis=basis,
+                    ts_ms=self.clock(),
+                )
+            ]
+        )
+        self.log.append(
+            actor,
+            "relation.claimed",
+            None,
+            {
+                "level": level, "source": scope, "subject": subject, "kind": kind,
+                "object": target, "origin": origin, "retracted": retract, "confidence": confidence,
+            },
+        )  # fmt: skip
+        return next(
+            r
+            for r in self.relations.relations(level, scope, kind=kind, include_retracted=True)
+            if (r.subject, r.object) == (subject, target)
+        )
+
+    @atomic
+    def bind(
+        self,
+        source: str,
+        kind: str,
+        key: str,
+        roles: dict[str, str | None],
+        origin: Origin,
+        actor: Actor,
+        *,
+        join_on: list[str] | None = None,
+        confidence: float | None = None,
+        basis: str | None = None,
+        retract: bool = False,
+        level: Level = "catalog",
+    ) -> dict[str, Any]:
+        """Claim (or retract) a role-based model binding. An unfilled role in the winning
+        claim raises a Gap recommending the missing instrumentation (once per role)."""
+        confidence = self._claim_confidence(origin, actor, confidence)
+        join = list(join_on or [])
+        validate_binding(kind, roles, join)
+        if not key.strip():
+            raise ValueError("binding key (service/resource name) is required")
+        for metric in roles.values():
+            if metric is not None:
+                self._check_endpoint(level, source, metric)
+        scope = source if level == "catalog" else ""
+        self.relations.put_binding(
+            BindingClaim(
+                level=level,
+                source=scope,
+                kind=kind,  # type: ignore[arg-type]
+                key=key,
+                origin=origin,
+                confidence=confidence,
+                retracted=retract,
+                roles=dict(roles),
+                join_on=join,
+                basis=basis,
+                ts_ms=self.clock(),
+            )
+        )
+        self.log.append(
+            actor,
+            "binding.claimed",
+            None,
+            {
+                "level": level, "source": scope, "kind": kind, "key": key, "origin": origin,
+                "retracted": retract, "roles": dict(roles), "confidence": confidence,
+            },
+        )  # fmt: skip
+        resolved = next(
+            b
+            for b in self.relations.bindings(
+                level, scope, kind=kind, key=key, include_retracted=True
+            )
+        )
+        gaps = (
+            []
+            if resolved.winner.retracted
+            else self._gaps_for_unfilled(level, scope, resolved, actor)
+        )
+        return {"binding": resolved, "gaps": gaps}
+
+    def _gaps_for_unfilled(
+        self, level: str, scope: str, resolved: ResolvedBinding, actor: Actor
+    ) -> list[str]:
+        created = []
+        slug = metric_slug(resolved.key)
+        for role, metric in resolved.winner.roles.items():
+            if metric is not None or self.relations.binding_gap(
+                level, scope, resolved.kind, resolved.key, role
+            ):
+                continue
+            hint = SUGGESTIONS[(resolved.kind, role)]
+            gap = self.gap_create(
+                GapIn(
+                    missing_signal=f"{role} signal for {resolved.kind} on '{resolved.key}'",
+                    needed_for=f"{resolved.kind} model of '{resolved.key}': {hint.why}",
+                    suggestion=MetricSuggestion(
+                        name=hint.name.format(key=slug), type=hint.type, labels=list(hint.labels)
+                    ),
+                ),
+                actor,
+            )
+            self.relations.set_binding_gap(level, scope, resolved.kind, resolved.key, role, gap.id)
+            created.append(gap.id)
+        return created
+
+    def catalog_relations(
+        self,
+        source: str,
+        metric: str | None = None,
+        kind: str | None = None,
+        level: Level = "catalog",
+        include_retracted: bool = False,
+    ) -> dict[str, list]:
+        if level not in ("catalog", "workspace"):
+            raise ValueError(f"unknown level {level!r}; expected 'catalog' or 'workspace'")
+        scope = source if level == "catalog" else ""
+        rels = self.relations.relations(
+            level, scope, metric=metric, kind=kind, include_retracted=include_retracted
+        )
+        binds = [
+            b
+            for b in self.relations.bindings(level, scope, include_retracted=include_retracted)
+            if metric is None or metric in b.winner.roles.values()
+        ]
+        return {"relations": rels, "bindings": binds}
+
+    def relate_claude(
+        self, source: str, items: list[dict[str, Any]], level: Level = "catalog"
+    ) -> list[dict]:
+        """Claude's batched relation writes: origin claude, basis required, confidence capped
+        (correlated is evidence, not truth: lower cap). Per-item rejection; outranked claims are
+        stored but reported."""
+        if len(items) > MAX_CLAUDE_BATCH:
+            raise ValueError(f"at most {MAX_CLAUDE_BATCH} claims per call, got {len(items)}")
+        results = []
+        for item in items:
+            base = {k: item.get(k) for k in ("subject", "kind", "object")}
+            try:
+                cap = (
+                    CORRELATED_MAX_CONFIDENCE
+                    if item.get("kind") == "correlated"
+                    else CLAUDE_MAX_CONFIDENCE
+                )
+                confidence, basis = _claude_gate(item, cap)
+                r = self.relate(
+                    source,
+                    str(item.get("subject")),
+                    str(item.get("kind")),
+                    str(item.get("object")),
+                    "claude",
+                    "claude",
+                    confidence=confidence,
+                    basis=basis,
+                    params=item.get("params"),
+                    retract=bool(item.get("retract", False)),
+                    level=level,
+                )
+            except (NotFound, ValueError) as e:
+                results.append({**base, "status": "rejected", "reason": str(e)})
+                continue
+            effective = r.winner.origin == "claude"
+            res = {**base, "status": "accepted", "effective": effective}
+            if not effective:
+                res["outranked_by"] = r.winner.origin
+            results.append(res)
+        return results
+
+    def bind_claude(
+        self,
+        source: str,
+        kind: str,
+        key: str,
+        roles: dict[str, str | None],
+        *,
+        join_on: list[str] | None = None,
+        confidence: float | None = None,
+        basis: str | None = None,
+        retract: bool = False,
+        level: Level = "catalog",
+    ) -> dict[str, Any]:
+        conf, why = _claude_gate({"confidence": confidence, "basis": basis}, CLAUDE_MAX_CONFIDENCE)
+        out = self.bind(
+            source, kind, key, roles, "claude", "claude",
+            join_on=join_on, confidence=conf, basis=why, retract=retract, level=level,
+        )  # fmt: skip
+        win = out["binding"].winner
+        effective = win.origin == "claude"
+        return {
+            "binding": {
+                "kind": kind,
+                "key": key,
+                "roles": win.roles,
+                "join_on": win.join_on,
+                "retracted": win.retracted,
+            },
+            "effective": effective,
+            **({} if effective else {"outranked_by": win.origin}),
+            "gaps": out["gaps"],
+        }
 
     def catalog_hot(self, source: str) -> set[str]:
         """Catalogued metrics this workspace has actually queried (any dataset expression)."""

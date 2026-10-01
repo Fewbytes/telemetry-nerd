@@ -155,12 +155,19 @@ async def learned(tmp_path):
 
 def test_wikimedia_node_exporter_metrics_get_descriptions_and_bounded_by(learned):
     e = learned.catalog_entry("default", "node_filesystem_avail_bytes")
-    assert e.fields["bounded_by"].value == ["node_filesystem_size_bytes"]
-    assert e.fields["bounded_by"].origin == "pack"
+    (rel,) = learned.catalog_relations("default", "node_filesystem_avail_bytes", "bounded_by")[
+        "relations"
+    ]
+    assert (rel.subject, rel.object, rel.winner.origin) == (
+        "node_filesystem_avail_bytes",
+        "node_filesystem_size_bytes",
+        "pack",
+    )
+    assert "bounded_by" not in e.fields  # a relation, not a field
     assert "available to non-root" in e.fields["description"].value
     assert e.fields["description"].origin == "pack"  # outranks the declared HELP
-    mem = learned.catalog_entry("default", "node_memory_MemAvailable_bytes")
-    assert mem.fields["bounded_by"].value == ["node_memory_MemTotal_bytes"]
+    mem = learned.catalog_relations("default", "node_memory_MemAvailable_bytes", "bounded_by")
+    assert [r.object for r in mem["relations"]] == ["node_memory_MemTotal_bytes"]
 
 
 def test_pack_corrects_untyped_counters(learned):
@@ -194,3 +201,26 @@ def test_kube_state_flags_are_zero_one_and_additive(learned):
 def test_user_claim_beats_pack(learned):
     learned.catalog_claim("default", "node_load1", "role", "mine", "user", "user")
     assert learned.catalog_entry("default", "node_load1").fields["role"].value == "mine"
+
+
+async def test_pack_relations_only_link_metrics_the_source_has(tmp_path):
+    only_avail = Discovery(
+        (MetricInfo("node_filesystem_avail_bytes", "gauge", "h", None),),
+        (),
+        {},
+        None,
+        1.0,
+        (),
+        False,
+    )
+    svc = make_service(tmp_path, FakeSource(name="default", discovery=only_avail))
+    out = await svc.learn("default")
+    assert out["relations_changed"] == 0  # the size metric is not in this source: no dangling edge
+    assert svc.ws.catalog_relations("default")["relations"] == []
+
+
+async def test_relearning_does_not_rewrite_unchanged_relations(tmp_path):
+    svc = make_service(tmp_path, FakeSource(name="default", discovery=disc_from(NODE)))
+    first = await svc.learn("default")
+    again = await svc.learn("default")
+    assert first["relations_changed"] > 0 and again["relations_changed"] == 0

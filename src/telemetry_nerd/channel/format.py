@@ -61,6 +61,13 @@ def describe_event(e: Event) -> str:
                 f"{who} set {p['field']} of {p['metric']} on {p['source']} "
                 f"to {json.dumps(p['value'], ensure_ascii=False)}"
             )
+        case "relation.claimed":
+            verb = "retracted" if p.get("retracted") else "asserted"
+            return f"{who} {verb} {p['subject']} {p['kind']} {p['object']}"
+        case "binding.claimed":
+            verb = "retracted" if p.get("retracted") else "set"
+            roles = ", ".join(f"{r}={m or '?'}" for r, m in p["roles"].items())
+            return f"{who} {verb} {p['kind']} binding {p['key']}: {roles}"
         case "object.highlighted":
             note = p.get("note")
             return f"{who} highlighted {e.object_id}" + (f': "{note}"' if note else "")

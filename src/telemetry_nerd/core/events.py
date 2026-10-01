@@ -27,6 +27,8 @@ INTENTIONAL_TYPES = frozenset(
         "hypothesis.status_changed",
         "annotation.created",
         "catalog.claimed",  # a user's catalog edit is a correction Claude must know about
+        "relation.claimed",
+        "binding.claimed",
     }
 )
 AMBIENT_TYPES = frozenset(

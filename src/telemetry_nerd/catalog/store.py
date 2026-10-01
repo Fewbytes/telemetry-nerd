@@ -91,6 +91,14 @@ class CatalogStore:
         )
         return self._db.total_changes - before
 
+    def has_metric(self, source: str, metric: str) -> bool:
+        return (
+            self._db.execute(
+                "SELECT 1 FROM catalog_metrics WHERE source = ? AND metric = ?", (source, metric)
+            ).fetchone()
+            is not None
+        )
+
     def claims_for(self, source: str, metric: str) -> list[Claim]:
         rows = self._db.execute(
             f"SELECT {_CLAIM_COLS} FROM catalog_claims WHERE source = ? AND metric = ?",

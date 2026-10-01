@@ -36,7 +36,6 @@ FieldName = Literal[
     "description",
     "histogram_family",
     "operating_profile_ref",
-    "bounded_by",
 ]
 FIELDS = frozenset(get_args(FieldName))
 
@@ -63,10 +62,10 @@ def validate_value(field: str, value: Any) -> Any:
     elif field in _TEXT:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{field} must be a non-empty string")
-    elif field in ("histogram_family", "bounded_by") and (
+    elif field == "histogram_family" and (
         not isinstance(value, list) or not value or not all(isinstance(v, str) for v in value)
     ):
-        raise ValueError(f"{field} must be a non-empty list of metric names")
+        raise ValueError("histogram_family must be a non-empty list of metric names")
     return value
 
 

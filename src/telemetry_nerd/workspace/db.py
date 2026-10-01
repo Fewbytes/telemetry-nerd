@@ -58,6 +58,43 @@ CREATE TABLE IF NOT EXISTS catalog_claims (
     ts_ms INTEGER NOT NULL,
     PRIMARY KEY (source, metric, field, origin)
 );
+CREATE TABLE IF NOT EXISTS catalog_relations (
+    level TEXT NOT NULL,
+    source TEXT NOT NULL,
+    subject TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    object TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    retracted INTEGER NOT NULL DEFAULT 0,
+    params TEXT NOT NULL,
+    basis TEXT,
+    ts_ms INTEGER NOT NULL,
+    PRIMARY KEY (level, source, subject, kind, object, origin)
+);
+CREATE TABLE IF NOT EXISTS catalog_bindings (
+    level TEXT NOT NULL,
+    source TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    key TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    confidence REAL NOT NULL,
+    retracted INTEGER NOT NULL DEFAULT 0,
+    roles TEXT NOT NULL,
+    join_on TEXT NOT NULL,
+    basis TEXT,
+    ts_ms INTEGER NOT NULL,
+    PRIMARY KEY (level, source, kind, key, origin)
+);
+CREATE TABLE IF NOT EXISTS catalog_binding_gaps (
+    level TEXT NOT NULL,
+    source TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    key TEXT NOT NULL,
+    role TEXT NOT NULL,
+    gap_id TEXT NOT NULL,
+    PRIMARY KEY (level, source, kind, key, role)
+);
 CREATE TABLE IF NOT EXISTS sources (
     name TEXT PRIMARY KEY,
     spec TEXT NOT NULL,
