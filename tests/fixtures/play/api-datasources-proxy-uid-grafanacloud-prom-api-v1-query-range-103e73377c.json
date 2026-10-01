@@ -1,0 +1,29 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/api/datasources/proxy/uid/grafanacloud-prom/api/v1/query_range",
+  "params": [
+   [
+    "end",
+    "1790850000.000"
+   ],
+   [
+    "query",
+    "sum by (cloud_region) (histogram_count(increase(traces_spanmetrics_latency{service=\"checkoutservice\",span_kind=\"SPAN_KIND_SERVER\"}[1m])))"
+   ],
+   [
+    "start",
+    "1790848200.000"
+   ],
+   [
+    "step",
+    "60s"
+   ]
+  ]
+ },
+ "response": {
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"matrix\",\"result\":[{\"metric\":{\"cloud_region\":\"ap-south-1\"},\"values\":[[1790848920,\"8.000800080008\"]]},{\"metric\":{\"cloud_region\":\"eu-west-1\"},\"values\":[[1790848980,\"574.057405740574\"]]},{\"metric\":{\"cloud_region\":\"us-east-2\"},\"values\":[[1790848980,\"500.0500050005\"]]}]}}\n"
+ }
+}

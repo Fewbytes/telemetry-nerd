@@ -14,4 +14,14 @@ WIKIMEDIA = SourceSpec(
     politeness=Politeness(max_concurrency=1, min_interval_ms=1000, timeout_s=90),
 )
 
-PRESETS: dict[str, SourceSpec] = {"wikimedia": WIKIMEDIA}
+# Grafana Play: hosted OpenTelemetry demo (native histograms: traces_spanmetrics_latency,
+# classic: http_server_request_duration_seconds_bucket). Public demo: stay polite.
+PLAY = SourceSpec(
+    name="play",
+    url="https://play.grafana.org/api/datasources/proxy/uid/grafanacloud-prom",
+    flavor="prometheus",
+    resolution_ms=20_000,
+    politeness=Politeness(max_concurrency=1, min_interval_ms=1000, timeout_s=60),
+)
+
+PRESETS: dict[str, SourceSpec] = {"wikimedia": WIKIMEDIA, "play": PLAY}

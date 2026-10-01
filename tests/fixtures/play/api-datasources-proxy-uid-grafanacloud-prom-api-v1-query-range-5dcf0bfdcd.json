@@ -1,0 +1,29 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/api/datasources/proxy/uid/grafanacloud-prom/api/v1/query_range",
+  "params": [
+   [
+    "end",
+    "1790859600.000"
+   ],
+   [
+    "query",
+    "sum(increase(http_server_request_duration_seconds_bucket{job=\"ecommerce-prod/cartservice\",le=\"+Inf\"}[5m]))"
+   ],
+   [
+    "start",
+    "1790856000.000"
+   ],
+   [
+    "step",
+    "300s"
+   ]
+  ]
+ },
+ "response": {
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"success\",\"data\":{\"resultType\":\"matrix\",\"result\":[{\"metric\":{},\"values\":[[1790856000,\"256.25\"],[1790856300,\"252.49894792105036\"],[1790856600,\"266.2511093796224\"],[1790856900,\"251.24895312936195\"],[1790857200,\"261.25\"],[1790857500,\"256.25\"],[1790857800,\"263.75109896291235\"],[1790858100,\"258.7489218794922\"],[1790858400,\"266.2488906296224\"],[1790858700,\"260\"],[1790859000,\"250\"],[1790859300,\"246.25102604594184\"],[1790859600,\"266.25\"]]}]}}\n"
+ }
+}
