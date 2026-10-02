@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from telemetry_nerd.analysis.samples import SampleStats
+from telemetry_nerd.catalog.browse import Browse
+from telemetry_nerd.catalog.browse import browse as browse_catalog
 from telemetry_nerd.catalog.models import (
     ORIGIN_RANK,
     CatalogEntry,
@@ -53,6 +55,7 @@ from telemetry_nerd.charts.yview import (
     check_view,
     value_stats,
 )
+from telemetry_nerd.core.card_payload import binding_row, browse_row, field_rows, relation_row
 from telemetry_nerd.core.events import Actor, Event, EventLog, check_actor
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.discovery import Discovery
@@ -877,6 +880,40 @@ class WorkspaceService:
             needs_review=needs_review,
             limit=max(1, min(limit, MAX_SEARCH)),
         )
+
+    def catalog_browse(self, source: str, b: Browse) -> dict:
+        """One page of the catalog with provenance per row, plus counts for the whole source."""
+        total, names, summary = browse_catalog(self.catalog.connection, source, b)
+        findings = self.samples.findings_for(source, names)
+        verdicts = self.samples.verdicts_for(source, names)
+        rows = [
+            browse_row(self.catalog.entry(source, n), findings[n], verdicts.get(n)) for n in names
+        ]
+        return {
+            "source": source,
+            "total": total,
+            "offset": b.offset,
+            "rows": rows,
+            "summary": summary,
+        }
+
+    def metric_section(self, source: str, metric: str) -> dict:
+        """What the card and the catalog view show for one metric: fields with every competing
+        claim, relations, bindings, and the gaps those bindings raised."""
+        entry = self.catalog.entry(source, metric)
+        rels = self.catalog_relations(source, metric)
+        gaps = []
+        for b in rels["bindings"]:
+            for role, gid in self.relations.binding_gaps("catalog", source, b.kind, b.key).items():
+                gaps.append({"id": gid, "binding": f"{b.kind}/{b.key}", "role": role})
+        return {
+            "metric": metric,
+            "present": entry.present,
+            "fields": field_rows(entry),
+            "relations": [relation_row(r) for r in rels["relations"]],
+            "bindings": [binding_row(b) for b in rels["bindings"]],
+            "gaps": gaps,
+        }
 
     def catalog_overview(self, source: str, top: int = 30) -> list[dict]:
         return family_overview(self.catalog.list_entries(source), top)

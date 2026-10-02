@@ -101,6 +101,10 @@ class CatalogStore:
         ).fetchall()
         return [r[0] for r in rows]
 
+    @property
+    def connection(self) -> sqlite3.Connection:
+        return self._db
+
     def has_metric(self, source: str, metric: str) -> bool:
         return (
             self._db.execute(

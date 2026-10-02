@@ -9,6 +9,7 @@
   import PanelView from "./Panel.svelte";
   import Sidebar from "./components/Sidebar.svelte";
   import ConnectionPill from "./components/ConnectionPill.svelte";
+  import CatalogView from "./components/CatalogView.svelte";
   import { setContext } from "svelte";
   import { refTargets } from "./lib/refs";
   import HighlightStrip from "./components/HighlightStrip.svelte";
@@ -39,6 +40,14 @@
     seen = new Map(current);
   });
 
+  // two views in one page: panels (default) and the catalog; evidence links (#/panel/p3) go back
+  let route = $state<"panels" | "catalog">(location.hash.startsWith("#/catalog") ? "catalog" : "panels");
+  $effect(() => {
+    const sync = () => (route = location.hash.startsWith("#/catalog") ? "catalog" : "panels");
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  });
+
   const panels = $derived((ws.snapshot?.panels ?? []).filter((p) => !p.closed));
   const threads = $derived(ws.snapshot?.threads ?? []); // anchored ones render inside Panel
 
@@ -59,6 +68,10 @@
 <main>
   <div class="app-header">
     <h1 class="brand"><img src="/icon.svg" alt="" width="32" height="32" />Telemetry Nerd</h1>
+    <nav class="views" aria-label="Views">
+      <a href="#/panels" aria-current={route === "panels" ? "page" : undefined}>Panels</a>
+      <a href="#/catalog" aria-current={route === "catalog" ? "page" : undefined}>Catalog</a>
+    </nav>
     <div class="header-controls">
       <ConnectionPill daemon={ws.daemon} presence={ws.presence} />
       <select
@@ -75,7 +88,8 @@
   </div>
   {#if ws.error}<div class="error">{ws.error}</div>{/if}
   <HighlightStrip highlights={ws.highlights} />
-  <div class="layout">
+  {#if route === "catalog"}<CatalogView />{/if}
+  <div class="layout" hidden={route === "catalog"}>
     <div class="panels">
       {#if panels.length === 0}
         <p class="empty">No panels yet. Ask Claude a question about your metrics.</p>

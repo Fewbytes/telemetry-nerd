@@ -6,6 +6,7 @@ from __future__ import annotations
 import polars as pl
 
 from telemetry_nerd.catalog.models import CatalogEntry
+from telemetry_nerd.catalog.search import KEY_FIELDS, reviewed
 
 #: rows shown for every metric, claimed or not, so the user can fill a gap in place
 EDITABLE = (
@@ -44,6 +45,21 @@ def field_rows(entry: CatalogEntry) -> list[dict]:
             }
         )
     return rows
+
+
+def browse_row(entry: CatalogEntry, findings: list[dict], verdict: str | None) -> dict:
+    """One catalog-view row: the winners of the key fields with their provenance."""
+    out: dict = {"metric": entry.metric, "present": entry.present}
+    for f in KEY_FIELDS:
+        w = entry.fields.get(f)
+        out[f] = w.value if w else None
+    out["origins"] = {f: entry.fields[f].origin for f in KEY_FIELDS if f in entry.fields}
+    out["confidences"] = {f: entry.fields[f].confidence for f in KEY_FIELDS if f in entry.fields}
+    out["conflicts"] = sorted(entry.conflicts())
+    out["findings"] = findings
+    out["verdict"] = verdict
+    out["reviewed"] = reviewed(entry)
+    return out
 
 
 def relation_row(r) -> dict:

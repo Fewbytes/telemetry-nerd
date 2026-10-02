@@ -303,3 +303,21 @@ export const fetchCard = (id: string) => fetch(`/api/panels/${id}/card`).then((r
 export const postClaim = (source: string, metric: string, field: string, value: unknown) =>
   postJSON<unknown>("/api/catalog/claims", { source, metric, field, value });
 
+/** The catalog view (bead 2as.13): one page of the catalog with provenance per row. */
+export interface CatalogRow {
+  metric: string; present: boolean;
+  type: string | null; unit: string | null; role: string | null; bounds: string | null;
+  origins: Record<string, string>; confidences: Record<string, number>;
+  conflicts: string[]; findings: { kind: string; id: string }[]; verdict: string | null; reviewed: boolean;
+}
+export interface CatalogPage {
+  source: string; total: number; offset: number; rows: CatalogRow[];
+  summary: { metrics: number; reviewed: number; conflicts: number; findings: number };
+}
+export const fetchCatalog = (params: URLSearchParams) =>
+  fetch(`/api/catalog?${params}`).then((r) => json<CatalogPage>(r));
+export const fetchCatalogMetric = (source: string, metric: string) =>
+  fetch(`/api/catalog/${encodeURIComponent(source)}/${encodeURIComponent(metric)}`).then((r) => json<CardMetric>(r));
+export interface SourceInfo { name: string; url?: string; live?: boolean }
+export const fetchSources = () => fetch("/api/sources").then((r) => json<{ sources: SourceInfo[] }>(r));
+

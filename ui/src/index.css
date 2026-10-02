@@ -224,3 +224,32 @@ ul.gaps { list-style: none; margin: 0; padding: 0; }
 .metric-card .card-rel { margin: 4px 0; }
 .metric-card .rel { margin-right: 10px; }
 .metric-card input[type="text"] { font: inherit; font-size: 12px; min-width: 200px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; }
+
+/* Views switch and the catalog view (bead 2as.13) */
+.app-header .views { display: flex; gap: 14px; font-size: 14px; margin-right: auto; margin-left: 24px; }
+.app-header .views a { color: var(--muted); text-decoration: none; padding-bottom: 2px; }
+.app-header .views a[aria-current="page"] { color: var(--fg); border-bottom: 2px solid var(--fg); }
+.layout[hidden] { display: none; }
+.catalog-view { font-size: 13px; }
+.catalog-head { display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; }
+.catalog-head h2 { margin: 0; font-size: 16px; }
+.catalog-summary { color: var(--muted); }
+.catalog-filters { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 10px 0; }
+.catalog-filters input[type="search"], .catalog-filters input[type="text"], .catalog-filters select { font: inherit; font-size: 12px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; }
+.catalog-filters label { font-size: 12px; color: var(--muted); display: inline-flex; gap: 4px; align-items: center; }
+.catalog-filters button, .catalog-pager button { font: inherit; font-size: 12px; background: none; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 8px; cursor: pointer; }
+.catalog-filters button:hover, .catalog-pager button:hover:not(:disabled) { color: var(--fg); border-color: var(--fg); }
+.catalog-pager button:disabled { opacity: 0.4; cursor: default; }
+.catalog-table { border-collapse: collapse; width: 100%; }
+.catalog-table th { text-align: left; font-weight: 400; color: var(--muted); border-bottom: 1px solid var(--border); padding: 3px 8px 3px 0; }
+.catalog-table td { padding: 3px 8px 3px 0; border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent); vertical-align: top; }
+.catalog-row.conflict { background: color-mix(in srgb, var(--warn) 7%, transparent); }
+.catalog-row.open { background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.catalog-detail td { padding: 6px 0 12px 16px; }
+.linklike { font: inherit; background: none; border: 0; padding: 0; color: inherit; cursor: pointer; text-decoration: underline dotted; }
+.linklike.metric { text-decoration: none; }
+.catalog-view .chip { font-size: 10px; padding: 0 5px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); margin-left: 4px; }
+.catalog-view .chip.origin.user { color: var(--fg); border-color: var(--ann-user); }
+.catalog-view .chip.origin.claude { border-color: var(--ann-claude); }
+.catalog-view .chip.warn { color: var(--warn); border-color: var(--warn); }
+.catalog-pager { display: flex; gap: 10px; align-items: center; margin: 10px 0; }

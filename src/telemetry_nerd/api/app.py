@@ -24,6 +24,7 @@ from starlette.staticfiles import StaticFiles
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from telemetry_nerd.analysis.distlod import PX_PER_CELL
+from telemetry_nerd.catalog.browse import Browse
 from telemetry_nerd.channel.dispatch import ChannelDispatcher
 from telemetry_nerd.config import DEFAULT_ALLOWED_HOSTS
 from telemetry_nerd.core.consumer import kind_of
@@ -267,6 +268,46 @@ def create_app(
                 "panel": service.workspace.get_panel(res.panel.id).to_dict(),
                 "issues": [i.model_dump() for i in res.issues],
             }
+        )
+
+    @_api
+    async def catalog_list(request: Request) -> object:
+        qp = request.query_params
+        source = qp.get("source")
+        if not source:
+            raise _BadRequest(
+                "missing parameter 'source'", "pass ?source=<name> (see /api/sources)"
+            )
+
+        def flag(name: str) -> bool:
+            return qp.get(name, "").lower() in ("1", "true", "yes")
+
+        reviewed = qp.get("reviewed")
+        if reviewed not in (None, "", "yes", "no"):
+            raise _BadRequest("invalid parameter 'reviewed'", "use reviewed=yes or reviewed=no")
+        try:
+            maxc = float(qp["max_confidence"]) if qp.get("max_confidence") else None
+        except ValueError as e:
+            raise _BadRequest("invalid parameter 'max_confidence'", "give a number in 0..1") from e
+        b = Browse(
+            q=qp.get("q") or None,
+            prefix=qp.get("prefix") or None,
+            origin=qp.get("origin") or None,
+            max_confidence=maxc,
+            conflicts=flag("conflicts"),
+            findings=flag("findings"),
+            reviewed=None if not reviewed else reviewed == "yes",
+            removed=flag("removed"),
+            sort=qp.get("sort", "name"),
+            offset=max(0, _int_param(request, "offset", 0)),
+            limit=_int_param(request, "limit", 50),
+        )
+        return service.ws.catalog_browse(source, b)
+
+    @_api
+    async def catalog_metric(request: Request) -> object:
+        return service.ws.metric_section(
+            request.path_params["source"], request.path_params["metric"]
         )
 
     @_api
@@ -681,6 +722,8 @@ def create_app(
         Route("/api/panels/{id}/overlays", panel_overlays, methods=["POST"]),
         Route("/api/panels/{id}/card", panel_card),
         Route("/api/catalog/claims", catalog_claim_create, methods=["POST"]),
+        Route("/api/catalog", catalog_list),
+        Route("/api/catalog/{source}/{metric}", catalog_metric),
         Route("/api/panels/{id}/marginal", panel_marginal, methods=["POST"]),
         Route("/api/panels/{id}/data-view", panel_data_view, methods=["POST"]),
         Route("/api/panels/{id}/data", panel_data),

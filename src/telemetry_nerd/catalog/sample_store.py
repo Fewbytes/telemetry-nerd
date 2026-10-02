@@ -57,6 +57,30 @@ class SampleStore:
         d["integral"], d["constant"] = bool(d["integral"]), bool(d["constant"])
         return SampleObservation(**d)
 
+    def findings_for(self, source: str, metrics: list[str]) -> dict[str, list[dict]]:
+        """kind/id of the contradiction findings filed for each of `metrics`."""
+        out: dict[str, list[dict]] = {m: [] for m in metrics}
+        if not metrics:
+            return out
+        marks = ",".join("?" * len(metrics))
+        for m, kind, fid in self._db.execute(
+            f"SELECT metric, kind, finding_id FROM catalog_findings WHERE source = ? "
+            f"AND metric IN ({marks}) ORDER BY kind",
+            (source, *metrics),
+        ):
+            out[m].append({"kind": kind, "id": fid})
+        return out
+
+    def verdicts_for(self, source: str, metrics: list[str]) -> dict[str, str]:
+        if not metrics:
+            return {}
+        marks = ",".join("?" * len(metrics))
+        rows = self._db.execute(
+            f"SELECT metric, verdict FROM catalog_samples WHERE source = ? AND metric IN ({marks})",
+            (source, *metrics),
+        ).fetchall()
+        return dict(rows)
+
     def finding(self, source: str, metric: str, kind: str) -> str | None:
         r = self._db.execute(
             "SELECT finding_id FROM catalog_findings WHERE source = ? AND metric = ? AND kind = ?",

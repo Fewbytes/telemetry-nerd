@@ -57,11 +57,8 @@ from telemetry_nerd.charts.ycontext import (
 from telemetry_nerd.charts.yview import value_stats
 from telemetry_nerd.core.card_payload import (
     MAX_METRICS,
-    binding_row,
-    field_rows,
     gap_pct,
     profile_card,
-    relation_row,
 )
 from telemetry_nerd.core.events import Actor, EventLog
 from telemetry_nerd.core.panel_payloads import (
@@ -561,26 +558,7 @@ class TelemetryService:
         parts = selector_parts(meta.expr)
         names = sorted(metric_names(meta.expr), key=lambda n: (parts is None or n != parts[0], n))
         known = [n for n in names if self.ws.catalog.has_metric(meta.source, n)][:MAX_METRICS]
-        metrics = []
-        for name in known:
-            entry = self.ws.catalog.entry(meta.source, name)
-            rels = self.ws.catalog_relations(meta.source, name)
-            gaps = []
-            for b in rels["bindings"]:
-                for role, gid in self.ws.relations.binding_gaps(
-                    "catalog", meta.source, b.kind, b.key
-                ).items():
-                    gaps.append({"id": gid, "binding": f"{b.kind}/{b.key}", "role": role})
-            metrics.append(
-                {
-                    "metric": name,
-                    "present": entry.present,
-                    "fields": field_rows(entry),
-                    "relations": [relation_row(r) for r in rels["relations"]],
-                    "bindings": [binding_row(b) for b in rels["bindings"]],
-                    "gaps": gaps,
-                }
-            )
+        metrics = [self.ws.metric_section(meta.source, name) for name in known]
         return {
             "source": meta.source,
             "metrics": metrics,
