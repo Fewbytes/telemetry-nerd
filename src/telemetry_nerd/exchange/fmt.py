@@ -204,20 +204,56 @@ def normalize_output_meta(
         if like not in declared:
             raise undeclared_error(like, declared)
         base = input_meta(like)
+    rep = _representation(meta, base)
+    grid = _grid(meta, base)
+    uncertainty, exact = _uncertainty(meta, rep)
+    parents = _parents(meta, declared)
+    description = meta.get("description")
+    if description is not None and not isinstance(description, str):
+        raise ExchangeError("meta.description must be a string")
+    scheme = meta.get("scheme", base.get("scheme") if rep == DISTRIBUTION else None)
+    if scheme is not None and (rep != DISTRIBUTION or not isinstance(scheme, Mapping)):
+        raise ExchangeError("meta.scheme is a bucket scheme dict, for distributions only")
+    n_min = meta.get("n_min", base.get("n_min") if rep == DISTRIBUTION else None)
+    if n_min is not None and (isinstance(n_min, bool) or not isinstance(n_min, int) or n_min < 1):
+        raise ExchangeError(f"meta.n_min must be a positive integer, got {n_min!r}")
+    out = {
+        "name": check_name(meta["name"]) if meta.get("name") is not None else None,
+        "representation": rep,
+        "like": like,
+        **grid,
+        "description": description,
+        "labels": _str_list(meta, "labels"),
+        "uncertainty": uncertainty,
+        "exact": exact,
+        "caveats": _str_list(meta, "caveats"),
+        "parents": parents,
+        "scheme": dict(scheme) if scheme is not None else None,
+        "n_min": n_min,
+        "semantics_flags": dict(meta.get("semantics_flags", base.get("semantics_flags")) or {}),
+    }
+    if internal:
+        out.update({k: meta[k] for k in INTERNAL_KEYS - out.keys() if k in meta})
+    return out
+
+
+def _representation(meta: Mapping, base: Mapping) -> str:
+    """The output's representation: given, else `like`'s, else bucket_agg; must be puttable and
+    of the same family as `like` (`base`, its meta)."""
     rep = meta.get("representation") or base.get("representation") or "bucket_agg"
     if rep not in PUTTABLE:
         hint = " (use tn.put_fit for a fit/estimate)" if rep == ESTIMATE else ""
         raise ExchangeError(
             f"representation {rep!r} cannot be put; supported: {', '.join(PUTTABLE)}{hint}"
         )
-    if (
-        base
-        and base.get("representation") != rep
-        and not (base.get("representation") in TIME_SERIES and rep in TIME_SERIES)
-    ):
-        raise ExchangeError(
-            f"like={like!r} is a {base.get('representation')} dataset, output is {rep}"
-        )
+    base_rep = base.get("representation")
+    if base and base_rep != rep and not (base_rep in TIME_SERIES and rep in TIME_SERIES):
+        raise ExchangeError(f"like={meta.get('like')!r} is a {base_rep} dataset, output is {rep}")
+    return rep
+
+
+def _grid(meta: Mapping, base: Mapping) -> dict:
+    """step_ms, resolution_ms, start_ms, end_ms and unit: given, else inherited from `like`."""
     merged = {
         k: meta.get(k, base.get(k))
         for k in ("step_ms", "resolution_ms", "start_ms", "end_ms", "unit")
@@ -233,46 +269,24 @@ def normalize_output_meta(
     unit = merged["unit"]
     if unit is not None and not isinstance(unit, str):
         raise ExchangeError(f"meta.unit must be a string such as 's' or 'By', got {unit!r}")
-    uncertainty, exact = _uncertainty(meta, rep)
-    parents = meta.get("parents")
-    if parents is None:
-        parents = list(declared)
-    else:
-        parents = _str_list(meta, "parents")
-        for p in parents:
-            if p not in declared:
-                raise undeclared_error(p, declared)
-    description = meta.get("description")
-    if description is not None and not isinstance(description, str):
-        raise ExchangeError("meta.description must be a string")
-    scheme = meta.get("scheme", base.get("scheme") if rep == DISTRIBUTION else None)
-    if scheme is not None and (rep != DISTRIBUTION or not isinstance(scheme, Mapping)):
-        raise ExchangeError("meta.scheme is a bucket scheme dict, for distributions only")
-    n_min = meta.get("n_min", base.get("n_min") if rep == DISTRIBUTION else None)
-    if n_min is not None and (isinstance(n_min, bool) or not isinstance(n_min, int) or n_min < 1):
-        raise ExchangeError(f"meta.n_min must be a positive integer, got {n_min!r}")
-    out = {
-        "name": check_name(meta["name"]) if meta.get("name") is not None else None,
-        "representation": rep,
-        "like": like,
+    return {
         "step_ms": step,
         "resolution_ms": resolution,
         "start_ms": start,
         "end_ms": end,
         "unit": unit,
-        "description": description,
-        "labels": _str_list(meta, "labels"),
-        "uncertainty": uncertainty,
-        "exact": exact,
-        "caveats": _str_list(meta, "caveats"),
-        "parents": parents,
-        "scheme": dict(scheme) if scheme is not None else None,
-        "n_min": n_min,
-        "semantics_flags": dict(meta.get("semantics_flags", base.get("semantics_flags")) or {}),
     }
-    if internal:
-        out.update({k: meta[k] for k in INTERNAL_KEYS - out.keys() if k in meta})
-    return out
+
+
+def _parents(meta: Mapping, declared: Sequence[str]) -> list[str]:
+    """meta.parents (a subset of the declared inputs), else all declared inputs."""
+    if meta.get("parents") is None:
+        return list(declared)
+    parents = _str_list(meta, "parents")
+    for p in parents:
+        if p not in declared:
+            raise undeclared_error(p, declared)
+    return parents
 
 
 def undeclared_error(handle: Any, declared: Sequence[str]) -> ExchangeError:
