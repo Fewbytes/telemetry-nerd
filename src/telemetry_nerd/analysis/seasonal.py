@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import numpy as np
 
-from telemetry_nerd.analysis.autocorr import tau_int
+from telemetry_nerd.analysis.autocorr import n_eff, tau_int
 from telemetry_nerd.analysis.stats import MAD_SCALE, binom_sf, t_quantile
 
 SCHEMES = ("previous", "1d", "1w")  # preference order: a later scheme must win by CHOICE_GAIN
@@ -373,7 +373,7 @@ def _outside_band(
     w_lo: np.ndarray,
     w_hi: np.ndarray,
     n: int,
-    n_eff: float,
+    effective_n: float,
 ) -> OutsideBand:
     """Share of now's points outside the 90% band: binomial on n_eff against 10%, and beyond
     every previous cycle's share."""
@@ -382,7 +382,7 @@ def _outside_band(
     for r in Rc:
         ok = ~np.isnan(r) & ~np.isnan(w_lo)
         prev_share.append(float(np.mean((r[ok] < w_lo[ok]) | (r[ok] > w_hi[ok]))) if ok.any() else 0.0)  # fmt: skip
-    ne = max(1, round(n_eff))
+    ne = max(1, round(effective_n))
     p = binom_sf(round(share * ne), ne, 1 - (BAND[1] - BAND[0]))
     return OutsideBand(share, prev_share, p, p < ALPHA and share > max(prev_share))
 
@@ -452,7 +452,7 @@ def compare(
     obs = ~np.isnan(d)
     out.n = int(obs.sum())
     out.tau = _tau(R)
-    out.n_eff = out.n / max(1.0, out.tau)
+    out.n_eff = n_eff(out.n, out.tau)
     if out.n == 0:
         out.reasons.append("no phase where now and >= 3 cycles have data")
         return out

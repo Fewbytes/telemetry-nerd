@@ -15,6 +15,7 @@ from telemetry_nerd.core.fleet_ops import FleetOps
 
 MAX_HEAT_ROWS = 200  # more members than this: the most deviating rows only, disclosed
 Z_CLIP = 12.0  # +-inf (zero-spread steps) and wild values stay finite on the wire
+Z_CAP = 6.0  # the colour scale saturates here
 
 
 def _row(z: np.ndarray) -> list[float | None]:
@@ -46,7 +47,7 @@ def heat_rows(f: Fleet, names: list[str]) -> dict:
     rest.sort(key=lambda i: -med[i])
     order = top + rest + bottom
     return {
-        "z_cap": 6.0,
+        "z_cap": Z_CAP,
         "rows_total": m_,
         "rows": [
             {
