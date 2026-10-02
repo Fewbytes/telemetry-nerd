@@ -33,20 +33,30 @@ drops the start of the range.
 ## Estimator and interval (per window, per group, and pooled)
 R = L̂ / (λ̂·Ŵ) with L̂, λ̂, S̄, C̄ the sub-step means and Ŵ = S̄/C̄.
 
-1. **Delta method on residuals** (all four quantities, empirical covariance): per sub-step
-   z_i = (L_i−L̂)/(λW) − R(λ_i−λ̂)/λ̂ − R(S_i−S̄)/S̄ + R(C_i−C̄)/C̄, Var(R̂) = s²_z·τ_int(z)/n
-   (Geyer τ: autocorrelation, n_eff = n/τ). This carries the correlation between L and λW within
-   the realisation instead of assuming it.
-2. **Floors where the data cannot show the error** (summed linearly = worst-case correlation):
-   gauge sampling — scrapes can miss short spikes, so the time average of m samples has at least
-   Poisson-occupancy variance max(L̂, λŴ)/m_ind (m_ind = min(samples, T/Ŵ)); λ — Poisson on the
-   window's arrivals N; W — mean of C completions with CV ≥ 1. sd = max(delta, floor sum).
-3. **Bias bounds added to the half-width**: window edges (requests straddling the boundaries):
-   (L_first + L_last)·W_max/(λŴ·T); alignment (the rate window looks back δ = (rate interval −
-   s)/2 further than the gauge average): R·δ/T·(relative range of λ, S or C in the window).
+The estimand is the realised path: over a window, L·T = ∫N dt and λ·W·T = Σ measured latencies of
+the window's completions agree up to the requests straddling its edges. So the error is what the
+instruments add, not how the next window would differ:
 
-Interval = R ± (t_{n_eff−1}·sd + bias), clipped at 0. L and λ·W get their own intervals for the
-panel (same terms, per side).
+1. **L (scrape sampling)**: the gauge is read at m scrape instants. Its sampling error is
+   estimated from successive differences (mean(ΔL²)/2 / n: σ²/m for a fast process, small for a
+   slowly varying, well-resolved one), never below the error a Poisson-occupancy process with
+   correlation time Ŵ would have under the same sampling — max(L̂, λŴ)/m · (coth(x/2) − 2/x),
+   x = scrape/Ŵ — because scrapes can miss short spikes even when every sample looks alike.
+   (A first version used the delta method over all four sub-step series with Geyer τ: it
+   estimates the long-run ratio, so a queue that wanders slowly made it hugely wide and missed 3×
+   mismatches; the realised-path version keeps the false-alarm rate and detects them.)
+2. **λ and W**: Poisson relative errors 1/√N (arrivals) and 1/√C (completions; CV ≥ 1), added
+   linearly — their correlation is unknown, so the worst case. They bound rate()
+   extrapolation and counting noise; at production rates they are small.
+3. **Delta method on log R**: L's error (another instrument: sampling instants) in quadrature with
+   the counts' (λ+W) error: sd_R² = (sd_L/λW)² + (R·(r_λ + r_W))².
+4. **Bias bounds added to the half-width**: window edges (L_first + L_last)·W_max/(λŴ·T);
+   alignment (rate() looks back δ = (rate interval − s)/2 further than the gauge average):
+   R·δ/T·(relative range of λ, S or C in the window).
+
+Interval = R ± (t_{n−1}·sd + bias), clipped at 0. L and λ·W get their own intervals for the panel.
+Measured on the simulations: pointwise 95% intervals cover 1 in ~98.5–100% of consistent windows
+(conservative), overall false alarms 0–2% at a nominal 5%.
 
 ## Verdicts (α = 5% overall, split in two)
 - Window (per group): `consistent` | `L_high` | `L_low` from a Bonferroni interval over all
