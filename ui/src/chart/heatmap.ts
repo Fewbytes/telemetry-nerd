@@ -1,4 +1,5 @@
 import type { HeatSeries } from "../lib/api";
+import { STATE } from "./rug";
 
 export const STRIP_PX = 10; // open buckets: (-Inf, e] and (e, +Inf) get a strip, never a fake range
 export type AxisMode = "auto" | "log" | "linear";
@@ -54,7 +55,7 @@ export interface HeatLayoutOpts {
   nMin: number; color: "count" | "density"; yMode?: AxisMode;
 }
 export interface HeatLayout {
-  axis: ValueAxis; rects: HeatRect[]; missing: Span[]; lowN: Span[];
+  axis: ValueAxis; rects: HeatRect[]; missing: (Span & { kind: "empty" | "unknown" })[]; lowN: Span[]; partial: Span[];
   colorMax: number; x0Ms: number; spanMs: number; width: number; nAt: Map<number, number>;
 }
 
@@ -63,8 +64,13 @@ export function layoutHeatmap(s: HeatSeries, o: HeatLayoutOpts): HeatLayout {
   const k = o.stepMs;
   const { x0Ms, x1Ms, spanMs, col } = timeColumns(o.startMs, o.endMs, k, o.width);
   const nAt = new Map(s.ts.map((t, i) => [t, s.n[i]]));
-  const missing: Span[] = [];
-  for (let t = x0Ms + k; t <= x1Ms; t += k) if (!nAt.has(t)) missing.push(col(t));
+  // no column: UNKNOWN is hatched, anything else (empty, absent, no state) dotted; a blank cell in a returned column is a measured zero
+  const stateAt = new Map((s.state?.ts ?? []).map((t, i) => [t, s.state!.state[i]]));
+  const missing: (Span & { kind: "empty" | "unknown" })[] = [];
+  for (let t = x0Ms + k; t <= x1Ms; t += k)
+    if (!nAt.has(t)) missing.push({ ...col(t), kind: stateAt.get(t) === STATE.UNKNOWN ? "unknown" : "empty" });
+  const partialTs = new Set([...stateAt].filter(([, v]) => v === STATE.PARTIAL).map(([t]) => t));
+  const partial = [...partialTs].map(col);
   const lowN = s.ts.filter((_, i) => s.n[i] > 0 && s.n[i] < o.nMin).map(col);
   const value = (i: number) => {
     if (o.color === "count") return s.cells.c[i];
@@ -79,9 +85,9 @@ export function layoutHeatmap(s: HeatSeries, o: HeatLayoutOpts): HeatLayout {
     const ts = s.cells.ts[i];
     const [p0, p1] = cellSpan(axis, s.cells.lo[i], s.cells.hi[i]);
     const n = nAt.get(ts) ?? 0;
-    return { ...col(ts), y: o.height - p1, h: p1 - p0, t: scale(value(i)), cell: i, lowN: n > 0 && n < o.nMin };
+    return { ...col(ts), y: o.height - p1, h: p1 - p0, t: scale(value(i)), cell: i, lowN: (n > 0 && n < o.nMin) || partialTs.has(ts) };
   });
-  return { axis, rects, missing, lowN, colorMax, x0Ms, spanMs, width: o.width, nAt };
+  return { axis, rects, missing, lowN, partial, colorMax, x0Ms, spanMs, width: o.width, nAt };
 }
 
 export function hitTest(l: HeatLayout, px: number, py: number): number | null {

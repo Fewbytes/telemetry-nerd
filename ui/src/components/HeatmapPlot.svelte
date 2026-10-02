@@ -3,7 +3,8 @@
   import { colormap, type ColormapName } from "../chart/colormap";
   import { cellSpan, hitTest, layoutHeatmap, STRIP_PX, timeAt, timeColumns, type HeatLayout } from "../chart/heatmap";
   import { fmtValue, valueTicks } from "../chart/axis";
-  import { seriesName } from "../chart/toUplot";
+  import { drawRug, hitRug, rugCells, rugHeight, rugHint, type RugCell } from "../chart/rug";
+  import { rgba, seriesName } from "../chart/toUplot";
   import { fmtRange } from "../lib/format";
   import type { HeatmapPanelData, HeatSeries } from "../lib/api";
 
@@ -32,6 +33,39 @@
     ctx.stroke(); ctx.restore();
   }
 
+  function dots(ctx: CanvasRenderingContext2D, x: number, w: number, h: number) {
+    ctx.save(); ctx.fillStyle = ctx.strokeStyle as string;
+    for (let yy = 3; yy < h; yy += 6) for (let xx = x + 3; xx < x + w; xx += 6) ctx.fillRect(xx - 0.75, yy - 0.75, 1.5, 1.5);
+    ctx.restore();
+  }
+
+  let rugEl = $state<HTMLCanvasElement | null>(null);
+  let rugCellsNow: RugCell[] = [];
+  let rugTip = $state<{ x: number; y: number; text: string } | null>(null);
+  $effect(() => {
+    const el = rugEl;
+    const st = series.state;
+    if (!el || !st) return;
+    const ctx = setupCanvas(el, plotW, rugHeight(1));
+    if (!ctx) return;
+    const css = getComputedStyle(el);
+    const grey = css.getPropertyValue("--muted").trim();
+    const fg = css.getPropertyValue("--fg").trim();
+    const { col } = timeColumns(data.dataset.start_ms, data.dataset.end_ms, data.effective_step_ms, plotW);
+    const toX = (ms: number) => { const c = col(ms); return c.x + c.w; };
+    rugCellsNow = rugCells([st], data.effective_step_ms, toX);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, plotW, rugHeight(1)); ctx.clip();
+    drawRug(ctx, rugCellsNow, { tint: () => rgba(fg, 0.12), grey, line: grey });
+    ctx.restore();
+  });
+  function onRugMove(e: MouseEvent) {
+    const st = series.state;
+    const c = st ? hitRug(rugCellsNow, e.offsetX, e.offsetY) : null;
+    if (!c || !st) { rugTip = null; return; }
+    rugTip = { x: e.offsetX + AXIS_LEFT + 8, y: e.offsetY + 12, text: rugHint(c, st, data.effective_step_ms, seriesName(series.labels), data.dataset.resolution_ms) };
+  }
+
   $effect(() => {
     const el = canvas;
     if (!el) return;
@@ -47,7 +81,7 @@
     layout = l;
     ctx.save(); ctx.translate(AXIS_LEFT, 0);
     ctx.strokeStyle = v("--grid"); ctx.lineWidth = 1;
-    for (const m of l.missing) hatch(ctx, m.x, m.w, plotH); // no data: hatched, never "zero"
+    for (const m of l.missing) m.kind === "unknown" ? hatch(ctx, m.x, m.w, plotH) : dots(ctx, m.x, m.w, plotH); // never "zero"
     for (const r of l.rects) {
       ctx.globalAlpha = r.lowN ? 0.45 : 1;
       ctx.fillStyle = cmap(r.t);
@@ -129,11 +163,18 @@
     onmouseup={up}
     onmouseleave={() => { tip = null; }}
   ></canvas>
+  {#if series.state}
+    <canvas class="rug" bind:this={rugEl} data-rug aria-label="Coverage rug: where data is missing"
+      style="margin-left: {AXIS_LEFT}px" onmousemove={onRugMove} onmouseleave={() => (rugTip = null)}></canvas>
+    {#if rugTip}<div class="rug-tip" style="left: {rugTip.x}px; top: {height + rugTip.y}px">{rugTip.text}</div>{/if}
+  {/if}
   {#if tip}<div class="tip" style="left: {tip.x}px; top: {tip.y}px">{tip.text}</div>{/if}
 </div>
 
 <style>
   .facet { position: relative; }
   .facet-label { font-size: 11px; color: var(--muted); }
+  .rug { display: block; }
+  .rug-tip { position: absolute; white-space: pre; font-size: 11px; background: var(--fg); color: var(--bg); padding: 4px 6px; border-radius: 4px; pointer-events: none; z-index: 5; }
   .tip { position: absolute; pointer-events: none; background: var(--bg); border: 1px solid var(--border); padding: 2px 6px; font-size: 11px; white-space: nowrap; z-index: 5; }
 </style>

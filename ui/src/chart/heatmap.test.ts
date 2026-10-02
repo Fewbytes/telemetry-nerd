@@ -32,7 +32,7 @@ describe("layoutHeatmap", () => {
     const l = layoutHeatmap(series([[60_000, 1, 10, 20], [60_000, 10, 100, 10]], [60_000, 120_000], [30, 0]), opts);
     expect(l.rects.map((r) => [r.x, r.w])).toEqual([[0, 100], [0, 100]]);
     expect(l.rects[0]).toMatchObject({ y: 50, h: 50 }); // [1, 10] is the lower half of a log 1..100 axis
-    expect(l.missing).toEqual([{ x: 200, w: 100 }]);
+    expect(l.missing).toEqual([{ x: 200, w: 100, kind: "empty" }]);
     expect(l.lowN).toEqual([]);
   });
   it("flags low-n columns", () => {
@@ -58,6 +58,16 @@ describe("layoutHeatmap", () => {
     expect(hitTest(l, r.x + 1, r.y + 1)).toBe(0);
     expect(hitTest(l, 250, 50)).toBeNull();
     expect(timeAt(l, 150)).toBe(90_000);
+  });
+});
+
+describe("heatmap state textures", () => {
+  it("marks missing columns by kind and partial columns", () => {
+    const base = series([], [120_000], [5]);
+    const st = { ...base, state: { id: base.id, ts: [60_000, 120_000, 180_000], state: [4, 1, 2], observed: [0, 1, 0], expected: [2, 2, 2], flags: [0, 0, 0] } };
+    const l = layoutHeatmap(st, { width: 300, height: 100, startMs: 60_000, endMs: 180_000, stepMs: 60_000, nMin: 0, color: "count" });
+    expect(l.missing.map((m) => m.kind)).toEqual(["unknown", "empty"]);
+    expect(l.partial).toHaveLength(1);
   });
 });
 
