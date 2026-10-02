@@ -27,7 +27,7 @@ from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.time import TimeRange, format_duration, now_ms, parse_duration
-from telemetry_nerd.sources.base import Source, SourceError
+from telemetry_nerd.sources.base import Source, SourceError, SourceUnavailable
 from telemetry_nerd.sources.promql import is_selector
 from telemetry_nerd.sources.registry import SourceRegistry
 
@@ -316,6 +316,8 @@ class ProfileService:
                     step,
                     lambda r: psrc.fetch_values(t.expr, r, step),
                 )
+            if result.failed:  # a profile over a gappy window would mislead; keep the stale one
+                raise SourceUnavailable(result.failed[0][2], hint="retry shortly")
         except SourceError as e:
             with self.ws.log.transaction():
                 self.store.put_failed(source, t.expr, now, str(e))

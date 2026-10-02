@@ -108,3 +108,29 @@ def test_distribution_round_trip_keeps_infinite_edges_and_zero_columns(store):
     assert store.series_count(meta.id) == 1
     with pytest.raises(ValueError, match="distribution"):
         store.get(meta.id)
+
+
+def test_failed_spans_round_trip(store):
+    base = result()
+    failed = ((1000, 2000, "SourceUnavailable: x"),)
+    meta = store.put(
+        source="s",
+        expr="up",
+        rng=TimeRange(0, 60_000),
+        step_ms=1000,
+        resolution_ms=1000,
+        result=FetchResult(base.buckets, base.series, failed=failed),
+    )
+    assert store.meta(meta.id).failed_spans == [[1000, 2000, "SourceUnavailable: x"]]
+
+
+def test_old_meta_without_failed_spans_loads(store):
+    meta = store.put(
+        source="s",
+        expr="up",
+        rng=TimeRange(0, 60_000),
+        step_ms=1000,
+        resolution_ms=1000,
+        result=result(),
+    )
+    assert store.meta(meta.id).failed_spans == []

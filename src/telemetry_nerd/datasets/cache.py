@@ -11,6 +11,7 @@ import duckdb
 from telemetry_nerd.datasets.db import fetch_arrow, upsert_series
 from telemetry_nerd.model.series import BUCKET_SCHEMA, SERIES_SCHEMA, FetchResult
 from telemetry_nerd.model.time import TimeRange, now_ms
+from telemetry_nerd.sources.base import LimitExceeded, SourceError
 
 MAX_CONCURRENT_FETCHES = 8
 
@@ -73,18 +74,31 @@ class SeriesCache:
                 async with self._fetch_slots:
                     return await fetch(TimeRange(cs, cs + span - step_ms))
 
-            results = await asyncio.gather(*(bounded(cs) for cs in missing))
+            results = await asyncio.gather(*(bounded(cs) for cs in missing), return_exceptions=True)
+            failed: list[tuple[int, int, str]] = []
             for cs, result in zip(missing, results, strict=True):
+                if isinstance(result, BaseException):
+                    if not isinstance(result, SourceError) or isinstance(result, LimitExceeded):
+                        raise result
+                    failed.append((cs, cs + span - step_ms, f"{type(result).__name__}: {result}"))
+                    continue
                 immutable = cs + span <= now - self.settle_ms
                 self._store(qkey, cs, cs + span - step_ms, result, now, immutable)
             starts = self.chunk_starts(rng, step_ms)
+            if failed and len(failed) == len(starts):
+                raise next(r for r in results if isinstance(r, BaseException))
             partial = self._con.execute(
                 """SELECT COALESCE(SUM(partial), 0) FROM cache_chunks
                    WHERE qkey = $q AND chunk_start BETWEEN $a AND $b""",
                 {"q": qkey, "a": starts[0], "b": starts[-1]},
             ).fetchone()
             read = self._read(qkey, rng)
-            return FetchResult(read.buckets, read.series, partial=int(partial[0]) if partial else 0)
+            return FetchResult(
+                read.buckets,
+                read.series,
+                partial=int(partial[0]) if partial else 0,
+                failed=tuple(failed),
+            )
 
     def _fresh(self, state: tuple[int, bool] | None, now: int) -> bool:
         if state is None:

@@ -11,6 +11,7 @@ from telemetry_nerd.model.series import (
     series_id,
 )
 from telemetry_nerd.model.time import TimeRange
+from telemetry_nerd.sources.base import LimitExceeded, SourceUnavailable
 
 STEP = 60_000
 SPAN = STEP * 10
@@ -165,3 +166,43 @@ async def test_concurrent_chunk_fetches_are_bounded(cache):
     # 30 chunks of SPAN
     await cache.get("src", "up", TimeRange(0, 30 * SPAN - STEP), STEP, fetch)
     assert 1 < peak <= 8
+
+
+class FlakyFetcher(FakeFetcher):
+    """Fails every chunk whose start is in `bad`."""
+
+    def __init__(self, bad, exc=None):
+        super().__init__()
+        self.bad, self.exc = set(bad), exc or SourceUnavailable("store down")
+
+    async def __call__(self, rng):
+        if rng.start_ms in self.bad:
+            self.calls.append(rng)
+            raise self.exc
+        return await super().__call__(rng)
+
+
+async def test_failed_chunk_becomes_failed_span_and_is_not_cached(cache):
+    rng = TimeRange(NOW - 3 * SPAN, NOW - SPAN - STEP)
+    bad = NOW - 2 * SPAN
+    out = await cache.get("src", "up", rng, STEP, FlakyFetcher([bad]))
+    assert out.failed == ((bad, bad + SPAN - STEP, "SourceUnavailable: store down"),)
+    assert all(not (bad <= t < bad + SPAN) for t in out.buckets["ts_ms"].to_pylist())
+    retry = FakeFetcher()
+    again = await cache.get("src", "up", rng, STEP, retry)
+    assert [r.start_ms for r in retry.calls] == [bad]  # only the failed chunk is refetched
+    assert again.failed == ()
+
+
+async def test_all_chunks_failing_raises(cache):
+    rng = TimeRange(NOW - 2 * SPAN, NOW - SPAN - STEP)
+    with pytest.raises(SourceUnavailable):
+        await cache.get("src", "up", rng, STEP, FlakyFetcher([NOW - 2 * SPAN]))
+
+
+async def test_limit_exceeded_propagates(cache):
+    rng = TimeRange(NOW - 3 * SPAN, NOW - SPAN - STEP)
+    with pytest.raises(LimitExceeded):
+        await cache.get(
+            "src", "up", rng, STEP, FlakyFetcher([NOW - 2 * SPAN], LimitExceeded("too many"))
+        )

@@ -33,6 +33,7 @@ class DatasetMeta:
     histogram: dict | None = None  # {"selector", "by"}: the histogram a distribution came from
     source_caveats: list[str] = field(default_factory=list)  # conversion caveats from the source
     derived: dict | None = None  # filter() output: {op, from, label, reason, period_ms, ...}
+    failed_spans: list[list] = field(default_factory=list)  # [[a, b, reason]] fetch failures
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -79,6 +80,7 @@ class DatasetStore:
             n_min=n_min,
             histogram=histogram,
             derived=derived,
+            failed_spans=[list(f) for f in result.failed],
         )
         con = self._con
         con.begin()
