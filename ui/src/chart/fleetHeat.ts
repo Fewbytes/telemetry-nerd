@@ -92,6 +92,11 @@ export function heatLegendText(h: FleetHeat, shownRows: number): string {
     + "each pixel column shows its most extreme step · rows: higher outliers first, then by median, lower outliers last";
 }
 
+/** The colour bar's labels: centred on 0, named for what the colour is (never a value histogram). */
+export function heatBarLabels(cap: number): { title: string; lo: string; mid: string; hi: string } {
+  return { title: "deviation from fleet median (σ)", lo: `−${cap}`, mid: "0", hi: `+${cap}` };
+}
+
 export function heatTip(r: FleetHeatRow, z: number | null | undefined, at: string): string {
   if (z === null || z === undefined) return `${r.id} · ${at} · no report`;
   return `${r.id} · ${at} · z ${z > 0 ? "+" : ""}${z.toFixed(1)}`;

@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { fleetY, coverageGaps, fleetLegend, outlierText, toFleetUplot, type FleetData } from "./fleet";
+import { relativeLuminance } from "./colormap";
+import { BAND_ALPHAS, FLEET_HUE, bandFills, fleetAxisLabel, fleetKey, nearestOutlier, outlierMarkIdx, fleetY, coverageGaps, fleetLegend, outlierText, toFleetUplot, type FleetData } from "./fleet";
 
 const d: FleetData = {
   ts: [0, 300_000, 600_000], members: 100, normalise: "none", scale: "log",
@@ -70,4 +71,38 @@ test("fleet panels never resolve a log y view: unbounded wide-range data stays o
   expect(auto.effective?.mode).not.toBe("log");
   const chosen = fleetY(w, null, { mode: "log", label: "log" } as never);
   expect(chosen.log).toBe(false);
+});
+
+test("axis label names the encoding: unit, member count and the three bands", () => {
+  expect(fleetAxisLabel(d, "%")).toBe("% · spread across 100 members (bands: 25–75, 10–90, min–max)");
+  expect(fleetAxisLabel(d, null)).toContain("value · spread across 100 members");
+  expect(fleetAxisLabel({ ...d, normalise: "member" }, "%")).toMatch(/^× own median · /);
+});
+
+test("ribbons are one hue with strictly rising opacity, outermost lightest", () => {
+  for (const dark of [false, true]) {
+    const f = bandFills(dark);
+    const alphas = f.map((c) => Number(c.match(/,([\d.]+)\)$/)![1]));
+    expect(alphas).toEqual([...BAND_ALPHAS[dark ? "dark" : "light"]]);
+    expect([...alphas].sort((a, b) => a - b)).toEqual(alphas);
+    expect(new Set(f.map((c) => c.replace(/,[\d.]+\)$/, ""))).size).toBe(1);
+  }
+  expect(fleetKey(false).map((k) => k.id)).toEqual(["minmax", "q1090", "q2575", "median", "outlier"]);
+});
+
+test("median line clears 3:1 against the theme background", () => {
+  const ratio = (a: string, b: string) => {
+    const [x, y] = [relativeLuminance(a), relativeLuminance(b)].sort((p, q) => q - p);
+    return (x + 0.05) / (y + 0.05);
+  };
+  expect(ratio(FLEET_HUE.light.line, "#ffffff")).toBeGreaterThanOrEqual(3);
+  expect(ratio(FLEET_HUE.dark.line, "#16181d")).toBeGreaterThanOrEqual(3);
+});
+
+test("outlier markers only outside the 10-90 envelope; hover finds the nearest outlier", () => {
+  expect(outlierMarkIdx(d, 0)).toEqual([0, 1, 2]); // 18, 19 above q90; step 2 has no envelope so the point is kept
+  expect(outlierMarkIdx({ ...d, band: { ...d.band, q10: [0, 0, 0], q90: [30, 30, 30] } }, 0)).toEqual([]);
+  expect(nearestOutlier(d, 0, 17.5, 1)?.id).toBe("pod=a");
+  expect(nearestOutlier(d, 0, 14, 1)).toBeNull();
+  expect(nearestOutlier(d, 1, 10, 1)).toBeNull(); // pod=b has no value at step 1
 });

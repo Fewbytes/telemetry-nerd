@@ -62,11 +62,70 @@ export function coverageGaps(d: FleetData): { x: number; share: number }[] {
   return d.ts.flatMap((t, i) => (d.alive[i] > 0 && d.n[i] < d.alive[i] ? [{ x: t / 1000, share: 1 - d.n[i] / d.alive[i] }] : []));
 }
 
-/** Nested band fills, grey so the outliers keep the colours. */
-export const bandFills = (dark: boolean): string[] =>
-  dark
-    ? ["rgba(150,150,150,0.14)", "rgba(150,150,150,0.20)", "rgba(150,150,150,0.30)"]
-    : ["rgba(110,110,110,0.10)", "rgba(110,110,110,0.16)", "rgba(110,110,110,0.26)"];
+/** One neutral teal hue for the whole fleet spread (not a series colour, not an outlier colour, not a
+ *  viridis/cividis ramp: the heatmap views own those). `line` carries the median and clears 3:1 on
+ *  the theme background; the ribbons are the same hue at rising opacity, so the spread reads as
+ *  nested ribbons, never as grid cells. */
+export const FLEET_HUE = {
+  light: { fill: "#2A7F8E", line: "#14505B" },
+  dark: { fill: "#5FB7C6", line: "#BDEAF2" },
+} as const;
+/** Opacity of the min-max, 10-90 and 25-75 ribbons: lightest outermost, darkest innermost. */
+export const BAND_ALPHAS = { light: [0.12, 0.24, 0.42], dark: [0.16, 0.30, 0.50] } as const;
+
+const rgba = (hex: string, a: number): string => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+};
+
+/** Nested ribbon fills in the single fleet hue, outermost (min-max) first. */
+export const bandFills = (dark: boolean): string[] => {
+  const m = dark ? "dark" : "light";
+  return BAND_ALPHAS[m].map((a) => rgba(FLEET_HUE[m].fill, a));
+};
+
+/** Legend entries for the encoding row: three ribbons, the median line and the outlier marker. */
+export function fleetKey(dark: boolean): { id: "minmax" | "q1090" | "q2575" | "median" | "outlier"; label: string; swatch: string }[] {
+  const m = dark ? "dark" : "light";
+  const f = bandFills(dark);
+  return [
+    { id: "minmax", label: "min–max", swatch: f[0] },
+    { id: "q1090", label: "10–90%", swatch: f[1] },
+    { id: "q2575", label: "25–75%", swatch: f[2] },
+    { id: "median", label: "median", swatch: FLEET_HUE[m].line },
+    { id: "outlier", label: "outlier member (hover for id)", swatch: OUTLIER_COLORS[0] },
+  ];
+}
+
+/** Names the chart type and its encoding, so it is legible without reading the long legend. */
+export function fleetAxisLabel(d: FleetData, unit: string | null): string {
+  const u = d.normalise === "member" ? "× own median" : unit || "value";
+  return `${u} · spread across ${d.members} members (bands: 25–75, 10–90, min–max)`;
+}
+
+/** Steps where an outlier lies outside the 10-90 envelope: where its marker is drawn. */
+export function outlierMarkIdx(d: FleetData, k: number): number[] {
+  const o = d.outliers[k];
+  if (!o) return [];
+  const out: number[] = [];
+  o.values.forEach((v, i) => {
+    const lo = d.band.q10[i], hi = d.band.q90[i];
+    if (v !== null && (lo === null || hi === null || v < lo || v > hi)) out.push(i);
+  });
+  return out;
+}
+
+/** The outlier whose marker is nearest `yVal` at step `idx` (within `tol` in y units), for the hover label. */
+export function nearestOutlier(d: FleetData, idx: number, yVal: number, tol: number): FleetOutlier | null {
+  let best: FleetOutlier | null = null, bd = tol;
+  for (const o of d.outliers) {
+    const v = o.values[idx];
+    if (v === null || v === undefined) continue;
+    const dist = Math.abs(v - yVal);
+    if (dist <= bd) { bd = dist; best = o; }
+  }
+  return best;
+}
 
 /** The fleet's drawn values as y stats: the spread's min-max and every drawn outlier. */
 export function fleetStats(d: FleetData) {

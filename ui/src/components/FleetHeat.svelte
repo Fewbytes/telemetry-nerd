@@ -1,7 +1,7 @@
 <script lang="ts">
   import { OUTLIER_COLORS, type FleetData } from "../chart/fleet";
   import {
-    DIVERGING, GAP, binHeat, divergingLut, heatLegendText, heatTip, labelYs, lutIndex, rowPx, type HeatGrid,
+    DIVERGING, GAP, binHeat, divergingLut, heatBarLabels, heatLegendText, heatTip, labelYs, lutIndex, rowPx, type HeatGrid,
   } from "../chart/fleetHeat";
   import { setupCanvas } from "../chart/canvas";
   import { fmtTimeZ } from "../lib/format";
@@ -105,16 +105,19 @@
 </script>
 
 {#if heat}
+  {@const bar = heatBarLabels(heat.z_cap)}
   <div class="fh" data-fleet-heat data-fleet-heat-rows={heat.rows.length}>
     <div class="wrap">
       <canvas bind:this={canvas} onmousemove={onMove} onmouseleave={() => (tip = null)}
         aria-label="Member by time heatmap of deviation from the other members"></canvas>
       {#if tip}<div class="tip" style:left="{tip.x}px" style:top="{tip.y}px">{tip.text}</div>{/if}
     </div>
-    <div class="bar" aria-hidden="true">
-      <span>below −{heat.z_cap}</span>
-      <span class="ramp" style:background="linear-gradient(to right, {stops})"></span>
-      <span>above +{heat.z_cap}</span>
+    <div class="bar" data-fleet-heat-bar>
+      <span class="title">{bar.title}</span>
+      <span>{bar.lo}</span>
+      <span class="ramp" style:background="linear-gradient(to right, {stops})"><i class="zero"></i></span>
+      <span>{bar.hi}</span>
+      <span class="ends">purple: below the fleet · 0: at the median · orange: above</span>
     </div>
     <div class="legend">{heatLegendText(heat, heat.rows.length)}</div>
   </div>
@@ -128,5 +131,8 @@
     font-size: 0.75em; padding: 2px 6px; white-space: nowrap; z-index: 2; }
   .legend { font-size: 0.8em; margin: 2px 0; }
   .bar { display: flex; align-items: center; gap: 6px; font-size: 0.75em; margin: 4px 0 0 150px; }
-  .ramp { display: inline-block; width: 160px; height: 8px; border: 1px solid var(--muted, #888); }
+  .bar .title { font-weight: 600; }
+  .bar .ends { color: var(--muted, #777); }
+  .ramp { position: relative; display: inline-block; width: 160px; height: 8px; border: 1px solid var(--muted, #888); }
+  .zero { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--fg, #222); }
 </style>

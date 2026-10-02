@@ -82,6 +82,8 @@ test("fleet panel: band, 3 planted outliers labelled, heatmap and small multiple
     await fleet.locator("[data-fleet-view-btn=band]").click();
     const plot = el.locator(".u-over");
     await expect(plot).toBeVisible();
+    await expect(el.locator("[data-fleet-encoding]")).toContainText("spread across 100 members (bands: 25–75, 10–90, min–max)");
+    await expect(el.locator("[data-fleet-key] li")).toHaveCount(5);
     for (const rgb of OUTLIER_RGB) {
       await expect.poll(() => pixels(page, `[data-panel-id="${panel.id}"] canvas`, rgb)).toBeGreaterThan(20);
     }
@@ -100,6 +102,7 @@ test("fleet panel: band, 3 planted outliers labelled, heatmap and small multiple
     const box = (await cv.boundingBox())!;
     await page.mouse.move(box.x + 150 + 40, box.y + 6); // top row: a higher outlier
     await expect(heat.locator(".tip")).toContainText("z ");
+    await expect(heat.locator("[data-fleet-heat-bar]")).toContainText("deviation from fleet median (σ)");
     await el.screenshot({ path: `${SHOTS}/fleet-heat-${mode}.png` });
 
     // small multiples of the three outliers: one panel each, identical y

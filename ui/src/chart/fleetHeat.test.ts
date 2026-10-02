@@ -1,7 +1,7 @@
 import { expect, test } from "vitest";
 import { relativeLuminance } from "./colormap";
 import type { FleetData, FleetHeat } from "./fleet";
-import { ABSENT, DIVERGING, GAP, binHeat, decimate, divergingLut, labelYs, lutIndex, rowPx, sharedRange } from "./fleetHeat";
+import { ABSENT, DIVERGING, GAP, binHeat, decimate, divergingLut, heatBarLabels, labelYs, lutIndex, rowPx, sharedRange } from "./fleetHeat";
 
 const heat: FleetHeat = {
   z_cap: 6, rows_total: 2,
@@ -64,4 +64,8 @@ test("shared y covers the envelope and every drawn outlier", () => {
   expect(hi).toBeGreaterThan(30);
   expect(sharedRange(d, 1)[0]).toBeLessThan(1);
   expect(sharedRange(d, 1)[0]).toBeGreaterThan(-4);
+});
+
+test("heat colour bar is labelled as a deviation from the fleet median, centred on 0", () => {
+  expect(heatBarLabels(6)).toEqual({ title: "deviation from fleet median (σ)", lo: "−6", mid: "0", hi: "+6" });
 });
