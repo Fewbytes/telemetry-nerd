@@ -12,7 +12,7 @@ from telemetry_nerd.catalog.search import KEY_FIELDS, reviewed
 EDITABLE = (
     "type", "unit", "bounds", "additivity_series", "additivity_time", "role", "description",
 )  # fmt: skip
-SHOWN = (*EDITABLE, "histogram_family", "thresholds")
+SHOWN = (*EDITABLE, "histogram_family", "thresholds", "statistic")
 MAX_METRICS = 3
 
 

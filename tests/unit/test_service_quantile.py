@@ -1,5 +1,7 @@
 import pytest
 
+from telemetry_nerd.catalog.mergeability import HARTMANN_CAVEAT
+from telemetry_nerd.catalog.models import Claim
 from telemetry_nerd.sources.base import SourceError, SourceUnavailable
 from tests.unit.fakes import NOW, FakeSource, make_service
 
@@ -72,3 +74,41 @@ async def test_failed_counts_chunk_reaches_quantile_dataset(tmp_path):
     meta, _ = svc.datasets.get(out["dataset"])
     assert meta.failed_spans
     assert all(r.endswith("counts down") for *_, r in meta.failed_spans)
+
+
+# -- catalog-flagged non-mergeable statistics (telemetry-nerd-2as.20, spec §5 [H]/[SfE]) ------
+
+
+def _statistic_claim(value, ts=1):
+    return Claim(field="statistic", value=value, origin="rule", confidence=0.6, ts_ms=ts)
+
+
+async def test_aggregating_a_catalog_flagged_percentile_gauge_is_refused(tmp_path):
+    svc = make_service(tmp_path, FakeSource())
+    svc.ws.catalog.put_claim("default", "app_latency_p99", _statistic_claim("percentile"))
+    with pytest.raises(SourceError) as e:
+        await svc.query("avg(app_latency_p99)", "now-2h", "now-1h", step="1m")
+    assert "app_latency_p99" in str(e.value)
+    assert "allow_nonmergeable" in (e.value.hint or "")
+
+
+async def test_override_charts_it_anyway_with_hartmann_caveat(tmp_path):
+    svc = make_service(tmp_path, FakeSource())
+    svc.ws.catalog.put_claim("default", "app_latency_p99", _statistic_claim("percentile"))
+    out = await svc.query(
+        "avg(app_latency_p99)", "now-2h", "now-1h", step="1m", allow_nonmergeable=True
+    )
+    assert HARTMANN_CAVEAT in out["summary"]["caveats"]
+
+
+async def test_unflagged_metric_aggregates_without_any_caveat(tmp_path):
+    svc = make_service(tmp_path, FakeSource())
+    out = await svc.query("avg(some_gauge)", "now-2h", "now-1h", step="1m")
+    assert HARTMANN_CAVEAT not in out["summary"]["caveats"]
+
+
+async def test_plain_unwrapped_percentile_gauge_is_not_refused(tmp_path):
+    svc = make_service(tmp_path, FakeSource())
+    svc.ws.catalog.put_claim("default", "app_latency_p99", _statistic_claim("percentile"))
+    out = await svc.query("app_latency_p99", "now-2h", "now-1h", step="1m")
+    assert HARTMANN_CAVEAT not in out["summary"]["caveats"]

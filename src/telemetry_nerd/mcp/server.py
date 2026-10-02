@@ -142,6 +142,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         end: str = "now",
         step: str = "auto",
         source: str = "default",
+        allow_nonmergeable: bool = False,
     ) -> str:
         """Fetch a PromQL/MetricsQL expression as a dataset of min/max/avg/count buckets.
 
@@ -152,12 +153,23 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         as the WHOLE expression. It is evaluated per step (never rolled up) and each bucket
         carries n, the observations behind it; buckets with n < 10/(1-q) are flagged
         low_count. Wrapping a quantile in sum/avg/max/*_over_time is refused.
+        The catalog also flags plain metrics it knows are pre-computed, non-mergeable
+        statistics (a summary's own `quantile=` series, an exported `..._p99` gauge, median,
+        MAD, IQR, truncated mean — see the mergeability table): aggregating those with
+        avg/sum/min/max/*_over_time or a multi-series merge is refused the same way.
+        `allow_nonmergeable=true` charts it anyway and adds a caveat explaining why the result
+        is misleading (averaging pre-computed p90s across 24 hours overstated it by 68.5% in
+        the canonical example — recompute from the merged histogram/raw data instead).
         $__rate_interval expands to max(4 x scrape interval, step + scrape interval).
         Returns {dataset, summary}. The summary is compact; raw series stay on the server.
         """
         try:
             # pi-lens-ignore: python-sql-injection
-            return _dump(await service.query(expr, start, end, step, source))
+            return _dump(
+                await service.query(
+                    expr, start, end, step, source, allow_nonmergeable=allow_nonmergeable
+                )
+            )
         except SourceError as e:
             raise _source_error(e) from e
         except ValueError as e:
@@ -594,7 +606,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         """Record what you have learned about metrics, up to 200 claims per call. Each claim:
         {metric, field, value, confidence, basis}. field is one of type, unit, bounds,
         additivity_series, additivity_time, role, description, histogram_family, thresholds ([{value, label,
-        tone bad|warn|info}]: known good/bad lines such as an SLO, drawn on the metric's charts). Relations between
+        tone bad|warn|info}]: known good/bad lines such as an SLO, drawn on the metric's charts), statistic
+        (count, count_below, sum, min, max, mean, ratio, median, percentile, truncated_mean,
+        mad, iqr — the mergeability table: only count/min/max/sum merge across time/series
+        directly, mean/ratio need the counts too, the rest never merge). Relations between
         metrics (bounded_by, part_of, ...) go through catalog_relate.
         `basis` (required) is one line saying what you checked; confidence is at most 0.9
         (1.0 is reserved for the user). Writes are origin=claude: they never override a user

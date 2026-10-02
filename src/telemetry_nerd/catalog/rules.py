@@ -7,6 +7,7 @@ is what the name conventions imply. Rules only claim what the convention reliabl
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -64,6 +65,10 @@ _SUFFIX_UNITS = (
     ("_percent", "%"),
 )
 _MEMBERS = ("_bucket", "_sum", "_count")
+#: Prometheus percentile-gauge convention: `..._p99`, `..._p95`, `..._p999` (three digits for
+#: p99.9). These carry a pre-computed quantile exactly like a summary's `quantile=` series and
+#: must never be aggregated across time or instances (spec §5 [H], rule 4).
+_PERCENTILE_SUFFIX = re.compile(r"(?:^|_)p[0-9]{1,3}$")
 
 
 @dataclass(frozen=True)
@@ -92,6 +97,8 @@ class Facts:
     unit: str | None
     type: str | None
     unit_provenance: str | None
+    #: mergeability table kind (catalog.mergeability): drives aggregation guards
+    statistic: str | None = None
 
 
 def normalize_unit(declared: str | None) -> str | None:
@@ -152,6 +159,25 @@ def derive_claims(
         # contradicted the correct declaration on every one of them (Grafana Play run)
         out.append(ClaimSpec("additivity_series", "none", "rule", 0.8, "name:_info"))
 
+    # statistic kind (spec §5 [H]/[SfE] mergeability table): a Prometheus summary's base series
+    # carries the `quantile=` label (never aggregatable); its _sum/_count members are themselves
+    # mergeable (sum, count) same as a classic histogram's.
+    if info is not None and info.type == "summary" and not n.endswith(("_sum", "_count")):
+        out.append(
+            ClaimSpec(
+                "statistic", "percentile", "rule", 0.8, "summary base series (quantile label)"
+            )
+        )
+    elif n.endswith("_sum"):
+        out.append(ClaimSpec("statistic", "sum", "rule", 0.5, "name:_sum"))
+    elif n.endswith("_count"):
+        out.append(ClaimSpec("statistic", "count", "rule", 0.5, "name:_count"))
+    elif _PERCENTILE_SUFFIX.search(n):
+        # exported p99-style gauge (spec §5 [H] rule 4): pre-computed, never aggregatable
+        out.append(
+            ClaimSpec("statistic", "percentile", "rule", 0.6, "name:_pNN percentile convention")
+        )
+
     base = next((n.removesuffix(m) for m in _MEMBERS if n.endswith(m)), None)
     kind = families.get(name) or (families.get(base) if base else None)
     fam_base = name if name in families else base
@@ -192,10 +218,12 @@ def facts_from_claims(claims: list[Claim]) -> Facts:
     """Resolve the unit and type winners among already-stored claims."""
     unit = resolve(c for c in claims if c.field == "unit")
     kind = resolve(c for c in claims if c.field == "type")
+    statistic = resolve(c for c in claims if c.field == "statistic")
     return Facts(
         unit.value if unit else None,
         kind.value if kind else None,
         PROVENANCE[unit.origin] if unit else None,
+        statistic.value if statistic else None,
     )
 
 

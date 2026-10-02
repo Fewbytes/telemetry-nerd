@@ -61,7 +61,7 @@ from telemetry_nerd.charts.spec import (
     auto_spec,
     validate,
 )
-from telemetry_nerd.charts.units import metric_names, raw_counters
+from telemetry_nerd.charts.units import metric_names, nonmergeable_uses, raw_counters
 from telemetry_nerd.charts.ycontext import (
     counter_rate_metric,
     counter_rate_parts,
@@ -291,6 +291,7 @@ class TelemetryService:
         step: str = "auto",
         source: str = "default",
         actor: Actor = "claude",
+        allow_nonmergeable: bool = False,
     ) -> dict:
         src = self._source(source)
         now = self.clock()
@@ -306,6 +307,17 @@ class TelemetryService:
         info = analyze(expr)
         if info.problem:
             raise SourceError(info.problem, hint=QUANTILE_HINT)
+        violations = nonmergeable_uses(
+            expr, lambda m: self.ws.catalog_facts(src.name, m), override=allow_nonmergeable
+        )
+        if violations and not allow_nonmergeable:
+            v = violations[0]
+            raise SourceError(
+                f"{v.metric}: {v.reason}",
+                hint="recompute from the merged histogram/raw data, or pass "
+                "allow_nonmergeable=true to chart it anyway with a caveat",
+            )
+        nonmergeable_caveats = sorted({v.caveat for v in violations if v.caveat})
         representation, q, n_min = "bucket_agg", None, None
         histogram = None
         if info.quantile is None:
@@ -349,6 +361,9 @@ class TelemetryService:
             semantics_flags=_semantics_flags(src),
         )
         summary = self._time_summary(meta, result, now)
+        for caveat in nonmergeable_caveats:
+            if caveat not in summary["caveats"]:
+                summary["caveats"].append(caveat)
         self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
         return {"dataset": meta.id, "summary": summary}
 

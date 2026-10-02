@@ -34,9 +34,12 @@ def by(claims, origin="rule"):
             {"type": "counter", "unit": "s", "bounds": "≥0", "additivity_series": "additive"},
         ),
         ("node_memory_bytes", {"unit": "B", "bounds": "≥0", "additivity_series": "additive"}),
-        ("lat_seconds_sum", {"unit": "s", "bounds": "≥0"}),
+        ("lat_seconds_sum", {"unit": "s", "bounds": "≥0", "statistic": "sum"}),
         ("lat_seconds_bucket", {"unit": "s"}),
-        ("lat_seconds_count", {"unit": "count", "bounds": "≥0"}),
+        ("lat_seconds_count", {"unit": "count", "bounds": "≥0", "statistic": "count"}),
+        ("app_latency_p99", {"statistic": "percentile"}),
+        ("app_latency_p999", {"statistic": "percentile"}),
+        ("request_duration_seconds_p50", {"statistic": "percentile"}),
         (
             "cache_hit_ratio",
             {
@@ -116,6 +119,35 @@ def test_facts_from_name_keeps_old_suffix_behavior():
 
 def test_every_origin_has_a_provenance_label():
     assert set(PROVENANCE) == set(ORIGINS)
+
+
+# -- statistic / mergeability T0 rules (telemetry-nerd-2as.20, spec §5 [H]/[SfE]) ------------
+
+
+def test_summary_base_series_is_a_precomputed_percentile():
+    info = MetricInfo("lat_seconds", "summary", "request latency", "seconds")
+    got = by(derive_claims("lat_seconds", info))
+    assert got["statistic"] == "percentile"
+
+
+def test_summary_sum_and_count_members_stay_mergeable():
+    sum_info = MetricInfo("lat_seconds_sum", "summary")
+    count_info = MetricInfo("lat_seconds_count", "summary")
+    assert by(derive_claims("lat_seconds_sum", sum_info))["statistic"] == "sum"
+    assert by(derive_claims("lat_seconds_count", count_info))["statistic"] == "count"
+
+
+@pytest.mark.parametrize(
+    "name", ["service_latency_p99", "service_latency_p95", "service_latency_p999", "x_p50"]
+)
+def test_percentile_gauge_naming_convention(name):
+    assert by(derive_claims(name))["statistic"] == "percentile"
+
+
+def test_non_percentile_names_get_no_statistic_claim():
+    assert "statistic" not in by(derive_claims("up"))
+    assert "statistic" not in by(derive_claims("node_load1"))
+    assert "statistic" not in by(derive_claims("http_requests_total"))
 
 
 @given(st.text(max_size=40))

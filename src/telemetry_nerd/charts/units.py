@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 
+from telemetry_nerd.catalog.mergeability import check_aggregation
 from telemetry_nerd.catalog.rules import Facts, facts_from_name
 
 _IDENT = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*")
@@ -230,3 +232,81 @@ def metric_names(expr: str) -> set[str]:
     return {
         t for t in _TOKEN.findall(_STRING.sub(" ", expr)) if t not in "()" and t not in _KEYWORDS
     }
+
+
+#: functions/operators that actually combine values across time or series (spec §5 [H]/[SfE]);
+#: pure counting/pass-through ops (count_over_time, last_over_time, present_over_time, the
+#: `count` aggregator) are excluded: they report how many samples/series exist, not a merged
+#: value, so they cannot mis-aggregate a non-mergeable statistic.
+_MERGE_FUNCS = frozenset(
+    {
+        "sum", "avg", "min", "max", "stddev", "stdvar", "topk", "bottomk",
+        "quantile", "count_values", "median", "group",
+        "sum_over_time", "avg_over_time", "min_over_time", "max_over_time",
+        "stddev_over_time", "stdvar_over_time", "quantile_over_time",
+        "median_over_time", "mad_over_time",
+    }
+)  # fmt: skip
+
+
+@dataclass(frozen=True)
+class AggregationViolation:
+    metric: str
+    op: str
+    statistic: str
+    reason: str
+    caveat: str | None
+
+
+StatisticLookup = Callable[[str], Facts]
+
+#: `sum by (region) (x)` puts the labels paren BEFORE the aggregator's argument paren, which
+#: would otherwise make the token walk below lose track of which aggregator wraps `x` (the
+#: by-clause's own "(" steals the slot). Label lists never nest parens, so stripping the whole
+#: clause is safe and leaves `sum (x)` for the walk to see.
+_BY_CLAUSE = re.compile(r"\b(?:by|without)\s*\([^()]*\)", re.IGNORECASE)
+
+
+def nonmergeable_uses(
+    expr: str, lookup: StatisticLookup = facts_from_name, *, override: bool = False
+) -> list[AggregationViolation]:
+    """Catalog-driven generalisation of "never aggregate pre-computed quantiles" (spec §5
+    [H]/[SfE]): flag every avg/sum/min/max/*_over_time-style aggregation (cross-time or
+    cross-series) wrapping a metric whose catalog `statistic` claim says it cannot be combined
+    that way (the mergeability table in `catalog.mergeability`).
+
+    Unlike `exprkind.analyze` (which only recognises PromQL's own quantile syntax —
+    `histogram_quantile`, `quantile_over_time`, a `{quantile="..."}` summary selector), this
+    catches a plain gauge the catalog has flagged non-aggregatable by naming convention or T0
+    rule (e.g. an exported `..._p99` gauge) even though nothing in the expression's syntax
+    gives it away.
+
+    With `override=True`, violations are still reported (forbidden stays True) but each one
+    carries the Hartmann caveat text for the caller to show instead of refusing outright.
+    """
+    calls: list[str | None] = []
+    out: list[AggregationViolation] = []
+    prev: str | None = None
+    text = _BY_CLAUSE.sub(" ", _STRING.sub(" ", expr))
+    for token in _TOKEN.findall(text):
+        if token == "(":
+            calls.append(prev)
+            prev = None
+        elif token == ")":
+            if calls:
+                calls.pop()
+            prev = None
+        else:
+            prev = token
+            if token in _KEYWORDS:
+                continue
+            statistic = lookup(token).statistic
+            if statistic is None:
+                continue
+            op = next((c for c in reversed(calls) if c in _MERGE_FUNCS), None)
+            if op is None:
+                continue
+            check = check_aggregation(statistic, op, override=override)
+            if check.forbidden:
+                out.append(AggregationViolation(token, op, statistic, check.reason, check.caveat))
+    return out

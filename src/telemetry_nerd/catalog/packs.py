@@ -57,6 +57,7 @@ _VALUE_FIELDS = (
     "additivity_time",
     "role",
     "description",
+    "statistic",
 )
 
 
@@ -119,6 +120,7 @@ class PackEntry(BaseModel):
     additivity_time: str | None = None
     role: str | None = None
     description: str | None = None
+    statistic: str | None = None
     bounded_by: list[str] | None = None
     limits: list[BoundSpec] | None = None
     thresholds: list[BoundSpec] | None = None

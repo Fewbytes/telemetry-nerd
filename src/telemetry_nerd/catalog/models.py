@@ -41,6 +41,7 @@ FieldName = Literal[
     "histogram_family",
     "operating_profile_ref",
     "thresholds",
+    "statistic",
 ]
 FIELDS = frozenset(get_args(FieldName))
 
@@ -49,6 +50,24 @@ _METRIC_TYPES = frozenset(get_args(MetricType))
 _BOUNDS = frozenset({"≥0", "[0,1]", "[0,100]", "none"})
 _ADDITIVITY = frozenset({"additive", "intensive", "none"})
 _TEXT = frozenset({"unit", "role", "description", "operating_profile_ref"})
+#: what kind of statistic a metric's value IS (spec §5/[SfE] mergeability table): drives
+#: whether cross-time/cross-series aggregation is meaningful (see catalog.mergeability)
+_STATISTIC = frozenset(
+    {
+        "count",
+        "count_below",
+        "sum",
+        "min",
+        "max",
+        "mean",
+        "ratio",
+        "median",
+        "percentile",
+        "truncated_mean",
+        "mad",
+        "iqr",
+    }
+)
 
 
 THRESHOLD_TONES = ("bad", "warn", "info")
@@ -86,6 +105,7 @@ def validate_value(field: str, value: Any) -> Any:
         "bounds": _BOUNDS,
         "additivity_series": _ADDITIVITY,
         "additivity_time": _ADDITIVITY,
+        "statistic": _STATISTIC,
     }.get(field)
     if enum is not None:
         if value not in enum:
