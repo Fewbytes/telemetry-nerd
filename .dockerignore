@@ -21,3 +21,14 @@ tests
 docs
 research-docs
 graphify-out
+# Never ship local state: databases and data dirs belong in the /data volume.
+**/.tn-data
+**/*.duckdb
+**/*.duckdb.wal
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.sqlite
+**/*.sqlite3
+ui/e2e-shots
+assets/brand/dist

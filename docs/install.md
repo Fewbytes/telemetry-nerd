@@ -23,16 +23,57 @@ contains the UI and no dev-only deps, installs it into throwaway dirs and smoke-
 
 ## Container (podman or docker)
 
+### Run the published image
+
 ```bash
-just docker-build                      # CONTAINER=docker just docker-build for docker
-TN_SOURCE_URL=http://host.containers.internal:8428 just docker-run
-# or directly:
-podman run --rm -p 127.0.0.1:7070:7070 -v tn-data:/data -e TN_SOURCE_URL=... telemetry-nerd:dev
+podman volume create tn-data            # once; holds all state (see below)
+podman run -d --name telemetry-nerd \
+  -p 127.0.0.1:7070:7070 \
+  -v tn-data:/data \
+  -e TN_SOURCE_URL=http://host.containers.internal:8428 \
+  ghcr.io/fewbytes/telemetry-nerd:latest
+# then browse http://127.0.0.1:7070
 ```
 
-- Runs as non-root user `tn`; state is in the `/data` volume (replaces `.tn-data`).
+`docker` works the same (`docker volume create`, `docker run ...`; on Linux use
+`--add-host=host.docker.internal:host-gateway` and `http://host.docker.internal:8428` to reach a
+source on the host). Tags: `latest`, `X.Y.Z`, `X.Y`; pin a version for anything you keep.
+
+### Data volume
+
+The image contains no data. Everything the daemon writes lives under `/data`
+(`TN_DATA_DIR=/data`): the series cache and dataset store (`series.duckdb`), workspaces,
+catalog and event log (`workspace.db`) and `daemon.json`. Always mount a volume there; without
+one, state lives in the container's writable layer and is lost with `--rm` or on upgrade.
+
+- **Named volume (recommended):** `-v tn-data:/data`. The engine creates it owned by the
+  image's user, so permissions just work.
+- **Bind mount:** `-v /path/on/host:/data`. The daemon runs as uid `10001` (user `tn`), so the
+  directory must be writable by it: `mkdir -p /path/on/host && sudo chown 10001:10001
+  /path/on/host`. Rootless podman maps uids, so use `podman unshare chown 10001:10001
+  /path/on/host` instead; on SELinux hosts add `:Z` (`-v /path/on/host:/data:Z`).
+- **One daemon per volume.** The databases are single-writer: don't mount the same volume
+  into two running containers.
+- **Upgrade:** `podman pull ghcr.io/fewbytes/telemetry-nerd:<new>`, stop and remove the old
+  container, start the new one with the same `-v tn-data:/data`. State carries over.
+- **Back up:** stop the container, then
+  `podman run --rm -v tn-data:/data -v "$PWD":/backup docker.io/library/busybox tar czf /backup/tn-data.tgz -C /data .`
+  (restore with `tar xzf` into an empty volume the same way).
+- **Reset:** stop the container and `podman volume rm tn-data`.
+
+### Build locally
+
+```bash
+just docker-build                      # CONTAINER=docker just docker-build for docker
+TN_SOURCE_URL=http://host.containers.internal:8428 just docker-run   # uses the tn-data volume
+```
+
+- Runs as non-root user `tn` (uid 10001).
 - `EXPOSE 7070`; `HEALTHCHECK` polls `/api/health`. With podman the image must be built with
   `--format docker` (the recipe does this) or the healthcheck is dropped.
+- The build strips debug symbols from native extensions and drops pyarrow's development files
+  (about 90 MB smaller); local state (`.tn-data`, `*.duckdb`, `*.db`) is excluded by
+  `.dockerignore`.
 - Env: `TN_SOURCE_URL`, `TN_SOURCE_FLAVOR`, `TN_PORT`, `TN_DATA_DIR`, `TN_HOST`
   (image default `0.0.0.0`), `TN_ALLOWED_HOSTS` (comma-separated extra Host/Origin names).
 

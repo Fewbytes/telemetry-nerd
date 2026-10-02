@@ -21,6 +21,14 @@ COPY ui/package.json ui/package.json
 RUN uv build --wheel --out-dir /dist \
  && uv venv /opt/venv \
  && VIRTUAL_ENV=/opt/venv uv pip install /dist/*.whl
+# Slim the venv (~-90 MB): strip debug symbols from native extensions and drop pyarrow's
+# C++/Cython development files and tests, which nothing imports at runtime.
+RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends binutils \
+ && sp=$(/opt/venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])') \
+ && rm -rf "$sp/pyarrow/include" "$sp/pyarrow/tests" \
+ && find "$sp/pyarrow" -type f \( -name '*.pyx' -o -name '*.pxd' -o -name '*.pxi' -o -name '*.h' -o -name '*.cc' \) -delete \
+ && find /opt/venv -type f \( -name '*.so' -o -name '*.so.[0-9]*' \) -exec strip --strip-unneeded {} + \
+ && /opt/venv/bin/python -c 'import duckdb, numpy, polars, pyarrow, telemetry_nerd.cli'
 
 FROM python:3.14-slim-trixie
 RUN useradd --system --create-home --uid 10001 tn \
