@@ -138,3 +138,56 @@ test("outlier ends skip trailing gaps", async () => {
   expect(outlierEnds(d)).toEqual([{ j: 2, v: 20 }, { j: 2, v: 1 }]);
   expect(outlierEnds({ ...d, outliers: [{ ...d.outliers[0], values: [1, null, null] }, { ...d.outliers[0], values: [null, null, null] }] })).toEqual([{ j: 0, v: 1 }, null]);
 });
+
+const g: FleetData = {
+  ...d,
+  clusters: [
+    { id: "c1", size: 60, band: { median: [10, 10, null], q25: [9, 9, null], q75: [11, 11, null] } },
+    { id: "c2", size: 40, band: { median: [30, 31, 32], q25: [29, 30, 31], q75: [31, 32, 33] } },
+  ],
+  outliers: [{ ...d.outliers[0], cluster: "c2" }, d.outliers[1]],
+  located: [
+    { code: "untrusted_data", severity: "warn", message: "Data unknown", where: { spans: [[0, 300_000]], series: null }, source: "bucket_state" },
+    { code: "members_missing", severity: "info", message: "m", where: { spans: [[300_000, 600_000]] }, source: "fleet" },
+  ],
+};
+
+test("grouped fleet (oyi): whole min-max, then each group's IQR ribbon and median; outliers last", async () => {
+  const { grouped } = await import("./fleet");
+  expect(grouped(d)).toBe(false);
+  expect(grouped({ ...d, clusters: [g.clusters![0]] })).toBe(false); // one group is the fleet
+  expect(grouped(g)).toBe(true);
+  const m = toFleetUplot(g);
+  expect(m.roles).toEqual(["x", "lo", "hi", "cq25", "cq75", "cmedian", "cq25", "cq75", "cmedian", "outlier", "outlier"]);
+  expect(m.bands.map((b) => b.series)).toEqual([[2, 1], [4, 3], [7, 6]]);
+  expect(m.data[5]).toEqual([10, 10, null]); // c1 median: a gap stays a gap
+  expect(m.data[8]).toEqual([30, 31, 32]);
+});
+
+test("grouped legend, key and axis label name the groups; outliers are tagged with theirs", async () => {
+  const { groupEnds, untrustedSpans } = await import("./fleet");
+  expect(fleetLegend(g)).toContain("2 behaviour groups: c1 (60), c2 (40)");
+  expect(fleetLegend(g)).toContain("each judged within its group");
+  expect(fleetAxisLabel(g, "s")).toContain("2 behaviour groups (per group: 25–75 band + median; all: min–max)");
+  const key = fleetKey(false, g);
+  expect(key.map((k) => k.id)).toEqual(["minmax", "group-c1", "group-c2", "outlier", "unknown"]);
+  expect(key[1].line).toEqual({ color: "#14505B", style: "solid" });
+  expect(key[2].line?.style).toBe("dashed");
+  expect(key[4].hatch).toBe(true);
+  expect(fleetKey(false, d).map((k) => k.id)).toEqual(["minmax", "q1090", "q2575", "median", "outlier"]);
+  expect(outlierText(g.outliers[0], (ms) => `t${ms}`)).toBe("pod=a: consistently higher within group c2 since t0");
+  expect(untrustedSpans(g)).toEqual([[0, 300_000]]); // only unknown data is hatched
+  expect(groupEnds(g)).toEqual([{ j: 1, v: 10 }, { j: 2, v: 32 }]);
+});
+
+test("group styles clear 3:1 against the theme background and never reuse an outlier colour", async () => {
+  const { GROUP_STYLES, OUTLIER_COLORS } = await import("./fleet");
+  const contrast = (a: string, b: string) => {
+    const [l1, l2] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+    return (l1 + 0.05) / (l2 + 0.05);
+  };
+  for (const s of GROUP_STYLES.light) expect(contrast(s.line, "#ffffff")).toBeGreaterThanOrEqual(3);
+  for (const s of GROUP_STYLES.dark) expect(contrast(s.line, "#16181d")).toBeGreaterThanOrEqual(3);
+  const all = [...GROUP_STYLES.light, ...GROUP_STYLES.dark].flatMap((s) => [s.line, s.fill].map((c) => c.toUpperCase()));
+  for (const o of OUTLIER_COLORS) expect(all).not.toContain(o.toUpperCase());
+});

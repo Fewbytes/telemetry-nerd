@@ -157,3 +157,64 @@ test("fleet panel with 6 members: band view screenshot", async ({ page, request 
     await el.screenshot({ path: `${SHOTS}/fleet6-band-${mode}.png` });
   }
 });
+
+test("fleet split into behaviour groups: per-group bands and medians, tagged outliers, hatched unknown data (oyi)", async ({ page, request }) => {
+  mkdirSync(SHOTS, { recursive: true });
+  const metric = `tn_e2e_oyi_fleet_groups_${Date.now()}`;
+  const r = rng(11);
+  const T = 240, step = 60_000, end = Math.floor((Date.now() - 6 * 60_000) / step) * step, start = end - (T - 1) * step;
+  const lines: string[] = [];
+  for (let m = 0; m < 24; m++) {
+    const base = m < 12 ? 40 : 90; // two behaviour groups (e.g. two instance sizes)
+    const own = gauss(r) * 1.5;
+    for (let t = 0; t < T; t++) {
+      let v = base + own + 8 * Math.sin((2 * Math.PI * t) / T) + gauss(r) * 1.2;
+      if (m === 17 && t > 120) v += 22; // an outlier within the upper group: inside the whole-fleet band
+      if (m === 5 && t > 160) v += 14; // and one within the lower group
+      lines.push(`${metric}{node="n${String(m).padStart(2, "0")}",job="db"} ${v.toFixed(3)} ${start + t * step}`);
+    }
+  }
+  expect((await request.post(`${VM}/api/v1/import/prometheus`, { data: lines.join("\n") + "\n" })).ok()).toBeTruthy();
+  await request.get(`${VM}/internal/force_flush`);
+  const q = await request.post("/api/query", { data: { expr: metric, start: "now-250m", end: "now-5m", step: "1m" } });
+  const { dataset } = await q.json();
+  const s = await request.post("/api/show", { data: { dataset, question: "Which db nodes are off?", mark: "fleet" } });
+  expect(s.ok(), await s.text()).toBeTruthy();
+  const { panel } = await s.json();
+  // a fetch failure cannot be planted in VictoriaMetrics: add a located untrusted span to the payload
+  let spanEnd = 0;
+  await page.route(`**/api/panels/${panel.id}/data*`, async (route) => {
+    const res = await route.fetch();
+    const body = await res.json();
+    const ts: number[] = body.ts;
+    spanEnd = ts[Math.floor(ts.length * 0.35)];
+    body.located = [...(body.located ?? []), {
+      code: "untrusted_data", severity: "warn", source: "bucket_state",
+      message: "Data unknown for 20m (planted by the e2e test)", where: { spans: [[ts[Math.floor(ts.length * 0.27)], spanEnd]], series: null },
+    }];
+    await route.fulfill({ response: res, json: body });
+  });
+  await page.setViewportSize({ width: 1200, height: 1000 });
+  await page.goto("/");
+  const el = page.locator(`[data-panel-id="${panel.id}"]`);
+  await expect(el.locator("[data-fleet-encoding]")).toContainText("2 behaviour groups");
+  await expect(el.locator("[data-fleet-key-id=group-c1]")).toContainText("group c1 (12)");
+  await expect(el.locator("[data-fleet-key-id=group-c2]")).toContainText("group c2 (12)");
+  await expect(el.locator("[data-fleet-key-id=unknown]")).toContainText("data unknown");
+  await expect(el.locator(".what")).toContainText("Fleet in behaviour groups");
+  const list = el.locator(".outliers li");
+  await expect(list.filter({ hasText: "node=n17" })).toContainText("within group c");
+  await expect(list.filter({ hasText: "node=n05" })).toContainText("within group c");
+  expect(spanEnd).toBeGreaterThan(0);
+  for (const mode of ["light", "dark"] as const) {
+    await page.getByLabel("Theme").selectOption(mode);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", mode);
+    await expect(el.locator(".u-over")).toBeVisible();
+    const boxes = JSON.parse((await el.locator("[data-fleet-labels]").getAttribute("data-fleet-labels")) ?? "[]") as number[][];
+    expect(boxes.length).toBeGreaterThanOrEqual(4); // 2 outliers + 2 group medians
+    for (const [i, a] of boxes.entries())
+      for (const b of boxes.slice(i + 1))
+        expect(a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3], JSON.stringify(boxes)).toBe(false);
+    await el.screenshot({ path: `${SHOTS}/fleet-groups-${mode}.png` });
+  }
+});

@@ -67,6 +67,12 @@ describe("describeShown", () => {
   it("names the quantile and says it is never aggregated", () => {
     expect(describeShown({ representation: "quantile", quantile: 0.95 }, "1m")).toMatch(/^p95 per 1m window.*never aggregated/);
   });
+  it("describes a fleet split into behaviour groups by its groups, not one band (oyi)", () => {
+    const r = { representation: "bucket_agg" } as const;
+    expect(describeShown(r, "1m", "fleet", "", "band", true)).toMatch(/behaviour groups.*per group.*25–75% band and median/);
+    expect(describeShown(r, "1m", "fleet", "", "band", false)).toMatch(/^Fleet: every member/);
+    expect(caveatText("clustered")).toContain("each group has its own 25–75% band and median");
+  });
   it("describes the average-with-envelope default", () => {
     expect(describeShown({ representation: "bucket_agg" }, "30s")).toContain("min–max envelope");
   });

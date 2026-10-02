@@ -59,7 +59,7 @@ const CAVEATS: Record<string, Describe> = {
   member_coverage_unknown: () => "Aggregated at the source: missing member series cannot be seen.",
   heavy_tailed_noise: () => "The members' noise has heavier tails than normal: spike and short-episode thresholds follow the other members' own peaks, so only excursions unusual for this fleet are named.",
   many_outliers: () => "More than 10% of the members were named: they differ systematically (sizes, roles, zones). Compare shapes with normalise=\"member\" or split the fleet by a label.",
-  clustered: () => "The members form behaviour groups (e.g. sizes or roles): each group was analysed as its own fleet, and outliers are named against their own group. The band is the whole fleet.",
+  clustered: () => "The members form behaviour groups (e.g. sizes or roles): each group was analysed as its own fleet, and outliers are named against their own group. In the band view each group has its own 25–75% band and median; the outer shading is the whole fleet's min–max.",
   members_skipped: () => "Some members had too little data to be tested; they are in the band but not judged.",
   too_few_members_for_outliers: () => "Fewer than 10 members had enough data: the band is shown, no member is judged.",
   members_partial: () => "Many member-steps rest on fewer samples than the members usually report: those values are noisier, and an excursion there may be a collection artefact.",
@@ -227,11 +227,13 @@ export function describeShown(
   kind = "time",
   mark = "",
   fleetView = "band",
+  fleetGrouped = false,
 ): string {
   if (kind === "spectrum") return "Periodogram (Lomb-Scargle): the share of variance a sinusoid of each period explains, with the 1% false-alarm level; peaks carry intervals.";
   if (kind === "spc") return "Control chart: the series against a centre line and 3σ band computed from the baseline only (shaded, or an earlier window named below); flagged points break SPC rules.";
   if (kind === "fleet" && fleetView === "heat") return "Member × time: one row per member, one column per step; colour is the member's deviation from the fleet median in robust σ (orange above, purple below, capped), dots where a live member was silent.";
   if (kind === "fleet" && fleetView === "multiples") return "Small multiples: one panel per outlying member on the same y range, its line against the fleet's shaded spread (min–max, 10–90%, 25–75%) and median.";
+  if (kind === "fleet" && fleetGrouped) return "Fleet in behaviour groups: the whole fleet's min–max shaded, and per group (members that behave alike) its 25–75% band and median line; outliers, judged within their own group, drawn as lines.";
   if (kind === "fleet") return "Fleet: every member of the group, shaded by how many members lie there (min–max, 10–90%, 25–75% at each step, over the members that reported), the median, and only the outlying members drawn as lines.";
   if (kind === "littles") return "Little's law check: per window, mean concurrency L (gauge) against throughput × mean latency λ·W, each with a 95% band, and their ratio below (1 = consistent); shaded windows break the law.";
   if (kind === "seasonal") return "Seasonal comparison: now against the same window in previous cycles (faint), their median (dashed) and a 90% band from the spread across those cycles; dots are points too extreme for any previous cycle.";

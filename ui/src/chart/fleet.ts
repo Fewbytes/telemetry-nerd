@@ -1,5 +1,5 @@
 import type uPlot from "uplot";
-import type { YContext, YView } from "../lib/api";
+import type { Caveat, YContext, YView } from "../lib/api";
 import { resolveY, yStats, type YResolved } from "./yview";
 
 /** Fleet panel (bead lkn.3): many series of one metric as a group band + outlying members. */
@@ -7,6 +7,12 @@ export interface FleetOutlier {
   id: string; labels: Record<string, string>; kind: "persistent" | "drifting" | "shifted" | "transient";
   direction: "higher" | "lower"; score: number | null; values: (number | null)[];
   since_ms: number | null; episodes: [number, number][];
+  /** behaviour group the member was judged in (lkn.10), when the fleet is split */
+  cluster?: string;
+}
+/** A behaviour group (lkn.10): its own median and interquartile band per step. */
+export interface FleetCluster {
+  id: string; size: number; band: { median: (number | null)[]; q25: (number | null)[]; q75: (number | null)[] };
 }
 export interface FleetBand {
   median: (number | null)[]; q25: (number | null)[]; q75: (number | null)[];
@@ -18,6 +24,39 @@ export interface FleetHeat { z_cap: number; rows_total: number; rows: FleetHeatR
 export interface FleetData {
   ts: number[]; members: number; normalise: "none" | "member"; scale: "log" | "linear";
   band: FleetBand; n: number[]; alive: number[]; outliers: FleetOutlier[]; outlier_count: number; heat?: FleetHeat;
+  clusters?: FleetCluster[]; located?: Caveat[];
+}
+
+/** The fleet is split into behaviour groups: the whole-fleet quantile band would be bimodal (its
+ *  median can sit between the groups, where no member is), so each group is drawn instead. */
+export const grouped = (d: FleetData): boolean => (d.clusters?.length ?? 0) >= 2;
+
+/** One style per behaviour group: muted hues kept apart from the Okabe-Ito outlier colours, each
+ *  with its own dash so groups stay distinct without colour; line clears 3:1 on the background. */
+export const GROUP_STYLES = {
+  light: [
+    { line: "#14505B", fill: "#2A7F8E", dash: [] as number[] },
+    { line: "#4B3D78", fill: "#7A6BB0", dash: [7, 3] },
+    { line: "#5C4A12", fill: "#9C8236", dash: [2, 3] },
+    { line: "#3B4A59", fill: "#71879C", dash: [9, 3, 2, 3] },
+    { line: "#5A2E3E", fill: "#9E6378", dash: [4, 4] },
+    { line: "#2F4F2F", fill: "#6E8F6E", dash: [1, 2] },
+  ],
+  dark: [
+    { line: "#BDEAF2", fill: "#5FB7C6", dash: [] as number[] },
+    { line: "#D6CCF5", fill: "#A898E0", dash: [7, 3] },
+    { line: "#EBDCA8", fill: "#C9AE5E", dash: [2, 3] },
+    { line: "#D3DEE8", fill: "#9BB0C4", dash: [9, 3, 2, 3] },
+    { line: "#F0C9D6", fill: "#C98DA2", dash: [4, 4] },
+    { line: "#CDE6CD", fill: "#93B893", dash: [1, 2] },
+  ],
+} as const;
+export const GROUP_ALPHA = { light: 0.3, dark: 0.32 } as const;
+export const groupStyle = (dark: boolean, k: number) => GROUP_STYLES[dark ? "dark" : "light"][k % GROUP_STYLES.light.length];
+
+/** Time spans (ms) where the data is unknown (located `untrusted_data`): hatched, never read as values. */
+export function untrustedSpans(d: FleetData): [number, number][] {
+  return (d.located ?? []).filter((c) => c.code === "untrusted_data").flatMap((c) => c.where?.spans ?? []);
 }
 
 /** Okabe-Ito, colour-blind safe; the band is grey, so outliers keep the colours. */
@@ -31,6 +70,14 @@ export const OUTLIER_COLORS = ["#D55E00", "#0072B2", "#CC79A7", "#009E73", "#E69
 export function toFleetUplot(d: FleetData): { data: uPlot.AlignedData; bands: uPlot.Band[]; roles: string[] } {
   const x = d.ts.map((t) => t / 1000);
   const b = d.band;
+  if (grouped(d)) {
+    // grouped (oyi): the whole fleet's min-max for context, then per group q25, q75, median
+    const cs = d.clusters!;
+    const cols = [x, b.lo, b.hi, ...cs.flatMap((c) => [c.band.q25, c.band.q75, c.band.median]), ...d.outliers.map((o) => o.values)];
+    const roles = ["x", "lo", "hi", ...cs.flatMap(() => ["cq25", "cq75", "cmedian"]), ...d.outliers.map(() => "outlier")];
+    const bands = [{ series: [2, 1] as [number, number] }, ...cs.map((_, k) => ({ series: [4 + 3 * k, 3 + 3 * k] as [number, number] }))];
+    return { data: cols as uPlot.AlignedData, bands, roles };
+  }
   const cols = [x, b.lo, b.hi, b.q10, b.q90, b.q25, b.q75, b.median, ...d.outliers.map((o) => o.values)];
   const roles = ["x", "lo", "hi", "q10", "q90", "q25", "q75", "median", ...d.outliers.map(() => "outlier")];
   return { data: cols as uPlot.AlignedData, bands: [{ series: [2, 1] }, { series: [4, 3] }, { series: [6, 5] }], roles };
@@ -44,7 +91,8 @@ export function outlierText(o: FleetOutlier, fmtTime: (ms: number) => string): s
   const since = o.kind === "transient"
     ? o.episodes.length ? ` · ${o.episodes.length === 1 ? "episode" : `${o.episodes.length} episodes`} from ${fmtTime(o.episodes[0][0])}` : ""
     : o.since_ms !== null ? ` since ${fmtTime(o.since_ms)}` : "";
-  return `${o.id}: ${KIND_TEXT[o.kind]} ${o.direction}${since}`;
+  const group = o.cluster ? ` within group ${o.cluster}` : "";
+  return `${o.id}: ${KIND_TEXT[o.kind]} ${o.direction}${group}${since}`;
 }
 
 export function fleetLegend(d: FleetData): string {
@@ -54,6 +102,10 @@ export function fleetLegend(d: FleetData): string {
   const n = nMin === nMax ? `${nMax} reporting per step` : `${nMin}–${nMax} reporting per step`;
   const units = d.normalise === "member" ? " · each member relative to its own median" : "";
   const out = d.outlier_count === 0 ? "no outliers" : `${d.outlier_count} outlier${d.outlier_count > 1 ? "s" : ""}${more > 0 ? ` (${shown} drawn)` : ""}`;
+  if (grouped(d)) {
+    const gs = d.clusters!.map((c) => `${c.id} (${c.size})`).join(", ");
+    return `${d.members} members in ${d.clusters!.length} behaviour groups: ${gs} · ${out}, each judged within its group · ${n} · shading: min–max across all members; per group 25–75% and its median${units}`;
+  }
   return `${d.members} members · ${out} · ${n} · shading: min–max, 10–90%, 25–75% across reporting members · line: median${units}`;
 }
 
@@ -85,21 +137,43 @@ export const bandFills = (dark: boolean): string[] => {
 };
 
 /** Legend entries for the encoding row: three ribbons, the median line and the outlier marker. */
-export function fleetKey(dark: boolean): { id: "minmax" | "q1090" | "q2575" | "median" | "outlier"; label: string; swatch: string }[] {
+/** `line`: the group's median colour and CSS border style (its dash), drawn across the swatch. */
+export interface KeyEntry { id: string; label: string; swatch: string; line?: { color: string; style: "solid" | "dashed" | "dotted" }; hatch?: boolean }
+const cssDash = (dash: readonly number[]): "solid" | "dashed" | "dotted" => (!dash.length ? "solid" : dash[0] <= 2 ? "dotted" : "dashed");
+export function fleetKey(dark: boolean, d?: FleetData): KeyEntry[] {
   const m = dark ? "dark" : "light";
   const f = bandFills(dark);
+  const unknown: KeyEntry[] = d && untrustedSpans(d).length
+    ? [{ id: "unknown", label: "hatched: data unknown", swatch: dark ? "#9aa0a6" : "#6b7075", hatch: true }]
+    : [];
+  if (d && grouped(d)) {
+    return [
+      { id: "minmax", label: "min–max (all)", swatch: f[0] },
+      ...d.clusters!.map((c, k) => {
+        const g = groupStyle(dark, k);
+        return {
+          id: `group-${c.id}`, label: `group ${c.id} (${c.size}): 25–75% + median`, swatch: rgba(g.fill, GROUP_ALPHA[m]),
+          line: { color: g.line, style: cssDash(g.dash) },
+        };
+      }),
+      { id: "outlier", label: "outlier member (hover for id)", swatch: OUTLIER_COLORS[0] },
+      ...unknown,
+    ];
+  }
   return [
     { id: "minmax", label: "min–max", swatch: f[0] },
     { id: "q1090", label: "10–90%", swatch: f[1] },
     { id: "q2575", label: "25–75%", swatch: f[2] },
     { id: "median", label: "median", swatch: FLEET_HUE[m].line },
     { id: "outlier", label: "outlier member (hover for id)", swatch: OUTLIER_COLORS[0] },
+    ...unknown,
   ];
 }
 
 /** Names the chart type and its encoding, so it is legible without reading the long legend. */
 export function fleetAxisLabel(d: FleetData, unit: string | null): string {
   const u = d.normalise === "member" ? "× own median" : unit || "value";
+  if (grouped(d)) return `${u} · ${d.members} members in ${d.clusters!.length} behaviour groups (per group: 25–75 band + median; all: min–max)`;
   return `${u} · spread across ${d.members} members (bands: 25–75, 10–90, min–max)`;
 }
 
@@ -189,5 +263,18 @@ export function outlierEnds(d: FleetData): ({ j: number; v: number } | null)[] {
     let j = o.values.length - 1;
     while (j >= 0 && o.values[j] === null) j--;
     return j < 0 ? null : { j, v: o.values[j] as number };
+  });
+}
+
+/** The interquartile ribbon of behaviour group `k`. */
+export const groupFill = (dark: boolean, k: number): string => rgba(groupStyle(dark, k).fill, GROUP_ALPHA[dark ? "dark" : "light"]);
+
+/** Where each group's median line ends: (step index, value), for its end label. */
+export function groupEnds(d: FleetData): ({ j: number; v: number } | null)[] {
+  return (d.clusters ?? []).map((c) => {
+    const m = c.band.median;
+    let j = m.length - 1;
+    while (j >= 0 && m[j] === null) j--;
+    return j < 0 ? null : { j, v: m[j] as number };
   });
 }

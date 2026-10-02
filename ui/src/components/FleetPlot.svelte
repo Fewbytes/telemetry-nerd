@@ -2,8 +2,8 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import {
-    FLEET_HUE, OUTLIER_COLORS, bandFills, coverageGaps, fleetAxisLabel, fleetKey, fleetLegend, nearestOutlier, outlierEnds,
-    outlierMarkIdx, outlierText, placeEndLabels, toFleetUplot, type EndLabel,
+    FLEET_HUE, OUTLIER_COLORS, bandFills, coverageGaps, fleetAxisLabel, fleetKey, fleetLegend, groupEnds, groupFill, groupStyle,
+    grouped, nearestOutlier, outlierEnds, outlierMarkIdx, outlierText, placeEndLabels, toFleetUplot, untrustedSpans, type EndLabel,
   } from "../chart/fleet";
   import { HIDDEN_SERIES, plotAxes } from "../chart/plotKit";
   import { fmtTimeZ } from "../lib/format";
@@ -28,7 +28,7 @@
   let el = $state<HTMLDivElement | null>(null);
   let tip = $state<{ x: number; y: number; px: number; py: number; text: string } | null>(null);
   let tipColor = $state("");
-  const key = $derived(fleetKey(theme.effective === "dark"));
+  const key = $derived(fleetKey(theme.effective === "dark", data));
   const axisLabel = $derived(fleetAxisLabel(data, unit));
 
   $effect(() => {
@@ -42,11 +42,16 @@
     const m = toFleetUplot(data);
     const gaps = coverageGaps(data);
     const dark = mode === "dark";
-    const fills = bandFills(dark);
-    const labelOf: Record<string, string> = { lo: "min", hi: "max", q10: "10%", q90: "90%", q25: "25%", q75: "75%" };
-    let k = 0;
+    const isGrouped = grouped(data);
+    const fills = isGrouped ? [bandFills(dark)[0], ...(data.clusters ?? []).map((_, g) => groupFill(dark, g))] : bandFills(dark);
+    const labelOf: Record<string, string> = { lo: "min", hi: "max", q10: "10%", q90: "90%", q25: "25%", q75: "75%", cq25: "25%", cq75: "75%" };
+    let k = 0, g = 0;
     const series: uPlot.Series[] = [{}, ...m.roles.slice(1).map((r): uPlot.Series => {
       if (r === "median") return { label: "median", stroke: median, width: 2, points: { show: false } };
+      if (r === "cmedian") {
+        const st = groupStyle(dark, g);
+        return { label: `group ${data.clusters![g++].id} median`, stroke: st.line, width: 2, dash: [...st.dash], points: { show: false } };
+      }
       if (r === "outlier") {
         const o = data.outliers[k];
         return { label: o.id, stroke: OUTLIER_COLORS[k++ % OUTLIER_COLORS.length], width: 1.5, points: { show: false } };
@@ -85,6 +90,25 @@
             (p: uPlot) => {
               const c = p.ctx, dpr = window.devicePixelRatio || 1;
               c.save();
+              // data unknown (located untrusted_data, oyi): hatched over the whole height, never read as values
+              const spans = untrustedSpans(data);
+              if (spans.length) {
+                c.save();
+                c.beginPath(); c.rect(p.bbox.left, p.bbox.top, p.bbox.width, p.bbox.height); c.clip();
+                c.strokeStyle = dark ? "rgba(200,205,210,0.55)" : "rgba(80,85,90,0.5)"; c.lineWidth = 1 * dpr;
+                const top = p.bbox.top, h = p.bbox.height, gap = 7 * dpr;
+                for (const [s0, s1] of spans) {
+                  const x0 = Math.max(p.bbox.left, p.valToPos(s0 / 1000, "x", true));
+                  const x1 = Math.min(p.bbox.left + p.bbox.width, p.valToPos(s1 / 1000, "x", true));
+                  if (x1 <= x0) continue;
+                  c.save(); c.beginPath(); c.rect(x0, top, x1 - x0, h); c.clip();
+                  c.fillStyle = dark ? "rgba(22,24,29,0.35)" : "rgba(255,255,255,0.35)"; c.fillRect(x0, top, x1 - x0, h);
+                  c.beginPath();
+                  for (let x = x0 - h; x < x1; x += gap) { c.moveTo(x, top + h); c.lineTo(x + h, top); }
+                  c.stroke(); c.restore();
+                }
+                c.restore();
+              }
               // coverage strip: steps where alive members did not report (darker = more missing)
               const y0 = p.bbox.top + p.bbox.height - 4 * dpr;
               const w = Math.max(1, (p.bbox.width / Math.max(data.ts.length, 1)));
@@ -107,28 +131,32 @@
               const fs = 11 * dpr, lh = 13 * dpr;
               c.font = `${fs}px sans-serif`;
               c.textAlign = "right"; c.textBaseline = "middle"; c.lineJoin = "round";
-              const ends = outlierEnds(data);
-              const items: (EndLabel & { i: number; px: number; py: number })[] = [];
-              ends.forEach((e, i) => {
+              const items: (EndLabel & { text: string; color: string; px: number; py: number })[] = [];
+              const endLabel = (e: { j: number; v: number } | null, text: string, color: string) => {
                 if (!e) return;
                 const px = p.valToPos(data.ts[e.j] / 1000, "x", true), py = p.valToPos(e.v, "y", true);
-                items.push({ i, px, py, right: px - 6 * dpr, w: c.measureText(data.outliers[i].id).width, y: py - 6 * dpr });
+                items.push({ text, color, px, py, right: px - 6 * dpr, w: c.measureText(text).width, y: py - 6 * dpr });
+              };
+              outlierEnds(data).forEach((e, i) => {
+                const o = data.outliers[i];
+                endLabel(e, isGrouped && o.cluster ? `${o.id} · ${o.cluster}` : o.id, OUTLIER_COLORS[i % OUTLIER_COLORS.length]);
               });
+              if (isGrouped) groupEnds(data).forEach((e, gi) => endLabel(e, `${data.clusters![gi].id} (${data.clusters![gi].size})`, groupStyle(dark, gi).line));
               const ys = placeEndLabels(items, lh, p.bbox.top, p.bbox.top + p.bbox.height);
               // placed label boxes (css px), for checking that none overlap
               host.dataset.fleetLabels = JSON.stringify(items.map((it, k) => [
                 Math.round((it.right - it.w) / dpr), Math.round((ys[k] - lh / 2) / dpr), Math.round(it.w / dpr), Math.round(lh / dpr),
               ]));
               items.forEach((it, k) => {
-                const col = OUTLIER_COLORS[it.i % OUTLIER_COLORS.length], y = ys[k];
+                const col = it.color, y = ys[k];
                 if (Math.abs(y - it.y) > 2 * dpr) {
                   c.strokeStyle = col; c.lineWidth = 1 * dpr;
                   c.beginPath(); c.moveTo(it.px - 1 * dpr, it.py); c.lineTo(it.right + 2 * dpr, y); c.stroke();
                 }
                 c.strokeStyle = bg; c.lineWidth = 3 * dpr;
-                c.strokeText(data.outliers[it.i].id, it.right, y);
+                c.strokeText(it.text, it.right, y);
                 c.fillStyle = col;
-                c.fillText(data.outliers[it.i].id, it.right, y);
+                c.fillText(it.text, it.right, y);
               });
               c.restore();
             },
@@ -155,7 +183,8 @@
     <div class="encoding" data-fleet-encoding>{axisLabel}</div>
     <ul class="key" data-fleet-key aria-label="Fleet chart encoding">
       {#each key as k (k.id)}
-        <li><span class="sw {k.id}" style:background={k.swatch}></span>{k.label}</li>
+        <li data-fleet-key-id={k.id}><span class="sw {k.id.startsWith('group-') ? 'group' : k.id}" class:hatch={k.hatch} style:background={k.hatch ? undefined : k.swatch}
+          style:border-top={k.line ? `2px ${k.line.style} ${k.line.color}` : undefined}></span>{k.label}</li>
       {/each}
     </ul>
     <div class="wrap"><div bind:this={el}></div>{#if tip}<i class="hov" style:left="{tip.px}px" style:top="{tip.py}px" style:background={tipColor}></i><div class="tip" style:left="{tip.x}px" style:top="{tip.y}px">{tip.text}</div>{/if}</div>
@@ -185,6 +214,7 @@
   .sw { display: inline-block; width: 18px; height: 9px; margin-right: 4px; vertical-align: middle; border: 1px solid var(--grid, #ccc); }
   .sw.median { height: 2px; border: 0; }
   .sw.outlier { width: 8px; height: 8px; border-radius: 50%; border: 0; }
+  .sw.hatch { background: repeating-linear-gradient(135deg, var(--muted, #888) 0 1px, transparent 1px 5px); }
   .wrap { position: relative; }
   .hov { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; border: 1.5px solid var(--bg, #fff); pointer-events: none; z-index: 1; }
   .tip { position: absolute; pointer-events: none; background: var(--bg, #fff); color: var(--fg, #222); border: 1px solid var(--muted, #888);
