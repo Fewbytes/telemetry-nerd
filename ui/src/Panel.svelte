@@ -224,7 +224,17 @@
   let heatQ = $state<number | null>(null);
   // percentile-band view of the same payload: no refetch, the server already sent the bands
   let heatView = $state<"heatmap" | "percentiles">("heatmap");
-  let heatQs = $state<number[]>(panel.spec.layers[0]?.quantiles ?? DEFAULT_QUANTILES);
+  let heatQs = $state<number[]>(DEFAULT_QUANTILES);
+  // follow the spec when Claude re-shows the panel with other quantiles; local picks last until then
+  let specQsKey: string | null = null;
+  $effect.pre(() => {
+    const qs = panel.spec.layers[0]?.quantiles ?? DEFAULT_QUANTILES;
+    const k = JSON.stringify(qs);
+    if (k !== specQsKey) {
+      specQsKey = k;
+      heatQs = qs;
+    }
+  });
   $effect(() => {
     if (data?.kind === "heatmap") heatView = data.mark === "percentiles" ? "percentiles" : "heatmap";
   });

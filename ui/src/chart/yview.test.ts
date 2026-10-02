@@ -63,7 +63,7 @@ describe("yview with catalog context (2as.10)", () => {
     natural_lo: null, natural_hi: null, bounds: null, bounds_origin: null, limit: null, profile: null, notes: [], ...o,
   });
   const stats = (vals: number[]) => yStats([{ id: "s", labels: {}, ts: vals.map((_, i) => i), avg: vals, min: vals, max: vals, count: vals.map(() => 1) }], { quantile: false, nMin: null });
-  const view = (mode: YView["mode"], label = mode): YView => ({ mode, label });
+  const view = (mode: YView["mode"], label: string = mode): YView => ({ mode, label });
 
   it("reference unions data, normal range and physical limit", () => {
     const st = stats([40, 50]);

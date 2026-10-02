@@ -213,7 +213,7 @@ export const closePanel = (id: string) => postJSON<unknown>(`/api/panels/${id}/c
 export const fetchPanelData = (id: string, width: number) =>
   fetch(`/api/panels/${id}/data?width=${width}`).then((r) => json<PanelData>(r));
 
-export const reportRender = (r: { panel_id: string; render_ms: number; points: number; width_px: number }) =>
+export const reportRender = (r: { panel_id: string; render_ms: number; points: number; width_px: number; height_px?: number }) =>
   postJSON<{ budget_exceeded: boolean }>("/api/render-report", r);
 
 export interface SocketHandlers {

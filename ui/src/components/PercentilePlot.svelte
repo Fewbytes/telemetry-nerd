@@ -1,7 +1,7 @@
 <script lang="ts">
   import { setupCanvas } from "../chart/canvas";
   import { colormap } from "../chart/colormap";
-  import { cellSpan, minSamples, timeColumns, valueAxis } from "../chart/heatmap";
+  import { minSamples, timeColumns, valueAxis } from "../chart/heatmap";
   import { fmtValue, valueTicks } from "../chart/axis";
   import { bandRects, overlay, qKey, qLabel, QUANTILE_CHOICES, thinColumns } from "../chart/percentiles";
   import { PALETTE, seriesName } from "../chart/toUplot";
