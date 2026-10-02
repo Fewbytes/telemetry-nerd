@@ -6,7 +6,8 @@
     closePanel, fetchPanelData, refreshYContext, reportRender, selectYView, setMarginal, selectDataView, setOverlays,
     type Annotation, type Panel, type PanelData, type Thread, type YView,
   } from "./lib/api";
-  import { toUplot } from "./chart/toUplot";
+  import { PALETTE, rgba, seriesName, toUplot } from "./chart/toUplot";
+  import { drawRug, hitRug, rugCells, rugHeight, rugHint, type RugCell } from "./chart/rug";
   import { describeShown, panelNotes } from "./lib/panelNotes";
   import { setupCanvas } from "./chart/canvas";
   import { drawnFor, VIEW_LABELS, type DataViewName } from "./chart/dataview";
@@ -162,6 +163,17 @@
   // marginal histogram (4ok.6): server computes it; the toggle lives in the panel spec
   const MARGINAL_W = 84;
   let margEl = $state<HTMLCanvasElement | null>(null);
+  let rugEl = $state<HTMLCanvasElement | null>(null);
+  let rugCellsNow: RugCell[] = [];
+  let rugTip = $state<{ x: number; y: number; text: string } | null>(null);
+  function onRugMove(e: MouseEvent) {
+    if (data?.kind !== "time" || !data.bucket_state) return;
+    const c = hitRug(rugCellsNow, e.offsetX, e.offsetY);
+    if (!c) { rugTip = null; return; }
+    const s = data.bucket_state[c.row];
+    const sd = data.series.find((x) => x.id === s.id);
+    rugTip = { x: e.offsetX + 8, y: e.offsetY + 12, text: rugHint(c, s, data.effective_step_ms, sd?.labels ? seriesName(sd.labels) : s.id, data.dataset.resolution_ms) };
+  }
   let margBusy = $state(false);
   const indexedOn = $derived((chosen?.mode as string | undefined) === "indexed");
   const marg = $derived(data?.kind === "time" && !indexedOn ? (data.marginal ?? null) : null);
@@ -342,6 +354,20 @@
                     const top = u.bbox.top / dpr, bottom = top + u.bbox.height / dpr;
                     const mctx = setupCanvas(margEl, MARGINAL_W, el.clientHeight || 260);
                     if (mctx) drawMarginal(mctx, m.windows, m.n_min, { toPx: (v) => u.valToPos(v, "y"), top, bottom, width: MARGINAL_W, fg: stroke, muted: grid });
+                  }
+                  if (rugEl && d.bucket_state?.length) {
+                    const bs = d.bucket_state;
+                    const left = u.bbox.left / dpr;
+                    const rctx = setupCanvas(rugEl, width, rugHeight(bs.length));
+                    if (rctx) {
+                      const order = new Map(d.series.map((s, k) => [s.id, k]));
+                      const grey = getComputedStyle(el).getPropertyValue("--muted").trim();
+                      rugCellsNow = rugCells(bs, d.effective_step_ms, (ms) => left + u.valToPos(ms / 1000, "x"));
+                      drawRug(rctx, rugCellsNow, {
+                        tint: (row) => rgba(PALETTE[(order.get(bs[row].id) ?? row) % PALETTE.length], 0.2),
+                        grey, line: grey,
+                      });
+                    }
                   }
                   drawAnnotations(u, ops, colors, dpr);
                 },
@@ -548,6 +574,13 @@
       {/key}
     {/if}
   </div>
+  {#if data?.kind === "time" && (data.bucket_state?.length ?? 0) > 0}
+    <div class="rug-wrap">
+      <canvas class="rug" bind:this={rugEl} data-rug aria-label="Coverage rug: where data is missing"
+        onmousemove={onRugMove} onmouseleave={() => (rugTip = null)}></canvas>
+      {#if rugTip}<div class="rug-tip" style="left:{rugTip.x}px;top:{rugTip.y}px">{rugTip.text}</div>{/if}
+    </div>
+  {/if}
   {#if data?.kind === "time" && data.overlays?.flags}
     <div class="legend overlays" role="group" aria-label="Reference layers">
       layers:
