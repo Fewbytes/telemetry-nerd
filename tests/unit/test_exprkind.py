@@ -181,6 +181,37 @@ def test_histogram_source(expr, want):
 @pytest.mark.parametrize(
     ("expr", "want"),
     [
+        # trailing `by` (telemetry-nerd-1ap): the most common spelling in the wild
+        ("histogram_quantile(0.99, sum(rate(x_bucket[5m])) by (le))", HistogramSource("x_bucket", ())),
+        ('histogram_quantile(0.99, sum(rate(x_bucket{a="b"}[5m])) by (le, region))',
+         HistogramSource('x_bucket{a="b"}', ("region",))),
+        ("histogram_quantile(0.99, sum(increase(x_bucket[$__rate_interval])) by (region, le))",
+         HistogramSource("x_bucket", ("region",))),
+        ("histogram_quantile(0.99, SUM BY (le) (rate(x_bucket[5m])))", HistogramSource("x_bucket", ())),
+        ("histogram_quantile(0.99, (sum(rate(x[5m])) by (region))) * 1000",
+         HistogramSource("x", ("region",))),  # native, parenthesised, scaled
+        ("histogram_quantile(0.99, sum(rate(x_bucket[5m])) by (le) # why\n)",
+         HistogramSource("x_bucket", ())),
+        # nested sums: an outer label the inner sum dropped is gone
+        ("histogram_quantile(0.9, sum by (le, region) (sum by (le, region, pod) (rate(x_bucket[5m]))))",
+         HistogramSource("x_bucket", ("region",))),
+        ("histogram_quantile(0.9, sum by (le, pod) (sum(rate(x_bucket[5m])) by (le, region)))",
+         HistogramSource("x_bucket", ())),
+        # not nameable as selector + by-list: honest None
+        ("histogram_quantile(0.99, sum without (pod) (rate(x_bucket[5m])))", None),
+        ("histogram_quantile(0.99, sum(rate(x_bucket[5m])) without (pod))", None),
+        ("histogram_quantile(0.99, sum by (le) (rate(x_bucket[5m])) by (le))", None),
+        ("histogram_quantile(0.99, sum by (le) (rate(x_bucket[5m:1m])))", None),  # subquery
+        ("histogram_quantile(0.99, sum by (le) (rate(x_bucket[5m] offset 1h)))", None),
+    ],
+)  # fmt: skip
+def test_histogram_source_promql_spellings(expr, want):
+    assert histogram_source(expr) == want
+
+
+@pytest.mark.parametrize(
+    ("expr", "want"),
+    [
         ('sum(rate(lat_seconds_bucket{job="a"}[5m]))', True),
         ("sum by (le) (rate(x[5m]))", True),
         ("sum by (vmrange) (histogram_over_time(x[5m]))", True),

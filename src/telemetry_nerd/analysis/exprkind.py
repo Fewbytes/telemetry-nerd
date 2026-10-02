@@ -227,9 +227,15 @@ def analyze(expr: str) -> ExprAnalysis:
     return ExprAnalysis(QuantileExpr(_literal(args[0]), func, _count_expr(func, args[1])))  # type: ignore[arg-type]
 
 
-_SUM = re.compile(r"^\s*sum\s*(?:by\s*\(([^()]*)\)\s*)?\(")
-_WINDOWED_CALL = re.compile(r"^\s*(?:rate|increase)\s*\(")
+_AGG = re.compile(
+    r"^\s*sum\s*(?:(?P<mod>by|without)\s*\((?P<labels>[^()]*)\)\s*)?\(", re.IGNORECASE
+)
+_TRAILING_MOD = re.compile(r"^\s*(?P<mod>by|without)\s*\((?P<labels>[^()]*)\)\s*$", re.IGNORECASE)
+_WINDOWED_CALL = re.compile(r"^\s*(?:rate|increase)\s*\(", re.IGNORECASE)
 _ANY_SELECTOR = re.compile(r"^\s*[a-zA-Z_:][a-zA-Z0-9_:]*\s*(\{[^{}]*\})?\s*$")
+_WINDOW_ONLY = re.compile(
+    r"^\[\s*(?:[0-9]+(?:ms|s|m|h|d|w|y))+\s*\]$|^\[\s*\$__rate_interval\s*\]$"
+)
 
 
 @dataclass(frozen=True)
@@ -238,41 +244,87 @@ class HistogramSource:
     by: tuple[str, ...]
 
 
-def _unwrap(text: str, masked: str, pattern: re.Pattern) -> tuple[re.Match, str, str] | None:
+def _call(text: str, pattern: re.Pattern) -> tuple[re.Match, str, str, str] | None:
+    """`f(...)` matched by `pattern` (ending at its open paren) -> (match, inner, masked inner,
+    masked tail after the close paren)."""
+    masked = _mask_strings(text)
     m = pattern.match(masked)
     if not m:
         return None
     open_idx = m.end() - 1
     close_idx = _close(masked, open_idx)
-    if masked[close_idx + 1 :].strip():
+    return (
+        m,
+        text[open_idx + 1 : close_idx],
+        masked[open_idx + 1 : close_idx],
+        masked[close_idx + 1 :],
+    )
+
+
+def _labels(text: str) -> tuple[str, ...]:
+    return tuple(x.strip() for x in text.split(",") if x.strip())
+
+
+def _sum_source(text: str) -> tuple[str, tuple[str, ...]] | None:
+    """sum [by (L)] (X) [by (L)], where X is another such sum or rate|increase(SEL[w]).
+    Returns (selector, effective grouping labels incl. le) or None when the shape is not one
+    whose histogram we can name. `without` cannot be turned into a by-list without knowing
+    every label, so it is not recognised."""
+    text = _peel_parens(text)
+    got = _call(text, _AGG)
+    if got is None:
+        windowed = _call(text, _WINDOWED_CALL)
+        if windowed is None or windowed[3].strip():
+            return None
+        _, arg, marg, _ = windowed
+        bracket = marg.rfind("[")
+        if (
+            bracket < 0
+            or not _ANY_SELECTOR.match(marg[:bracket])
+            or not _WINDOW_ONLY.match(marg[bracket:].strip())
+        ):
+            return None
+        return arg[:bracket].strip(), ("*",)  # "*": a bare series keeps every label
+    m, body, _, tail = got
+    mod, labels = m.group("mod"), m.group("labels")
+    if tail.strip():
+        t = _TRAILING_MOD.match(tail)
+        if t is None or mod is not None:
+            return None
+        mod, labels = t.group("mod"), t.group("labels")
+    if mod is not None and mod.lower() == "without":
         return None
-    return m, text[open_idx + 1 : close_idx], masked[open_idx + 1 : close_idx]
+    by = _labels(labels or "")
+    inner = _sum_source(body)
+    if inner is None:
+        return None
+    sel, inner_by = inner
+    if "*" not in inner_by:  # an outer label the inner sum dropped is absent: keep the intersection
+        by = tuple(x for x in by if x in inner_by)
+    return sel, by
 
 
 def histogram_source(expr: str) -> HistogramSource | None:
-    """The histogram behind histogram_quantile(q, sum by (L) (rate|increase(SEL[w]))), so a
-    percentile panel can open the distribution it was computed from."""
+    """The histogram behind a percentile, so a percentile panel can open the distribution it
+    was computed from: histogram_quantile(q, S) where S is sum by (L) (rate|increase(SEL[w])),
+    with `by` leading or trailing, nested sums, classic (_bucket, le) or native histograms."""
     info = analyze(expr)
     if info.quantile is None or info.quantile.func != "histogram_quantile" or info.problem:
         return None
+    expr = _peel_parens(_strip_comments(expr))
     masked = _mask_strings(expr)
     call = _QCALL.search(masked)
+    if call is None:
+        return None
     open_idx = call.end() - 1
     args = _split_args(expr, masked, open_idx + 1, _close(masked, open_idx))
-    inner = args[1]
-    summed = _unwrap(inner, _mask_strings(inner), _SUM)
-    if summed is None:
+    if not _AGG.match(_mask_strings(_peel_parens(args[1]))):
+        return None  # no sum: per-series, cannot express as a by-list
+    got = _sum_source(args[1])
+    if got is None:
         return None
-    m, body, mbody = summed
-    by = tuple(x.strip() for x in (m.group(1) or "").split(",") if x.strip() and x.strip() != "le")
-    windowed = _unwrap(body.strip(), mbody.strip(), _WINDOWED_CALL)
-    if windowed is None:
-        return None
-    _, arg, marg = windowed
-    bracket = marg.rfind("[")
-    if bracket < 0 or not _ANY_SELECTOR.match(marg[:bracket]):
-        return None
-    return HistogramSource(arg[:bracket].strip(), by)
+    sel, by = got
+    return HistogramSource(sel, tuple(x for x in by if x not in ("le", "*")))
 
 
 _HISTOGRAM_HINT = re.compile(r"_bucket\b|\bvmrange\b|\bby\s*\([^()]*\ble\b[^()]*\)", re.IGNORECASE)

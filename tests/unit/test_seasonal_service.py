@@ -115,7 +115,8 @@ def test_local_time_alignment_is_stated(tmp_path):
 
 def test_refusals(tmp_path):
     svc = make_service(tmp_path, source=SeasonalSource())
-    q = window(svc, SAT, expr="histogram_quantile(0.99, sum(rate(x_bucket[5m])) by (le))")
+    # `without` cannot be named as selector + by-list, so the histogram stays unknown
+    q = window(svc, SAT, expr="histogram_quantile(0.99, sum without (pod) (rate(x_bucket[5m])))")
     with pytest.raises(ValueError, match="percentile.*hint: compare the histogram per cycle"):
         asyncio.run(svc.compare_seasonal(q))
     d = window(svc, SAT, hours=36)
