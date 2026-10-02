@@ -9,9 +9,7 @@ Design: docs/superpowers/specs/2026-10-02-seasonal-compare-design.md.
 from __future__ import annotations
 
 import json
-import math
 import re
-from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -31,11 +29,11 @@ from telemetry_nerd.analysis.seasonal import (
     scale_of,
 )
 from telemetry_nerd.core.signal_ops import SERIES_BUDGET, SignalOps, human_period
+from telemetry_nerd.core.wire import Memo, add_caveats, sig, sig_list, sig_pair, statistic
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.time import format_duration, iso
 
 MAX_POINTS = 2000
-MEMO = 16
 DAY_S, WEEK_S = 86_400, 7 * 86_400
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -45,18 +43,6 @@ QUANTILE_REFUSAL = (
     "the histogram, then show(mark='histogram', windows=[now, the same window last week]); or "
     "compare the request rate or a threshold count from fraction_over with compare_seasonal)"
 )
-
-
-def _r(v: float | None, sig: int = 4) -> float | None:
-    if v is None or not math.isfinite(v):
-        return None
-    return float(f"{v:.{sig}g}")
-
-
-def _arr(a: np.ndarray | None) -> list[float | None]:
-    if a is None:
-        return []
-    return [None if not math.isfinite(float(v)) else float(f"{float(v):.5g}") for v in a]
 
 
 def _moved(c: Cycle, nominal: int) -> bool:
@@ -92,7 +78,7 @@ class SeasonalOps:
         self._query = query
         self._profile_period = profile_period
         self._last: dict[str, dict] = {}  # dataset -> config of the latest compare_seasonal
-        self._memo: OrderedDict[str, tuple] = OrderedDict()
+        self._memo: Memo[tuple] = Memo()
 
     # preconditions --------------------------------------------------------------------
     def check(self, dataset_id: str):
@@ -239,9 +225,8 @@ class SeasonalOps:
 
     def run(self, dataset_id: str, cfg: dict) -> tuple:
         key = dataset_id + json.dumps(cfg, sort_keys=True)
-        if key in self._memo:
-            self._memo.move_to_end(key)
-            return self._memo[key]
+        if (hit := self._memo.get(key)) is not None:
+            return hit
         meta, result = self._datasets.get(dataset_id)
         step, n = meta.step_ms, (meta.end_ms - meta.start_ms) // meta.step_ms + 1
         # buckets carry their END time: the grid is the bucket end times of the window
@@ -270,16 +255,12 @@ class SeasonalOps:
             }  # fmt: skip
             pick, scores = choose(y, schemes, step, excl)
             scale = scale_of(y, [c for cs in schemes.values() for c in cs])
-            if pick is None:  # nothing usable: report the most specific scheme's shortfall
-                last = [s for s in SCHEMES if s in schemes][-1]
-                cmp_ = compare(y, schemes[last], step, excl.get(last, set()), scale)
-            else:
-                cmp_ = compare(y, schemes[pick], step, excl.get(pick, set()), scale)
+            # nothing usable: report the most specific scheme's shortfall
+            scheme = pick if pick is not None else [s for s in SCHEMES if s in schemes][-1]
+            cmp_ = compare(y, schemes[scheme], step, excl.get(scheme, set()), scale)
             out[sid] = (labels.get(sid, {}), y, cmp_, scores)
         res = (meta, out)
-        self._memo[key] = res
-        if len(self._memo) > MEMO:
-            self._memo.popitem(last=False)
+        self._memo.put(key, res)
         return res
 
     # outputs --------------------------------------------------------------------------
@@ -301,7 +282,7 @@ class SeasonalOps:
         series = []
         for labels, _, c, scores in res.values():
             series.append(self._series(dataset_id, meta, cfg, labels, c, scores, span))
-            caveats += [x for x in c.caveats if x not in caveats]
+            add_caveats(caveats, c.caveats)
         profile = self._profile_period(meta.source, meta.expr)
         alignment = (
             "UTC: cycles are whole days/weeks in UTC (human-driven load follows local time; "
@@ -327,7 +308,7 @@ class SeasonalOps:
     def _series(self, dataset_id, meta, cfg, labels, c: Comparison, scores, span) -> dict:
         def cyc(cy: Cycle) -> dict:
             return {"j": cy.j, "start": iso(cy.start_ms),
-                    "shift_h": _r(cy.shift_ms / 3_600_000)}  # fmt: skip
+                    "shift_h": sig(cy.shift_ms / 3_600_000)}  # fmt: skip
 
         out: dict = {
             "labels": labels,
@@ -339,7 +320,7 @@ class SeasonalOps:
                 "label": self.label(c, cfg["tz"], span),
                 "cycles": [cyc(x) for x in c.kept],
                 "excluded": [{**cyc(x), "reason": why} for x, why in c.excluded],
-                "scores": {k: _r(v, 3) for k, v in scores.items()},
+                "scores": {k: sig(v, 3) for k, v in scores.items()},
             },
         }
         period_ms = {"1d": DAY_S * 1000, "1w": WEEK_S * 1000}.get(c.scheme)
@@ -355,32 +336,30 @@ class SeasonalOps:
         out |= {
             "scale": c.scale,
             "n": c.n,
-            "n_eff": _r(c.n_eff, 3),
+            "n_eff": sig(c.n_eff, 3),
             unit: {
-                "value": _r(lv.ratio), "normal_90": [_r(lv.normal[0]), _r(lv.normal[1])],
-                "interval_99": [_r(lv.p_interval[0]), _r(lv.p_interval[1])],
-                "previous_cycles": [_r(v, 3) for v in lv.cycle_means], "flagged": lv.flagged,
-                "evidence": {
-                    "kind": "statistic", "dataset": dataset_id, "name": f"seasonal_{unit}",
-                    "value": _r(lv.ratio), "interval": [_r(lv.normal[0]), _r(lv.normal[1])],
-                    "exact": False, "method": method,
-                    "params": {"reference": c.scheme, "cycles": len(c.kept), "tz": cfg["tz"],
-                               "step": format_duration(meta.step_ms), "n": c.n},
-                },
+                "value": sig(lv.ratio), "normal_90": sig_pair(lv.normal),
+                "interval_99": sig_pair(lv.p_interval),
+                "previous_cycles": [sig(v, 3) for v in lv.cycle_means], "flagged": lv.flagged,
+                "evidence": statistic(
+                    dataset_id, f"seasonal_{unit}", sig(lv.ratio), sig_pair(lv.normal), method,
+                    {"reference": c.scheme, "cycles": len(c.kept), "tz": cfg["tz"],
+                     "step": format_duration(meta.step_ms), "n": c.n},
+                ),
             },
         }  # fmt: skip
         if c.outside is not None:
             out["outside_band"] = {
-                "share": _r(c.outside.share, 3), "nominal": 0.1,
-                "previous_cycles": [_r(v, 3) for v in c.outside.previous],
-                "p": _r(c.outside.p, 2), "flagged": c.outside.flagged,
+                "share": sig(c.outside.share, 3), "nominal": 0.1,
+                "previous_cycles": [sig(v, 3) for v in c.outside.previous],
+                "p": sig(c.outside.p, 2), "flagged": c.outside.flagged,
             }  # fmt: skip
         if c.extremes is not None:
             e = c.extremes
             top = max(e.points, key=lambda q: abs(q[1])) if e.points else None
             out["extremes"] = {
-                "threshold_z": _r(e.threshold, 3), "points": len(e.points),
-                "max_z": _r(top[1], 3) if top else None,
+                "threshold_z": sig(e.threshold, 3), "points": len(e.points),
+                "max_z": sig(top[1], 3) if top else None,
                 "at": iso(meta.start_ms + top[0] * meta.step_ms) if top else None,
                 "heavy_tails": e.heavy_tails, "flagged": e.flagged,
             }  # fmt: skip
@@ -394,12 +373,12 @@ class SeasonalOps:
         series = []
         caveats: list[str] = []
         for sid, (labels, y, c, _) in res.items():
-            caveats += [x for x in c.caveats if x not in caveats]
+            add_caveats(caveats, c.caveats)
             item: dict = {
-                "id": sid, "labels": labels, "ts": ts, "now": _arr(y), "verdict": c.verdict,
+                "id": sid, "labels": labels, "ts": ts, "now": sig_list(y), "verdict": c.verdict,
                 "direction": c.direction, "reasons": c.reasons, "scheme": c.scheme,
                 "label": self.label(c, cfg["tz"], span), "scale": c.scale,
-                "cycles": [{"j": x.j, "start_ms": x.start_ms, "values": _arr(x.values)} for x in c.kept],
+                "cycles": [{"j": x.j, "start_ms": x.start_ms, "values": sig_list(x.values)} for x in c.kept],
                 "excluded": [{"j": x.j, "start_ms": x.start_ms, "reason": why} for x, why in c.excluded],
                 "n": c.n,
             }  # fmt: skip
@@ -407,12 +386,12 @@ class SeasonalOps:
                 ratio = c.scale == "log"
                 conv = np.exp if ratio else (lambda a: a)
                 item |= {
-                    "centre": _arr(c.centre), "lo": _arr(c.lo), "hi": _arr(c.hi),
-                    "ratio": {"kind": "ratio" if ratio else "difference", "value": _arr(conv(c.d)),
-                              "lo": _arr(conv(c.d_lo)), "hi": _arr(conv(c.d_hi))},
-                    "flagged": [{"ts": ts[i], "value": _r(float(y[i])), "z": _r(z, 3)}
+                    "centre": sig_list(c.centre), "lo": sig_list(c.lo), "hi": sig_list(c.hi),
+                    "ratio": {"kind": "ratio" if ratio else "difference", "value": sig_list(conv(c.d)),
+                              "lo": sig_list(conv(c.d_lo)), "hi": sig_list(conv(c.d_hi))},
+                    "flagged": [{"ts": ts[i], "value": sig(float(y[i])), "z": sig(z, 3)}
                                 for i, z in (c.extremes.points if c.extremes else [])],
-                    "n_eff": _r(c.n_eff, 3),
+                    "n_eff": sig(c.n_eff, 3),
                 }  # fmt: skip
             series.append(item)
         return {

@@ -8,8 +8,6 @@ control limits see. Every headline number carries an interval and an `evidence` 
 from __future__ import annotations
 
 import json
-import math
-from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 
 import numpy as np
@@ -21,10 +19,10 @@ from telemetry_nerd.analysis.spc import CUSUM_H, CUSUM_K, EWMA_L, EWMA_LAMBDA
 from telemetry_nerd.analysis.spectrum import spectrum
 from telemetry_nerd.core.profiles import SeasonalShapes
 from telemetry_nerd.core.signal_ops import SPECTRUM_CAP, Prepared, SignalOps, human_period
+from telemetry_nerd.core.wire import Memo, add_caveats, sig, sig_pair, statistic
 from telemetry_nerd.datasets.store import DatasetMeta
 from telemetry_nerd.model.time import format_duration, iso
 
-MEMO = 16
 MAX_VIOLATIONS_LISTED = 5
 GAP_HANDLING = (
     "gaps are never filled: run rules break at a gap; across g missing steps the EWMA decays "
@@ -37,16 +35,6 @@ ShapeLookup = Callable[[str, str, int, int], SeasonalShapes | None]
 #: analyze(baseline=...) -> the cycle scheme of seasonal comparison (lkn.2) whose alignment it reuses
 REFERENCE_SCHEMES = {"previous": "previous", "day": "1d", "week": "1w"}
 Run = tuple[Prepared, tuple[int, int, str], dict[str, Diagnosis], dict[str, dict]]
-
-
-def _r(x: float | None, digits: int = 4) -> float | None:
-    if x is None or not math.isfinite(x):
-        return None
-    return float(f"{x:.{digits}g}")
-
-
-def _iv(pair) -> list[float | None]:
-    return [_r(pair[0]), _r(pair[1])]
 
 
 def default_baseline(meta: DatasetMeta) -> tuple[int, int]:
@@ -110,7 +98,7 @@ class SeriesDiagnostics:
         self._signal = signal
         self._shapes = shapes
         self._query = query
-        self._memo: OrderedDict[tuple, Run] = OrderedDict()
+        self._memo: Memo[Run] = Memo()
         self._last: dict[str, dict | None] = {}  # dataset -> reference config of the last analyze
 
     async def fetch_reference(
@@ -181,9 +169,8 @@ class SeriesDiagnostics:
             dataset_id, start_ms, end_ms, json.dumps(ref, sort_keys=True) if ref else None,
             (shapes.profile_id, shapes.computed_at_ms) if shapes else None,
         )  # fmt: skip
-        if key in self._memo:
-            self._memo.move_to_end(key)
-            return self._memo[key]
+        if (hit := self._memo.get(key)) is not None:
+            return hit
         prep = self._signal._prepare(dataset_id, "analyze", SPECTRUM_CAP, allow_empty=True)
         refs = [
             self._signal._prepare(r["dataset"], "analyze", SPECTRUM_CAP, allow_empty=True)
@@ -220,9 +207,7 @@ class SeriesDiagnostics:
                     "judged_hours_excluded": shapes.excluded_hours,
                 }  # fmt: skip
         res = (prep, base, out, used)
-        self._memo[key] = res
-        if len(self._memo) > MEMO:
-            self._memo.popitem(last=False)
+        self._memo.put(key, res)
         return res
 
     # summary for Claude ------------------------------------------------------
@@ -240,7 +225,7 @@ class SeriesDiagnostics:
         for sid, d in diags.items():
             labels, ts, _ = prep.series[sid]
             series.append(self._series_summary(dataset_id, eff, base, labels, ts, d, used.get(sid)))
-            caveats += [c for c in d.caveats if c not in caveats]
+            add_caveats(caveats, d.caveats)
         for sk in prep.skipped:
             series.append({
                 "labels": sk["labels"], "verdict": "insufficient_data",
@@ -268,11 +253,10 @@ class SeriesDiagnostics:
     @staticmethod
     def _series_summary(dataset_id, eff, base, labels, ts, d: Diagnosis, profile=None) -> dict:
         def ev(name, value, interval, method, **params):
-            return {
-                "kind": "statistic", "dataset": dataset_id, "name": name, "value": _r(value),
-                "interval": _iv(interval), "exact": False, "method": method,
-                "params": {"step": eff, "n": d.n, "n_eff": _r(d.n_eff, 3), **params},
-            }  # fmt: skip
+            return statistic(
+                dataset_id, name, sig(value), sig_pair(interval), method,
+                {"step": eff, "n": d.n, "n_eff": sig(d.n_eff, 3), **params},
+            )  # fmt: skip
 
         out: dict = {
             "labels": labels,
@@ -284,21 +268,21 @@ class SeriesDiagnostics:
         if d.trend is None:  # too few points: nothing else was computed
             return out
         out |= {
-            "n_eff": _r(d.n_eff, 3),
-            "autocorrelation_time_steps": _r(d.tau, 3),
+            "n_eff": sig(d.n_eff, 3),
+            "autocorrelation_time_steps": sig(d.tau, 3),
             "structure": d.model,
         }
         periods = []
         for pk, pr in zip(d.peaks, d.periods, strict=True):
             p_s = pk.period_ms / 1000
-            interval = [_r(pk.lo_ms / 1000), _r(pk.hi_ms / 1000)]
+            interval = [sig(pk.lo_ms / 1000), sig(pk.hi_ms / 1000)]
             periods.append({
-                "period": human_period(p_s), "period_s": _r(p_s), "interval_s": interval,
-                "power": _r(pr.power, 3), "fap_red_noise": _r(pr.fap, 2),
+                "period": human_period(p_s), "period_s": sig(p_s), "interval_s": interval,
+                "power": sig(pr.power, 3), "fap_red_noise": sig(pr.fap, 2),
                 "evidence": ev(
                     "dominant_period", p_s, interval,
                     "Lomb-Scargle peak, half-power width; confirmed against AR(1) red noise",
-                    fap=pr.fap, phi_background=_r(pr.phi, 3),
+                    fap=pr.fap, phi_background=sig(pr.phi, 3),
                 ),
             })  # fmt: skip
         out["frequency"] = {
@@ -307,8 +291,8 @@ class SeriesDiagnostics:
         }
         tr = d.trend
         trend = {
-            "change_over_range": _r(tr.change), "interval": _iv(tr.change_interval),
-            "per_hour": _r(tr.slope_per_h), "significant": tr.significant,
+            "change_over_range": sig(tr.change), "interval": sig_pair(tr.change_interval),
+            "per_hour": sig(tr.slope_per_h), "significant": tr.significant,
         }  # fmt: skip
         if "drifting" in [d.verdict, *d.also]:
             trend["evidence"] = ev(
@@ -318,8 +302,8 @@ class SeriesDiagnostics:
         shifts = []
         for s in d.shifts:
             item = {
-                "at": iso(s.ts_ms), "delta": _r(s.delta), "interval": _iv(s.interval),
-                "sigma_units": _r(abs(s.delta) / d.sigma_within, 3), "p": _r(s.p, 2),
+                "at": iso(s.ts_ms), "delta": sig(s.delta), "interval": sig_pair(s.interval),
+                "sigma_units": sig(abs(s.delta) / d.sigma_within, 3), "p": sig(s.p, 2),
                 "n_before": s.n_before, "n_after": s.n_after,
             }  # fmt: skip
             if d.model == "step":
@@ -329,26 +313,26 @@ class SeriesDiagnostics:
                     at=iso(s.ts_ms), p=s.p,
                 )  # fmt: skip
             shifts.append(item)
-        stability = {"trend": trend, "shifts": shifts, "sigma_within": _r(d.sigma_within)}
+        stability = {"trend": trend, "shifts": shifts, "sigma_within": sig(d.sigma_within)}
         if d.kpss is not None:
             stability["kpss"] = {
-                "stat": _r(d.kpss.stat, 3),
+                "stat": sig(d.kpss.stat, 3),
                 "p": "> 0.1" if d.kpss.p_upper >= 0.1 else f"<= {d.kpss.p_upper:g}",
                 "lags": d.kpss.lags,
             }
         if d.variance is not None:
             stability["variance_ratio_last_first_third"] = {
-                "value": _r(d.variance.ratio, 3), "interval": _iv(d.variance.interval),
+                "value": sig(d.variance.ratio, 3), "interval": sig_pair(d.variance.interval),
             }  # fmt: skip
         out["stability"] = stability
         out["spc"] = SeriesDiagnostics._spc_summary(d, base, ts, ev, profile)
         sh = d.shape
         if sh is not None:
             out["shape"] = {
-                "skew": [_r(sh.skew, 3), *_iv(sh.skew_interval)],
-                "excess_kurtosis": [_r(sh.excess_kurtosis, 3), *_iv(sh.kurtosis_interval)],
-                "zeros": sh.zeros, "zero_share_interval": _iv(sh.zero_share_interval),
-                "bimodality_coefficient": _r(sh.bimodality, 3), "flags": sh.flags,
+                "skew": [sig(sh.skew, 3), *sig_pair(sh.skew_interval)],
+                "excess_kurtosis": [sig(sh.excess_kurtosis, 3), *sig_pair(sh.kurtosis_interval)],
+                "zeros": sh.zeros, "zero_share_interval": sig_pair(sh.zero_share_interval),
+                "bimodality_coefficient": sig(sh.bimodality, 3), "flags": sh.flags,
             }  # fmt: skip
         if d.caveats:
             out["caveats"] = d.caveats
@@ -362,14 +346,14 @@ class SeriesDiagnostics:
         bwin = [iso(base[0]), iso(base[1])]
         nb = {
             "n": c.n_baseline,
-            "n_eff": _r(c.n_eff_baseline, 3),
+            "n_eff": sig(c.n_eff_baseline, 3),
         }  # the baseline's, not the series'
         # level + seasonal: the centre at rest (a separate reference is not in c.centre)
         level = float(np.nanmedian(c.centre[c.baseline])) if c.baseline.any() else c.level
         detectors = {
             name: {
-                "count": det.count, "of": det.opportunities, "expected": _r(det.expected, 3),
-                **({"p": _r(det.p, 2)} if det.p is not None else {}),
+                "count": det.count, "of": det.opportunities, "expected": sig(det.expected, 3),
+                **({"p": sig(det.p, 2)} if det.p is not None else {}),
             }
             for name, det in c.detectors.items()
         }  # fmt: skip
@@ -380,10 +364,10 @@ class SeriesDiagnostics:
         ]
         out = {
             "mode": c.mode,
-            "baseline": {"n": c.n_baseline, "n_eff": _r(c.n_eff_baseline, 3)},
+            "baseline": {"n": c.n_baseline, "n_eff": sig(c.n_eff_baseline, 3)},
             "centre": {
-                "value": _r(level), "interval": _iv(c.centre_interval),
-                "seasonal_periods_s": [_r(p) for p in c.seasonal_periods_s],
+                "value": sig(level), "interval": sig_pair(c.centre_interval),
+                "seasonal_periods_s": [sig(p) for p in c.seasonal_periods_s],
                 "seasonal": c.seasonal,
                 **({"seasonal_profile": profile} if profile else {}),
                 "evidence": ev(
@@ -396,26 +380,26 @@ class SeriesDiagnostics:
                 ),
             },
             "sigma": {
-                "value": _r(c.sigma), "interval": _iv(c.sigma_interval),
+                "value": sig(c.sigma), "interval": sig_pair(c.sigma_interval),
                 "evidence": ev(
                     "spc_sigma", c.sigma, c.sigma_interval,
                     "1.4826 MAD of baseline deviations (marginal), 99% interval from n_eff",
                     baseline=bwin, **nb,
                 ),
             },
-            "limits_3sigma": [_r(level - 3 * c.sigma), _r(level + 3 * c.sigma)],
-            "lag1_phi": _r(c.phi, 3),
+            "limits_3sigma": [sig(level - 3 * c.sigma), sig(level + 3 * c.sigma)],
+            "lag1_phi": sig(c.phi, 3),
             "in_control": c.in_control,
             "outside_limits": {
                 "count": c.outside.count, "of": c.outside.opportunities,
-                "expected": _r(c.outside.expected, 3),
-                "rate_interval": _iv(c.outside.rate_interval) if c.outside.rate_interval else None,
+                "expected": sig(c.outside.expected, 3),
+                "rate_interval": sig_pair(c.outside.rate_interval) if c.outside.rate_interval else None,
             } if c.outside else None,
             "detectors": detectors,
             "settings": {
                 "ewma": f"lambda {EWMA_LAMBDA}, L {EWMA_L}", "cusum": f"k {CUSUM_K}, h {CUSUM_H}",
-                "arl0": {k: _r(v, 3) for k, v in c.arl0.items()},
-                "arl_1sigma_shift": {k: _r(v, 3) for k, v in c.arl_1sigma.items()},
+                "arl0": {k: sig(v, 3) for k, v in c.arl0.items()},
+                "arl_1sigma_shift": {k: sig(v, 3) for k, v in c.arl_1sigma.items()},
                 "gaps": GAP_HANDLING,
             },
             "first_violations": first,
@@ -436,7 +420,7 @@ class SeriesDiagnostics:
                 "id": sid,
                 "labels": labels,
                 "ts": [int(t) for t in ts],
-                "value": [_r(v, 6) for v in y],
+                "value": [sig(v, 6) for v in y],
                 "verdict": d.verdict,
                 "also": d.also,
                 "n": d.n,
@@ -447,24 +431,24 @@ class SeriesDiagnostics:
                 centre = c.centre
                 item |= {
                     "mode": c.mode,
-                    "centre": [_r(v, 6) for v in centre],
-                    "sigma": _r(c.sigma, 6),
+                    "centre": [sig(v, 6) for v in centre],
+                    "sigma": sig(c.sigma, 6),
                     "n_baseline": c.n_baseline,
-                    "n_eff_baseline": _r(c.n_eff_baseline, 3),
+                    "n_eff_baseline": sig(c.n_eff_baseline, 3),
                     # limit uncertainty (99%, from the baseline's n_eff): the level's interval
                     # and sigma's; the drawn limits inherit both
-                    "level": _r(c.level, 6),
-                    "centre_interval": _iv(c.centre_interval),
-                    "sigma_interval": _iv(c.sigma_interval),
+                    "level": sig(c.level, 6),
+                    "centre_interval": sig_pair(c.centre_interval),
+                    "sigma_interval": sig_pair(c.sigma_interval),
                     "seasonal": c.seasonal,
                     **({"seasonal_profile": used[sid]} if sid in used else {}),
                     "in_control": c.in_control,
                     "violations": [
-                        {"ts": int(ts[i]), "value": _r(float(y[i]), 6), "rules": rules}
+                        {"ts": int(ts[i]), "value": sig(float(y[i]), 6), "rules": rules}
                         for i, rules in c.violations().items()
                     ],
                 }
-            caveats += [x for x in d.caveats if x not in caveats]
+            add_caveats(caveats, d.caveats)
             series.append(item)
         return {
             "kind": "spc",

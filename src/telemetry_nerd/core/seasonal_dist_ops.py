@@ -30,6 +30,7 @@ from telemetry_nerd.analysis.seasonal_dist import (
     snap,
 )
 from telemetry_nerd.core.signal_ops import SERIES_BUDGET
+from telemetry_nerd.core.wire import add_caveats, sig, statistic
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.time import format_duration, iso
 
@@ -42,12 +43,6 @@ NO_HISTOGRAM = (
     "_bucket histogram and compare_seasonal that dataset, or write the percentile as "
     "histogram_quantile(q, sum by (le) (rate(x_bucket[5m]))); or compare the request rate)"
 )
-
-
-def _r(v: float | None, sig: int = 4) -> float | None:
-    if v is None or not math.isfinite(v):
-        return None
-    return float(f"{v:.{sig}g}")
 
 
 def _key(labels: dict) -> str:
@@ -177,7 +172,7 @@ class SeasonalDistOps:
             c = compare_tail(h_now, schemes[scheme], x, scheme, excl.get(scheme, set()))
             if not enough and x is not None and "few_over_threshold" not in c.caveats:
                 c.caveats.append("few_over_threshold")
-            caveats += [v for v in c.caveats if v not in caveats]
+            add_caveats(caveats, c.caveats)
             series.append(self._series(dataset_id, json.loads(key), c, scores, x, how, tz))
         return {
             "dataset": dataset_id,
@@ -210,9 +205,9 @@ class SeasonalDistOps:
     @staticmethod
     def _series(dataset_id, labels, c: TailComparison, scores, x, how, tz) -> dict:
         def cyc(h: Hist) -> dict:
-            d: dict = {"j": h.j, "start": iso(h.start_ms), "n": _r(h.n)}
+            d: dict = {"j": h.j, "start": iso(h.start_ms), "n": sig(h.n)}
             if x is not None and h.n > 0:
-                d["share_over"] = _r(h.over(x) / h.n, 3)
+                d["share_over"] = sig(h.over(x) / h.n, 3)
             d["dataset"] = h.dataset
             return d
 
@@ -230,38 +225,36 @@ class SeasonalDistOps:
             "direction": c.direction,
             "reasons": c.reasons,
             "threshold": {"x": x, "how": how},
-            "now": {"n": _r(c.now.n), **({"share_over": _r(c.now.over(x) / c.now.n, 3)}
+            "now": {"n": sig(c.now.n), **({"share_over": sig(c.now.over(x) / c.now.n, 3)}
                                           if x is not None and c.now.n > 0 else {})},
             "reference": {
                 "scheme": c.scheme,
                 "label": label,
                 "cycles": [cyc(h) for h in c.kept],
                 "excluded": [{**cyc(h), "reason": why} for h, why in c.excluded],
-                "scores": {s: _r(v, 3) for s, v in scores.items()},
+                "scores": {s: sig(v, 3) for s, v in scores.items()},
             },
         }  # fmt: skip
         if c.share is None:
             return out
         sh = c.share
         out["share_over"] = {
-            "value": _r(sh.value, 3), "normal_90": [_r(sh.normal[0], 3), _r(sh.normal[1], 3)],
-            "interval_99": [_r(sh.p_interval[0], 3), _r(sh.p_interval[1], 3)],
-            "centre": _r(sh.centre, 3), "flagged": sh.flagged,
-            "evidence": {
-                "kind": "statistic", "dataset": dataset_id, "name": "seasonal_share_over",
-                "value": _r(sh.value, 3), "interval": [_r(sh.normal[0], 3), _r(sh.normal[1], 3)],
-                "exact": False,
-                "method": f"share above {x:g} per cycle from histogram counts; 90% range of a "
-                          f"normal cycle from the spread of {k} cycles (t, {k - 1} df, logit)",
-                "params": {"x": x, "reference": c.scheme, "cycles": k, "tz": tz,
-                           "n": _r(c.now.n)},
-            },
+            "value": sig(sh.value, 3), "normal_90": [sig(sh.normal[0], 3), sig(sh.normal[1], 3)],
+            "interval_99": [sig(sh.p_interval[0], 3), sig(sh.p_interval[1], 3)],
+            "centre": sig(sh.centre, 3), "flagged": sh.flagged,
+            "evidence": statistic(
+                dataset_id, "seasonal_share_over", sig(sh.value, 3),
+                [sig(sh.normal[0], 3), sig(sh.normal[1], 3)],
+                f"share above {x:g} per cycle from histogram counts; 90% range of a normal cycle "
+                f"from the spread of {k} cycles (t, {k - 1} df, logit)",
+                {"x": x, "reference": c.scheme, "cycles": k, "tz": tz, "n": sig(c.now.n)},
+            ),
         }  # fmt: skip
         if math.isfinite(c.shape):
             prev = [v for v in c.shape_previous if math.isfinite(v)]
             out["shape"] = {
-                "distance": _r(c.shape, 3),
-                "previous_cycles": [_r(v, 3) for v in prev],
+                "distance": sig(c.shape, 3),
+                "previous_cycles": [sig(v, 3) for v in prev],
                 "beyond_previous": bool(prev) and c.shape > max(prev),
                 "method": "largest |CDF difference| at the shared bucket edges: now vs the kept "
                           "cycles' summed counts, each cycle vs the others (descriptive: with k "
