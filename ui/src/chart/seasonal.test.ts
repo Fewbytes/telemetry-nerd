@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { flagMarks, seasonalLegend, toSeasonalUplot, verdictText, type SeasonalSeries } from "./seasonal";
+import { flagMarks, seasonalLegend, seriesDisplayName, toSeasonalUplot, verdictText, type SeasonalSeries } from "./seasonal";
 
 const s: SeasonalSeries = {
   id: "a", labels: { job: "api" }, ts: [0, 300_000, 600_000], now: [10, null, 30],
@@ -38,4 +38,9 @@ test("legend states reference, band method and exclusions; flags follow the view
   expect(flagMarks(s, "overlay")).toEqual([{ x: 600, y: 30, text: "z +6.1" }]);
   expect(flagMarks(s, "ratio")[0].y).toBe(2.6);
   expect(verdictText(s)).toBe("unusual (higher)");
+});
+
+test("seriesDisplayName: labelled series keep their name; a fully unlabelled series (sum without()) falls back to the expr", () => {
+  expect(seriesDisplayName(s, "sum without()(up)")).toBe('{job="api"}');
+  expect(seriesDisplayName({ ...s, labels: {} }, "sum without()(up)")).toBe("sum without()(up)");
 });

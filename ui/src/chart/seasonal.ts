@@ -1,4 +1,5 @@
 import type uPlot from "uplot";
+import { seriesName } from "./toUplot";
 
 /** Seasonal comparison panel (bead lkn.2): now vs previous cycles, their median and 90% band. */
 export interface SeasonalCycle { j: number; start_ms: number; values: (number | null)[] }
@@ -62,6 +63,15 @@ export function flagMarks(s: SeasonalSeries, view: SeasonalView) {
     const y = view === "ratio" ? (i >= 0 ? s.ratio?.value[i] ?? null : null) : f.value;
     return { x: f.ts / 1000, y, text: `z ${f.z > 0 ? "+" : ""}${f.z}` };
   }).filter((m) => m.y !== null) as { x: number; y: number; text: string }[];
+}
+
+/**
+ * seriesName({}) renders as the bare braces "{}" (e.g. `sum without()` drops every
+ * label including __name__), which reads as a blank prefix ahead of the verdict.
+ * Fall back to the dataset expression so there's still a name to show.
+ */
+export function seriesDisplayName(s: SeasonalSeries, exprFallback: string): string {
+  return Object.keys(s.labels).length ? seriesName(s.labels) : exprFallback;
 }
 
 export function verdictText(s: SeasonalSeries): string {
