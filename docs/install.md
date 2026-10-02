@@ -39,7 +39,10 @@ contains the UI and no dev-only deps, installs it into throwaway dirs and smoke-
 
 ### Run the published image
 
-Tags (`ghcr.io/fewbytes/telemetry-nerd`):
+Images are built by CI for `linux/amd64` and `linux/arm64` and pushed to GHCR **only for version
+tags** (`v*`; the tag must match the version in `pyproject.toml`). Regular commits never publish
+one, so a version that was just tagged may take a few minutes to appear. Tags
+(`ghcr.io/fewbytes/telemetry-nerd`):
 
 | Variant | Tags | Contents |
 | --- | --- | --- |
@@ -62,7 +65,12 @@ podman run -d --name telemetry-nerd \
 
 `docker` works the same (`docker volume create`, `docker run ...`; on Linux use
 `--add-host=host.docker.internal:host-gateway` and `http://host.docker.internal:8428` to reach a
-source on the host). Tags: `latest`, `X.Y.Z`, `X.Y`; pin a version for anything you keep.
+source on the host). `latest` moves with every release: pin `X.Y.Z` (or `X.Y` for patch updates)
+for anything you keep.
+
+Claude's analysis code (the tier-2 `run_code` tools) runs as IPython kernel subprocesses inside
+this container; there is no separate sandbox image. The libraries it can import are the ones in the
+image, which is the whole difference between the slim and the `-full` variant.
 
 ### Data volume
 
@@ -80,7 +88,8 @@ one, state lives in the container's writable layer and is lost with `--rm` or on
 - **One daemon per volume.** The databases are single-writer: don't mount the same volume
   into two running containers.
 - **Upgrade:** `podman pull ghcr.io/fewbytes/telemetry-nerd:<new>`, stop and remove the old
-  container, start the new one with the same `-v tn-data:/data`. State carries over.
+  container, start the new one with the same `-v tn-data:/data`. State carries over. Switching
+  between the slim and `-full` variant is the same operation: the volume is shared.
 - **Back up:** stop the container, then
   `podman run --rm -v tn-data:/data -v "$PWD":/backup docker.io/library/busybox tar czf /backup/tn-data.tgz -C /data .`
   (restore with `tar xzf` into an empty volume the same way).

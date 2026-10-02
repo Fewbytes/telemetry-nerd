@@ -115,9 +115,35 @@ You need [Claude Code](https://claude.com/claude-code) and [uv](https://docs.ast
    > Connect to grafana-play and show me whether checkout latency got worse in the last 3 hours.
 
 To use your own metrics, set `TN_SOURCE_URL` to your Prometheus or VictoriaMetrics URL before
-starting Claude Code, or ask Claude to connect it. You can also build and run it as a container; see
-[docs/install.md](docs/install.md) for that, for running the daemon separately, and for all
-settings.
+starting Claude Code, or ask Claude to connect it.
+
+### Or run it as a container
+
+No local Python or Node needed. Images are published for `linux/amd64` and `linux/arm64` on
+version tags:
+
+```bash
+docker run -d --name telemetry-nerd \
+  -p 127.0.0.1:7070:7070 \
+  -v tn-data:/data \
+  -e TN_SOURCE_URL=http://host.docker.internal:8428 \
+  ghcr.io/fewbytes/telemetry-nerd:latest
+```
+
+Then open <http://127.0.0.1:7070>, add the plugin as in step 2, and start Claude Code with
+`TN_DAEMON_URL=http://127.0.0.1:7070` so the plugin talks to the container instead of starting a
+local daemon (and needs no local install of Telemetry Nerd beyond the plugin itself). Images are `ghcr.io/fewbytes/telemetry-nerd`:
+
+| Tag | What |
+| --- | --- |
+| `X.Y.Z`, `X.Y`, `latest` | slim: the daemon, the UI and the kernel dependencies for Claude's analysis code |
+| `X.Y.Z-full`, `X.Y-full`, `latest-full` | slim plus scipy, statsmodels, scikit-learn, ruptures and PyWavelets |
+
+Use the `-full` image if you want Claude's analysis code to use those libraries (nothing can be
+installed at runtime). Pin `X.Y.Z` for anything you keep. All state lives in the `/data` volume, so
+mount one; the image runs as a non-root user, has a health check, and has **no authentication**:
+publish the port on loopback only. Podman works the same. Volumes, upgrades, backups, building the
+image yourself and the settings: [docs/install.md](docs/install.md).
 
 > **Status:** early. Metrics only for now (logs and traces are planned), and the API is still
 > changing. The workspace has no authentication and listens on `127.0.0.1` only.
@@ -132,7 +158,11 @@ result.
 1. Check prerequisites: `uv --version` succeeds. For a source install, `node --version` and
    `npm --version` succeed too (the wheel build compiles the UI).
 2. Install: `uv tool install git+https://github.com/Fewbytes/telemetry-nerd`, then
-   `telemetry-nerd --help` must succeed.
+   `telemetry-nerd --help` must succeed. Or, for a container instead:
+   `docker run -d --name telemetry-nerd -p 127.0.0.1:7070:7070 -v tn-data:/data
+   ghcr.io/fewbytes/telemetry-nerd:latest` (add `-e TN_SOURCE_URL=...`; use the `-full` tag if
+   analysis code needs scipy/statsmodels), then step 3, and set `TN_DAEMON_URL=http://127.0.0.1:7070`
+   in the environment Claude Code starts with. INSTALL.md has the full runbook.
 3. Register the plugin (the user runs these in Claude Code):
    `/plugin marketplace add Fewbytes/telemetry-nerd` and
    `/plugin install telemetry-nerd@telemetry-nerd`. The plugin starts the daemon on demand

@@ -55,8 +55,10 @@ Expected: a version line from whichever is installed. Either works; examples bel
 - **uv tool install** (path A): fastest to verify, runs natively, needs node/npm to
   build from source. Use this unless the user specifically wants containers.
 - **Docker/Podman image** (path B): no local node/uv/Python needed beyond the
-  container runtime; image is `ghcr.io/fewbytes/telemetry-nerd`, published only on
-  version tags (e.g. `0.0.1`, `latest`). Use this when the host can't/shouldn't have a
+  container runtime; image is `ghcr.io/fewbytes/telemetry-nerd` (`linux/amd64` and
+  `linux/arm64`), published only on version tags (e.g. `0.1.0`, `0.1`, `latest`). A second
+  variant with the scientific stack for Claude's analysis code has the same tags with a
+  `-full` suffix (`0.1.0-full`, `latest-full`). Use this path when the host can't/shouldn't have a
   Python toolchain, or the user explicitly asks for a container.
 
 Both paths end with the same MCP registration (step 3) and verification (step 5).
@@ -125,7 +127,15 @@ docker ps --filter name=telemetry-nerd --format '{{.Status}}'
 Expected: a line starting with `Up` (after the 10s start period, it should say
 `Up ... (healthy)`).
 
+Use `ghcr.io/fewbytes/telemetry-nerd:latest-full` instead if the user wants Claude's analysis
+code to use scipy, statsmodels, scikit-learn, ruptures or PyWavelets (about 240 MB larger; nothing
+can be installed at runtime). Pin a version (`0.1.0`) for anything long-lived.
+
 Notes:
+- All state lives in `/data`: always mount a volume there (`-v tn-data:/data` above) or it is lost
+  when the container is removed. One daemon per volume. Upgrade by pulling the new tag, removing the
+  old container and starting it again with the same volume. Backups, bind mounts and uids:
+  [docs/install.md](docs/install.md).
 - The container always binds `0.0.0.0` internally; the published port is restricted to
   `127.0.0.1` on the host side (`-p 127.0.0.1:7070:7070`), and the daemon's own
   Host/Origin allowlist only accepts `127.0.0.1`/`localhost`/`[::1]` regardless. Never
