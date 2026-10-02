@@ -100,6 +100,9 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   bounds), record it with `catalog_write` and a basis; never claim a unit you cannot justify.
   Relations (`catalog_relate`: bounded_by, part_of, ...) and model bindings (`catalog_bind`:
   littles_law, RED, USE) go the same way; a binding role with no signal raises a Gap.
+  `binding_suggest` proposes bindings (RED per service, USE per instance/device, Little's law
+  triples) from names, packs and relations: check the picks and alternatives, then
+  `binding_accept` or `catalog_bind`.
 - When you can read the service's repo, `catalog_context` turns its metric registrations,
   dashboards and docs into cited claims (description, type, unit): find the files with rg, read the
   few that matter, send their text. Say where a claim came from when you cite it.
@@ -740,6 +743,50 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                     level=level,  # type: ignore[arg-type]
                 )
             )
+        except (NotFound, ValueError) as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
+    def binding_suggest(
+        source: str, kind: str | None = None, key: str | None = None, limit: int = 10
+    ) -> str:
+        """Propose model bindings from what the catalog already knows (metric names, types, packs,
+        relations; nothing is queried from the source). kind: littles_law | RED | USE (default all).
+        key: a suggested scope key (http.server, node:cpu, k8s:container-cpu, ...) to narrow, or
+        the service/instance name to bind for (it is then used as the binding key). Returns
+        ranked suggestions: id, kind, key, roles {role: metric|null}, per-role `detail` (confidence,
+        basis [pack|naming|relation], form, expr hint: rate() for counters, histogram _sum/_count
+        and _bucket for latency, never a precomputed percentile while a histogram exists, plus
+        `alternatives` and `ambiguous`), `unfilled` roles with the instrumentation that would fill
+        them, and join_on label hints (conventions: verify against the series). Check the picks,
+        then confirm with `binding_accept(id, basis)` or `catalog_bind`."""
+        try:
+            return _dump(service.ws.binding_suggest(source, kind, key, limit))
+        except ValueError as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
+    def binding_accept(
+        source: str,
+        id: str,
+        basis: str,
+        key: str | None = None,
+        overrides: dict[str, str | None] | None = None,
+        join_on: list[str] | None = None,
+        confidence: float | None = None,
+    ) -> str:
+        """Confirm a `binding_suggest` suggestion by id: a catalog_bind with its roles and
+        join_on. `basis` (required) says what you checked. `key` names the entity to bind (as in
+        binding_suggest); `overrides` {role: metric|null} swaps a role for one of its listed
+        alternatives; confidence defaults to the suggestion's (at most 0.9). Unfilled roles raise
+        Gaps exactly as in catalog_bind."""
+        try:
+            return _dump(
+                service.ws.binding_accept(
+                    source, id, basis=basis, key=key, overrides=overrides,
+                    join_on=join_on, confidence=confidence,
+                )
+            )  # fmt: skip
         except (NotFound, ValueError) as e:
             raise _fail(e) from e
 

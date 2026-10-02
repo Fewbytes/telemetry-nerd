@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from telemetry_nerd.analysis.samples import SampleStats
+from telemetry_nerd.catalog.binding_suggest import find_suggestion, suggest_bindings
 from telemetry_nerd.catalog.browse import Browse
 from telemetry_nerd.catalog.browse import browse as browse_catalog
 from telemetry_nerd.catalog.context import MAX_BYTES, MAX_FILES
@@ -860,6 +861,63 @@ class WorkspaceService:
             if metric is None or metric in b.winner.roles.values()
         ]
         return {"relations": rels, "bindings": binds}
+
+    def binding_suggest(
+        self,
+        source: str,
+        kind: str | None = None,
+        key: str | None = None,
+        limit: int = 10,
+        level: Level = "catalog",
+    ) -> dict[str, Any]:
+        """Ranked role->metric proposals for littles_law/RED/USE from what the catalog knows
+        (names, types, packs, relations); pure, nothing is queried from the source."""
+        rels = self.relations.relations(level, source if level == "catalog" else "")
+        binds = self.relations.bindings(level, source if level == "catalog" else "")
+        return suggest_bindings(
+            self.catalog.list_entries(source), rels, binds, kind=kind, key=key, limit=limit
+        )
+
+    def binding_accept(
+        self,
+        source: str,
+        suggestion_id: str,
+        *,
+        basis: str | None,
+        key: str | None = None,
+        overrides: dict[str, str | None] | None = None,
+        join_on: list[str] | None = None,
+        confidence: float | None = None,
+    ) -> dict[str, Any]:
+        """Confirm a suggestion as a Claude binding. `overrides` swaps a role's metric for one of
+        its listed alternatives (or null to leave it unfilled)."""
+        res = self.binding_suggest(source, key=key, limit=1000)
+        s = find_suggestion(res, suggestion_id)
+        roles = dict(s["roles"])
+        for role, metric in (overrides or {}).items():
+            if role not in roles:
+                raise ValueError(f"{s['kind']} has no role {role!r}; roles: {sorted(roles)}")
+            offered = (
+                [s["detail"][role]["metric"]]
+                + [a["metric"] for a in s["detail"][role]["alternatives"]]
+                if role in s["detail"]
+                else []
+            )
+            if metric is not None and metric not in offered:
+                raise ValueError(
+                    f"{metric!r} is not a candidate for {role}; offered: {offered}. "
+                    "Use catalog_bind for a metric the suggester did not propose."
+                )
+            roles[role] = metric
+        return self.bind_claude(
+            source,
+            s["kind"],
+            s["key"],
+            roles,
+            join_on=join_on if join_on is not None else s["join_on"],
+            confidence=confidence if confidence is not None else min(s["confidence"], 0.9),
+            basis=basis,
+        )
 
     def relate_claude(
         self, source: str, items: list[dict[str, Any]], level: Level = "catalog"
