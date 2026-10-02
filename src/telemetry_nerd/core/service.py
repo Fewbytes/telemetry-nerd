@@ -24,6 +24,7 @@ from telemetry_nerd.analysis.exprkind import (
     RATE_INTERVAL,
     analyze,
     expand,
+    has_division,
     histogram_source,
     looks_like_histogram,
     min_samples,
@@ -68,7 +69,13 @@ from telemetry_nerd.charts.spec import (
     auto_spec,
     validate,
 )
-from telemetry_nerd.charts.units import metric_names, nonmergeable_uses, raw_counters
+from telemetry_nerd.charts.unit_check import check_unit
+from telemetry_nerd.charts.units import (
+    infer_unit_with_provenance,
+    metric_names,
+    nonmergeable_uses,
+    raw_counters,
+)
 from telemetry_nerd.charts.ycontext import (
     NATURAL,
     counter_rate_metric,
@@ -132,6 +139,7 @@ from telemetry_nerd.model.caveats import (
 )
 from telemetry_nerd.model.companions import dataset_bundle
 from telemetry_nerd.model.distribution import DIST_N_MIN
+from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.series import BUCKET_SCHEMA, FetchResult
 from telemetry_nerd.model.time import (
     TimeRange,
@@ -1597,6 +1605,9 @@ class TelemetryService:
         # tool, etc.) wins over suffix inference and records who vouched for it.
         # A code output's unit is what the code declared; its expr names no catalog metric.
         provenance = f"provided by {actor}" if unit else None
+        unit_warning = None
+        if unit and not meta.code_node:
+            unit, provenance, unit_warning = self._verify_unit(meta, unit, provenance)
         if not unit and meta.code_node and meta.unit:
             unit, provenance = meta.unit, f"declared by code node {meta.code_node}"
         spec = auto_spec(
@@ -1713,6 +1724,10 @@ class TelemetryService:
                     ),
                 )
             )
+        if unit_warning:
+            issues.append(
+                ValidationIssue(rule="unit_unverified", severity="warning", message=unit_warning)
+            )
         errors = [i for i in issues if i.severity == "error"]
         if errors:
             raise ChartRejected(errors)
@@ -1727,6 +1742,48 @@ class TelemetryService:
         ):
             self.profiles.request(meta.source, meta.expr)  # lazy T1 profile on first view
         return ShowResult(panel, [i for i in issues if i.severity == "warning"])
+
+    def _verify_unit(
+        self, meta: DatasetMeta, unit: str, provenance: str | None
+    ) -> tuple[str, str | None, str | None]:
+        """An asserted y unit, checked against what the catalog (or a derived-bounds rule) says
+        the expression returns and against the data range (telemetry-nerd-lei). A scale or
+        dimension conflict is refused; an unverifiable unit is kept, flagged in its provenance."""
+        if meta.representation == "distribution":
+            expected, why = None, None  # the unit labels the value axis of buckets, not a line
+        else:
+            derived = self._derived_bounds(meta)
+            if derived is not None:
+                expected, why = derived.unit, f"rule: {derived.basis}"
+            elif has_division(meta.expr):
+                # the token walk does not see operators: a quotient (bytes / bytes) would be
+                # "inferred" in its operands' unit, so there is nothing sound to check against
+                expected, why = None, None
+            else:
+                expected, why = infer_unit_with_provenance(
+                    meta.expr, lambda m: self.ws.catalog_facts(meta.source, m)
+                )
+        check = check_unit(unit, expected, why, self._value_range(meta.id))
+        if check.problem:
+            raise ValueError(check.problem)
+        if check.provenance_note:
+            provenance = f"{provenance}; {check.provenance_note}"
+        return unit, provenance, check.warning
+
+    def _value_range(self, dataset_id: str) -> tuple[float, float] | None:
+        """Finite (min, max) over every series and step of a series dataset, else None."""
+        try:
+            _, result = self.datasets.get(dataset_id)
+        except (NotFound, ValueError):
+            return None
+        b = result.buckets
+        if b is None or b.num_rows == 0 or "min" not in b.column_names:
+            return None
+        lo = pc.min(pc.drop_null(b["min"])).as_py() if b.num_rows else None
+        hi = pc.max(pc.drop_null(b["max"])).as_py() if b.num_rows else None
+        if lo is None or hi is None or not (math.isfinite(lo) and math.isfinite(hi)):
+            return None
+        return float(lo), float(hi)
 
     async def operating_profile(
         self, expr: str, source: str = "default", refresh: bool = False

@@ -336,3 +336,9 @@ def looks_like_histogram(expr: str) -> bool:
     if analyze(expr).quantile is not None:
         return False
     return bool(_HISTOGRAM_HINT.search(_mask_strings(_strip_comments(expr))))
+
+
+def has_division(expr: str) -> bool:
+    """`/` as an operator (not inside a label value or comment): the expression is a quotient,
+    whose unit is not its operands' unit."""
+    return "/" in _mask_strings(_strip_comments(expr))

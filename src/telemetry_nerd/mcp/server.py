@@ -1041,7 +1041,12 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         when you know the unit from context the metric name doesn't reveal — you read
         the emitting code, or you know the generating tool's conventions. Your unit
         overrides suffix inference and is persisted with provenance ("provided by
-        claude"), so only pass a unit you can actually vouch for.
+        claude"), so only pass a unit you can actually vouch for. It is CHECKED: a unit that
+        contradicts what the catalog or a derivation rule says the expression returns is
+        refused (a label never rescales data). Named failure mode — ratio vs percent: a
+        fraction of a whole (1 - rate(idle), errors/total, s/s) is unit "ratio" in [0,1];
+        "%" means 0-100 and needs 100 * (...) in the expression. Same for s vs ms and bytes
+        vs bits. If the catalog is wrong, fix it with catalog_write (basis) instead.
         bounds_lo / bounds_hi: optional natural bounds of what the expression measures, for a
         derived expression the catalog cannot bound (a ratio of your own making, an
         error rate, a utilisation). Like unit, they are recorded as "asserted by claude" and

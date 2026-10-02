@@ -65,13 +65,22 @@ async def test_show_without_inferable_unit_still_warns(tmp_path):
 async def test_show_agent_learned_unit_overrides_inference_and_persists(tmp_path):
     svc = make_service(tmp_path)
     ds = (await svc.query("tn_demo_latency_seconds", start="now-2h", end="now-1h"))["dataset"]
-    res = svc.show(ds, "How slow is it?", unit="ms")  # Claude knows it's actually ms
+    # lei: the name says seconds, so "ms" contradicts the catalog and is refused...
+    with pytest.raises(ValueError, match="multiplied by 1000.*catalog_write"):
+        svc.show(ds, "How slow is it?", unit="ms")
+    # ...until Claude records what it knows (it read the emitting code), with a basis
+    svc.ws.catalog_claim(
+        "default", "tn_demo_latency_seconds", "unit", "ms", "claude", "claude",
+        confidence=0.9, citation="emitter.go:12",
+    )  # fmt: skip
+    res = svc.show(ds, "How slow is it?", unit="ms")
     assert res.panel.spec["y"]["unit"] == "ms"
-    assert res.panel.spec["y"]["unit_provenance"] == "provided by claude"
+    prov = res.panel.spec["y"]["unit_provenance"]
+    assert prov.startswith("provided by claude; agrees with ms")
     assert svc.workspace.get_panel(res.panel.id).spec["y"] == {
         "range_mode": "data",
         "unit": "ms",
-        "unit_provenance": "provided by claude",
+        "unit_provenance": prov,
         "label": None,
         "views": [],
         "selected": None,

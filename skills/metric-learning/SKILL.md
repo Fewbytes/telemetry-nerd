@@ -89,6 +89,11 @@ Rules that keep the catalog honest:
 - **Do not claim a unit you cannot justify.** A `_seconds` metric may be a timestamp
   (`node_boot_time_seconds`), not a duration: claim `role=timestamp` and say so in the basis.
   No suffix is not "dimensionless".
+- **Ratio vs percent (a named failure mode).** A fraction of a whole (`1 - rate(idle)`,
+  `errors / total`, a rate of a seconds counter: `s/s`) is unit `ratio`, values in [0,1]. `%`
+  means 0-100 and needs `100 * (...)` in the expression. `show(unit=...)` refuses a unit that
+  contradicts the catalog or a derivation rule (also s vs ms, bytes vs bits): fix the
+  expression or the catalog claim, never just the label.
 - **Counters vs gauges.** `unknown` or missing declared type does not make something a gauge.
   Check monotonicity/resets before claiming `counter`, or cite documentation.
 - **Bounds are physical, not typical.** `[0,1]` only if it cannot exceed 1 (CPU percent summed
