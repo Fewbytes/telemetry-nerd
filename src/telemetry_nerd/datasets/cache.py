@@ -61,9 +61,11 @@ class SeriesCache:
         async with self._lock:
             now = self._clock()
             state = {
-                row[0]: (row[1], row[2], row[3])
+                row[0]: (row[1], row[2], row[3], bool(row[4]))
                 for row in self._con.execute(
-                    """SELECT chunk_start, fetched_at, immutable, failed IS NULL
+                    """SELECT chunk_start, fetched_at, immutable, covered_to,
+                              (failed IS NULL OR covered_to IS NOT NULL)
+                              AND COALESCE(partial, 0) = 0
                        FROM cache_chunks WHERE qkey = $q""",
                     {"q": qkey},
                 ).fetchall()
@@ -93,14 +95,24 @@ class SeriesCache:
                     # stale so the next read asks again rather than serving it as complete.
                     immutable, fetched_at = False, now - self.recent_ttl_ms
                     old = state.get(cs)
-                    if old is not None and old[2]:
+                    if old is not None and old[3]:
                         # 3o0: we hold a complete earlier copy of this chunk. Keep it (a partial
                         # answer is worse data than a complete one) and report unknown only the
                         # buckets after the moment that copy was fetched, which it cannot cover.
-                        failed += self._keep_complete(qkey, cs, step_ms, old[0], result, fetched_at)
+                        failed += self._keep_complete(
+                            qkey,
+                            cs,
+                            step_ms,
+                            old[2] if old[2] is not None else old[0] - self.settle_ms,
+                            result,
+                            fetched_at,
+                        )
                         continue
                     failed += result.failed
-                self._store(qkey, cs, cs + span - step_ms, result, fetched_at, immutable)
+                covered_to = None if result.failed or result.partial else now - self.settle_ms
+                self._store(
+                    qkey, cs, cs + span - step_ms, result, fetched_at, immutable, covered_to
+                )
             starts = self.chunk_starts(rng, step_ms)
             if errored and errored == len(starts):
                 raise next(r for r in results if isinstance(r, BaseException))
@@ -119,14 +131,17 @@ class SeriesCache:
         return self._read(self.query_key(source_identity, expr, step_ms), rng, step_ms)
 
     def _keep_complete(
-        self, qkey: str, cs: int, step_ms: int, old_fetched_at: int, result: FetchResult,
+        self, qkey: str, cs: int, step_ms: int, covered_to: int, result: FetchResult,
         fetched_at: int,
     ) -> list[tuple[int, int, str]]:  # fmt: skip
         """Rule (3o0): a refetch that came back partial never replaces a complete stored chunk.
         The stored rows stay and the chunk stays eligible for refresh (stale at once, still
-        mutable). Buckets at or before the old fetch time are covered by the complete copy; the
-        unknown spans are the refetch's failed spans clipped to the buckets after it."""
-        first_uncovered = cs + ((old_fetched_at - cs) // step_ms + 1) * step_ms
+        mutable until a complete answer arrives). `covered_to` is when the stored rows were last
+        authoritative (old fetch time minus the settle window); it is never advanced here, so
+        repeated partial refetches keep reporting the same gap. Buckets after it are unknown: the
+        refetch's failed spans clipped to them, also persisted in `failed` so `peek` sees the
+        gap."""
+        first_uncovered = cs + ((covered_to - cs) // step_ms + 1) * step_ms
         spans = [
             (max(a, first_uncovered), b, why) for a, b, why in result.failed if b >= first_uncovered
         ]
@@ -136,23 +151,29 @@ class SeriesCache:
             {"q": qkey, "c": cs},
         ).fetchone()
         old_notes = json.loads(row[0]) if row and row[0] else []
-        notes = list(dict.fromkeys([*old_notes, *result.notes]))
+        notes = list(dict.fromkeys([*old_notes, *result.notes]))[-20:]
         con.execute(
-            """UPDATE cache_chunks SET fetched_at = $f, immutable = FALSE, notes = $n
+            """UPDATE cache_chunks SET fetched_at = $f, immutable = FALSE, notes = $n,
+                   failed = $x, covered_to = $v
                WHERE qkey = $q AND chunk_start = $c""",
-            {"q": qkey, "c": cs, "f": fetched_at, "n": json.dumps(notes) if notes else None},
-        )
+            {
+                "q": qkey, "c": cs, "f": fetched_at, "v": covered_to,
+                "n": json.dumps(notes) if notes else None,
+                "x": json.dumps(spans) if spans else None,
+            },
+        )  # fmt: skip
         return spans
 
-    def _fresh(self, state: tuple[int, bool, bool] | None, now: int) -> bool:
+    def _fresh(self, state: tuple[int, bool, int | None, bool] | None, now: int) -> bool:
         if state is None:
             return False
-        fetched_at, immutable, _ = state
+        fetched_at, immutable, _, _ = state
         return immutable or now - fetched_at < self.recent_ttl_ms
 
     def _store(
-        self, qkey: str, cs: int, ce: int, result: FetchResult, now: int, immutable: bool
-    ) -> None:
+        self, qkey: str, cs: int, ce: int, result: FetchResult, now: int, immutable: bool,
+        covered_to: int | None,
+    ) -> None:  # fmt: skip
         con = self._con
         con.begin()
         try:
@@ -172,8 +193,8 @@ class SeriesCache:
             upsert_series(con, result.series)
             con.execute(
                 """INSERT INTO cache_chunks
-                       (qkey, chunk_start, fetched_at, immutable, partial, failed, notes)
-                   VALUES ($q, $c, $f, $i, $p, $x, $n)""",
+                       (qkey, chunk_start, fetched_at, immutable, partial, failed, notes, covered_to)
+                   VALUES ($q, $c, $f, $i, $p, $x, $n, $v)""",
                 {
                     **params,
                     "f": now,
@@ -181,6 +202,7 @@ class SeriesCache:
                     "p": result.partial,
                     "x": json.dumps(result.failed) if result.failed else None,
                     "n": json.dumps(result.notes) if result.notes else None,
+                    "v": covered_to,
                 },
             )
             con.commit()

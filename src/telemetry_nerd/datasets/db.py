@@ -20,6 +20,9 @@ _SCHEMA = [
     # NULL on chunks stored before these columns existed (read as: complete, no notes)
     "ALTER TABLE cache_chunks ADD COLUMN IF NOT EXISTS failed VARCHAR",
     "ALTER TABLE cache_chunks ADD COLUMN IF NOT EXISTS notes VARCHAR",
+    # instant up to which a complete answer made the stored rows authoritative (fetch time minus
+    # the settle window); NULL for partial chunks and for chunks stored before this column
+    "ALTER TABLE cache_chunks ADD COLUMN IF NOT EXISTS covered_to BIGINT",
     "CREATE TABLE IF NOT EXISTS datasets (id VARCHAR PRIMARY KEY, meta VARCHAR NOT NULL)",
     """CREATE TABLE IF NOT EXISTS dataset_rows (
         dataset_id VARCHAR, ts_ms BIGINT, series_id VARCHAR,

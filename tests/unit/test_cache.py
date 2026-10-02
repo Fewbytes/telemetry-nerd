@@ -261,8 +261,16 @@ async def test_partial_refetch_does_not_replace_a_complete_chunk(cache, clock):
     clock.t = NOW  # past the recent ttl
     second = await cache.get("src", "up", rng, STEP, partial_fetch)
     assert second.buckets.num_rows == complete_rows  # complete rows kept
-    first_new = NOW - 5 * STEP + STEP  # first bucket after the old fetch time
+    # the old copy is authoritative only up to fetch time minus the settle window (5 steps)
+    first_new = NOW - 5 * STEP - cache.settle_ms + STEP
     assert [(a, b) for a, b, _ in second.failed] == [(first_new, NOW - STEP)]
+    assert [(a, b) for a, b, _ in cache.peek("src", "up", rng, STEP).failed] == [
+        (first_new, NOW - STEP)
+    ]
+    clock.t = NOW + 2 * STEP  # a second partial refetch must not shrink the unknown span
+    again2 = await cache.get("src", "up", rng, STEP, partial_fetch)
+    assert [(a, b) for a, b, _ in again2.failed] == [(first_new, NOW - STEP)]
+    assert again2.buckets.num_rows == complete_rows
     again = FakeFetcher()
     third = await cache.get("src", "up", rng, STEP, again)  # still eligible for refresh
     assert len(again.calls) == 1 and third.failed == () and third.buckets.num_rows == complete_rows
