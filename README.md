@@ -36,6 +36,39 @@ Telemetry Nerd draws telemetry the way a careful scientist would:
 - **Claims are scoped.** Hypotheses and findings are typed objects with the evidence attached,
   so you can check what Claude concluded and why.
 
+## It knows what your metrics mean
+
+A metric name is not enough to draw or analyse it correctly. A counter, a gauge and a
+histogram need different treatment; so do a percentage, a byte count and a ratio. Telemetry
+Nerd keeps a catalog of what each metric is: its type, unit, natural bounds, whether it can be
+summed across series or over time, and its role (utilization, latency, errors and so on).
+
+Those facts come from the source's own metadata, naming conventions, curated knowledge packs
+for common exporters (node_exporter, Kubernetes), measured sample behaviour, and Claude reading
+the metrics with you (`/learn`). Each fact records where it came from and how confident it is.
+You can confirm or correct any of them from the metric card under a graph, and your word always
+wins over every automatic source.
+
+That context decides what you see and which analysis is allowed:
+
+- **Counters are drawn as rates,** never as an ever-growing running total.
+- **Bounded metrics get their natural axis.** A ratio is drawn on 0 to 1 and a percentage on
+  0 to 100, so a 3% wiggle doesn't fill the screen like a crisis.
+- **Every graph knows what normal looks like.** A 30-day operating profile gives each metric a
+  reference range and a normal band for the current hour of the week, so an unusual value
+  stands out without anyone setting a threshold.
+- **Physical limits are drawn.** Available memory is shown against total memory, available
+  replicas against all replicas.
+- **Units are shown with their origin:** source metadata, inferred from the name, or set by you.
+- **Related metrics are linked.** Metrics are connected as parts, limits and derivations of each
+  other, and grouped into RED, USE and Little's-law models of a service. When a model is missing
+  a signal (say, no concurrency metric), that is recorded as an open gap in the investigation.
+- **Wrong analysis is refused, with a hint.** Percentiles are never averaged across hosts or
+  over time, raw counters are never fed to a periodogram, and a group of hosts is never
+  summarised by the median of their p99s.
+- **Contradictions surface.** If a metric's samples behave unlike what is known about it (a
+  "counter" that sometimes goes down a little), that becomes a finding you can see, not a silent overwrite.
+
 ## What it is, and what it isn't
 
 It **is** an analysis workspace for people who need to understand what their systems are
@@ -51,8 +84,8 @@ alerting system. It reads metrics; it never changes your infrastructure.
 - Find cycles in a series with periodograms and spectrograms.
 - Compare distributions across time windows, and count exactly how many requests crossed a
   latency threshold.
-- Learn what a source's metrics mean (types, units, roles, bounds) into a shared catalog, so
-  graphs get the right units and scales.
+- Analyse many series of one metric as a fleet: the spread across hosts, and which members are
+  outliers, instead of a hundred overlapping lines.
 - Keep track of the investigation: hypotheses, findings, open questions and annotations, all in
   one place that both you and Claude can see.
 
