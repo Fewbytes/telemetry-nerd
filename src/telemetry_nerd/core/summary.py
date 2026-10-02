@@ -6,11 +6,12 @@ import json
 import math
 
 import polars as pl
+import pyarrow as pa
 
 from telemetry_nerd.analysis.exprkind import min_samples
 from telemetry_nerd.analysis.quantiles import quantile_bucket
 from telemetry_nerd.datasets.store import DatasetMeta
-from telemetry_nerd.model.bucket_state import State, compute
+from telemetry_nerd.model.bucket_state import State, compute, grid
 from telemetry_nerd.model.caveats import runs
 from telemetry_nerd.model.distribution import DistResult
 from telemetry_nerd.model.series import FetchResult
@@ -35,13 +36,37 @@ def _empty(base: dict, caveats: list[str]) -> dict:
     }
 
 
-def _coverage(meta: DatasetMeta, result: FetchResult) -> tuple[dict[str, dict], list[list[str]]]:
-    """Per series: observed/expected share, total missing, longest gap; dataset unknown spans."""
-    mode = "presence" if meta.representation == "quantile" else "samples"
-    st = compute(result.buckets, result.series["series_id"].to_pylist(), start_ms=meta.start_ms,
-                 end_ms=meta.end_ms, step_ms=meta.step_ms, resolution_ms=meta.resolution_ms,
-                 mode=mode, failed=[tuple(f) for f in meta.failed_spans])  # fmt: skip
-    df = pl.from_arrow(st)
+UNKNOWN_SPANS_CAP = 10
+
+
+def _unknown_spans(meta: DatasetMeta, df: pl.DataFrame | None) -> dict:
+    """Where the data is unknown: failed fetches plus UNKNOWN buckets; capped for Claude."""
+    ts: list[int] = []  # straight from the dataset's failed fetches, independent of series
+    for a, b, _reason in meta.failed_spans:
+        ts += grid(max(a, meta.start_ms), min(b, meta.end_ms), meta.step_ms)
+    if df is not None and df.height:
+        ts += df.filter(pl.col("state") == int(State.UNKNOWN))["ts_ms"].to_list()
+    spans = runs(sorted(set(ts)), meta.step_ms)
+    return {
+        "unknown_spans": [[iso(a), iso(b)] for a, b in spans[:UNKNOWN_SPANS_CAP]],
+        "unknown_spans_more": max(0, len(spans) - UNKNOWN_SPANS_CAP),
+    }
+
+
+def _coverage(
+    meta: DatasetMeta, result: FetchResult, states: pa.Table | None
+) -> tuple[dict[str, dict], dict, pl.DataFrame]:
+    """Per series: observed/expected share, total missing, longest gap; dataset unknown spans.
+
+    Everything comes from the bucket_state (the bundle's when given), never from re-judging
+    summed counts."""
+    if states is None:
+        mode = "presence" if meta.representation == "quantile" else "samples"
+        states = compute(result.buckets, result.series["series_id"].to_pylist(),
+                         start_ms=meta.start_ms, end_ms=meta.end_ms, step_ms=meta.step_ms,
+                         resolution_ms=meta.resolution_ms, mode=mode,
+                         failed=[tuple(f) for f in meta.failed_spans])  # fmt: skip
+    df = pl.from_arrow(states)
     bad = [int(State.EMPTY), int(State.PARTIAL), int(State.UNKNOWN)]
     out: dict[str, dict] = {}
     for (sid,), g in df.group_by("series_id"):
@@ -54,15 +79,14 @@ def _coverage(meta: DatasetMeta, result: FetchResult) -> tuple[dict[str, dict], 
             "missing": format_duration(sum(b - a for a, b in gaps)) if gaps else "0s",
             "longest_gap": format_duration(longest) if longest else None,
         }
-    unknown = runs(df.filter(pl.col("state") == int(State.UNKNOWN))["ts_ms"].unique().to_list(),
-                   meta.step_ms)  # fmt: skip
-    return out, [[iso(a), iso(b)] for a, b in unknown]
+    return out, _unknown_spans(meta, df), df
 
 
-def _coverage_caveats(coverage: dict[str, dict], unknown_spans: list, caveats: list[str]) -> None:
-    if unknown_spans:
+def _coverage_caveats(df: pl.DataFrame, unknown: dict, caveats: list[str]) -> None:
+    """missing_data: some alive bucket is PARTIAL or EMPTY; untrusted_data: anything UNKNOWN."""
+    if unknown["unknown_spans"]:
         caveats.append("untrusted_data")
-    if any(c["pct"] < 1.0 for c in coverage.values()):
+    if df.height and df["state"].is_in([int(State.PARTIAL), int(State.EMPTY)]).any():
         caveats.append("missing_data")
 
 
@@ -76,7 +100,13 @@ def _base_caveats(meta: DatasetMeta, now_ms: int, settle_ms: int) -> list[str]:
 
 
 def summarize(
-    meta: DatasetMeta, result: FetchResult, *, now_ms: int, settle_ms: int, top: int = 5
+    meta: DatasetMeta,
+    result: FetchResult,
+    *,
+    now_ms: int,
+    settle_ms: int,
+    top: int = 5,
+    states: pa.Table | None = None,
 ) -> dict:
     caveats = _base_caveats(meta, now_ms, settle_ms)
     if meta.partial > 0:
@@ -90,12 +120,13 @@ def summarize(
     }
     if meta.representation == "quantile":
         base |= {"quantile": meta.quantile, "n_min": meta.n_min}
+    # even with nothing returned, failed fetches make the data untrusted (not merely empty)
+    labels = _labels_by_id(result.series)
+    coverage, unknown, df = _coverage(meta, result, states)
+    base |= unknown
+    _coverage_caveats(df, unknown, caveats)
     if result.buckets.num_rows == 0:
         return _empty(base, caveats)
-    labels = _labels_by_id(result.series)
-    coverage, unknown_spans = _coverage(meta, result)
-    base["unknown_spans"] = unknown_spans
-    _coverage_caveats(coverage, unknown_spans, caveats)
     # The grid is inclusive of both start and end (query_range and cache reads are BETWEEN).
     expected = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
     if meta.representation == "quantile":

@@ -83,8 +83,8 @@ from telemetry_nerd.core.summary import summarize, summarize_distribution
 from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
-from telemetry_nerd.model.bucket_state import coarsen
-from telemetry_nerd.model.caveats import from_bucket_state, series_name
+from telemetry_nerd.model.bucket_state import STATE_SCHEMA, coarsen, grid
+from telemetry_nerd.model.caveats import Caveat, Where, from_bucket_state, runs, series_name
 from telemetry_nerd.model.companions import dataset_bundle
 from telemetry_nerd.model.distribution import DIST_N_MIN
 from telemetry_nerd.model.time import (
@@ -305,8 +305,15 @@ class TelemetryService:
         self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
         return {"dataset": meta.id, "summary": summary}
 
-    def _time_summary(self, meta, result, now: int) -> dict:
-        summary = summarize(meta, result, now_ms=now, settle_ms=self.cache.settle_ms)
+    def _time_summary(self, meta, result, now: int, bundle=None) -> dict:
+        bundle = bundle or dataset_bundle(self.datasets, meta, result)
+        # the summary judges coverage from the bundle's states (carried through filters);
+        # where coverage is not tracked there is nothing to judge, not a fresh guess
+        states = bundle.companions.get("bucket_state")
+        summary = summarize(
+            meta, result, now_ms=now, settle_ms=self.cache.settle_ms,
+            states=STATE_SCHEMA.empty_table() if states is None else states,
+        )  # fmt: skip
         if meta.representation == "bucket_agg" and looks_like_histogram(meta.expr):
             summary["caveats"].append("histogram_as_lines")
         return summary
@@ -1184,8 +1191,8 @@ class TelemetryService:
             )
         labels = series_labels(result.series)
         series = series_payload(table, labels)
-        caveats = self._time_summary(meta, result, self.clock())["caveats"]
         bundle = dataset_bundle(self.datasets, meta, result)
+        caveats = self._time_summary(meta, result, self.clock(), bundle)["caveats"]
         states = bundle.companions.get("bucket_state")
         located = list(bundle.caveats)
         state_rows: list[dict] = []
@@ -1196,6 +1203,24 @@ class TelemetryService:
             failed = [tuple(f) for f in meta.failed_spans]
             located += from_bucket_state(states, names, effective_step, failed)
             state_rows = state_payload(states)
+        if meta.failed_spans and not any(c.code == "untrusted_data" for c in located):
+            # failed fetches are known from the dataset even when no series carries the state
+            ts = [
+                t
+                for a, b, _ in meta.failed_spans
+                for t in grid(max(a, meta.start_ms), min(b, meta.end_ms), meta.step_ms)
+            ]
+            spans = runs(ts, meta.step_ms)
+            reasons = sorted({r for *_ab, r in meta.failed_spans})
+            total = format_duration(sum(b - a for a, b in spans))
+            located.append(
+                Caveat(
+                    code="untrusted_data",
+                    message=f"Data unknown for {total} ({'; '.join(reasons)}).",
+                    where=Where(spans=spans),
+                    source="bucket_state",
+                )
+            )
         if any(c.code == "missing_data" for c in located) and "gaps" in caveats:
             caveats.remove("gaps")
         for c in located:

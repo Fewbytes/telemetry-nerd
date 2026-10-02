@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 
 import pyarrow as pa
 
@@ -238,3 +239,37 @@ async def test_summary_reports_coverage(tmp_path):
     worst = min(cov.values(), key=lambda c: c["pct"])
     assert worst["longest_gap"] == "3m" and worst["pct"] < 1.0
     assert s["unknown_spans"] == []
+
+
+def test_jittery_counts_do_not_raise_missing_data():
+    counts = [4, 3, 4, 4, 4, 3, 4, 4, 4]
+    rows = [(i * STEP, "a", 1.0, 1.0, 1.0, c) for i, c in enumerate(counts)]
+    m = meta(end=8000, resolution=250)  # expected 4 per 1s bucket
+    out = run(m, result(rows, {"a": "a"}))
+    assert "missing_data" not in out["caveats"] and "untrusted_data" not in out["caveats"]
+    assert out["series"][0]["coverage"]["missing"] == "0s"
+
+
+def test_a_hole_is_missing_data_and_unknown_is_untrusted():
+    rows = [(t, "a", 1.0, 1.0, 1.0, 1) for t in (0, 1000, 3000, 4000)]
+    out = run(meta(), result(rows, {"a": "a"}))
+    assert "missing_data" in out["caveats"] and "untrusted_data" not in out["caveats"]
+    m = replace(meta(), failed_spans=[[1000, 2000, "boom"]])
+    out = run(m, result(rows, {"a": "a"}))
+    assert "untrusted_data" in out["caveats"] and out["unknown_spans"] == [
+        ["1970-01-01T00:00:00+00:00", "1970-01-01T00:00:02+00:00"]
+    ]
+
+
+def test_failed_fetch_with_no_rows_is_untrusted_not_just_empty():
+    m = replace(meta(), failed_spans=[[1000, 2000, "boom"]])
+    out = run(m, result([], {}))
+    assert out["caveats"][0] == "empty" and "untrusted_data" in out["caveats"]
+    assert len(out["unknown_spans"]) == 1
+
+
+def test_unknown_spans_are_capped():
+    spans = [[t, t, "x"] for t in range(1000, 60_000, 2000)]  # 30 separate spans
+    m = replace(meta(end=100_000), failed_spans=spans)
+    out = run(m, result([], {}))
+    assert len(out["unknown_spans"]) == 10 and out["unknown_spans_more"] == 20

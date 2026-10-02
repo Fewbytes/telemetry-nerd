@@ -5,7 +5,7 @@ from telemetry_nerd.core.service import ChartRejected, auto_step
 from telemetry_nerd.model.series import BUCKET_SCHEMA, FetchResult
 from telemetry_nerd.model.time import TimeRange
 from telemetry_nerd.sources.base import LimitExceeded, SourceError
-from tests.unit.fakes import FakeSource, NonFiniteSource, PartialSource, make_service
+from tests.unit.fakes import NOW, FakeSource, NonFiniteSource, PartialSource, make_service
 
 
 def test_auto_step_targets_about_600_buckets():
@@ -194,3 +194,49 @@ async def test_clean_panel_has_no_bucket_state(tmp_path):
     ds = (await svc.query("up", start="now-2h", end="now-1h", step="1m"))["dataset"]
     data = svc.panel_data(svc.show(ds, "Clean?").panel.id, width_px=2000)
     assert data["bucket_state"] == [] and data["located"] == []
+
+
+class JitterSource(FakeSource):
+    """Expected 4 samples per 1m bucket; the real count wobbles 3-4."""
+
+    async def fetch(self, expr, rng, step_ms):
+        res = await super().fetch(expr, rng, step_ms)
+        b = res.buckets.to_pylist()
+        for r in b:
+            r["count"] = 3 if (r["ts_ms"] // step_ms) % 3 == 0 else 4
+        return FetchResult(pa.Table.from_pylist(b, schema=BUCKET_SCHEMA), res.series)
+
+
+async def test_jittery_counts_raise_no_missing_data_anywhere(tmp_path):
+    svc = make_service(tmp_path, JitterSource())
+    out = await svc.query("up", start="now-2h", end="now-1h", step="1m")
+    assert "missing_data" not in out["summary"]["caveats"]
+    data = svc.panel_data(svc.show(out["dataset"], "Jitter?").panel.id, width_px=2000)
+    assert "missing_data" not in data["caveats"]
+    assert data["bucket_state"] == [] and data["located"] == []
+
+
+class OldChunkFailsNewChunkEmpty(FakeSource):
+    """The only data-bearing chunk fails; the other chunk answers with zero rows."""
+
+    async def fetch(self, expr, rng, step_ms):
+        from telemetry_nerd.sources.base import SourceUnavailable
+
+        if rng.start_ms < NOW - 12 * 3_600_000:
+            raise SourceUnavailable("store down")
+        return FetchResult(
+            BUCKET_SCHEMA.empty_table(),
+            (await super().fetch(expr, rng, step_ms)).series.slice(0, 0),
+        )
+
+
+async def test_failed_chunk_with_other_chunk_empty_is_untrusted_not_empty(tmp_path):
+    svc = make_service(tmp_path, OldChunkFailsNewChunkEmpty())
+    out = await svc.query("up", start="now-14h", end="now-1h", step="1m")
+    summary = out["summary"]
+    assert "empty" in summary["caveats"] and "untrusted_data" in summary["caveats"]
+    assert summary["unknown_spans"]
+    data = svc.panel_data(svc.show(out["dataset"], "Down?").panel.id, width_px=2000)
+    [c] = [c for c in data["located"] if c["code"] == "untrusted_data"]
+    assert c["where"]["spans"] and c["where"]["series"] is None
+    assert "untrusted_data" in data["caveats"]
