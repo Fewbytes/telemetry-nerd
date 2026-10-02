@@ -2,7 +2,7 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import { fmtPeriod, periodTicks } from "../chart/period";
-  import { limitZones, peakMarks, toSpectrumUplot } from "../chart/spectrum";
+  import { layoutPeakLabels, limitZones, peakMarks, toSpectrumUplot } from "../chart/spectrum";
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { SpectrumPanelData } from "../lib/api";
 
@@ -21,7 +21,7 @@
     const m = toSpectrumUplot(data);
     const [xmin, xmax] = m.xRange;
     const zones = limitZones(data.limits, xmin, xmax);
-    const marks = data.series.flatMap((s, k) => peakMarks(s).map((p) => ({ ...p, k })));
+    const marks = data.series.flatMap((s, k) => peakMarks(s).map((p, i) => ({ ...p, k, id: `${k}:${i}` })));
     const u = new uPlot(
       {
         width, height: 240, series: m.series,
@@ -45,11 +45,16 @@
                 c.stroke(); c.restore();
                 c.fillStyle = stroke; c.fillText(z.text, x0 + 4 * dpr, p.bbox.top + 12 * dpr);
               }
+              const toPx = (x: number) => p.valToPos(x, "x", true);
+              const widthOf = (text: string) => c.measureText(text).width;
+              const placements = new Map(layoutPeakLabels(marks, toPx, widthOf).map((pl) => [pl.id, pl]));
               for (const mk of marks) {
                 const y = p.valToPos(mk.y, "y", true), xa = p.valToPos(mk.lo, "x", true), xb = p.valToPos(mk.hi, "x", true), xc = p.valToPos(mk.x, "x", true);
                 c.strokeStyle = stroke; c.lineWidth = 2 * dpr;
                 c.beginPath(); c.moveTo(xa, y - 6 * dpr); c.lineTo(xb, y - 6 * dpr); c.stroke(); // the interval, not just the point
-                c.fillStyle = stroke; c.fillText(mk.text, xc + 4 * dpr, y - 10 * dpr);
+                const placed = placements.get(mk.id);
+                const row = placed?.row ?? 0;
+                c.fillStyle = stroke; c.fillText(placed?.text ?? mk.text, xc + 4 * dpr, y - 10 * dpr - row * 12 * dpr);
               }
               c.restore();
             },

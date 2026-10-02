@@ -44,7 +44,57 @@ export function limitZones(limits: { shortest_s: number; longest_s: number }, xm
 
 export function peakMarks(s: SpectrumSeries) {
   return s.peaks.filter((p) => p.significant).map((p) => ({
-    x: p.period_s, lo: p.interval_s[0], hi: p.interval_s[1], y: p.power,
+    x: p.period_s, lo: p.interval_s[0], hi: p.interval_s[1], y: p.power, power: p.power,
     text: `${fmtPeriod(p.period_s)} [${fmtPeriod(p.interval_s[0])}–${fmtPeriod(p.interval_s[1])}]`,
+    shortText: fmtPeriod(p.period_s),
   }));
+}
+
+export interface PeakLabelInput { x: number; text: string; shortText: string; power: number }
+
+/** Rough label width for the chart's small label font (~10px) when no real canvas measurement is given. */
+export function estimateLabelWidth(text: string, charPx = 6): number {
+  return text.length * charPx;
+}
+
+const MAX_LABEL_ROWS = 3;
+
+/**
+ * Arrange peak labels left-to-right in pixel space, avoiding overlapping bounding boxes.
+ * The highest-power ("dominant") peak always keeps its full label. For every other peak, a full
+ * label that would run into the next peak's label is first shortened (dropping the
+ * confidence-interval range text); if it still collides with the previous label on its row, it
+ * is stacked onto the next row down instead.
+ *
+ * Generic over `T` so callers can round-trip extra fields (e.g. a series index) through the
+ * returned, re-sorted list; `x` values need not be unique.
+ */
+export function layoutPeakLabels<T extends PeakLabelInput>(
+  marks: T[],
+  toPx: (x: number) => number,
+  widthOf: (text: string) => number = estimateLabelWidth,
+  gap = 4,
+): (T & { row: number })[] {
+  if (!marks.length) return [];
+  const dominant = marks.reduce((a, b) => (b.power > a.power ? b : a));
+  const sorted = marks
+    .map((m) => ({ m: { ...m }, xpx: toPx(m.x), isDominant: m === dominant }))
+    .sort((a, b) => a.xpx - b.xpx);
+
+  // Pass 1: shorten a non-dominant label whose full box would run into the next peak's x.
+  for (let i = 0; i < sorted.length - 1; i++) {
+    const cur = sorted[i], next = sorted[i + 1];
+    if (!cur.isDominant && cur.xpx + widthOf(cur.m.text) + gap > next.xpx) cur.m.text = cur.m.shortText;
+  }
+
+  // Pass 2: stack anything that still collides with the last label placed on its row.
+  const rowEnd: number[] = [];
+  const out: (T & { row: number })[] = [];
+  for (const { m, xpx } of sorted) {
+    let row = 0;
+    while (row < MAX_LABEL_ROWS - 1 && xpx < (rowEnd[row] ?? -Infinity) + gap) row++;
+    rowEnd[row] = xpx + widthOf(m.text);
+    out.push({ ...m, row });
+  }
+  return out;
 }
