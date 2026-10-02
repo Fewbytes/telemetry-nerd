@@ -61,3 +61,24 @@ export function tipAt(p: uPlot, wrap: HTMLElement, left: number, top: number, te
   const flip = x > w.width / 2;
   return { x: flip ? x - 12 : x + 12, y: y + 12, text, flip };
 }
+
+/** Hatch the x spans (seconds) over the plot's full height, clipped to the plot area. */
+export function drawHatch(p: uPlot, spans: [number, number][], dark: boolean): void {
+  if (!spans.length) return;
+  const c = p.ctx, dpr = window.devicePixelRatio || 1;
+  const { left, top, width, height } = p.bbox, gap = 7 * dpr;
+  c.save();
+  c.beginPath(); c.rect(left, top, width, height); c.clip();
+  c.strokeStyle = dark ? "rgba(200,205,210,0.55)" : "rgba(80,85,90,0.5)"; c.lineWidth = 1 * dpr;
+  for (const [s0, s1] of spans) {
+    const x0 = Math.max(left, p.valToPos(s0, "x", true));
+    const x1 = Math.min(left + width, p.valToPos(s1, "x", true));
+    if (x1 <= x0) continue;
+    c.save(); c.beginPath(); c.rect(x0, top, x1 - x0, height); c.clip();
+    c.fillStyle = dark ? "rgba(22,24,29,0.35)" : "rgba(255,255,255,0.35)"; c.fillRect(x0, top, x1 - x0, height);
+    c.beginPath();
+    for (let x = x0 - height; x < x1; x += gap) { c.moveTo(x, top + height); c.lineTo(x + height, top); }
+    c.stroke(); c.restore();
+  }
+  c.restore();
+}

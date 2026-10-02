@@ -5,7 +5,7 @@
     FLEET_HUE, OUTLIER_COLORS, bandFills, coverageGaps, fleetAxisLabel, fleetKey, fleetLegend, groupEnds, groupFill, groupStyle,
     grouped, nearestOutlier, outlierEnds, outlierMarkIdx, outlierText, placeEndLabels, toFleetUplot, untrustedSpans, type EndLabel,
   } from "../chart/fleet";
-  import { HIDDEN_SERIES, plotAxes } from "../chart/plotKit";
+  import { drawHatch, HIDDEN_SERIES, plotAxes } from "../chart/plotKit";
   import { fmtTimeZ } from "../lib/format";
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { FleetPanelData } from "../lib/api";
@@ -91,24 +91,7 @@
               const c = p.ctx, dpr = window.devicePixelRatio || 1;
               c.save();
               // data unknown (located untrusted_data, oyi): hatched over the whole height, never read as values
-              const spans = untrustedSpans(data);
-              if (spans.length) {
-                c.save();
-                c.beginPath(); c.rect(p.bbox.left, p.bbox.top, p.bbox.width, p.bbox.height); c.clip();
-                c.strokeStyle = dark ? "rgba(200,205,210,0.55)" : "rgba(80,85,90,0.5)"; c.lineWidth = 1 * dpr;
-                const top = p.bbox.top, h = p.bbox.height, gap = 7 * dpr;
-                for (const [s0, s1] of spans) {
-                  const x0 = Math.max(p.bbox.left, p.valToPos(s0 / 1000, "x", true));
-                  const x1 = Math.min(p.bbox.left + p.bbox.width, p.valToPos(s1 / 1000, "x", true));
-                  if (x1 <= x0) continue;
-                  c.save(); c.beginPath(); c.rect(x0, top, x1 - x0, h); c.clip();
-                  c.fillStyle = dark ? "rgba(22,24,29,0.35)" : "rgba(255,255,255,0.35)"; c.fillRect(x0, top, x1 - x0, h);
-                  c.beginPath();
-                  for (let x = x0 - h; x < x1; x += gap) { c.moveTo(x, top + h); c.lineTo(x + h, top); }
-                  c.stroke(); c.restore();
-                }
-                c.restore();
-              }
+              drawHatch(p, untrustedSpans(data).map(([s0, s1]): [number, number] => [s0 / 1000, s1 / 1000]), dark);
               // coverage strip: steps where alive members did not report (darker = more missing)
               const y0 = p.bbox.top + p.bbox.height - 4 * dpr;
               const w = Math.max(1, (p.bbox.width / Math.max(data.ts.length, 1)));
