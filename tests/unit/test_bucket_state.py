@@ -268,11 +268,14 @@ def test_slow_series_trailing_silence_goes_empty_after_one_and_a_half_intervals(
     assert all(by_ts[t] == State.EMPTY for t in range(last + 90_000 + S15, end + 1, S15))
 
 
-def test_slow_series_never_partial_and_never_flags_interval_change():
+def test_slow_series_never_partial_and_flags_its_interval_change():
+    # 60s -> 120s at a 15s step: judged from the gaps (7kc), not the 0/1 counts
     ts = _cadence(60_000, 60_000, HOUR // 2) + _cadence(120_000, HOUR // 2 + 120_000, HOUR)
     out = _slow_run(ts, end=HOUR)
-    assert State.PARTIAL not in states(out)
-    assert not any(f & Flag.INTERVAL_CHANGE for f in out["flags"].to_pylist())
+    assert State.PARTIAL not in states(out) and State.EMPTY not in states(out)
+    by_ts = dict(zip(out["ts_ms"].to_pylist(), out["flags"].to_pylist()))
+    # one side is flagged (here the 60s one: it covers slightly less of the window), not both
+    assert bool(by_ts[HOUR] & Flag.INTERVAL_CHANGE) != bool(by_ts[HOUR // 4] & Flag.INTERVAL_CHANGE)
 
 
 def test_slow_cadence_feeds_summary_coverage_and_claim_share():
@@ -356,3 +359,153 @@ def test_slow_series_does_not_go_empty_right_after_an_unknown_span():
     out = _compute_rows(rows, step=S15, failed=[(20 * 60_000, 30 * 60_000, "boom")], res=S15)
     st = states(out)
     assert State.EMPTY not in st and State.UNKNOWN in st
+
+
+# --- local cadence (7kc): rate changes, jitter at step == interval, short windows ---
+
+
+def _sample_ts(interval, *, phase=0, jitter=0, end=HOUR, seed=0, start=0):
+    """Scrape timestamps every `interval` from `phase`, each off by a deterministic pseudo-random
+    jitter in [-jitter, +jitter] ms; only those in (start, end] (what the source would return)."""
+    import random
+
+    rng = random.Random(seed)
+    out, k = [], 0
+    while True:
+        nominal = start + phase + k * interval
+        if nominal > end + jitter:
+            return out
+        t = nominal + (rng.randint(-jitter, jitter) if jitter else 0)
+        if start < t <= end:
+            out.append(t)
+        k += 1
+
+
+def _count_rows(ts, step, sid="a"):
+    counts: dict[int, int] = {}
+    for t in ts:
+        b = -(-t // step) * step
+        counts[b] = counts.get(b, 0) + 1
+    return [(b, sid, 1.0, c) for b, c in sorted(counts.items())]
+
+
+def _alive_coverage(out, sid="a"):
+    rows = [
+        (o, e)
+        for o, e, s, i in zip(
+            out["observed"].to_pylist(),
+            out["expected"].to_pylist(),
+            out["state"].to_pylist(),
+            out["series_id"].to_pylist(),
+        )
+        if i == sid and s != State.ABSENT
+    ]
+    return sum(o for o, _ in rows) / sum(e for _, e in rows)
+
+
+def _miss_after(interval, step):
+    return max(1.5 * interval, interval + step)
+
+
+SWEEP = [
+    (interval, step, phase, jitter)
+    for interval in (15_000, 20_000, 25_000, 40_000, 60_000, 120_000)
+    for step in (15_000, 30_000, 60_000)
+    for phase in (0, 1_000, 7_500, 14_000)
+    for jitter in (0, 2_000)
+]
+
+
+@pytest.mark.parametrize(("interval", "step", "phase", "jitter"), SWEEP)
+def test_sweep_healthy_series_reads_ok_with_coverage_near_one(interval, step, phase, jitter):
+    ts = _sample_ts(interval, phase=phase, jitter=jitter, seed=interval + step + phase)
+    out = _compute_rows(_count_rows(ts, step), step=step, res=15_000)
+    st = states(out)
+    assert State.EMPTY not in st and State.PARTIAL not in st
+    assert 0.9 <= _alive_coverage(out) <= 1.1
+    assert not any(f & Flag.INTERVAL_CHANGE for f in out["flags"].to_pylist())
+
+
+@pytest.mark.parametrize(("interval", "step", "phase", "jitter"), SWEEP)
+def test_sweep_ten_minute_hole_is_empty_inside_and_nowhere_else(interval, step, phase, jitter):
+    h0, h1 = 25 * 60_000, 35 * 60_000
+    ts = _sample_ts(interval, phase=phase, jitter=jitter, seed=interval + step + phase)
+    ts = [t for t in ts if not h0 < t <= h1]
+    bucket = lambda t: -(-t // step) * step
+    p_b = bucket(max(t for t in ts if t <= h0))  # last bucket with a sample before the hole
+    n_b = bucket(min(t for t in ts if t > h1))  # first bucket with a sample after it
+    out = _compute_rows(_count_rows(ts, step), step=step, res=15_000)
+    by_ts = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
+    empty = [b for b, s in by_ts.items() if s == State.EMPTY]
+    partial = [b for b, s in by_ts.items() if s == State.PARTIAL]
+    assert all(p_b < b < n_b for b in empty), (p_b, n_b, empty)
+    assert all(b in (p_b, n_b) for b in partial), (p_b, n_b, partial)
+    # the hole interior: past the cadence allowance (local estimate within 10%) until samples resume
+    interior = [b for b in by_ts if p_b + _miss_after(1.1 * interval, step) < b < n_b]
+    assert interior and all(by_ts[b] == State.EMPTY for b in interior)
+
+
+@pytest.mark.parametrize(("fast", "slow"), [(15_000, 60_000), (60_000, 15_000)])
+def test_rate_change_within_the_window_reads_ok_and_flags_interval_change(fast, slow):
+    half = HOUR // 2
+    ts = _sample_ts(fast, end=half) + _sample_ts(slow, start=half, end=HOUR)
+    out = _compute_rows(_count_rows(ts, S15), step=S15, res=S15)
+    st = states(out)
+    assert State.EMPTY not in st and State.PARTIAL not in st
+    assert any(f & Flag.INTERVAL_CHANGE for f in out["flags"].to_pylist())
+    assert 0.9 <= _alive_coverage(out) <= 1.1
+
+
+@pytest.mark.parametrize(("first", "then"), [(15_000, 60_000), (60_000, 15_000)])
+def test_rate_change_caveat_reports_both_intervals_in_order(first, then):
+    from telemetry_nerd.model.caveats import from_bucket_state
+
+    half = HOUR // 2
+    ts = _sample_ts(first, end=half) + _sample_ts(then, start=half, end=HOUR)
+    out = _compute_rows(_count_rows(ts, S15), step=S15, res=S15)
+    [c] = [c for c in from_bucket_state(out, {"a": "A"}, S15) if c.code == "interval_change"]
+    assert f"{first // 1000}s → {then // 1000}s" in c.message
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_step_equal_to_interval_with_jitter_has_no_empty(seed):
+    # scrapes straddle the bucket boundaries: counts 0/1/2 with every sample present
+    ts = _sample_ts(15_000, jitter=2_000, seed=seed)
+    out = _compute_rows(_count_rows(ts, S15), step=S15, res=S15)
+    assert State.EMPTY not in states(out)
+    assert 0.95 <= _alive_coverage(out) <= 1.05
+
+
+def test_step_equal_to_interval_with_jitter_still_shows_lost_scrapes():
+    ts = _sample_ts(15_000, jitter=2_000, seed=3)
+    lost = set(ts[20::23][:10])  # ten isolated lost scrapes
+    out = _compute_rows(_count_rows([t for t in ts if t not in lost], S15), step=S15, res=S15)
+    assert states(out).count(State.EMPTY) >= 5
+
+
+@pytest.mark.parametrize(("interval", "end"), [(120_000, 10 * 60_000), (60_000, 6 * 60_000)])
+def test_few_non_zero_buckets_within_cadence_are_not_empty(interval, end):
+    out = _compute_rows(_count_rows(_sample_ts(interval, end=end), S15), step=S15, end=end)
+    assert State.EMPTY not in states(out) and State.PARTIAL not in states(out)
+
+
+@pytest.mark.parametrize("ts", [[], [90_000], [90_000, 210_000]])
+def test_one_or_two_samples_do_not_crash(ts):
+    out = _compute_rows(_count_rows(ts, S15), step=S15, end=10 * 60_000)
+    assert out.num_rows == 40
+
+
+def test_many_series_stay_fast():
+    import time
+
+    step, end = 15_000, 1440 * 15_000
+    rows = []
+    for i in range(20):
+        rows += _count_rows(_sample_ts(15_000, jitter=2_000, seed=i, end=end), step, sid=f"s{i}")
+    t0 = time.perf_counter()
+    out = compute(
+        buckets(rows), [f"s{i}" for i in range(20)], start_ms=step, end_ms=end, step_ms=step,
+        resolution_ms=step, mode="samples",
+    )  # fmt: skip
+    assert out.num_rows == 20 * 1440
+    assert time.perf_counter() - t0 < 1.0

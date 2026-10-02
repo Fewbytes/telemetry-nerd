@@ -62,16 +62,22 @@ INTERVAL_RATIO = 1.5  # own scrape interval this far from the configured one is 
 
 def differing_intervals(states: pa.Table, step_ms: int, resolution_ms: int) -> dict[str, int]:
     """series id -> its own sample interval (whole seconds) for series scraped at a rate other than
-    the source's configured one. Samples-mode states only (the caller gates presence mode); series
-    with no samples, source-filled counts, or a step finer than the scrape are not judged."""
+    the source's configured one: the dominant one, the median over its ok/partial buckets of the
+    local interval (step / expected). Samples-mode states only (the caller gates presence mode);
+    series with no samples, source-filled counts, or a step finer than the scrape are not
+    judged."""
     if states.num_rows == 0 or resolution_ms <= 0 or step_ms < resolution_ms:
         return {}
     df = pl.from_arrow(states)
-    seen = df.filter((pl.col("observed") > 0) & (pl.col("state") != int(State.UNKNOWN)))
+    sampled = df.filter(pl.col("observed") > 0)["series_id"].unique()
     filled = df.filter((pl.col("flags") & int(Flag.SOURCE_FILLED)) != 0)["series_id"].unique()
+    seen = df.filter(
+        pl.col("state").is_in([int(State.OK), int(State.PARTIAL)])
+        & pl.col("series_id").is_in(sampled.to_list())
+        & ~pl.col("series_id").is_in(filled.to_list())
+    )
     per = (
-        seen.filter(~pl.col("series_id").is_in(filled.to_list()))
-        .group_by("series_id")
+        seen.group_by("series_id")
         .agg(pl.col("expected").median().alias("expected"))
         .sort("series_id")
     )
@@ -116,8 +122,11 @@ def interval_caveats(
     ]
 
 
-def _every(step_ms: int, count: float) -> str:
-    return f"{max(1, round(step_ms / count / 1000))}s"
+def _every(step_ms: int, buckets: pl.DataFrame) -> str:
+    """Time per sample over ok/partial buckets (a slower-than-step series' ok 0 buckets count)."""
+    seen = buckets.filter(pl.col("state").is_in([int(State.OK), int(State.PARTIAL)]))
+    samples = seen["observed"].sum()
+    return f"{max(1, round(seen.height * step_ms / samples / 1000))}s" if samples else "?"
 
 
 def from_bucket_state(
@@ -201,14 +210,16 @@ def _interval_change_caveat(
     sid: str, name: str, g: pl.DataFrame, changed: pl.DataFrame, step_ms: int
 ) -> Caveat:
     spans = runs(changed["ts_ms"].to_list(), step_ms)
-    here = changed.filter(pl.col("observed") > 0)["observed"].median()
-    other = g.filter(
-        ((pl.col("flags") & int(Flag.INTERVAL_CHANGE)) == 0) & (pl.col("observed") > 0)
-    )["observed"].median()
-    early = changed["ts_ms"].min() < g.filter(pl.col("observed") > 0)["ts_ms"].median()
-    rates = (here, other) if early else (other, here)
+    other = g.filter((pl.col("flags") & int(Flag.INTERVAL_CHANGE)) == 0)
+    other_at = other.filter(pl.col("observed") > 0)["ts_ms"].median()
+    early = other_at is not None and changed["ts_ms"].median() < other_at
+    # the first sample closes an interval that began before the window: not part of either rate
+    f0 = g.filter(pl.col("observed") > 0)["ts_ms"].min()
+    parts = [
+        p.filter(pl.col("ts_ms") != f0) for p in ((changed, other) if early else (other, changed))
+    ]
     around = spans[-1][1] if early else spans[0][0]
-    a, b = (_every(step_ms, r) for r in rates)
+    a, b = (_every(step_ms, p) for p in parts)
     return Caveat(
         code="interval_change",
         severity="info",

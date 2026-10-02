@@ -144,22 +144,48 @@ accepts both shapes during migration.
 | `flags` | bitmask: `reset`, `interval_change`, `stale_marker`, `source_filled` |
 | `reason` | for `unknown`/`source_filled`: short code from the source profile or error |
 
-Series interval `I` (samples mode): normally `step / median(non-zero counts)`. When that median is
-1 and the series' non-zero buckets are spaced wider than the step (median gap, at least 3 such
-buckets), the series is scraped **slower than the step** and `I` = that median gap, so `expected` =
-step / I < 1 and coverage = Σobserved / Σexpected stays ≈ 1 for a healthy series. For such a series
-a bucket with samples is `ok` (never `partial`), and a bucket without is `empty` only when more than
-1.5 × I has passed since the series' last sample (cadence missed; trailing silence likewise), else
-`ok` (within its normal cadence). Buckets before the first sample stay `absent`. `interval_change`
-is not judged for these series. `interval_differs` reports `I`.
-Because bucketed gaps snap to whole steps, `I` is the trimmed mean of the non-zero-bucket gaps (those
-up to 2 × the median gap), which also catches series between 1 and 2 × the step: with at least 8
-non-zero buckets a mean gap above 1.25 × step counts as slower than the step (fewer buckets cannot
-tell such a series from a step-rate one with a hole). The cadence is missed after
-max(1.5 × I, I + step). An `unknown` bucket resets the cadence reference (what happened inside it
-is not known), so no `empty` follows a failed span. Coarsening (§5.3) judges `empty` from states:
-a coarse bucket is `empty` only if none of its sub-buckets is `ok` or `partial`, never from
-observed = 0, so a slower-than-step series' within-cadence buckets stay `ok`.
+Series interval `I` (samples mode) is judged **locally**, from the gaps between the series'
+non-zero buckets, so a series whose scrape rate changes within the window is judged against the
+rate it has at that point. For each gap (non-zero bucket p to the next one, n) there are two
+neighbourhoods: the 16 gaps ending at p and the 16 after n. Each estimates `I` = Σgap / Σsamples
+over its gaps, leaving out holes (gaps over 2 × the centred median gap; bucketed gaps snap to whole
+steps, so a mean, not a median, gives a fractional interval). With fewer than 2 usable gaps a
+neighbourhood falls back to the other one, then to the whole series. The gap (its 0 buckets and
+the bucket n) takes the neighbourhood whose `I` is nearer the gap's own time per sample (gap /
+samples in n): either side of a rate change reads at its own rate; a hole lies above both and
+reads at the slower one.
+
+A neighbourhood is **slower than the step** when `I` > 1.25 × step with at least 2 gaps longer than
+the step; a gap is slower when either neighbourhood is. In a slower stretch a bucket with samples
+is `ok` (never `partial`), `expected` = step / I < 1, and a bucket without is `empty` only once the
+time since the series' last sample exceeds max(1.5 × I, I + step) (cadence missed; trailing
+silence likewise), else `ok`. Elsewhere every 0 bucket is `empty`, except at about one sample per
+bucket (step / I in [0.8, 1.2]): a scrape near a bucket boundary lands in the neighbouring bucket,
+so a lone 0 bucket paired with a 2 bucket (either order, only 1s between, each 2 pairing one 0) is
+`ok`; an unpaired 0 is a lost scrape. A 0 still waiting for its 2 at the window end, or before a
+hole or `unknown` span, is `ok` if the series was seen spilling. There `expected` is the series'
+samples per bucket over all its at-or-faster-than-step gaps (holes and `empty` buckets' time left
+out; at least 1), so a stretch with fewer samples per bucket still reads `partial` (a bucket is
+`partial` below expected − max(1, 10 % of expected) − 0.1, the 0.1 for the estimate's error).
+Coverage Σobserved / Σexpected stays ≈ 1 for a healthy series, jittered or changing rate.
+
+Buckets before the first sample stay `absent`. An `unknown` bucket resets the cadence reference
+(what happened inside it is not known), so no `empty` follows a failed span. `interval_differs`
+reports the dominant interval: the median over `ok`/`partial` buckets of step / expected.
+`interval_change`: a series with a slower-than-step stretch is judged from its gaps: time per
+sample of each non-zero bucket, median-smoothed over 9; when that spans ≥ 2×, the buckets split at
+the geometric middle and, with 3 non-zero buckets a side and the slower side's lower quartile above
+the faster side's upper one, the side covering less of the window is flagged (with the 0 buckets of
+its gaps). Other series compare the counts of the halves of their non-zero buckets (≥ 2×, same
+separation rule). The caveat gives each side's interval as its time over its samples. Coarsening
+(§5.3) judges `empty` from states: a coarse bucket is `empty` only if none of its sub-buckets is
+`ok` or `partial`, never from observed = 0, so a slower-than-step series' within-cadence buckets
+stay `ok`.
+
+Limits: a series scraped between 1 and 1.25 × the step reads as a step-rate one that loses a sample
+now and then (its skipped buckets `empty`), and a step-rate series losing more than about a fifth of
+its samples (or a slower one showing fewer than 2 gaps over the step) reads the other way; bucket counts cannot
+tell the two apart.
 
 Dataset level: failed spans with error text (never cached; retried on next read).
 

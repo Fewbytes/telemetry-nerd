@@ -29,12 +29,17 @@ class Flag(IntFlag):
 
 
 PARTIAL_RATIO = 0.9
+COUNT_SLACK = 0.1  # error of an estimated expected count, on top of one sample of jitter
 CHANGE_RATIO = 2.0  # a series' sample rate halves or doubles within the window
-CHANGE_MIN_BUCKETS = 3  # non-zero buckets each half needs before it can be judged
-SLOW_MIN_BUCKETS = 3  # non-zero buckets needed to estimate an interval from their spacing
-SLOW_FRACTIONAL_MIN = 8  # non-zero buckets before a spacing between step and 2 steps counts as slow
-SLOW_MARGIN = 1.25  # mean spacing this far above the step: slower than the step, not just holes
+CHANGE_MIN_BUCKETS = 3  # non-zero buckets each side of a rate change needs before it can be judged
+CHANGE_WINDOW = 9  # non-zero buckets in the centred median that localises a rate change
+LOCAL_GAPS = 16  # non-zero-bucket gaps in each one-sided neighbourhood the cadence is judged from
+LOCAL_MIN_GAPS = 2  # gaps a neighbourhood needs to stand on its own (else the other side, global)
+HOLE_RATIO = 2.0  # a gap over this many times its neighbourhood's median gap is a hole, not cadence
+SLOW_MIN_LONG = 2  # gaps longer than the step a neighbourhood needs before it can read as slow
+SLOW_MARGIN = 1.25  # interval this far above the step: slower than the step, not a step-rate one
 SLOW_MISS_RATIO = 1.5  # a slower-than-step series misses its cadence after this many intervals
+SPILL_RATE = (0.8, 1.2)  # samples per bucket at which a scrape can spill into the next bucket
 
 STATE_SCHEMA = pa.schema(
     [
@@ -58,8 +63,10 @@ def grid(start_ms: int, end_ms: int, step_ms: int) -> list[int]:
 
 
 def short(observed: pl.Expr, expected: pl.Expr) -> pl.Expr:
-    """Below expected by more than jitter: one sample, or (1 - PARTIAL_RATIO) of a long bucket."""
-    return observed < expected - pl.max_horizontal(pl.lit(1.0), (1 - PARTIAL_RATIO) * expected)
+    """Below expected by more than jitter: one sample, or (1 - PARTIAL_RATIO) of a long bucket.
+    `expected` is an estimate from the series' own spacing: COUNT_SLACK more for its error."""
+    tolerance = pl.max_horizontal(pl.lit(1.0), (1 - PARTIAL_RATIO) * expected) + COUNT_SLACK
+    return observed < expected - tolerance
 
 
 def compute(
@@ -95,35 +102,26 @@ def compute(
     df = base.join(obs, on=["series_id", "ts_ms"], how="left").with_columns(
         pl.col("observed").fill_null(0.0)
     )
-    df = df.sort("series_id", "ts_ms")
-    if mode == "samples":
-        df = _with_expected(df, step_ms)
-    else:
-        df = df.with_columns(
-            pl.lit(1.0).alias("expected"),
-            pl.lit(False).alias("_slow"),
-            pl.lit(None, dtype=pl.Float64).alias("_i"),
-        )
+    unknown = pl.lit(source_filled)
+    for a, b, _reason in failed:
+        unknown = unknown | pl.col("ts_ms").is_between(a, b)
+    df = df.with_columns(unknown.alias("_unk"))
     first = (
         df.filter(pl.col("observed") > 0)
         .group_by("series_id")
         .agg(pl.col("ts_ms").min().alias("first_seen"))
     )
-    df = df.join(first, on="series_id", how="left")
-    unknown = pl.lit(source_filled)
-    for a, b, _reason in failed:
-        unknown = unknown | pl.col("ts_ms").is_between(a, b)
-    # a slower-than-step series is empty only once the time since its last sample exceeds its
-    # cadence; faster series (and any series with no interval estimate) miss with every 0 bucket.
-    # An UNKNOWN bucket resets the cadence reference: what happened inside it is not known.
-    ref = pl.when((pl.col("observed") > 0) | unknown).then(pl.col("ts_ms")).forward_fill()
-    interval = pl.col("_i").fill_null(0.0)
-    miss_after = pl.max_horizontal(SLOW_MISS_RATIO * interval, interval + step_ms)
-    df = df.with_columns(
-        (~pl.col("_slow") | (pl.col("ts_ms") - ref.over("series_id") > miss_after)).alias("_missed")
-    )
+    df = df.join(first, on="series_id", how="left").sort("series_id", "ts_ms")
+    if mode == "samples":
+        df = _cadence(df, step_ms)
+    else:
+        df = df.with_columns(
+            pl.lit(1.0).alias("expected"),
+            pl.lit(False).alias("_slow"),
+            pl.lit(True).alias("_missed"),
+        )
     state = (
-        pl.when(unknown)
+        pl.when(pl.col("_unk"))
         .then(int(State.UNKNOWN))
         .when(pl.col("first_seen").is_not_null() & (pl.col("ts_ms") < pl.col("first_seen")))
         .then(int(State.ABSENT))
@@ -137,13 +135,19 @@ def compute(
     )
     df = df.with_columns(
         state.cast(pl.UInt8).alias("state"),
-        pl.when(unknown).then(0.0).otherwise(pl.col("observed")).alias("observed"),
-    ).sort("series_id", "ts_ms")
+        pl.when(pl.col("_unk")).then(0.0).otherwise(pl.col("observed")).alias("observed"),
+    )
     flags = pl.lit(int(Flag.SOURCE_FILLED) if source_filled else 0)
-    if mode == "samples" and not source_filled and step_ms >= resolution_ms:
-        # (a step finer than the scrape interval only ever counts 0 or 1: no rate to compare)
-        df, changed = _interval_change(df)
+    if mode == "samples" and not source_filled:
+        # a series with a slower-than-step stretch shows its rate in the gaps between samples (at
+        # any step); the others in their counts, when the step holds several samples
+        df = df.with_columns(pl.col("_slow").any().over(_S).alias("_by_gap"))
+        df, changed = _gap_interval_change(df)
         flags = flags | changed
+        if step_ms >= resolution_ms:
+            df, changed = _interval_change(df)
+            flags = flags | changed
+    df = df.sort("series_id", "ts_ms")
     if post_gap_buckets > 0:
         is_gap = pl.col("state").is_in([int(State.EMPTY), int(State.UNKNOWN)])
         df = df.with_columns(is_gap.cum_sum().over("series_id").alias("_gap_no"))
@@ -160,62 +164,229 @@ def compute(
     return out.to_arrow().cast(STATE_SCHEMA)
 
 
-def _with_expected(df: pl.DataFrame, step_ms: int) -> pl.DataFrame:
-    """Adds `expected` (samples per bucket), `_slow` and `_i` (the series' sample interval in ms).
-    df is sorted.
+_S = "series_id"
 
-    The series' own interval, not the source's configured one (a source may scrape slower than its
-    preset says). Normally the typical count of a bucket that has samples: interval = step / that.
-    When that count is 1 and the non-zero buckets are spaced wider than the step, the series is
-    scraped slower than the step: interval = the trimmed mean spacing (gaps up to twice the median;
-    a median would snap to whole steps), expected = step / interval < 1. The spacing must exceed
-    the step: median gap > step, or (with SLOW_FRACTIONAL_MIN buckets) mean > SLOW_MARGIN x step, so
-    a step-rate series with a few holes is not mistaken for slow.
-    `expected` carries the estimate (interval = step / expected): caveats reads it from there."""
-    gaps = pl.col("ts_ms").diff().drop_nulls()
-    per = (
-        df.filter(pl.col("observed") > 0)
-        .group_by("series_id")
+
+def _cadence(df: pl.DataFrame, step_ms: int) -> pl.DataFrame:
+    """Adds `expected` (samples per bucket), `_slow` (bucket in a slower-than-step stretch) and
+    `_missed` (a 0 bucket here is a miss). df is sorted by series, ts.
+
+    Judged locally (spec §5.1), from the gaps between the series' non-zero buckets: the zero
+    buckets between two non-zero buckets p and n, and n itself, take the interval I of the
+    neighbourhood before p or the one after n, whichever is nearer the gap's own time per sample
+    (so either side of a rate change reads at its own rate, and a hole at the slower one), each
+    being Σgap/Σsamples over its LOCAL_GAPS gaps, holes (gaps over HOLE_RATIO x the median) left
+    out. A neighbourhood is slower than the step when I > SLOW_MARGIN x step with SLOW_MIN_LONG
+    gaps over the step; a gap is slower when either neighbourhood is. Slower: a sample bucket is OK, a 0 bucket is a miss only once the time since
+    the last sample (or UNKNOWN bucket) exceeds max(1.5 I, I + step), and `expected` = step / I.
+    Otherwise every 0 bucket is a miss, except at about one sample per bucket a lone 0 paired with
+    a 2 (a scrape that spilled into the next bucket), and `expected` is the series' samples per
+    bucket over all its at-or-faster-than-step gaps (holes and missed buckets' time left out; at
+    least 1), so a series whose count drops for a stretch reads partial there, as before.
+    `interval_differs` reads the interval back as step / expected."""
+    nz_b = (pl.col("observed") > 0) & ~pl.col("_unk")
+    nz = df.filter(nz_b).select(
+        _S,
+        "ts_ms",
+        pl.col("observed").alias("_c"),
+        pl.col("ts_ms").diff().over(_S).cast(pl.Float64).alias("_g"),
+    )
+    est = _local_interval(nz, "_g", step_ms)
+    df = _spread(df, est, step_ms)
+    alive = pl.col("first_seen").is_not_null() & (pl.col("ts_ms") >= pl.col("first_seen"))
+    # an UNKNOWN bucket resets the cadence reference: what happened inside it is not known
+    ref = pl.when(nz_b | pl.col("_unk")).then(pl.col("ts_ms")).forward_fill().over(_S)
+    miss_after = pl.max_horizontal(SLOW_MISS_RATIO * pl.col("_I"), pl.col("_I") + step_ms)
+    zero = (pl.col("observed") == 0) & ~pl.col("_unk") & alive
+    rate = step_ms / pl.col("_I")
+    near_one = ~pl.col("_slow") & rate.is_between(*SPILL_RATE)
+    lone = nz_b.shift(1).over(_S).fill_null(False) & nz_b.shift(-1).over(_S).fill_null(True)
+    df = df.with_columns(
+        (zero & lone & near_one).alias("_ev0"),
+        (nz_b & (pl.col("observed") >= 2) & near_one).alias("_ev2"),
+        ((zero & ~lone) | pl.col("_unk")).alias("_evx"),
+    )
+    spilled = _spilled(df.filter(pl.col("_ev0") | pl.col("_ev2") | pl.col("_evx")))
+    df = df.join(spilled, on=[_S, "ts_ms"], how="left").sort(_S, "ts_ms")
+    df = df.with_columns(
+        pl.when(pl.col("_slow"))
+        .then((pl.col("ts_ms") - ref > miss_after).fill_null(True))
+        .otherwise(~pl.col("_spill").fill_null(False))
+        .alias("_missed")
+    )
+    # at or faster than the step a missed bucket is lost time, not cadence: take it out of I
+    gap_of = pl.when(nz_b).then(pl.col("ts_ms")).backward_fill().over(_S)
+    lost = (
+        df.filter(zero & pl.col("_missed") & ~pl.col("_slow"))
+        .group_by(_S, gap_of.alias("ts_ms"))
+        .agg(pl.len().alias("_lost"))
+        .drop_nulls("ts_ms")
+    )
+    g2 = pl.col("_g") - step_ms * pl.col("_lost").fill_null(0)
+    med = g2.rolling_median(window_size=2 * LOCAL_GAPS + 1, center=True, min_samples=1)
+    use = g2.is_not_null() & (g2 <= HOLE_RATIO * med.over(_S)) & ~pl.col("_sl")
+    fast = (
+        nz.join(lost, on=[_S, "ts_ms"], how="left")
+        .join(est.select(_S, "ts_ms", "_sl"), on=[_S, "ts_ms"], how="left")
+        .sort(_S, "ts_ms")
+        .with_columns(use.alias("_use"), g2.alias("_g2"))
+        .group_by(_S)
         .agg(
-            pl.col("observed").median().alias("_typical"),
-            gaps.median().alias("_med"),
-            gaps.filter(gaps <= 2 * gaps.median()).mean().alias("_gap"),
-            pl.len().alias("_n"),
+            pl.col("_c").filter("_use").sum().alias("_n"),
+            pl.col("_g2").filter("_use").sum().alias("_t"),
+            pl.col("_c").median().alias("_typ"),
+        )
+        .select(
+            _S,
+            pl.when(pl.col("_t") > 0)
+            .then(step_ms * pl.col("_n") / pl.col("_t"))
+            .otherwise(pl.col("_typ"))
+            .alias("_fast"),
         )
     )
-    slow = (
-        (pl.col("_typical") <= 1.0)
-        & (pl.col("_n") >= SLOW_MIN_BUCKETS)
-        & (
-            (pl.col("_med") > step_ms)
-            | ((pl.col("_n") >= SLOW_FRACTIONAL_MIN) & (pl.col("_gap") > SLOW_MARGIN * step_ms))
-        )
-    ).fill_null(False)
-    per = per.with_columns(
-        slow.alias("_slow"),
-        pl.when(slow)
-        .then(pl.col("_gap"))
-        .otherwise(step_ms / pl.max_horizontal(pl.lit(1.0), pl.col("_typical")))
-        .alias("_i"),
-    ).select("series_id", "_slow", "_i")
-    df = df.join(per, on="series_id", how="left").with_columns(
-        pl.col("_slow").fill_null(False), pl.col("_i").fill_null(float(step_ms))
+    df = df.join(fast, on=_S, how="left").sort(_S, "ts_ms")
+    expected = (
+        pl.when(pl.col("_slow"))
+        .then(step_ms / pl.col("_I"))
+        .otherwise(pl.max_horizontal(pl.lit(1.0), pl.col("_fast").fill_null(1.0)))
     )
-    return df.with_columns((step_ms / pl.col("_i")).alias("expected"))
+    return df.with_columns(expected.alias("expected"))
+
+
+def _local_interval(nz: pl.DataFrame, gap: str, step_ms: int) -> pl.DataFrame:
+    """Per non-zero bucket n (rows sorted by series, ts; `_c` samples, `gap` ms since the previous
+    non-zero bucket): `_I`/`_sl`, the interval and slowness that judge the gap ending at n, and
+    `_It`/`_slt`, those for the open gap after n (trailing silence)."""
+    k = LOCAL_GAPS
+    g = pl.col(gap)
+    med = g.rolling_median(window_size=2 * k + 1, center=True, min_samples=1).over(_S)
+    kept = g.is_not_null() & (g <= HOLE_RATIO * med)
+    parts = {
+        "G": pl.when(kept).then(g).otherwise(0.0),
+        "C": pl.when(kept).then(pl.col("_c")).otherwise(0.0),
+        "L": (kept & (g > step_ms)).cast(pl.Float64),
+        "N": kept.cast(pl.Float64),
+    }
+    nz = nz.with_columns(e.alias(f"_k{p}") for p, e in parts.items())
+    glob = nz.group_by(_S).agg(
+        *(pl.col(f"_k{p}").sum().alias(f"_glob{p}") for p in parts),
+        pl.col("_c").median().alias("_typ"),
+    )
+    nz = nz.join(glob, on=_S, how="left").sort(_S, "ts_ms")
+    nz = nz.with_columns(pl.col(f"_k{p}").cum_sum().over(_S).alias(f"_s{p}") for p in parts)
+    nz = nz.with_columns(
+        *(  # the k gaps ending here
+            (pl.col(f"_s{p}") - pl.col(f"_s{p}").shift(k).over(_S).fill_null(0.0)).alias(f"_b{p}")
+            for p in parts
+        ),
+        *(  # the k gaps after this one
+            (
+                pl.col(f"_s{p}").shift(-k).over(_S).fill_null(pl.col(f"_s{p}").last().over(_S))
+                - pl.col(f"_s{p}")
+            ).alias(f"_a{p}")
+            for p in parts
+        ),
+    )
+    nz = nz.with_columns(pl.col(f"_b{p}").shift(1).over(_S).alias(f"_p{p}") for p in parts)
+
+    def side(x: str, min_gaps: float = LOCAL_MIN_GAPS) -> tuple[pl.Expr, pl.Expr, pl.Expr]:
+        c = pl.col(f"_{x}C")
+        valid = (pl.col(f"_{x}N") >= min_gaps).fill_null(False) & (c > 0).fill_null(False)
+        i = pl.when(valid).then(pl.col(f"_{x}G") / c)
+        slow = valid & (i > SLOW_MARGIN * step_ms) & (pl.col(f"_{x}L") >= SLOW_MIN_LONG)
+        return valid, i, slow.fill_null(False)
+
+    _, gi, gs = side("glob", 1)
+    gi = pl.coalesce(gi, step_ms / pl.max_horizontal(pl.lit(1.0), pl.col("_typ")))
+    pv, pi, ps = side("p")  # before the previous non-zero bucket
+    av, ai, as_ = side("a")  # after this one
+    bv, bi, bs = side("b")
+    # I: of the side nearer this gap's own time per sample (a gap at the new rate after a change,
+    # or the old rate before it; a hole is further above both: the slower one). Slower than the
+    # step if either side is, so estimates near SLOW_MARGIN do not flicker
+    x = g / pl.col("_c")
+    off = lambda i: (i / x).log().abs()
+    after = ~pv | (av & (x.is_null() | (off(ai) < off(pi))).fill_null(False))
+    return nz.select(
+        _S,
+        "ts_ms",
+        pl.coalesce(pl.when(after).then(ai).otherwise(pi), gi).alias("_I"),
+        pl.when(pv | av).then(ps | as_).otherwise(gs).alias("_sl"),
+        pl.coalesce(bi, gi).alias("_It"),
+        pl.when(bv).then(bs).otherwise(gs).alias("_slt"),
+    )
+
+
+def _spread(df: pl.DataFrame, est: pl.DataFrame, step_ms: int) -> pl.DataFrame:
+    """Per-gap estimates onto every bucket: a bucket takes the gap it lies in (the next non-zero
+    bucket's), trailing buckets the open gap after the last one. Adds `_I` and `_slow`."""
+    df = df.join(est, on=[_S, "ts_ms"], how="left").sort(_S, "ts_ms")
+    pick = lambda gap, tail: pl.coalesce(
+        pl.col(gap).backward_fill().over(_S), pl.col(tail).forward_fill().over(_S)
+    )
+    return df.with_columns(
+        pick("_I", "_It").fill_null(float(step_ms)).alias("_I"),
+        pick("_sl", "_slt").fill_null(False).alias("_slow"),
+    ).drop("_sl", "_It", "_slt")
+
+
+def _spilled(events: pl.DataFrame) -> pl.DataFrame:
+    """At about one sample per bucket a scrape near a bucket boundary lands in the next or previous
+    bucket: a 0 bucket and a 2 bucket, in either order with only 1s between (`_ev0`/`_ev2`; rows
+    sorted by series, ts). Pairs each 0 with an adjacent 2; a 0 left unpaired is a lost scrape,
+    except a last one still waiting for its 2 in a series seen spilling (the 2 may lie past the
+    window end or inside a hole or UNKNOWN span, `_evx`, which also restarts the pairing). Returns
+    the paired 0 buckets with `_spill` = True."""
+    ok_s: list[str] = []
+    ok_t: list[int] = []
+    cur, credit, pending, paired = None, False, None, False
+    rows = events.select(_S, "ts_ms", "_ev0", "_evx").iter_rows()
+    for sid, t, is_zero, reset in (*rows, (None, None, None, None)):
+        if sid != cur:
+            if pending is not None and paired:
+                ok_s.append(cur)
+                ok_t.append(pending)
+            cur, credit, pending, paired = sid, False, None, False
+            if sid is None:
+                break
+        if reset:
+            if pending is not None and paired:
+                ok_s.append(sid)
+                ok_t.append(pending)
+            credit, pending = False, None
+        elif not is_zero:
+            if pending is not None:
+                ok_s.append(sid)
+                ok_t.append(pending)
+                pending, paired = None, True
+            else:
+                credit = True
+        elif credit:
+            ok_s.append(sid)
+            ok_t.append(t)
+            credit, paired = False, True
+        else:
+            pending = t  # an earlier unpaired 0 stays a miss
+    return pl.DataFrame(
+        {_S: ok_s, "ts_ms": ok_t, "_spill": [True] * len(ok_s)},
+        schema={_S: pl.String, "ts_ms": pl.Int64, "_spill": pl.Boolean},
+    )
 
 
 def _interval_change(df: pl.DataFrame) -> tuple[pl.DataFrame, pl.Expr]:
     """Series whose sample rate differs >= CHANGE_RATIO between the first and second half of their
-    non-zero buckets: the half further from the series' baseline (`expected`) gets INTERVAL_CHANGE.
-    Only a flag: the baseline and the states are unchanged. Returns df (sorted by series, ts)
-    with helper bounds and the flag expression."""
-    # (slower-than-step series show a 0/1 pattern, not a rate: not judged)
-    nz = df.filter((pl.col("observed") > 0) & ~pl.col("_slow")).with_columns(
-        (pl.int_range(pl.len()).over("series_id") >= pl.len().over("series_id") // 2).alias("_late")
+    non-zero buckets: the half further from the series' baseline (typical count) gets
+    INTERVAL_CHANGE. Only a flag: the states are unchanged. Returns df with helper bounds and the
+    flag expression."""
+    # (series with slower-than-step stretches show a 0/1 pattern there: _gap_interval_change)
+    nz = (
+        df.filter((pl.col("observed") > 0) & ~pl.col("_by_gap"))
+        .sort(_S, "ts_ms")
+        .with_columns((pl.int_range(pl.len()).over(_S) >= pl.len().over(_S) // 2).alias("_late"))
     )
     half = {
         h: nz.filter(pl.col("_late") == (h == "late"))
-        .group_by("series_id")
+        .group_by(_S)
         .agg(
             pl.col("observed").median().alias(f"_m_{h}"),
             pl.col("observed").mean().alias(f"_mean_{h}"),
@@ -227,8 +398,8 @@ def _interval_change(df: pl.DataFrame) -> tuple[pl.DataFrame, pl.Expr]:
         )
         for h in ("early", "late")
     }
-    exp = nz.group_by("series_id").agg(pl.col("expected").first().alias("_exp"))
-    st = half["early"].join(half["late"], on="series_id").join(exp, on="series_id")
+    exp = nz.group_by(_S).agg(pl.col("observed").median().clip(lower_bound=1.0).alias("_exp"))
+    st = half["early"].join(half["late"], on=_S).join(exp, on=_S)
     lo = pl.min_horizontal("_mean_early", "_mean_late")
     hi = pl.max_horizontal("_mean_early", "_mean_late")
     # clear separation, not just a ratio: alternating low counts (2,1,2,1) are steady jitter
@@ -250,13 +421,73 @@ def _interval_change(df: pl.DataFrame) -> tuple[pl.DataFrame, pl.Expr]:
             pl.when(late_is_odd).then(pl.col("_a_late")).otherwise(pl.col("_a_early")).alias("_lo"),
             pl.when(late_is_odd).then(pl.col("_b_late")).otherwise(pl.col("_b_early")).alias("_hi"),
         )
-        .select("series_id", "_lo", "_hi")
+        .select(_S, "_lo", "_hi")
     )
-    df = df.join(st, on="series_id", how="left")
+    df = df.join(st, on=_S, how="left")
     changed = pl.when(pl.col("ts_ms").is_between(pl.col("_lo"), pl.col("_hi"))).then(
         int(Flag.INTERVAL_CHANGE)
     )
     return df, changed.otherwise(0)
+
+
+def _gap_interval_change(df: pl.DataFrame) -> tuple[pl.DataFrame, pl.Expr]:
+    """Rate changes in series with a slower-than-step stretch, where 0/1 counts cannot show them:
+    from the time per sample (gap / count) of each non-zero bucket, median-smoothed over
+    CHANGE_WINDOW buckets. When that local interval spans >= CHANGE_RATIO, the buckets split at
+    the geometric middle into a faster and a slower side; with CHANGE_MIN_BUCKETS each and clear
+    separation (the slower side's lower quartile above the faster side's upper one, as for
+    counts) the side covering less of the window gets INTERVAL_CHANGE, with the 0 buckets of its
+    gaps. Only a flag."""
+    nz = (
+        df.filter(pl.col("observed") > 0)
+        .sort(_S, "ts_ms")
+        .with_columns(pl.col("ts_ms").diff().over(_S).cast(pl.Float64).alias("_gx"))
+        .with_columns((pl.col("_gx") / pl.col("observed")).alias("_x"))
+        .filter(pl.col("_by_gap") & pl.col("_x").is_not_null())
+    )
+    m = pl.col("_x").rolling_median(window_size=CHANGE_WINDOW, center=True, min_samples=1)
+    nz = nz.with_columns(m.over(_S).alias("_mx"))
+    nz = nz.with_columns(
+        (pl.col("_mx") >= (pl.col("_mx").min() * pl.col("_mx").max()).sqrt())
+        .over(_S)
+        .alias("_slower")
+    )
+    sl = pl.col("_slower")
+    st = (
+        nz.group_by(_S)
+        .agg(
+            (pl.col("_mx").max() / pl.col("_mx").min()).alias("_ratio"),
+            sl.sum().alias("_n_slow"),
+            (~sl).sum().alias("_n_fast"),
+            pl.col("_x").filter(sl).quantile(0.25).alias("_q1_slow"),
+            pl.col("_x").filter(~sl).quantile(0.75).alias("_q3_fast"),
+            pl.col("_gx").filter(sl).sum().alias("_t_slow"),
+            pl.col("_gx").filter(~sl).sum().alias("_t_fast"),
+        )
+        .filter(
+            (pl.col("_ratio") >= CHANGE_RATIO)
+            & (pl.col("_n_slow") >= CHANGE_MIN_BUCKETS)
+            & (pl.col("_n_fast") >= CHANGE_MIN_BUCKETS)
+            & (pl.col("_q1_slow") > pl.col("_q3_fast"))
+        )
+        .select(_S, (pl.col("_t_slow") <= pl.col("_t_fast")).alias("_odd_slow"))
+    )
+    # (the first non-zero bucket has no gap: it takes the next one's side, as 0 buckets do)
+    hit = nz.join(st, on=_S, how="left").select(
+        _S, "ts_ms", (pl.col("_slower") == pl.col("_odd_slow")).fill_null(False).alias("_gchg")
+    )
+    df = (
+        df.join(hit, on=[_S, "ts_ms"], how="left")
+        .sort(_S, "ts_ms")
+        .with_columns(
+            pl.coalesce(
+                pl.col("_gchg").backward_fill().over(_S), pl.col("_gchg").forward_fill().over(_S)
+            ).alias("_gchg")
+        )
+    )
+    alive = pl.col("first_seen").is_not_null() & (pl.col("ts_ms") >= pl.col("first_seen"))
+    hit_b = pl.col("_gchg").fill_null(False) & alive
+    return df, pl.when(hit_b).then(int(Flag.INTERVAL_CHANGE)).otherwise(0)
 
 
 GROUP_SCHEMA = pa.schema(
