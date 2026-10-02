@@ -272,3 +272,22 @@ async def test_evidence_rules_for_code_outputs(svc, run):
         finding(stat(fit, "intercept", 0.3, (0.2, 0.4)))
     with pytest.raises(ValueError, match="no fit parameter 'r2'"):
         finding(stat(fit, "r2", 0.9, (0.8, 1.0)))
+
+
+async def test_panel_evidence_checks_every_dataset_of_the_panel(svc, run):
+    d = await _input(svc)
+
+    def body():
+        tn.put(_wave(), step_ms=STEP, name="bare")
+        tn.put(_wave(with_interval=True), step_ms=STEP, name="ci",
+               uncertainty={"method": "bootstrap", "level": 0.95})  # fmt: skip
+
+    out = run("c6", [d], body)
+    spec = svc.ws.workspace.get_panel(svc.show(out["ci"], "ci").panel.id).spec
+    # a panel whose first dataset is evidence but a later one is not: not evidence
+    mixed = svc.ws.workspace.create_panel("mixed", spec, [out["ci"], out["bare"]])
+    with pytest.raises(ValueError, match=f"panel {mixed.id} is not evidence.*{out['bare']}"):
+        svc.ws.finding_create(
+            FindingIn(claim="c", scope=_scope(), evidence=[PanelRef(kind="panel", panel=mixed.id)]),
+            "claude",
+        )

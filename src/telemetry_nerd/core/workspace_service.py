@@ -238,11 +238,9 @@ class WorkspaceService:
         for ref in data.evidence:
             match ref:
                 case PanelRef(panel=pid):
-                    p = self.workspace.get_panel(pid)
-                    if p.dataset_ids and (
-                        why := evidence_problem(self.datasets.meta(p.dataset_ids[0]), None)
-                    ):
-                        raise ValueError(f"panel {pid} is not evidence: {why}")
+                    for did in self.workspace.get_panel(pid).dataset_ids:
+                        if why := evidence_problem(self.datasets.meta(did), None):
+                            raise ValueError(f"panel {pid} is not evidence: {why}")
                 case StatisticRef(dataset=did):
                     if not self.datasets.exists(did):
                         raise NotFound(f"dataset {did} not found")
