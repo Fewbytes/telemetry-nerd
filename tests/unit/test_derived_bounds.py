@@ -130,3 +130,13 @@ def test_part_of_needs_the_same_range_window():
 
 def test_irate_basis_says_irate():
     assert "irate of" in d('1 - irate(node_cpu_seconds_total{mode="idle"}[5m])').basis
+
+
+def test_bounded_by_pairs_skip_the_unit_unknown_rejection():
+    units = dict(UNITS)
+    UNITS.pop("mem_limit_bytes")
+    try:
+        assert d("mem_used_bytes / mem_limit_bytes").bounds == "[0,1]"
+    finally:
+        UNITS.clear()
+        UNITS.update(units)

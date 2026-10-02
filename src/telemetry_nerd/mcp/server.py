@@ -949,7 +949,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         baseline: str | None = None,
     ) -> str:
         """Offer the user another y-axis view of a time-series or fleet panel; the USER picks.
-        (A fleet panel takes zero, data, reference, natural-bounds, band, log; not indexed or meaningful.)
+        (A fleet panel takes zero, data, reference, natural-bounds and band; not log, indexed or meaningful.)
 
         mode: zero (include 0), data (fit the data), meaningful (percentile panels: range
         only over buckets with n >= n_min, so a faded low-n outlier does not squash the

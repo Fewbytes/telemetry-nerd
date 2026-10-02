@@ -694,7 +694,7 @@
   {#if (data?.kind === "time" || data?.kind === "fleet") && yst}
     <div class="legend y-views" role="group" aria-label="Y-axis view">
       y:
-      {#each offeredViews(yst, yctx).filter((o) => data?.kind === "time" || !["indexed", "meaningful"].includes(o.mode)) as o (o.mode + (o.baseline ?? ""))}
+      {#each offeredViews(yst, yctx).filter((o) => data?.kind === "time" || !["indexed", "meaningful", "log"].includes(o.mode)) as o (o.mode + (o.baseline ?? ""))}
         <button
           type="button" disabled={!o.enabled} title={o.title} class:suggest={o.suggest}
           class:on={o.mode === "band" ? bandPick || (chosen?.mode === "band" && !chosen?.id) : (chosen?.mode ?? "auto") === o.mode && !chosen?.id && (o.baseline ?? null) === (chosen?.baseline ?? null)}

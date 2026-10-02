@@ -1435,7 +1435,11 @@ class WorkspaceService:
 
     def _check(self, p: Panel, view: YView, spec: ChartSpec | None = None) -> list[str]:
         meta, result = self.datasets.get(p.dataset_ids[0])
-        if spec and spec.layers[0].mark == "fleet" and view.mode in ("indexed", "meaningful"):
+        if (
+            spec
+            and spec.layers[0].mark == "fleet"
+            and view.mode in ("indexed", "meaningful", "log")
+        ):
             raise ValueError(f"{view.mode} views do not apply to a fleet panel's spread band")
         if view.mode == "indexed":
             assert view.baseline is not None

@@ -350,3 +350,29 @@ async def test_asserted_bounds_where_they_cannot_apply_warn_instead_of_storing(t
     res = svc.show(d, "spectrum?", mark="spectrum", bounds_lo=0, bounds_hi=1)
     assert "bounds_not_applied" in [i.rule for i in res.issues]
     assert res.panel.spec["y"]["asserted_bounds"] is None
+
+
+async def test_fleet_payload_carries_what_the_ui_reads_for_the_bounded_range(tmp_path):
+    svc = make_service(tmp_path)
+    d = _util_fleet(svc)
+    pid = svc.show(d, "per-core utilisation?", mark="fleet").panel.id
+    await svc.y_context(pid)
+    data = svc.panel_data(pid, 800)
+    ctx = data["panel"]["spec"]["y"]["context"]
+    assert (ctx["natural_lo"], ctx["natural_hi"], ctx["bounds"], ctx["bounds_origin"]) == (
+        0.0,
+        1.0,
+        "[0,1]",
+        "rule",
+    )
+    assert ctx["bounds_basis"] and ctx["bounds_confidence"] is not None
+    # what fleetY reads: the analysis scale (log for all-positive data, not the drawn axis) and normalise
+    assert data["normalise"] == "none" and data["scale"] in ("log", "linear")
+    assert len(data["band"]["lo"]) == len(data["ts"]) and len(data["band"]["hi"]) == len(data["ts"])
+
+
+async def test_fleet_panels_refuse_a_log_y_view(tmp_path):
+    svc = make_service(tmp_path)
+    pid = svc.show(_util_fleet(svc), "q?", mark="fleet").panel.id
+    with pytest.raises(ValueError, match="fleet"):
+        svc.ws.select_y_view(pid, "user", mode="log")

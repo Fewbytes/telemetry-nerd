@@ -88,18 +88,19 @@ export const closedBounds = (c: YContext | null | undefined): boolean =>
  *  (data outside them stretches the range to show it, and is badged: never autoscaled away); else log when
  *  positive data spans more than two decades; else the reference range when the catalog knows a
  *  normal range or limit; else uPlot's own range. */
-function autoView(st: YStats, ctx: YContext | null): YView | null {
+function autoView(st: YStats, ctx: YContext | null, noLog = false): YView | null {
   const a = st.all;
   if (a && closedBounds(ctx)) {
     return { mode: "semantic", label: `natural bounds ${ctx!.bounds ?? ""} (auto)`.trim() };
   }
-  if (a && a.lo > 0 && decades(a) > 2) return { mode: "log", label: `log (auto: ${decades(a).toFixed(1)} decades)` };
+  if (!noLog && a && a.lo > 0 && decades(a) > 2) return { mode: "log", label: `log (auto: ${decades(a).toFixed(1)} decades)` };
   if (a && hasReference(ctx)) return { mode: "reference", label: "reference range" };
   return null;
 }
 
-export function resolveY(chosen: YView | null, st: YStats, ctx: YContext | null = null): YResolved {
-  const v = !chosen || chosen.mode === "auto" ? autoView(st, ctx) : chosen;
+/** `noLog`: the plot cannot draw a log axis (fleet panels), so neither auto nor a chosen log applies. */
+export function resolveY(chosen: YView | null, st: YStats, ctx: YContext | null = null, noLog = false): YResolved {
+  const v = !chosen || chosen.mode === "auto" || (noLog && chosen.mode === "log") ? autoView(st, ctx, noLog) : chosen;
   if (!v) return AUTO;
   const why = refusal(v, st, ctx);
   if (why) return { ...AUTO, refused: `${v.label}: ${why}` };

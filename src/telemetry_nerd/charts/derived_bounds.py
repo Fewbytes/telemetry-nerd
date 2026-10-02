@@ -186,7 +186,8 @@ class _Rules:
         if not (self.nonneg(ma) and self.nonneg(mb)):
             return None
         ua, ub = self.unit_of(ma), self.unit_of(mb)
-        if ua != ub:  # different, or only one known: nothing says they measure the same thing
+        related = ha[1] is None and ma != mb and self.bounded_by(ma, mb)
+        if ua != ub and not related:  # different or one unknown: nothing says they share a unit
             return None
         if ma == mb:
             sa, sb = _matchers(xa), _matchers(xb)

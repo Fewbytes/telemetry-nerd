@@ -53,3 +53,21 @@ test("a fleet of a bounded metric defaults to its natural bounds, with provenanc
   expect(fleetY({ ...u, normalise: "member" }, ctx).range).toBeNull(); // x own median: not in metric units
   expect(fleetY(u, ctx, { mode: "data", label: "data range" } as never).zoomed).toBe(true);
 });
+
+test("the real payload shape (scale log = analysis scale, normalise none) still gets the bounded range", async () => {
+  const { badgeText } = await import("./yview");
+  const u: FleetData = { ...d, scale: "log", normalise: "none", band: { ...d.band, lo: [0.0015, 0.002, 0.002], hi: [0.004, 0.003, 0.004] }, outliers: [] };
+  const ctx = { natural_lo: 0, natural_hi: 1, bounds: "[0,1]", bounds_origin: "rule", bounds_basis: "1 − idle", bounds_confidence: 0.7, limit: null, profile: null, notes: [] };
+  const r = fleetY(u, ctx);
+  expect(r.range).toEqual([0, 1]);
+  expect(badgeText(r.effective!, r, null, undefined, ctx)).toMatch(/natural bounds \[0,1\].*bounds: rule/);
+});
+
+test("fleet panels never resolve a log y view: unbounded wide-range data stays on uPlot's range", () => {
+  const w: FleetData = { ...d, scale: "log", band: { ...d.band, lo: [0.001, 0.002, 0.003], hi: [5, 4, 3] }, outliers: [] };
+  const auto = fleetY(w, null);
+  expect(auto.log).toBe(false);
+  expect(auto.effective?.mode).not.toBe("log");
+  const chosen = fleetY(w, null, { mode: "log", label: "log" } as never);
+  expect(chosen.log).toBe(false);
+});

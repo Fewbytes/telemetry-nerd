@@ -78,9 +78,10 @@ export function fleetStats(d: FleetData) {
 
 /** The y range of a fleet panel: its metric's natural bounds by default, like a time-series panel.
  *  Natural bounds are in the metric's own units: they do not apply once members are normalised to
- *  their own median or the axis is log. */
+ *  their own median. (`scale` is the deviation-analysis scale, not the drawn axis, which is linear:
+ *  so no log y view either.) */
 export function fleetY(d: FleetData, ctx: YContext | null, chosen: YView | null = null): YResolved & { stats: ReturnType<typeof fleetStats> } {
   const st = fleetStats(d);
-  const usable = d.normalise === "member" || d.scale === "log" ? null : ctx;
-  return { ...resolveY(chosen, st, usable), stats: st };
+  const usable = d.normalise === "member" ? null : ctx;
+  return { ...resolveY(chosen, st, usable, true), stats: st };
 }
