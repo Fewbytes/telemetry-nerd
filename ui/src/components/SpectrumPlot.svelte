@@ -37,6 +37,11 @@
               const c = p.ctx, dpr = window.devicePixelRatio || 1;
               c.save();
               c.font = `${10 * dpr}px sans-serif`;
+              // drawAxes (fired just before this hook) leaves ctx.textAlign/textBaseline set
+              // for the y-axis's own right-aligned, middle-anchored labels; reset them so our
+              // fillText x/y below are plain left/top origins, not swallowed by that state.
+              c.textAlign = "left";
+              c.textBaseline = "alphabetic";
               for (const z of zones) {
                 const x0 = p.valToPos(z.from, "x", true), x1 = p.valToPos(z.to, "x", true);
                 c.strokeStyle = grid; c.lineWidth = 1;
