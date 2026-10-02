@@ -232,6 +232,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         cycles: list[str] | None = None,
         tz: str = "UTC",
         exclude: list[str] | None = None,
+        threshold: float | None = None,
     ) -> str:
         """Is now unusual for this time of day / week? Compares the dataset's window with the
         same phase of previous cycles.
@@ -249,11 +250,20 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         unusual (direction higher/lower/mixed) | insufficient_history (< 3 usable cycles), from
         three detectors at 1% each: window level (ratio vs a t interval with k-1 df), extreme
         points (Sidak over the window), share of points outside the band. `ratio.evidence` is
-        a statistic for finding_create. Refused on percentile series (hint: histograms per
-        cycle), distributions and raw counters. Draw with show(dataset, question,
-        mark="seasonal")."""
+        a statistic for finding_create. Refused on raw counters. Draw with show(dataset,
+        question, mark="seasonal").
+        Latency (a histogram_quantile series or a query_distribution dataset): never percentiles
+        across cycles; the histogram is fetched for now and each previous cycle (same local
+        window) and compared per cycle: n and share above `threshold` per cycle (exact at a
+        bucket edge: a requested threshold snaps to the nearest shared edge, stated; default the
+        edge where the reference's share above is nearest 1%), band = t prediction interval of
+        the cycles' logit shares; verdict on that share (1%); `shape` = CDF distance per cycle
+        (descriptive). `share_over.evidence` is a statistic; each cycle lists its dataset for
+        show(mark="histogram"). Summary quantiles (no histogram) are refused."""
         try:
-            return _dump(await service.compare_seasonal(dataset, cycles, tz, exclude))
+            return _dump(
+                await service.compare_seasonal(dataset, cycles, tz, exclude, threshold=threshold)
+            )
         except SourceError as e:
             raise ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e)) from e
         except (NotFound, ValueError) as e:

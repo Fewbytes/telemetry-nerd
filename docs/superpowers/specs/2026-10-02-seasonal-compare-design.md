@@ -11,9 +11,9 @@ autocorrelation / n_eff (lkn.1) and the red-noise spectrum (lkn.4).
   aligned (UTC or a named timezone), which were excluded and why.
 - Uncertainty comes from what previous cycles actually did at the same phase (leave-one-cycle-out
   residuals), not from within-window noise and not from one reference cycle.
-- Percentiles are never aggregated across cycles: percentile series are refused with a hint
-  (compare the histogram per cycle with `show(mark="histogram", windows=[...])`). Distributions
-  and raw counters are refused as for other time ops.
+- Percentiles are never aggregated across cycles: for a percentile series with a known histogram,
+  or a distribution dataset, the histogram is compared per cycle (see Latency, lkn.7); summary
+  quantiles are refused with a hint. Raw counters are refused as for other time ops.
 - Gaps are never interpolated: a phase is compared only where now and >= 3 cycles have data.
 - Fewer than 3 usable cycles -> `insufficient_history`, saying what was found.
 
@@ -169,8 +169,57 @@ Choices that calibration forced (each was wrong first):
   a window across the change is matched point by point (the local 10:00 peak stays aligned).
 - Insufficient history, missing cycles, user and atypical exclusions, percentile refusal.
 
+## Latency: the histogram per cycle (lkn.7)
+
+`compare_seasonal` on a `histogram_quantile` series whose histogram is known, or on a
+`query_distribution` dataset, never compares percentiles: it fetches the histogram for now and
+for each previous cycle (same schemes and cycle counts; the cycle's window is the same local
+wall-clock window) and works on each cycle's **window histogram** (bucket counts summed over the
+window; counts are additive, percentiles are not, so nothing is pooled or averaged across cycles
+except counts where a pooled CDF is the reference for the descriptive shape distance).
+
+- **Threshold.** The share above x per cycle is exact at a bucket edge (fraction_over). A
+  requested x snaps to the nearest edge shared by every cycle (log distance) and says so. The
+  default is chosen from the reference cycles only (never from now): the edge whose pooled share
+  above is nearest 1% among edges with >= 20 expected observations above per cycle, else the
+  nearest-1% edge with caveat `few_over_threshold`.
+- **Band.** Per cycle the empirical logit L_j = logit((a_j + 1/2) / (n_j + 1)) with binomial
+  variance V_j. The share band is a Student t prediction interval with k-1 df around the mean of
+  the kept cycles' L_j with variance s^2 (1 + 1/k) + max(0, V_now - mean V), s^2 = max(sample
+  variance, mean V) (random-effects: cycle-to-cycle variation, never below sampling noise; now's
+  extra sampling noise when it has fewer observations). Requests within a window are not
+  independent, so binomial noise alone would be too tight; the across-cycle spread carries it.
+- **Verdict.** unusual when now's share lies outside the 99% interval (alpha 1%), with direction;
+  `share_over` reports value, normal_90, interval_99, centre and an `evidence` statistic.
+- **Atypical / missing / user exclusions** as for time series (forward search on L_j, floor =
+  binomial SE; missing = no observations or < 50% of the steps with data).
+- **Choice** of the reference by LOO error of L_j, same rule as above.
+- **Shape (descriptive).** Largest |CDF difference| at the shared edges, now vs the kept cycles'
+  summed counts, and each cycle vs the others. Not a detector: with k cycles now exceeds all of
+  them by chance 1/(k+1) of the time.
+- Each cycle lists its n, share and dataset (draw one with `show(mark="histogram")`); there is
+  no seasonal panel for histograms yet.
+
+Calibration (`scripts/calibrate_seasonal.py --only lkn7`, 1000 seeds; lognormal latency, median
+80 ms, sigma 0.6, per-step log-median jitter 0.1, per-cycle jitter as listed, classic le buckets,
+default threshold 250 ms = ~3% above):
+
+| k | n/window | cycle jitter | share 90% PI coverage | false alarms (1%) | detect 2% x5 slower | detect 5% x5 slower |
+|---|---|---|---|---|---|---|
+| 3 | 2000 | 5% | 0.977 | 0.0% | 0% | 0% |
+| 4 | 2000 | 5% | 0.921 | 0.0% | 0% | 12% |
+| 4 | 50000 | 5% | 0.908 | 0.5% | 6% | 28% |
+| 4 | 50000 | 0 | 0.911 | 0.1% | 62% | 100% |
+| 7 | 2000 | 5% | 0.906 | 0.8% | 7% | 44% |
+| 7 | 50000 | 10% | 0.891 | 1.3% | 3% | 10% |
+| 4 | 300 | 5% | 0.959 | 0.0% | 0% | 0% |
+
+Conservative at k = 3 and small n (the sampling-noise floor binds when s^2 has 2 df). Power is
+what the cycles allow: a 5% jitter of the median moves the share above 250 ms by ~20% from day to
+day, so a tail change must exceed that spread; with stable cycles it is caught at once.
+
 ## Out of scope (follow-ups)
 
-- Per-cycle histogram comparison for latency (distribution compare per cycle).
+- A seasonal panel for histograms (per-cycle survival curves with the share band).
 - Seasonal centre for SPC / prior-cycle baselines in `analyze` (lkn.5).
 - Learning the timezone per source (2as.24).

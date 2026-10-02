@@ -77,6 +77,7 @@ from telemetry_nerd.core.panel_payloads import (
 )
 from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.profiles import ProfileService
+from telemetry_nerd.core.seasonal_dist_ops import SeasonalDistOps
 from telemetry_nerd.core.seasonal_ops import SeasonalOps, seasonal_hint
 from telemetry_nerd.core.series_diagnostics import SeriesDiagnostics, resolve_baseline
 from telemetry_nerd.core.signal_ops import SignalOps
@@ -196,6 +197,7 @@ class TelemetryService:
             self.sources, self.cache, ProfileStore(self.workspace.connection), self.ws, self.clock
         )
         self.seasonal = SeasonalOps(self.datasets, self.signal, self.query, self._profile_periods)
+        self.seasonal_dist = SeasonalDistOps(self.datasets, self.query_distribution)
         self.fleets = FleetOps(self.datasets, self.signal, self.ws.catalog_facts)
 
     def _profile_periods(self, source: str, expr: str) -> list[str]:
@@ -211,8 +213,14 @@ class TelemetryService:
         tz: str = "UTC",
         exclude: list[str] | None = None,
         actor: Actor = "claude",
+        threshold: float | None = None,
     ) -> dict:
-        """Now vs the same phase of previous cycles, band from their spread (lkn.2)."""
+        """Now vs the same phase of previous cycles, band from their spread (lkn.2); latency
+        (percentile series or distributions): the histogram per cycle (lkn.7)."""
+        if SeasonalDistOps.applies(self.datasets.meta(dataset_id)):
+            return await self.seasonal_dist.compare(
+                dataset_id, cycles, tz, exclude, threshold, actor
+            )
         cfg = await self.seasonal.fetch(dataset_id, cycles, tz, exclude, actor)
         return self.seasonal.summary(dataset_id, cfg)
 

@@ -12,6 +12,10 @@ inside the 90% normal interval; false alarms per detector and any.
 
 Table 2 (lkn.8): atypical-cycle exclusion. Normal references (false exclusion of any cycle) and a
 weekday window against 7 daily references that include Saturday and Sunday (both must go).
+
+Table 3 (lkn.7): latency histograms per cycle (tests/unit/seasonal_dist_sim.py): coverage of the
+90% normal interval of the share above the default threshold, false alarms at 1%, and detection
+of a planted slow tail (2% / 5% of requests x5 slower).
 """
 
 from __future__ import annotations
@@ -25,6 +29,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from telemetry_nerd.analysis.seasonal import Cycle, compare, cycle_shifts
+from tests.unit.seasonal_dist_sim import table as dist_table
 
 H, M, DAY = 3_600_000, 60_000, 86_400_000
 MON = 1_790_553_600_000  # Monday 2026-09-28 00:00 UTC
@@ -124,12 +129,14 @@ def table_lkn8(seeds: int) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--seeds", type=int, default=1000)
-    ap.add_argument("--only", default="", help="lkn2 | lkn8")
+    ap.add_argument("--only", default="", help="lkn2 | lkn8 | lkn7")
     args = ap.parse_args()
     if args.only in ("", "lkn2"):
         table_lkn2(args.seeds)
     if args.only in ("", "lkn8"):
         table_lkn8(args.seeds)
+    if args.only in ("", "lkn7"):
+        dist_table(args.seeds)
 
 
 if __name__ == "__main__":
