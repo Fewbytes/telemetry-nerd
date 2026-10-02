@@ -326,16 +326,31 @@ thread cannot be reliably timed out.
 - **Libraries:** numpy, polars, pyarrow are always there; scipy, statsmodels, scikit-learn,
   ruptures, pywavelets ship as the optional `analysis` extra (`telemetry-nerd[analysis]`;
   a `-full` image tag carries them).
-- **`tn` API:** `tn.query(source, expr, range, step)`, `tn.dataset(handle)`,
-  `tn.stream(...)` (RecordBatch iterator), `tn.put(result, meta)`, `tn.put_fit(...)`,
-  `tn.chart(...)` (spec builder). `tn` talks to the daemon's HTTP API with Arrow IPC.
-  Adapters and credentials stay in the daemon. Every `tn` call is logged against the code
-  node.
+- **Data exchange: Arrow IPC files in a per-run directory** (`/data/runs/<code-node>/`).
+  `run_code(code, inputs=[handles])` makes the daemon export the declared input datasets as
+  Arrow IPC files (+ meta JSON); in the kernel `tn.dataset(handle)` memory-maps them
+  (zero-copy via the page cache). `tn.put(df, meta)` / `tn.put_fit(...)` write Arrow files +
+  meta JSON into the same directory; after the run the daemon ingests them, enforces the
+  evidence rule and records lineage (inputs = declared, outputs = put). Adapters and
+  credentials never reach the kernel. Run directories are kept while their code node is
+  referenced (re-run, debugging) and garbage-collected otherwise.
+  - Rejected: **shared memory** (segment ownership and leaks on kernel crash; Docker's 64 MB
+    default `/dev/shm`; an mmapped file already shares pages); **DuckDB** (the daemon holds
+    `series.duckdb` read-write and DuckDB forbids a second process opening it, even
+    read-only; a per-run DuckDB export is file exchange in a worse format); **Arrow IPC
+    streaming over a socket** (needs a protocol + server endpoint in the daemon loop, a copy
+    each way; Jupyter's own channels can't serve mid-run requests because a busy kernel only
+    processes replies after the run). Streaming is the upgrade path if mid-run fetches
+    (`tn.query`) are needed: it slots in behind the same `tn.dataset`/`tn.put` calls.
+- **`tn` API (MVP):** `tn.dataset(handle)` → polars DataFrame (pyarrow on request),
+  `tn.inputs` (declared handles), `tn.put(result, meta)`, `tn.put_fit(...)`. No `tn.query` or
+  `tn.chart` in the MVP: Claude queries via MCP and passes handles in; outputs are shown with
+  `show`.
 - **Code nodes:** each run becomes a `code` node with the stored code, its input and output
   dataset handles (lineage), duration and outcome; re-runnable.
 - **Evidence rule:** outputs must declare uncertainty or `exact`; otherwise they are tagged
   `no_uncertainty` and are ineligible as evidence.
-- **MCP:** `run_code(code, workspace)` returns stdout (truncated), the produced handles, a
+- **MCP:** `run_code(code, inputs)` returns stdout (truncated), the produced handles, a
   compact summary and the traceback on failure. Bulk data never comes back through it.
 - **Promotion path:** useful tier-2 functions become tier-1 ops.
 
