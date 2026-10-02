@@ -18,6 +18,7 @@ import polars as pl
 from telemetry_nerd.analysis.exprkind import rate_interval_ms
 from telemetry_nerd.analysis.littles import Block, GroupResult, Substeps, check, combine
 from telemetry_nerd.catalog.relations import SUGGESTIONS, metric_slug
+from telemetry_nerd.core.uncertainty import mark_statistics
 from telemetry_nerd.core.wire import Memo, sig, sig_pair, statistic
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.time import TimeRange, format_duration, iso, parse_duration, parse_time
@@ -544,7 +545,7 @@ class LittlesOps:
         caveats = []
         if not cfg["unit_basis"]:
             caveats.append("latency_unit_assumed")
-        return {
+        out = {
             "verdict": tot.verdict,
             "question": "Is mean concurrency L consistent with throughput x mean latency (L = lambda W)?",
             "range": [iso(cfg["start_ms"]), iso(cfg["end_ms"])],
@@ -561,6 +562,9 @@ class LittlesOps:
             "caveats": caveats,
             "draw": f'show("{L_ds}", question, mark="littles")',
         }
+        # the interval is built from the four series' own sampling and counting error; any
+        # declared (or unknown) uncertainty of those datasets is not folded in (spec §5.3)
+        return mark_statistics(out, self._datasets, list(cfg["datasets"].values()))
 
     def panel(self, cfg: dict) -> dict:
         r = self.run(cfg)

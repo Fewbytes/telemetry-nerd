@@ -235,3 +235,25 @@ def test_suggested_binding_from_otel_metadata_runs(tmp_path):
     out = asyncio.run(go())
     assert out["verdict"] == "consistent"
     assert any(f"rate({lat}_sum" in e for e in src.exprs)
+
+
+def test_statistics_over_inputs_of_unknown_uncertainty_are_flagged(tmp_path):
+    """Spec §5.3: the check folds no declared input interval into its own, so it marks its
+    statistics with the inputs' status (x2x / 4jk); clean source data leaves them unmarked."""
+    from dataclasses import replace
+
+    svc = _service(tmp_path)
+    out = _run(svc)
+    ev = out["total"]["evidence"]
+    assert ev and all("input_uncertainty" not in e["params"] for e in ev)
+    assert "input_uncertainty_unknown" not in out["caveats"]
+    cfg = svc.littles.last_config(out["datasets"]["concurrency"])
+    lam = out["datasets"]["arrival_rate"]
+    meta = svc.datasets.meta
+    svc.datasets.meta = lambda d: (  # an input whose uncertainty is unknown
+        replace(meta(d), source_caveats=["no_uncertainty"]) if d == lam else meta(d)
+    )
+    marked = svc.littles.summary(cfg)
+    assert "input_uncertainty_unknown" in marked["caveats"]
+    ev = marked["total"]["evidence"]
+    assert ev and all(e["params"]["input_uncertainty"] == "unknown" for e in ev)
