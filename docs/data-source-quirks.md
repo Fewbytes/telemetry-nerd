@@ -42,8 +42,9 @@ Research bead: `telemetry-nerd-1h9.10`. Findings written 2026-10-02.
    (`sum(rate(...))`, `histogram_quantile(...)`) the adapter asks `count_over_time((expr)[step:res])`.
    A subquery is a series of instant evaluations, so lookback fills gaps: `count` says 4
    samples for a bucket inside a 9 min hole (Prometheus: filled for the whole 5 m lookback).
-   `bucket_state` would call those buckets `ok`. Selector queries are honest. Bead filed
-   `telemetry-nerd-1h9.11` (see PQ1).
+   `bucket_state` would call those buckets `ok`. Selector queries are honest. Fixed in
+   `telemetry-nerd-1h9.11`: counts now come from the underlying selector where derivable,
+   else the expression is flagged "cannot tell" (`sources/observed.py`; spec §6).
 2. **VictoriaMetrics `increase()` after a gap returns the whole gap's increase in the first
    bucket** (615 instead of 15, 41× the truth), and 0, not "no data", for the first steps
    inside a gap (VQ2; bead `telemetry-nerd-1h9.13`). Prometheus returns no value for those buckets.
@@ -85,8 +86,13 @@ Research bead: `telemetry-nerd-1h9.10`. Findings written 2026-10-02.
   7 min outage alike (`prom__scrape_gauge_raw`, `prom__scrape_up`). Lookback fill only
   applies to gaps without markers (pushed data, PQ3).
 - ⚠ **Subqueries fill like instant evaluation** (`prom__count_subquery_w60` vs
-  `prom__count_selector_w60`): the adapter's expression path (`(expr)[step:res]`) reports
-  samples that do not exist. Bead `telemetry-nerd-1h9.11`, with this evidence.
+  `prom__count_selector_w60`): a `count_over_time` of the adapter's expression path
+  (`(expr)[step:res]`) reports samples that do not exist. The adapter therefore takes `count`
+  from the expression's selector (`count_over_time(sel[step])`, lifted through its
+  aggregations) and drops filled values; expressions it cannot derive (several selectors,
+  filters, vector matching) are "cannot tell" (`counts_are_observed`). Bead
+  `telemetry-nerd-1h9.11`; tests `test_subquery_windows_fill_gaps_but_the_adapter_reports_only_observed_samples`,
+  `test_fetch_values_keeps_only_values_of_buckets_that_observed_samples`.
 
 ### PQ2 Scrape failure vs vanished series ✅
 

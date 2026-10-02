@@ -11,8 +11,12 @@ from __future__ import annotations
 import json
 import math
 
+import httpx
 import pytest
 
+from telemetry_nerd.model.time import TimeRange
+from telemetry_nerd.sources.observed import counts_are_observed
+from telemetry_nerd.sources.promql import PromQLSource
 from tests.unit.missing_data_fx import FIXTURES, fill_after, fx, gaps, matrix, only, raw_samples
 
 P = "prometheus"
@@ -110,22 +114,90 @@ def test_vm_rollup_matches_count_over_time_gaps():
         assert [t for t, _ in series] == counts
 
 
-# --- the adapter's expression path: subqueries fill gaps ----------------------------------------
+# --- the adapter's expression path: subqueries fill gaps, observed counts must not (1h9.11) ----
+
+
+def _replay(backend: str, src: str, routes: dict[str, str]) -> PromQLSource:
+    """A source answering query_range from fixtures: query prefix -> fixture claim. Subquery
+    fixtures stand in for avg/min/max/rollup too: their points are where values exist."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        query = request.url.params["query"]
+        claim = next(c for prefix, c in routes.items() if query.startswith(prefix))
+        body = fx(f"{backend}/{src}__{claim}")["body"]
+        if query.startswith("rollup("):
+            [s] = body["data"]["result"]
+            series = [
+                {"metric": {**s["metric"], "rollup": r}, "values": s["values"]}
+                for r in ("min", "max", "avg")
+            ]
+            body = {**body, "data": {**body["data"], "result": series}}
+        return httpx.Response(200, json=body)
+
+    flavor = "prometheus" if backend == P else "victoriametrics"
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return PromQLSource(src, "http://lab.test", flavor=flavor, resolution_ms=15_000, client=client)
+
+
+def _window_of(backend: str, src: str, claim: str) -> TimeRange:
+    params = fx(f"{backend}/{src}__{claim}")["request"]["params"]
+    return TimeRange(round(float(params["start"]) * 1000), round(float(params["end"]) * 1000))
 
 
 @pytest.mark.parametrize("backend,src", [(P, "prom"), (V, "vm")])
-def test_subquery_windows_fabricate_samples_inside_gaps(backend, src):
+async def test_subquery_windows_fill_gaps_but_the_adapter_reports_only_observed_samples(
+    backend, src
+):
     samples = raw_samples(f"{backend}/{src}__gapfill_i60_samples")
     big = max(gaps(samples, 60), key=lambda g: g[1] - g[0])
     selector = only(matrix(f"{backend}/{src}__count_selector_w60"))
     subq = only(matrix(f"{backend}/{src}__count_subquery_w60"))
     inside = lambda series: [v for t, v in series if big[0] < t < big[1]]
+    # the backend: a subquery is instant evaluations, lookback fills them (subquery_fills_gaps)
     assert inside(selector) == []  # honest: nothing observed
-    assert inside(subq), "the subquery path returns counts for buckets with no samples"
+    assert inside(subq), "the subquery returns counts for buckets with no samples"
     assert all(v >= 1 for v in inside(subq))
     if backend == P:
         # Prometheus: 4 evaluations per 60 s bucket, filled for the whole 5 m lookback
         assert len([t for t, _ in subq if big[0] < t < big[0] + 300]) >= 4
+
+    # the adapter: values still come from the subquery, the count from the selector itself
+    expr = 'syn_gauge{case="i60"} * 1'
+    source = _replay(
+        backend,
+        src,
+        {"count_over_time(syn_gauge": "count_selector_w60", "": "count_subquery_w60"},
+    )
+    rng = _window_of(backend, src, "count_selector_w60")
+    res = await source.fetch(expr, rng, 60_000)
+    got = [(r["ts_ms"] / 1000, r["count"]) for r in res.buckets.to_pylist()]
+    assert got == [(t, round(v)) for t, v in selector]  # exactly the observed samples
+    assert inside(got) == []  # nothing inside the hole: bucket_state sees `empty`, not `ok`
+    assert res.partial == 0  # filled cells are not "half-returned"
+    assert counts_are_observed(expr)
+
+
+@pytest.mark.parametrize("backend,src", [(P, "prom"), (V, "vm")])
+async def test_fetch_values_keeps_only_values_of_buckets_that_observed_samples(backend, src):
+    samples = raw_samples(f"{backend}/{src}__gapfill_i60_samples")
+    evaluated = only(matrix(f"{backend}/{src}__gapfill_i60_step60"))
+    observed = {t for t, _ in only(matrix(f"{backend}/{src}__count_selector_w60"))}
+    # instant evaluation of the selector at a 60 s step fills buckets without samples
+    filled = [t for t, _ in evaluated if t not in observed]
+    assert filled, "lookback / adaptive fill gives values to buckets with no samples"
+
+    expr = 'syn_gauge{case="i60"}'  # a plain value query (e.g. a summary quantile series)
+    source = _replay(
+        backend,
+        src,
+        {"count_over_time(syn_gauge": "count_selector_w60", "syn_gauge": "gapfill_i60_step60"},
+    )
+    rng = _window_of(backend, src, "gapfill_i60_step60")
+    res = await source.fetch_values(expr, rng, 60_000)
+    got = [(r["ts_ms"] / 1000, r["avg"]) for r in res.buckets.to_pylist()]
+    assert got == [(t, v) for t, v in evaluated if t in observed]
+    for a, b in gaps(samples, 60):
+        assert not [t for t, _ in got if a + 60 < t < b]  # no value for a bucket in a gap
 
 
 # --- PQ2/PQ3: scrape failure, vanished series, pushed data --------------------------------------

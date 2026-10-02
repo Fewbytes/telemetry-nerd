@@ -28,6 +28,7 @@ from telemetry_nerd.model.series import (
 from telemetry_nerd.model.time import TimeRange, format_duration
 from telemetry_nerd.sources.base import LimitExceeded, Limits, SourceError, SourceUnavailable
 from telemetry_nerd.sources.gate import Gate
+from telemetry_nerd.sources.observed import observed_count_query
 from telemetry_nerd.sources.semantics import (
     MissingDataSemantics,
     classify_limit_error,
@@ -39,6 +40,7 @@ MAX_STEPS_PER_QUERY = 11_000
 _SELECTOR = re.compile(r"^\s*[a-zA-Z_:][a-zA-Z0-9_:]*\s*(\{[^{}]*\})?\s*$")
 _DEFAULT_LIMITS = Limits()
 _FIELDS = ("avg", "min", "max", "count")
+_VALUES = frozenset(_FIELDS[:3])
 
 
 def _user_agent() -> str:
@@ -160,11 +162,24 @@ class PromQLSource:
             return f"{expr.strip()}[{window}]"
         return f"({expr.strip()})[{window}:{format_duration(self.resolution_ms)}]"
 
+    def _observed_count(self, expr: str, step_ms: int) -> str | None:
+        """Sample count behind a non-selector expression, from its underlying selector: the
+        subquery's own count counts lookback-filled evaluations, not samples (1h9.11)."""
+        if is_selector(expr):
+            return None
+        return observed_count_query(expr, format_duration(step_ms))
+
     def build_queries(self, expr: str, step_ms: int) -> dict[str, str]:
         win = self._window(expr, step_ms)
         if self.flavor == "victoriametrics":
-            return {"rollup": f"rollup({win})", "count": f"count_over_time({win})"}
-        return {field: f"{field}_over_time({win})" for field in _FIELDS}
+            queries = {"rollup": f"rollup({win})", "count": f"count_over_time({win})"}
+        else:
+            queries = {field: f"{field}_over_time({win})" for field in _FIELDS}
+        if (observed := self._observed_count(expr, step_ms)) is not None:
+            queries["count"] = observed
+        # else (expression we cannot derive from): the count is subquery evaluations, not
+        # samples; consumers learn so from sources.observed.counts_are_observed(expr)
+        return queries
 
     async def fetch(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
         steps = (rng.end_ms - rng.start_ms) // step_ms + 1
@@ -174,6 +189,7 @@ class PromQLSource:
                 hint="use a coarser step or a shorter range",
             )
         queries = self.build_queries(expr, step_ms)
+        derived = self._observed_count(expr, step_ms) is not None
         results = await asyncio.gather(
             *(self._query_range(q, rng, step_ms) for q in queries.values())
         )
@@ -223,7 +239,15 @@ class PromQLSource:
         # would otherwise become a bucket with data but no mean. Drop it, count it.
         complete = {k: c for k, c in cells.items() if all(f in c for f in _FIELDS)}
         complete = {k: c for k, c in complete.items() if c["count"] is not None}
-        partial = len(cells) - len(complete)
+        if derived:
+            # Values and count come from different queries here. Values without a count are
+            # filled (lookback / range carried past the last sample): no sample arrived in the
+            # bucket, so it is empty. A count without values is samples the expression gives
+            # no value for (rate needs two). Neither is a half-returned cell; drop, don't count.
+            partial = sum(1 for c in cells.values() if 0 < len(c.keys() & _VALUES) < 3)
+            labels_by_sid = {sid: labels_by_sid[sid] for sid, _ in complete}
+        else:
+            partial = len(cells) - len(complete)
         cells = complete
         keys = sorted(cells)
         buckets = pa.table(
@@ -292,14 +316,26 @@ class PromQLSource:
 
     async def fetch_values(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
         """The expression's own value at each step: no rollup, no *_over_time.
-        For quantiles and other non-additive values that must never be re-aggregated."""
+        For quantiles and other non-additive values that must never be re-aggregated.
+
+        Instant evaluation fills gaps, so where the observed samples can be derived
+        (sources.observed) a second query keeps only values of buckets that observed any;
+        otherwise values are returned as evaluated (`counts_are_observed(expr)` is False)."""
         steps = (rng.end_ms - rng.start_ms) // step_ms + 1
         if steps > MAX_STEPS_PER_QUERY:
             raise LimitExceeded(
                 f"{steps} steps exceeds {MAX_STEPS_PER_QUERY} per query",
                 hint="use a coarser step or a shorter range",
             )
-        result = await self._query_range(expr.strip(), rng, step_ms)
+        observed_q = observed_count_query(expr, format_duration(step_ms))
+        if observed_q is None:
+            result = await self._query_range(expr.strip(), rng, step_ms)
+            counts = None
+        else:
+            result, counts = await asyncio.gather(
+                self._query_range(expr.strip(), rng, step_ms),
+                self._query_range(observed_q, rng, step_ms),
+            )
         rows: list[tuple[int, str, float | None]] = []
         labels_by_sid: dict[str, dict[str, str]] = {}
         for item in result:
@@ -324,6 +360,12 @@ class PromQLSource:
                 f"query returned {len(labels_by_sid)} series (limit {self.limits.max_series})",
                 hint="narrow the selector with label filters or aggregate the histogram by fewer labels",
             )
+        if counts is not None:
+            observed = self._observed_cells(counts)
+            # Instant evaluation fills (lookback, range windows longer than the step, VM's
+            # previous sample): keep a value only where the bucket observed samples (1h9.11).
+            rows = [r for r in rows if (r[1], r[0]) in observed]
+            labels_by_sid = {sid: labels_by_sid[sid] for sid in {r[1] for r in rows}}
         rows.sort(key=lambda r: (r[1], r[0]))
         vals = [r[2] for r in rows]
         buckets = pa.table(
@@ -343,6 +385,20 @@ class PromQLSource:
             schema=SERIES_SCHEMA,
         )
         return FetchResult(buckets, series)
+
+    def _observed_cells(self, result: list[dict]) -> set[tuple[str, int]]:
+        """(series_id, ts_ms) of buckets with at least one observed sample."""
+        cells: set[tuple[str, int]] = set()
+        for item in result:
+            try:
+                labels = dict(item["metric"])
+                samples = list(item["values"])
+                labels.pop("__name__", None)
+                sid = series_id(self.name, labels)
+                cells.update((sid, round(float(t) * 1000)) for t, v in samples if float(v) > 0)
+            except (KeyError, TypeError, ValueError) as e:
+                raise _malformed(f"malformed series {item!r} in query result") from e
+        return cells
 
     async def fetch_histogram(
         self, selector: str, by: Sequence[str], rng: TimeRange, step_ms: int

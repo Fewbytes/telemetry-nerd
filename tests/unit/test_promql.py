@@ -34,11 +34,19 @@ def test_build_queries_vm_selector_uses_raw_window():
     }
 
 
-def test_build_queries_vm_expression_uses_subquery():
+def test_build_queries_vm_expression_uses_subquery_for_values_and_selector_for_count():
     src = PromQLSource("vm", BASE, resolution_ms=15_000)
     q = src.build_queries("sum(rate(x[1m]))", 60_000)
     assert q["rollup"] == "rollup((sum(rate(x[1m])))[1m:15s])"
-    assert q["count"] == "count_over_time((sum(rate(x[1m])))[1m:15s])"
+    # a subquery's count is lookback-filled evaluations, not samples (1h9.11)
+    assert q["count"] == "sum (count_over_time(x[1m]))"
+
+
+def test_build_queries_expression_without_derivable_count_keeps_the_subquery_count():
+    src = PromQLSource("prom", BASE, flavor="prometheus", resolution_ms=15_000)
+    q = src.build_queries("rate(x[5m]) / rate(y[5m])", 60_000)
+    assert q["count"] == "count_over_time((rate(x[5m]) / rate(y[5m]))[1m:15s])"
+    assert q["avg"] == "avg_over_time((rate(x[5m]) / rate(y[5m]))[1m:15s])"
 
 
 def test_build_queries_prometheus_flavor():
@@ -387,28 +395,44 @@ async def test_probe_unreachable_raises_source_unavailable():
 
 @respx.mock
 async def test_fetch_values_is_a_plain_query_range():
-    route = respx.get(**ROUTE).mock(
-        return_value=httpx.Response(
-            200,
-            json=matrix(
-                [
-                    {
-                        "metric": {"__name__": "x", "region": "a"},
-                        "values": [[1_700_000_040, "0.25"], [1_700_000_100, "NaN"]],
-                    }
-                ]
-            ),
-        )
-    )
+    values = {
+        "metric": {"__name__": "x", "region": "a"},
+        "values": [[1_700_000_040, "0.25"], [1_700_000_100, "NaN"], [1_700_000_160, "0.5"]],
+    }
+    # samples were observed in the first two buckets only: the third value is filled
+    counts = {"metric": {"region": "a"}, "values": [[1_700_000_040, "3"], [1_700_000_100, "4"]]}
+
+    def responder(request):
+        if request.url.params["query"].startswith("sum without (le, vmrange)"):
+            return httpx.Response(200, json=matrix([counts]))
+        return httpx.Response(200, json=matrix([values]))
+
+    route = respx.get(**ROUTE).mock(side_effect=responder)
     src = PromQLSource("s", BASE, flavor="victoriametrics")
     res = await src.fetch_values("histogram_quantile(0.9, x)", RNG, 60_000)
-    assert route.calls.last.request.url.params["query"] == "histogram_quantile(0.9, x)"
+    assert sorted(c.request.url.params["query"] for c in route.calls) == [
+        "histogram_quantile(0.9, x)",
+        "sum without (le, vmrange) (count_over_time(x[1m]))",
+    ]
     rows = res.buckets.to_pylist()
     assert [(r["avg"], r["min"], r["max"], r["count"]) for r in rows] == [
         (0.25, 0.25, 0.25, 1),
         (None, None, None, 1),
     ]
     assert res.series.to_pylist()[0]["series_id"] == series_id("s", {"region": "a"})
+
+
+@respx.mock
+async def test_fetch_values_without_derivable_count_is_one_plain_query():
+    route = respx.get(**ROUTE).mock(
+        return_value=httpx.Response(
+            200, json=matrix([{"metric": {}, "values": [[1_700_000_100, "1"]]}])
+        )
+    )
+    src = PromQLSource("s", BASE, flavor="prometheus")
+    res = await src.fetch_values("x / y", RNG, 60_000)
+    assert [c.request.url.params["query"] for c in route.calls] == ["x / y"]
+    assert res.buckets.num_rows == 1
 
 
 @respx.mock
@@ -534,3 +558,40 @@ async def test_mixed_le_layouts_in_a_group_are_refused_with_a_hint():
     with pytest.raises(SourceError, match="different bucket layouts") as e:
         await PromQLSource("s", BASE).fetch_histogram("x_bucket", [], RNG, 60_000)
     assert "group by" in (e.value.hint or "")
+
+
+@respx.mock
+async def test_expression_fetch_counts_observed_samples_and_drops_filled_buckets():
+    # values from the subquery at 100/160 (160 lookback-filled); samples observed at 40/100;
+    # series b has samples but no value anywhere (rate needs two samples)
+    def responder(request):
+        q = request.url.params["query"]
+        if q.startswith("count_over_time(x["):
+            return httpx.Response(
+                200,
+                json=matrix(
+                    [
+                        {
+                            "metric": {"i": "a"},
+                            "values": [[1_700_000_040, "4"], [1_700_000_100, "3"]],
+                        },
+                        {"metric": {"i": "b"}, "values": [[1_700_000_100, "1"]]},
+                    ]
+                ),
+            )
+        assert q.startswith(("avg_over_time((rate(x", "min_over_time((", "max_over_time(("))
+        return httpx.Response(
+            200,
+            json=matrix(
+                [{"metric": {"i": "a"}, "values": [[1_700_000_100, "1"], [1_700_000_160, "1"]]}]
+            ),
+        )
+
+    respx.get(**ROUTE).mock(side_effect=responder)
+    src = PromQLSource("p", BASE, flavor="prometheus")
+    res = await src.fetch("rate(x[5m])", RNG, 60_000)
+    assert [(r["ts_ms"], r["count"]) for r in res.buckets.to_pylist()] == [(1_700_000_100_000, 3)]
+    assert res.series.to_pylist() == [
+        {"series_id": series_id("p", {"i": "a"}), "labels": '{"i":"a"}'}
+    ]
+    assert res.partial == 0

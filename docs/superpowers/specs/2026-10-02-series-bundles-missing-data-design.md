@@ -191,12 +191,33 @@ Adapter rules:
 3. Profile summary shown on the source card and in the provenance footer.
 4. Each profile property is pinned by recorded-fixture tests (`1h9.6`, `1h9.10`).
 
-Known current gaps (evidence: `docs/data-source-quirks.md`, bead `1h9.10`): the adapter's expression
-path (`count_over_time((expr)[step:res])`) fills gaps like instant evaluation (`1h9.11`); VictoriaMetrics
+Known current gaps (evidence: `docs/data-source-quirks.md`, bead `1h9.10`): VictoriaMetrics
 `increase`/`rate` carry a gap's whole increase into the first bucket after it (`1h9.13`); warnings /
-`isPartial` are ignored (`1h9.12`). Profiles are in `sources/semantics.py`. Also: `fetch_values` (quantile path) uses expression evaluation. Quantiles via
-`histogram_quantile(increase(...[step]))` are range-based and safe; plain-gauge value queries are
-not, and must move to the `*_over_time` path or be flagged.
+`isPartial` are ignored (`1h9.12`). Profiles are in `sources/semantics.py`.
+
+**Expression path observed counts (decision, `1h9.11`).** A non-selector expression's values come
+from a subquery `(expr)[step:res]`; its `count_over_time` counts instant evaluations, which lookback
+fills (`subquery_fills_gaps`, verified on Prometheus and VictoriaMetrics), so it is never used as
+`observed`. Hybrid, in `sources/observed.py`:
+
+- *Exact where derivable*: one vector selector, label-preserving functions (`rate`, `increase`,
+  `*_over_time`, `abs`, `clamp`, `histogram_count`, ...) with literal other arguments, arithmetic
+  with literals, aggregations sum/avg/min/max/count/group/stddev/stdvar (by/without), and
+  `histogram_quantile(q, ...)` as an aggregation `without (le, vmrange)`. `count` comes from
+  `count_over_time(sel[step])` lifted through the same aggregations with `sum`, so its series are
+  the expression's own. For an aggregate, `observed` = samples of all members (member coverage
+  stays unknown, as today). A value in a bucket with no observed sample is filled and dropped
+  (bucket `empty`); samples without a value (e.g. `rate` with one sample) are dropped too, never
+  counted `partial`. Cost: same number of queries for `fetch` (the count query is replaced by a
+  cheaper selector count); `fetch_values` (quantile path) adds one count query and keeps only
+  values of buckets that observed samples (masks lookback fill on summary/gauge series, VM
+  previous-sample values, windows longer than the step).
+- *Cannot tell otherwise* (two selectors, filters/comparisons, set operators, vector matching,
+  `offset`/`@`, topk, label_replace, nested subqueries, unknown functions): the adapter keeps the
+  subquery count (it still weights the bucket mean), and `counts_are_observed(expr)` is False:
+  consumers must mark those buckets `unknown` + `source_filled` (reason `subquery_fills_gaps`),
+  never `ok`. Not derived from the profile: an evaluation count is never a sample count, even
+  on a backend that did not fill.
 
 ## 7. Rendering
 
