@@ -37,5 +37,19 @@ origins): "code: q.py:2 says type is 'gauge', but source metadata says 'counter'
 disagreement is a correction, not a contradiction. The UI renders claim evidence as a link to the catalog.
 
 ## Not done
-YAML collector renames/unit conversions and other languages (follow-up); importing a repo in one step;
+other languages (Java micrometer, Ruby) and statsd_exporter mappings (follow-ups); importing a repo in one step;
 file watching; label names and bucket bounds have no catalog field yet (they are in the extractor output).
+
+## Pipeline rules (2as.27)
+`catalog/context_yaml.py` reads (with `yaml.safe_load`; nothing is executed) OpenTelemetry Collector
+configs and Prometheus relabel configs: `metricstransform` renames (strict or regexp) and
+`experimental_scale_value`, `transform` OTTL `set(name|unit, "x") where name == "y"`, the `prometheus`
+and `prometheusremotewrite` exporters' `namespace` and `add_metric_suffixes`, and
+`metric_relabel_configs`/`write_relabel_configs` `replace` on `__name__`. Citations are
+`file#key.path` (YAML keeps no line numbers). For each code definition `catalog_context` also tries what
+the pipeline would leave: collector rules on the OTLP name, then one candidate per exporter (an exporter's
+namespace and suffix setting travel together; which exporter carries a metric is unknown), then relabel
+renames on the exposed names. A match through rules has confidence 0.05 lower, says "through <rules>" in
+its citation and is counted in `matched_through_pipeline`. A value scale changes the unit only when the
+series name agrees with the new unit (suffixes follow the instrument's unit metadata, not the scale); a
+stated unit (OTTL `set(unit, ...)`) is taken as the config's word. Unread rules are listed as skipped.

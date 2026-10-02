@@ -15,6 +15,8 @@ from telemetry_nerd.catalog.browse import Browse
 from telemetry_nerd.catalog.browse import browse as browse_catalog
 from telemetry_nerd.catalog.context import GRAFANA_UNITS, MAX_BYTES, MAX_FILES, SOURCE_CONFIDENCE
 from telemetry_nerd.catalog.context import extract as extract_context
+from telemetry_nerd.catalog.context_yaml import confidence_of
+from telemetry_nerd.catalog.context_yaml import variants as name_variants
 from telemetry_nerd.catalog.families import detect as detect_families
 from telemetry_nerd.catalog.models import (
     ORIGIN_RANK,
@@ -989,27 +991,35 @@ class WorkspaceService:
 
         unmatched: list[dict] = []
         matched_metrics: set[str] = set()
-        for d in found.definitions:
-            hits = [n for n in d.names if self.catalog.has_metric(source, n)]
-            if d.kind in ("histogram", "summary") and self.catalog.has_metric(source, d.base):
-                hits.append(d.base)  # a native histogram is exposed under its base name
-            if not hits:
-                unmatched.append({"name": d.base, "where": f"{d.path}:{d.line}"})
-                continue
-            for n in hits:
-                matched_metrics.add(n)
-                if d.help and d.help.strip():
-                    propose(n, "description", d.help.strip(), d.confidence, d.citation)
-                if d.unit:
-                    propose(n, "unit", d.unit, d.confidence, d.citation)
-                exact = n == d.base or n in d.names and d.kind in ("counter", "gauge")
-                if (
-                    d.kind in ("counter", "gauge")
-                    and exact
-                    or d.kind in ("histogram", "summary")
-                    and n == d.base
-                ):
-                    propose(n, "type", d.kind, d.confidence, d.citation)
+        via_pipeline = 0
+        for orig in found.definitions:
+            # the definition as registered, then as the collector / relabel rules would leave it
+            tried = [(orig, orig.confidence), *[
+                (v, confidence_of(v, True)) for v in name_variants(orig, found.transforms)
+            ]]  # fmt: skip
+            any_hit = False
+            for d, confidence in tried:
+                hits = [n for n in d.names if self.catalog.has_metric(source, n)]
+                if d.kind in ("histogram", "summary") and self.catalog.has_metric(source, d.base):
+                    hits.append(d.base)  # a native histogram is exposed under its base name
+                any_hit = any_hit or bool(hits)
+                via_pipeline += bool(hits) and d is not orig
+                for n in hits:
+                    matched_metrics.add(n)
+                    if d.help and d.help.strip():
+                        propose(n, "description", d.help.strip(), confidence, d.citation)
+                    if d.unit:
+                        propose(n, "unit", d.unit, confidence, d.citation)
+                    exact = n == d.base or n in d.names and d.kind in ("counter", "gauge")
+                    if (
+                        d.kind in ("counter", "gauge")
+                        and exact
+                        or d.kind in ("histogram", "summary")
+                        and n == d.base
+                    ):
+                        propose(n, "type", d.kind, confidence, d.citation)
+            if not any_hit:
+                unmatched.append({"name": orig.base, "where": f"{orig.path}:{orig.line}"})
         for p in found.panels:
             self._panel_context(source, p, propose, matched_metrics)
 
@@ -1064,6 +1074,8 @@ class WorkspaceService:
             "dry_run": dry_run,
             "files": len(files),
             "definitions": len(found.definitions),
+            "pipeline_rules": len(found.transforms),
+            "matched_through_pipeline": via_pipeline,
             "panels": len(found.panels),
             "metrics_matched": len(matched_metrics),
             "claims": len(rows),

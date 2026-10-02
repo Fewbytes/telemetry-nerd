@@ -35,6 +35,9 @@ class Definition:
     line: int
     source_kind: Literal["code", "dashboard", "docs"]
     how: str  # e.g. "python prometheus_client Counter"
+    #: (OTLP name, UCUM unit) for an OpenTelemetry instrument, so a collector's renames and
+    #: exporter settings can be replayed over it (bead 2as.27)
+    otel: tuple[str, str | None] | None = None
 
     @property
     def confidence(self) -> float:
@@ -65,6 +68,9 @@ class PanelInfo:
 
 @dataclass
 class Extraction:
+    #: collector / relabel rules that change what a metric is called or measures between the code
+    #: and the source (bead 2as.27); see context_yaml
+    transforms: list = field(default_factory=list)
     definitions: list[Definition] = field(default_factory=list)
     panels: list[PanelInfo] = field(default_factory=list)
     skipped: list[Skipped] = field(default_factory=list)
@@ -247,6 +253,7 @@ def _python_otel(path, call: ast.Call, fname: str, consts, out: Extraction) -> N
         Definition(
             kind, base, names, _str(_arg(call, 2, "description"), consts),  # type: ignore[arg-type]
             normalize_unit(unit), (), None, path, call.lineno, "code", f"python opentelemetry {fname}",
+            (name, unit),
         )
     )  # fmt: skip
 
@@ -358,7 +365,7 @@ def extract_go(path: str, text: str, out: Extraction) -> None:
         base, names = otel_name(first.group(1), unit, kind)
         out.definitions.append(
             Definition(kind, base, names, desc, normalize_unit(unit), (), None, path, line, "code",
-                       f"go opentelemetry {m.group(1)}")
+                       f"go opentelemetry {m.group(1)}", (first.group(1), unit))
         )  # fmt: skip
 
 
@@ -389,7 +396,7 @@ def extract_js(path: str, text: str, out: Extraction) -> None:
         base, names = otel_name(first.group(2), unit, kind)
         out.definitions.append(
             Definition(kind, base, names, desc, normalize_unit(unit), (), None, path, line, "code",
-                       f"javascript opentelemetry create{m.group(1)}")
+                       f"javascript opentelemetry create{m.group(1)}", (first.group(2), unit))
         )  # fmt: skip
 
 
@@ -491,6 +498,10 @@ def extract(files: list[dict]) -> Extraction:
                 out.skipped.append(Skipped(path, 0, "JSON that is not a Grafana dashboard"))
         elif ext in ("md", "markdown"):
             extract_markdown(path, text, out)
+        elif ext in ("yaml", "yml"):
+            from telemetry_nerd.catalog.context_yaml import extract_yaml
+
+            extract_yaml(path, text, out)
         else:
             out.skipped.append(
                 Skipped(path, 0, f"no extractor for .{ext or 'files without an extension'}")

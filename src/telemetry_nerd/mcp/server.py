@@ -556,7 +556,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         <= 1 MB each; the daemon reads nothing itself). Extracted deterministically: Python
         prometheus_client and OpenTelemetry registrations, Go prometheus/OpenTelemetry, JS/TS
         OpenTelemetry, Grafana dashboard JSON (panel unit and description for single-metric panels),
-        markdown metric tables. Names built at runtime are skipped and reported, never guessed.
+        markdown metric tables, and the pipeline between code and source: OpenTelemetry Collector
+        configs (metricstransform renames/scales, simple transform/OTTL renames and units,
+        prometheus exporter namespace and add_metric_suffixes) and Prometheus relabel renames of
+        __name__. A code definition then finds its renamed series (lower confidence, the rules cited).
+        Names built at runtime are skipped and reported, never guessed.
         Writes origin=context claims (description, type, unit) with a file:line citation for metrics
         this source has; they rank below measured behaviour, Claude and the user. If one disagrees
         with what the source declares, a pack or a scan, a finding is filed. Returns matched

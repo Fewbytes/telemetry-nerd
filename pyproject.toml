@@ -13,6 +13,7 @@ dependencies = [
     "polars>=1.44.2",
     "pyarrow>=25.0.1",
     "pydantic>=2.13.5",
+    "pyyaml>=6.0.3",
     "starlette>=1.7.0",
     "uvicorn>=0.54.0",
     "websockets>=17.1",

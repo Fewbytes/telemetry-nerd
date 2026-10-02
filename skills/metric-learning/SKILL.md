@@ -58,6 +58,15 @@ the type and the unit are what the author declared. `catalog_context` does the e
    source declares, a pack, or a scan. Look at each: either the code is stale, the deployment is
    old, or the source is wrong.
 
+Send the pipeline's config too when the series is not called what the code calls it: OpenTelemetry
+Collector YAML (`metricstransform` renames and scale, `transform` renames and units, the `prometheus`
+exporter's `namespace` and `add_metric_suffixes`) and Prometheus `metric_relabel_configs` renames. The
+extractor replays those rules over the code's definitions, so `http.server.duration` still finds
+`acme_http_server_request_duration_seconds`; the claim then cites both the code line and the rule
+(`through collector ... file#key`) at slightly lower confidence. `matched_through_pipeline` counts
+them. A scale that the series name contradicts (values in seconds, name still `_milliseconds`) gets
+no unit claim: that mismatch is worth telling the user about. Rules it does not read are in `skipped`.
+
 Claims from code carry `file:line`; cite it. They rank below measured behaviour, so a metric that
 behaves unlike its code is a finding to investigate, not something to overwrite. A dashboard unit
 is weaker evidence than a registration (people pick the nearest unit), and a docs table weaker still.
