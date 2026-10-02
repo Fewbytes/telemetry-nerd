@@ -236,9 +236,10 @@
   // Heatmap facets render independently: report once per fetched dataset, when every facet drew.
   const facetStats = new Map<number, { ms: number; cells: number }>();
   let reportedFor: PanelData | null = null;
-  const onFacetRendered = (i: number, total: number, ms: number, cells: number, facetH: number) => {
+  // `again`: single-plot panels with view switches (fleet) report every redraw, not once per dataset
+  const onFacetRendered = (i: number, total: number, ms: number, cells: number, facetH: number, again = false) => {
     facetStats.set(i, { ms, cells });
-    if (!data || reportedFor === data || facetStats.size < total) return;
+    if (!data || (reportedFor === data && !again) || facetStats.size < total) return;
     reportedFor = data;
     const all = [...facetStats.values()];
     const cellSum = all.reduce((a, f) => a + f.cells, 0);
@@ -580,7 +581,7 @@
       {/each}
     {/if}
     {#if data && data.kind === "fleet"}
-      <FleetPlot data={data} width={fetchWidth} onRendered={(ms, pts) => onFacetRendered(0, 1, ms, pts, 260)} />
+      <FleetPlot data={data} width={fetchWidth} onRendered={(ms, pts, h) => onFacetRendered(0, 1, ms, pts, h ?? 260, true)} />
     {/if}
     {#if data && data.kind === "spectrogram"}
       {@const sg = data}

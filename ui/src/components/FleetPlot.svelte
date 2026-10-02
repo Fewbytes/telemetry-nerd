@@ -1,30 +1,35 @@
 <script lang="ts">
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
-  import { OUTLIER_COLORS, coverageGaps, fleetLegend, outlierText, toFleetUplot } from "../chart/fleet";
+  import { OUTLIER_COLORS, bandFills, coverageGaps, fleetLegend, outlierText, toFleetUplot } from "../chart/fleet";
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { FleetPanelData } from "../lib/api";
+  import FleetHeat from "./FleetHeat.svelte";
+  import FleetSmallMultiples from "./FleetSmallMultiples.svelte";
 
   let { data, width, height = 260, onRendered }: {
     data: FleetPanelData; width: number; height?: number;
-    onRendered: (ms: number, points: number) => void;
+    onRendered: (ms: number, points: number, heightPx?: number) => void;
   } = $props();
+
+  // band + lines (default), member x time heatmap, or small multiples of the top outliers
+  type View = "band" | "heat" | "multiples";
+  let view = $state<View>("band");
+  const views: [View, string][] = [["band", "band + outliers"], ["heat", "member × time"], ["multiples", "small multiples"]];
 
   let el = $state<HTMLDivElement | null>(null);
   const fmtTime = (ms: number) => new Date(ms).toISOString().slice(11, 16) + "Z";
 
   $effect(() => {
     const host = el;
-    if (!host) return;
+    if (!host || view !== "band") return;
     const t0 = performance.now();
     const mode = theme.effective;
     const { stroke, grid } = plotColors(host, mode);
     const m = toFleetUplot(data);
     const gaps = coverageGaps(data);
     const dark = mode === "dark";
-    const fills = dark
-      ? ["rgba(150,150,150,0.14)", "rgba(150,150,150,0.20)", "rgba(150,150,150,0.30)"]
-      : ["rgba(110,110,110,0.10)", "rgba(110,110,110,0.16)", "rgba(110,110,110,0.26)"];
+    const fills = bandFills(dark);
     const edge: uPlot.Series = { stroke: "transparent", width: 0, points: { show: false } };
     const labelOf: Record<string, string> = { lo: "min", hi: "max", q10: "10%", q90: "90%", q25: "25%", q75: "75%" };
     let k = 0;
@@ -76,13 +81,26 @@
       },
       m.data, host,
     );
-    onRendered(performance.now() - t0, (m.data[0] as number[]).length * (m.data.length - 1));
+    onRendered(performance.now() - t0, (m.data[0] as number[]).length * (m.data.length - 1), height);
     return () => u.destroy();
   });
 </script>
 
-<div class="fleet" data-fleet-members={data.members} data-fleet-outliers={data.outlier_count}>
-  <div bind:this={el}></div>
+<div class="fleet" data-fleet-members={data.members} data-fleet-outliers={data.outlier_count} data-fleet-view={view}>
+  <div class="legend views" role="group" aria-label="Fleet view">
+    view:
+    {#each views as [v, label] (v)}
+      {#if v === "band" || (v === "heat" && data.heat) || (v === "multiples" && data.outliers.length)}
+        <button type="button" class:on={view === v} aria-pressed={view === v} data-fleet-view-btn={v} onclick={() => (view = v)}>{label}</button>
+      {/if}
+    {/each}
+  </div>
+  {#if view === "band"}<div bind:this={el}></div>{/if}
+  {#if view === "heat"}
+    <FleetHeat {data} {width} {onRendered} />
+  {:else if view === "multiples"}
+    <FleetSmallMultiples {data} {width} {onRendered} />
+  {:else}
   <div class="legend">{fleetLegend(data)}</div>
   {#if data.outliers.length}
     <ul class="outliers">
@@ -91,10 +109,13 @@
       {/each}
     </ul>
   {/if}
+  {/if}
 </div>
 
 <style>
   .legend { font-size: 0.8em; margin: 2px 0; }
+  .views button { font-size: inherit; margin-right: 4px; }
+  .views button.on { font-weight: 600; text-decoration: underline; }
   .outliers { font-size: 0.8em; margin: 2px 0 6px 0; padding: 0; list-style: none; }
   .swatch { display: inline-block; width: 10px; height: 3px; margin-right: 6px; vertical-align: middle; }
 </style>

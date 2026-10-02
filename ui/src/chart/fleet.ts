@@ -10,9 +10,12 @@ export interface FleetBand {
   median: (number | null)[]; q25: (number | null)[]; q75: (number | null)[];
   q10: (number | null)[]; q90: (number | null)[]; lo: (number | null)[]; hi: (number | null)[];
 }
+export interface FleetHeatRow { id: string; z: (number | null)[]; rank: number | null; first: number; last: number }
+/** Member x time matrix of z (bead lkn.11): rows already sorted; None = no report. */
+export interface FleetHeat { z_cap: number; rows_total: number; rows: FleetHeatRow[] }
 export interface FleetData {
   ts: number[]; members: number; normalise: "none" | "member"; scale: "log" | "linear";
-  band: FleetBand; n: number[]; alive: number[]; outliers: FleetOutlier[]; outlier_count: number;
+  band: FleetBand; n: number[]; alive: number[]; outliers: FleetOutlier[]; outlier_count: number; heat?: FleetHeat;
 }
 
 /** Okabe-Ito, colour-blind safe; the band is grey, so outliers keep the colours. */
@@ -56,3 +59,9 @@ export function fleetLegend(d: FleetData): string {
 export function coverageGaps(d: FleetData): { x: number; share: number }[] {
   return d.ts.flatMap((t, i) => (d.alive[i] > 0 && d.n[i] < d.alive[i] ? [{ x: t / 1000, share: 1 - d.n[i] / d.alive[i] }] : []));
 }
+
+/** Nested band fills, grey so the outliers keep the colours. */
+export const bandFills = (dark: boolean): string[] =>
+  dark
+    ? ["rgba(150,150,150,0.14)", "rgba(150,150,150,0.20)", "rgba(150,150,150,0.30)"]
+    : ["rgba(110,110,110,0.10)", "rgba(110,110,110,0.16)", "rgba(110,110,110,0.26)"];

@@ -55,6 +55,7 @@ from telemetry_nerd.charts.ycontext import (
     selector_parts,
 )
 from telemetry_nerd.charts.yview import value_stats
+from telemetry_nerd.core import fleet_payloads
 from telemetry_nerd.core.card_payload import (
     MAX_METRICS,
     gap_pct,
@@ -1213,7 +1214,9 @@ class TelemetryService:
                 **out,
             }
         if layer0["mark"] == "fleet":
-            out = self.fleets.panel(dataset_id, layer0.get("fleet") or {})
+            cfg = layer0.get("fleet") or {}
+            out = self.fleets.panel(dataset_id, cfg)
+            out["heat"] = fleet_payloads.heat(self.fleets, dataset_id, cfg)
             return {
                 "panel": panel.to_dict(),
                 "dataset": self.datasets.meta(dataset_id).to_dict(),
