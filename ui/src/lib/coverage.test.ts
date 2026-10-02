@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { windowBadge } from "./coverage";
 
-const w = (columns: number, expected: number, unknown = false) =>
-  ({ label: "now", start_ms: 0, end_ms: 600_000, n: 10, columns, expected_columns: expected, unknown }) as never;
+const w = (columns: number, expected: number, unknown = false, unknown_columns?: number) =>
+  ({ label: "now", start_ms: 0, end_ms: 600_000, n: 10, columns, expected_columns: expected, unknown, unknown_columns }) as never;
 
 describe("windowBadge", () => {
   it("is silent when the window is complete", () => expect(windowBadge(w(10, 10), 60_000)).toBeNull());
@@ -16,4 +16,13 @@ describe("windowBadge", () => {
     expect(windowBadge(w(0, 0), 60_000)).toBeNull();
   });
   it("flags unknown data", () => expect(windowBadge(w(10, 10, true), 60_000)?.text).toContain("unknown"));
+  it("unknown columns are not counted as missing", () => {
+    const b = windowBadge(w(8, 10, true, 2), 60_000);
+    expect(b?.text).toBe("now: covers 80% · part unknown");
+    expect(b?.title).toContain("0 of 10 steps");
+    expect(windowBadge(w(7, 10, true, 2), 60_000)?.text).toBe("now: covers 70% · 1m missing · part unknown");
+  });
+  it("without unknown_columns (older payload) all absent columns read as missing", () => {
+    expect(windowBadge(w(8, 10, true), 60_000)?.text).toBe("now: covers 80% · 2m missing · part unknown");
+  });
 });
