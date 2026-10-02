@@ -37,6 +37,9 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   `significant` peaks with their interval, cite `evidence`; say which periods cannot be seen
   (shorter than `limits.shortest` = 2 x step, longer than range/2). red_noise: long periods look
   more significant than they are.
+- "Is this metric stable / drifting / shifted / periodic / in control?": `analyze(dataset)`, then
+  `show(dataset, question, mark="spc")`. State the verdict with its reasons and numbers, the
+  baseline window the control limits came from, n_eff, and caveats; cite `evidence`.
 - Filters: `filter(dataset, kind, period, reason)` only when the question needs it: lowpass for
   trend/sustained shift, highpass to remove baseline/diurnal before looking for spikes/steps,
   bandpass around a spectrum peak. Never filter percentiles or raw counters. `show` the result;
@@ -153,6 +156,31 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         that appear or disappear over time."""
         try:
             return _dump(service.spectrum(dataset, top, min_period, max_period))
+        except (NotFound, ValueError) as e:
+            raise ToolError(str(e)) from e
+
+    @mcp.tool()
+    def analyze(
+        dataset: str, baseline_start: str | None = None, baseline_end: str | None = None
+    ) -> str:
+        """Diagnose a time series in one call: is it stable, drifting, level-shifted, periodic,
+        noisy, or is there too little data to say?
+
+        Runs: periods (Lomb-Scargle, confirmed against AR(1) red noise, not just white noise);
+        trend (99% interval, autocorrelation-adjusted); level shifts (CUSUM changepoints with
+        p and a 99% interval on the size); KPSS stationarity; variance change; shape (skew,
+        tails, zeros, bimodality); and a control chart (SPC). Control limits come ONLY from the
+        baseline window (default: first half of the range; or baseline_start/baseline_end, e.g.
+        a calm day before an incident), never from the data being judged; with autocorrelation
+        the run rules/EWMA/CUSUM use AR(1) residuals. Intervals use the effective sample size
+        n_eff, not n. Gaps are never interpolated.
+        Returns per series: verdict, also, reasons (with numbers), and the sections; headline
+        numbers carry an `evidence` statistic for finding_create. Caveats: coarsened, gaps,
+        red_noise, short_baseline, near_random_walk, seasonal_not_in_baseline.
+        Refused with a hint on percentile series, distributions and raw counters (use a rate).
+        Draw it with show(dataset, question, mark="spc", windows=[{start, end}] = the baseline)."""
+        try:
+            return _dump(service.analyze(dataset, baseline_start, baseline_end))
         except (NotFound, ValueError) as e:
             raise ToolError(str(e)) from e
 
@@ -544,6 +572,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         0.95, 0.99, 0.999, drawn only where n >= 10/(1-q); never interpolated), histogram,
         ecdf, quantile_curve (inverse ECDF as bucket boxes), ccdf (P(X > x), log-log, exact at
         bucket edges). The last four need windows.
+        spc (time series): control chart from analyze: series, centre line, 3-sigma band,
+        violations, shaded baseline; windows=[{start, end}] is the baseline (default first half).
         spectrum / spectrogram (time series): periodicity panels; spectrogram needs `segment`
         (e.g. "30m", state it in your answer) and takes `overlap` (default 0.5). view: for a panel
         drawn from filter(): the default view (overlay | filtered | removed | raw).

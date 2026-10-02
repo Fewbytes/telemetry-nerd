@@ -73,7 +73,7 @@ class SignalOps:
             raise ValueError(problem)
         return meta
 
-    def _prepare(self, dataset_id: str, op: str, cap: int) -> Prepared:
+    def _prepare(self, dataset_id: str, op: str, cap: int, allow_empty: bool = False) -> Prepared:
         meta = self.check(dataset_id, op)
         meta, result = self._datasets.get(dataset_id)
         table, step = result.buckets, meta.step_ms
@@ -109,7 +109,7 @@ class SignalOps:
             caveats.append("gaps")
         if skipped:
             caveats.append("skipped_series")
-        if not series:
+        if not series and not allow_empty:
             raise ValueError(
                 f"{op}: no series qualifies ({', '.join(sorted({s['reason'] for s in skipped})) or 'no data'}); "
                 f"needs >= {MIN_POINTS} points, <= {int(MAX_GAP_FRACTION * 100)}% gaps, not constant"

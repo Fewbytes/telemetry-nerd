@@ -74,6 +74,7 @@ from telemetry_nerd.core.panel_payloads import (
 )
 from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.profiles import ProfileService
+from telemetry_nerd.core.series_diagnostics import SeriesDiagnostics, resolve_baseline
 from telemetry_nerd.core.signal_ops import SignalOps
 from telemetry_nerd.core.summary import summarize, summarize_distribution
 from telemetry_nerd.core.workspace_service import WorkspaceService
@@ -163,6 +164,7 @@ class TelemetryService:
     clock: Callable[[], int] = now_ms
     presence: PresenceRegistry = field(default_factory=PresenceRegistry)
     signal: SignalOps = field(init=False)
+    diagnostics: SeriesDiagnostics = field(init=False)
     profiles: ProfileService = field(init=False)
     _scrape_cache: dict = field(default_factory=dict, init=False, repr=False)
     #: compute a T1 operating profile in the background when a time-series panel is shown
@@ -170,6 +172,7 @@ class TelemetryService:
 
     def __post_init__(self) -> None:
         self.signal = SignalOps(self.datasets, self.ws.catalog_facts)
+        self.diagnostics = SeriesDiagnostics(self.signal)
         self.profiles = ProfileService(
             self.sources, self.cache, ProfileStore(self.workspace.connection), self.ws, self.clock
         )
@@ -657,6 +660,20 @@ class TelemetryService:
             parse_duration(max_period) if max_period else None,
         )
 
+    def analyze(
+        self,
+        dataset_id: str,
+        baseline_start: str | None = None,
+        baseline_end: str | None = None,
+    ) -> dict:
+        """Periodicity, stability, SPC against a stated baseline, shape -> verdict (lkn.1)."""
+        now = self.clock()
+        return self.diagnostics.summary(
+            dataset_id,
+            parse_time(baseline_start, now) if baseline_start else None,
+            parse_time(baseline_end, now) if baseline_end else None,
+        )
+
     def filter(
         self,
         dataset_id: str,
@@ -798,6 +815,15 @@ class TelemetryService:
                     )
                 layer.segment_ms, layer.overlap = seg, 0.5 if overlap is None else overlap
             spec.layers = [layer]
+        elif mark == "spc":
+            self.signal.check(dataset_id, "analyze")
+            if len(windows or []) > 1:
+                raise ValueError("spc takes at most one window: the baseline")
+            w = (windows or [None])[0]
+            if w is not None:
+                resolve_baseline(meta, w.start_ms, w.end_ms)  # validates; the label is fixed
+                w = Window(start_ms=w.start_ms, end_ms=w.end_ms, label="baseline")
+            spec.layers = [Layer(mark="spc", data=dataset_id, windows=[w] if w else [])]
         elif meta.derived and mark == "auto":
             d = meta.derived
             views = offered_views(d["op"])
@@ -890,6 +916,16 @@ class TelemetryService:
         if layer0["mark"] == "spectrum":
             out = self.signal.spectrum_panel(
                 dataset_id, layer0.get("min_period_ms"), layer0.get("max_period_ms"), width_px
+            )
+            return {
+                "panel": panel.to_dict(),
+                "dataset": self.datasets.meta(dataset_id).to_dict(),
+                **out,
+            }
+        if layer0["mark"] == "spc":
+            w = (layer0.get("windows") or [None])[0]
+            out = self.diagnostics.panel(
+                dataset_id, w["start_ms"] if w else None, w["end_ms"] if w else None
             )
             return {
                 "panel": panel.to_dict(),

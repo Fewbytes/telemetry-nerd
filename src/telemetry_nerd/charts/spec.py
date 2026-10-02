@@ -24,6 +24,7 @@ Mark = Literal[
     "ccdf",
     "spectrum",
     "spectrogram",
+    "spc",
 ]
 SPECTRAL_MARKS = {"spectrum", "spectrogram"}
 WINDOW_MARKS = {"histogram", "ecdf", "quantile_curve", "ccdf"}
@@ -186,7 +187,7 @@ def validate(
                 )
         elif (
             layer.role == "main"
-            and layer.mark in ("line+envelope", "spectrum")
+            and layer.mark in ("line+envelope", "spectrum", "spc")
             and layer.data not in datasets
         ):
             datasets.append(layer.data)

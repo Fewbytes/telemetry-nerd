@@ -1,0 +1,306 @@
+"""analyze: one-call series diagnostics for Claude and the SPC panel (bead lkn.1).
+
+Preconditions, coarsening and gap rules come from SignalOps._prepare (as for spectrum). The
+baseline window is stated, defaults to the first half of the range, and is the ONLY data the
+control limits see. Every headline number carries an interval and an `evidence` statistic.
+"""
+
+from __future__ import annotations
+
+import math
+from collections import OrderedDict
+
+import numpy as np
+
+from telemetry_nerd.analysis.diagnostics import Diagnosis, diagnose
+from telemetry_nerd.analysis.spc import CUSUM_H, CUSUM_K, EWMA_L, EWMA_LAMBDA
+from telemetry_nerd.analysis.spectrum import spectrum
+from telemetry_nerd.core.signal_ops import SPECTRUM_CAP, Prepared, SignalOps, human_period
+from telemetry_nerd.datasets.store import DatasetMeta
+from telemetry_nerd.model.time import format_duration, iso
+
+MEMO = 16
+MAX_VIOLATIONS_LISTED = 5
+
+
+def _r(x: float | None, digits: int = 4) -> float | None:
+    if x is None or not math.isfinite(x):
+        return None
+    return float(f"{x:.{digits}g}")
+
+
+def _iv(pair) -> list[float | None]:
+    return [_r(pair[0]), _r(pair[1])]
+
+
+def default_baseline(meta: DatasetMeta) -> tuple[int, int]:
+    """First half of the dataset range, on whole steps: [start, end)."""
+    steps = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
+    return meta.start_ms, meta.start_ms + (steps // 2) * meta.step_ms
+
+
+def resolve_baseline(
+    meta: DatasetMeta, start_ms: int | None, end_ms: int | None
+) -> tuple[int, int, str]:
+    if start_ms is None and end_ms is None:
+        s, e = default_baseline(meta)
+        return s, e, "first half of the range (default)"
+    s = meta.start_ms if start_ms is None else start_ms
+    e = meta.end_ms + meta.step_ms if end_ms is None else end_ms
+    if not meta.start_ms - meta.step_ms <= s < e <= meta.end_ms + meta.step_ms:
+        raise ValueError(
+            f"baseline {iso(s)}..{iso(e)} must lie inside the dataset range "
+            f"{iso(meta.start_ms)}..{iso(meta.end_ms)} (hint: pick a calm stretch before the "
+            "period you want to judge)"
+        )
+    return s, e, "stated"
+
+
+class SeriesDiagnostics:
+    def __init__(self, signal: SignalOps) -> None:
+        self._signal = signal
+        self._memo: OrderedDict[tuple, tuple[Prepared, tuple[int, int, str], dict]] = OrderedDict()
+
+    def run(
+        self, dataset_id: str, start_ms: int | None = None, end_ms: int | None = None
+    ) -> tuple[Prepared, tuple[int, int, str], dict[str, Diagnosis]]:
+        key = (dataset_id, start_ms, end_ms)
+        if key in self._memo:
+            self._memo.move_to_end(key)
+            return self._memo[key]
+        meta = self._signal.check(dataset_id, "analyze")
+        base = resolve_baseline(meta, start_ms, end_ms)
+        prep = self._signal._prepare(dataset_id, "analyze", SPECTRUM_CAP, allow_empty=True)
+        out: dict[str, Diagnosis] = {}
+        for sid, (_, ts, y) in prep.series.items():
+            try:
+                sp = spectrum(ts, y, prep.step_ms, top=8)
+            except ValueError:
+                sp = None
+            mask = (ts >= base[0]) & (ts < base[1])
+            out[sid] = diagnose(ts, y, prep.step_ms, mask, sp, lambda v: f"{v:.3g}", iso)
+        self._memo[key] = (prep, base, out)
+        if len(self._memo) > MEMO:
+            self._memo.popitem(last=False)
+        return prep, base, out
+
+    # summary for Claude ------------------------------------------------------
+    def summary(
+        self, dataset_id: str, start_ms: int | None = None, end_ms: int | None = None
+    ) -> dict:
+        prep, base, diags = self.run(dataset_id, start_ms, end_ms)
+        eff = format_duration(prep.step_ms)
+        caveats = list(prep.caveats)
+        series = []
+        for sid, d in diags.items():
+            labels, ts, _ = prep.series[sid]
+            series.append(self._series_summary(dataset_id, eff, base, labels, ts, d))
+            caveats += [c for c in d.caveats if c not in caveats]
+        for sk in prep.skipped:
+            series.append({
+                "labels": sk["labels"], "verdict": "insufficient_data",
+                "reasons": [f"skipped: {sk['reason']}"],
+            })  # fmt: skip
+        return {
+            "dataset": dataset_id,
+            "effective_step": eff,
+            "baseline": {"start": iso(base[0]), "end": iso(base[1]), "basis": base[2]},
+            "series": series,
+            "caveats": caveats,
+            "draw": f'show("{dataset_id}", question, mark="spc"'
+            + ("" if base[2] != "stated" else ", windows=[the baseline]")
+            + ")",
+        }
+
+    @staticmethod
+    def _series_summary(dataset_id, eff, base, labels, ts, d: Diagnosis) -> dict:
+        def ev(name, value, interval, method, **params):
+            return {
+                "kind": "statistic", "dataset": dataset_id, "name": name, "value": _r(value),
+                "interval": _iv(interval), "exact": False, "method": method,
+                "params": {"step": eff, "n": d.n, "n_eff": _r(d.n_eff, 3), **params},
+            }  # fmt: skip
+
+        out: dict = {
+            "labels": labels,
+            "verdict": d.verdict,
+            "also": d.also,
+            "reasons": d.reasons,
+            "n": d.n,
+        }
+        if d.trend is None:  # too few points: nothing else was computed
+            return out
+        out |= {
+            "n_eff": _r(d.n_eff, 3),
+            "autocorrelation_time_steps": _r(d.tau, 3),
+            "structure": d.model,
+        }
+        periods = []
+        for pk, pr in zip(d.peaks, d.periods, strict=True):
+            p_s = pk.period_ms / 1000
+            interval = [_r(pk.lo_ms / 1000), _r(pk.hi_ms / 1000)]
+            periods.append({
+                "period": human_period(p_s), "period_s": _r(p_s), "interval_s": interval,
+                "power": _r(pr.power, 3), "fap_red_noise": _r(pr.fap, 2),
+                "evidence": ev(
+                    "dominant_period", p_s, interval,
+                    "Lomb-Scargle peak, half-power width; confirmed against AR(1) red noise",
+                    fap=pr.fap, phi_background=_r(pr.phi, 3),
+                ),
+            })  # fmt: skip
+        out["frequency"] = {
+            "periods": periods,
+            "white_noise_candidates_rejected": len(d.candidates) - len(d.peaks),
+        }
+        tr = d.trend
+        trend = {
+            "change_over_range": _r(tr.change), "interval": _iv(tr.change_interval),
+            "per_hour": _r(tr.slope_per_h), "significant": tr.significant,
+        }  # fmt: skip
+        if "drifting" in [d.verdict, *d.also]:
+            trend["evidence"] = ev(
+                "trend_change_over_range", tr.change, tr.change_interval,
+                "OLS slope x range, SE inflated by sqrt(tau) of residuals, 99% t interval",
+            )  # fmt: skip
+        shifts = []
+        for s in d.shifts:
+            item = {
+                "at": iso(s.ts_ms), "delta": _r(s.delta), "interval": _iv(s.interval),
+                "sigma_units": _r(abs(s.delta) / d.sigma_within, 3), "p": _r(s.p, 2),
+                "n_before": s.n_before, "n_after": s.n_after,
+            }  # fmt: skip
+            if d.model == "step":
+                item["evidence"] = ev(
+                    "level_shift", s.delta, s.interval,
+                    "CUSUM changepoint (Kolmogorov null, AR(1) long-run sigma), 99% interval",
+                    at=iso(s.ts_ms), p=s.p,
+                )  # fmt: skip
+            shifts.append(item)
+        stability = {"trend": trend, "shifts": shifts, "sigma_within": _r(d.sigma_within)}
+        if d.kpss is not None:
+            stability["kpss"] = {
+                "stat": _r(d.kpss.stat, 3),
+                "p": "> 0.1" if d.kpss.p_upper >= 0.1 else f"<= {d.kpss.p_upper:g}",
+                "lags": d.kpss.lags,
+            }
+        if d.variance is not None:
+            stability["variance_ratio_last_first_third"] = {
+                "value": _r(d.variance.ratio, 3), "interval": _iv(d.variance.interval),
+            }  # fmt: skip
+        out["stability"] = stability
+        out["spc"] = SeriesDiagnostics._spc_summary(d, base, ts, ev)
+        sh = d.shape
+        if sh is not None:
+            out["shape"] = {
+                "skew": [_r(sh.skew, 3), *_iv(sh.skew_interval)],
+                "excess_kurtosis": [_r(sh.excess_kurtosis, 3), *_iv(sh.kurtosis_interval)],
+                "zeros": sh.zeros, "zero_share_interval": _iv(sh.zero_share_interval),
+                "bimodality_coefficient": _r(sh.bimodality, 3), "flags": sh.flags,
+            }  # fmt: skip
+        if d.caveats:
+            out["caveats"] = d.caveats
+        return out
+
+    @staticmethod
+    def _spc_summary(d: Diagnosis, base, ts, ev) -> dict:
+        c = d.chart
+        if c is None or c.mode == "insufficient_data":
+            return {"mode": "insufficient_data", "reason": c.reason if c else None}
+        bwin = [iso(base[0]), iso(base[1])]
+        nb = {
+            "n": c.n_baseline,
+            "n_eff": _r(c.n_eff_baseline, 3),
+        }  # the baseline's, not the series'
+        level = float(np.nanmedian(c.centre[c.baseline]))  # level + seasonal: the centre at rest
+        detectors = {
+            name: {
+                "count": det.count, "of": det.opportunities, "expected": _r(det.expected, 3),
+                **({"p": _r(det.p, 2)} if det.p is not None else {}),
+            }
+            for name, det in c.detectors.items()
+        }  # fmt: skip
+        viol = c.violations()
+        first = [
+            {"t": iso(int(ts[i])), "rules": rules}
+            for i, rules in list(viol.items())[:MAX_VIOLATIONS_LISTED]
+        ]
+        out = {
+            "mode": c.mode,
+            "baseline": {"n": c.n_baseline, "n_eff": _r(c.n_eff_baseline, 3)},
+            "centre": {
+                "value": _r(level), "interval": _iv(c.centre_interval),
+                "seasonal_periods_s": [_r(p) for p in c.seasonal_periods_s],
+                "evidence": ev(
+                    "spc_centre_line", level, c.centre_interval,
+                    "baseline median, 99% interval from n_eff", baseline=bwin, **nb,
+                ),
+            },
+            "sigma": {
+                "value": _r(c.sigma), "interval": _iv(c.sigma_interval),
+                "evidence": ev(
+                    "spc_sigma", c.sigma, c.sigma_interval,
+                    "1.4826 MAD of baseline deviations (marginal), 99% interval from n_eff",
+                    baseline=bwin, **nb,
+                ),
+            },
+            "limits_3sigma": [_r(level - 3 * c.sigma), _r(level + 3 * c.sigma)],
+            "lag1_phi": _r(c.phi, 3),
+            "in_control": c.in_control,
+            "outside_limits": {
+                "count": c.outside.count, "of": c.outside.opportunities,
+                "expected": _r(c.outside.expected, 3),
+                "rate_interval": _iv(c.outside.rate_interval) if c.outside.rate_interval else None,
+            } if c.outside else None,
+            "detectors": detectors,
+            "settings": {
+                "ewma": f"lambda {EWMA_LAMBDA}, L {EWMA_L}", "cusum": f"k {CUSUM_K}, h {CUSUM_H}",
+                "arl0": {k: _r(v, 3) for k, v in c.arl0.items()},
+                "arl_1sigma_shift": {k: _r(v, 3) for k, v in c.arl_1sigma.items()},
+            },
+            "first_violations": first,
+        }  # fmt: skip
+        return out
+
+    # panel payload -------------------------------------------------------------
+    def panel(self, dataset_id: str, start_ms: int | None, end_ms: int | None) -> dict:
+        prep, base, diags = self.run(dataset_id, start_ms, end_ms)
+        series = []
+        caveats = list(prep.caveats)
+        for sid, d in diags.items():
+            labels, ts, y = prep.series[sid]
+            c = d.chart
+            item = {
+                "id": sid,
+                "labels": labels,
+                "ts": [int(t) for t in ts],
+                "value": [_r(v, 6) for v in y],
+                "verdict": d.verdict,
+                "also": d.also,
+                "n": d.n,
+            }
+            if c is None or c.mode == "insufficient_data":
+                item |= {"mode": "insufficient_data", "reason": c.reason if c else d.reasons[0]}
+            else:
+                centre = c.centre
+                item |= {
+                    "mode": c.mode,
+                    "centre": [_r(v, 6) for v in centre],
+                    "sigma": _r(c.sigma, 6),
+                    "n_baseline": c.n_baseline,
+                    "n_eff_baseline": _r(c.n_eff_baseline, 3),
+                    "in_control": c.in_control,
+                    "violations": [
+                        {"ts": int(ts[i]), "value": _r(float(y[i]), 6), "rules": rules}
+                        for i, rules in c.violations().items()
+                    ],
+                }
+            caveats += [x for x in d.caveats if x not in caveats]
+            series.append(item)
+        return {
+            "kind": "spc",
+            "effective_step_ms": prep.step_ms,
+            "baseline": {"start_ms": base[0], "end_ms": base[1], "basis": base[2]},
+            "series": series,
+            "skipped": prep.skipped,
+            "caveats": caveats,
+        }
