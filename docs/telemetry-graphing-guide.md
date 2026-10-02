@@ -3,17 +3,29 @@
 How Telemetry Nerd draws telemetry. Distilled from two research reports
 (`research-docs/telemetry-graphing-style-guide - claude.md`, cited here as **[C]**, and
 `research-docs/Telemetry Data UX Design Guide - gemini research.md`, cited as **[G]**),
-filtered through this project's principles (MVP spec §1.2, §6) and checked against the
-current UI code.
+two Heinrich Hartmann sources (SREcon19 "Latency SLOs Done Right" slides **[H]**, the
+Statistics-for-Engineers workshop notebooks **[SfE]**), and design decisions made while
+reviewing them (**TN**). Filtered through this project's principles (MVP spec §1.2, §6)
+and checked against the current UI code.
 
 This is not a dashboard guide. Telemetry Nerd is an **investigation workspace**: every
 panel answers one explicit question, every claim is scoped and evidence-backed, and
 *correct beats conventional* (spec §1.2.3). Rules that only make sense for NOC wallboards
 are dropped (see §9).
 
+**We are not limited to common chart types.** Panels render on canvas. When a
+conventional idiom hides the distribution, the uncertainty or the missing data, design a
+better mark. For example, a group's spread is drawn as a density cloud, not as
+upper/lower lines (§3, §5a). Use conventional forms only where they are actually the best
+encoding. [TN]
+
 Evidence tags (from [C]): **E** controlled experiment · **P** practitioner/spec, read
 first-hand · **P2** secondhand · **X** inference, treat as hypothesis · **TN** project
 decision (our own rule, justified in the spec).
+
+Related: `docs/data-source-quirks.md` (per-backend missing-data behaviour),
+`docs/superpowers/specs/2026-10-02-series-bundles-missing-data-design.md` (companion
+series, localized caveats, `bucket_state`).
 
 ---
 
@@ -34,12 +46,12 @@ cites a primary source (M4 paper, Datadog engineering blog, W3C).
 
 | [G] claim | Problem | Our position |
 |---|---|---|
-| Horizon graphs let you watch "dozens" of series; magnitude by saturation | Ignores [C] H2: >2 bands raise error and time (E); needs training | Not a default form. If ever added: ≤2 bands, opt-in. Many-series case uses group band / series heatmap (spec §6.3) |
+| Horizon graphs let you watch "dozens" of series; magnitude by saturation | Ignores [C] H2: >2 bands raise error and time (E); needs training | Not a default form. If ever added: ≤2 bands, opt-in. The many-series case is a group density cloud + outliers (§3) |
 | LTTB "preserves the sharp, transient anomalies" | LTTB is sampling; it keeps one point per bucket and can drop extremes. Only M4/min-max is exact for line rasterization | Server-side min/max-preserving aggregation (spec §6.5). Never LTTB for evidence views |
 | Percentile lines (p50/p90/p99) are the histogram visualization | Fine as an overlay, wrong as the only view; [C] P4: cut-off at p95 misleads | Heatmap first; percentile curves / CCDF for tails |
 | Truncated y-axis = high Lie Factor, so anchor at zero | Line charts may legitimately omit zero ([C] A3, Wilke); forcing zero hides real shifts | Contextual y-range (spec §6.2): `reference` default, `data` zoom always badged + context strip + "y ≠ 0" marker |
 | "Eye-tracking confirms" F/Z scan; top-left = KPI | Secondary blog source; dashboard-specific | Irrelevant: panels are a question-driven stream, not a grid |
-| UI must cap at 10,000 series | Arbitrary number from a vendor blog | Our budget is perceptual, not DOM-based: 5 lines / 12 facets / group band beyond (§3) |
+| UI must cap at 10,000 series | Arbitrary number from a vendor blog | Our budget is perceptual, not DOM-based: never draw many series; aggregate and draw the result (§3) |
 | Cleveland–McGill table puts "small multiples" at rank 2, heatmaps last | Rank list is a paraphrase; [C] notes Cleveland not read first-hand, the E evidence is Heer & Bostock replication | Position on common scale first ([C] rule 1, E). Heatmaps are for *distribution shape*, not value reading |
 | Smooth x-axis scrolling animation for live data | No evidence; [C] T5: animation worse than static for analysis (E, secondhand) | Discrete updates at ~1 Hz max, y-axis stable (§7) |
 
@@ -80,7 +92,9 @@ errors; overriding needs `override: {rule, reason}` and renders a caveat (spec �
 4. **Never average percentiles.** Not across time, not across series, not in captions. [P2, C P8; TN]
 5. **Downsampling must preserve extremes.** Mean line + min/max envelope; never
    peak-eroding averages or LTTB for evidence views. [P, C R5; M4 via G]
-6. **Gaps stay gaps.** No interpolation, no zero-fill; "no data" ≠ 0. [P2, C G1–G4; TN] (`spanGaps: false` everywhere in `toUplot.ts`.)
+6. **Missing data is shown, not just omitted.** "No info" is information. No
+   interpolation, no zero-fill; "no data" ≠ 0 ≠ "don't know". Gaps, partial buckets,
+   series lifetimes and failed fetches are drawn (§5a). [P2, C G1–G4; SfE; TN]
 7. **No dual y-axes.** Small multiples with shared x, or an indexed (ratio) chart. [TN; G]
 8. **No stacking of non-additive quantities** (gauges, ratios, percentiles). Stacked
    areas also hurt individual-series reading even when additive. [TN; E2, C §2]
@@ -89,6 +103,17 @@ errors; overriding needs `override: {rule, reason}` and renders a caveat (spec �
 10. **Colour carries meaning, never alone.** Pair with position, shape, label or order. [P, C rule 8]
 11. **Uncertainty and aggregation travel with the number** (count, n_min, CIs, step,
     representation in the provenance footer). [TN §1.2.4]
+12. **Lines are stepped by default.** Each plotted value stands for its bucket's interval;
+    connecting bucket values "adds the illusion of continuity". Connected lines only on
+    explicit request, with a caveat. [P, SfE; TN]
+13. **Caveats are drawn where they apply, and only when present.** Every caveat has a code,
+    a severity and an optional location (time spans, series, value range). A caveat with a
+    location gets a visual form on the graph (rug, texture, fade, marker, badge). The
+    provenance footer lists all of them, and hovering an entry highlights its location. A
+    clean panel carries no caveat chrome. [TN]
+14. **Only mergeable statistics are aggregated** (count, sum, min, max; mean and ratios
+    only with their counts). Percentiles, medians, MAD/IQR and pre-computed quantiles are
+    recomputed from merged histograms or raw data, never combined. [P, SfE; H]
 
 ---
 
@@ -101,6 +126,7 @@ The catalog's auto-chart (`show(signal)`) picks the form; explicit specs overrid
 | Trend of one gauge/rate | `line+envelope` (mean + min/max band) | Mean only | TN, C R5 |
 | Counter | rate with envelope; never raw cumulative value | Raw counter line | P, G (OTel) |
 | Latency/size distribution over time | `heatmap` (x time, y value, colour count) | avg/max lines alone | P, C D1–D2 |
+| "How many requests were fast enough?" (SLO-style) | fraction ≤ X over the window, merged by summing counts, with [lo, hi] bounds at bucket edges; draggable threshold readout | p99 line, averaged percentiles | P, H; SfE |
 | Tail at a window ("how bad is the worst 0.1%?") | `ccdf` / `quantile_curve`, tail axis stretched | Percentiles cut at p95 | P2, C P4–P5 |
 | Shape comparison now vs reference | `histogram` / `ecdf` with ≤4 windows | Overlaid density with hidden bin choice | P, C D12 |
 | Spans >2 decades | log axis, labelled with variable+unit (not "log(x)") | Linear axis with bulk in a corner | P, C A7; TN §6.2 |
@@ -111,13 +137,33 @@ The catalog's auto-chart (`show(signal)`) picks the form; explicit specs overrid
 | Success vs failed latency | **separate series** | One merged latency | P, C T7 |
 | Saturation | most-constrained resource + its limit line; short-window p99 as early signal | Average utilization | P, C T8 |
 
-**Series budget** (spec §6.3; consistent with [C] C4/M5/M7 — 3–5 categorical colours,
-readability collapses past ~8):
+**Never draw many series; aggregate and draw the analysis.** [TN] Readability collapses
+past ~8 series, and no tested form keeps individual series readable beyond that ([C] M5,
+M7, C4). A pile of lines is not evidence.
 
-- ≤5 series → lines in one plot (shared-space wins for **local** comparisons — E, C M1).
-- 6–12 → small multiples, **identical y-scale** (split-space wins for **dispersed** comparisons — E, C M1, M6).
-- >12 → group band (median + MAD) with only outliers drawn and labelled, or series heatmap (row per series). [P, C M5]
-- Horizon graphs: not offered. If added, ≤2 bands, opt-in, with a legend explaining layering. [E, C H2]
+- **Group of series** (pods, instances, endpoints) → a **density cloud**, a canvas mark:
+  x is time, y is value, and colour intensity is how many members sit at that value
+  (heatmap-like, perceptually uniform colormap). The mean (or median) is drawn on top, and
+  only the outliers are drawn as lines and labelled ("44 pods · 3 outliers · 2 silent").
+  Spread is intensity, never upper/lower boundary lines. Outliers use robust rules
+  (median + MAD / Tukey fences), never σ. [TN; P, SfE; P, C M5]
+- **A few named series that are the question itself** (≤5, e.g. read vs write, prod vs
+  canary) → lines in one plot. Shared space wins for *local* comparisons. [E, C M1]
+- **Comparing aggregates across a few groups** (per region, per service) → small multiples
+  of the aggregate views, **identical y-scale**. Split space wins for *dispersed*
+  comparisons. [E, C M1, M6]
+- Series heatmap (a row per member) only when member identity over time is the question.
+- Horizon graphs: not offered. If ever added: ≤2 bands, opt-in, with a legend explaining
+  layering. [E, C H2]
+
+**One analysis, several related views.** An op can return several typed series aligned on
+one time grid. The values come with companion series, for example `bucket_state`
+(coverage and trust), counts, over-threshold fractions or estimator bounds. Latency, for
+instance, comes with a secondary "fraction over threshold" series. The panel draws the
+primary mark plus each companion's related marks: rug, count strip, a linked small panel,
+a bound band. A companion is drawn only when it has something to say. Companions are
+recomputed with the values every time ops are chained, and an op that cannot carry one
+drops it *with* a caveat. [TN; spec 2026-10-02]
 
 ---
 
@@ -225,8 +271,8 @@ is why distribution views are our default for latency.
 - Verified in code: `PromQLSource.build_queries` uses `*_over_time` / `rollup` over the full
   step window, so the main path is aggregation, not skip-sampling. Good.
 - "Interpolation lines add the illusion of continuity." Each plotted bucket value
-  represents an interval; a stepped path states that honestly. [P, SfE; open question
-  whether to default to steps]
+  represents an interval; a stepped path states that honestly. → Adopted: stepped by
+  default (rule 12). [P, SfE; TN]
 
 **Percentile definitions differ.** Hyndman–Fan list 9 types; software mostly uses type 7
 (interpolated), probability theory type 1. Histogram-derived quantiles are a *range* (bucket
@@ -235,7 +281,7 @@ edges). → Provenance footer should state the quantile estimator ("bucket-edge 
 
 **Deviation & outliers.** "68/95/99.7 within kσ" holds only for normal data — never for
 latency. Use MAD or IQR, Tukey fences (k·IQR beyond quartiles); boxplots show median,
-quartiles, outliers as points. Supports our group band = median + MAD. Caveat: MAD/IQR
+quartiles, outliers as points. Supports robust outlier rules for the group cloud (§3). Caveat: MAD/IQR
 aren't mergeable, compute on the merged data. [P, SfE]
 
 **Survival curve.** ratio_above(threshold) vs threshold, one curve per hour overlaid:
@@ -261,6 +307,65 @@ utilization is a *rate of a counter*, aggregate accordingly. Latency vs utilizat
 
 **Smoothing in disguise.** Unix load average = exponential smoothing. Label such
 signals as smoothed (window/α) in the metric card. [P, SfE]
+
+---
+
+## 5a. Missing and untrusted data
+
+"No info is itself info" (Hartmann). Full design:
+`docs/superpowers/specs/2026-10-02-series-bundles-missing-data-design.md`. Mockups were
+agreed in the brainstorm: coverage rug with hover hints, plus textured heatmap columns.
+
+**States** (`bucket_state`, a companion series computed per series and per bucket). Each
+state means something different and must look different:
+
+| state | meaning | rug | heatmap column |
+|---|---|---|---|
+| `ok` | observed ≈ expected samples | (no rug if every bucket is ok) | normal |
+| `partial` | observed/expected < 0.9 | grey fill ∝ missing share | faded |
+| `empty` | series alive, 0 samples | solid grey | dot texture |
+| `absent` | series not alive (before first / after last seen) | dotted line | — |
+| `unknown` | fetch failed, outside retention, source can't tell | hatch | hatch texture |
+
+Flags on top of the states: `reset` (↺ on the plot), `interval_change` (axis tick),
+`stale_marker`, and `source_filled` (the backend invented the value).
+
+**Rules:**
+- **The rug appears only when something is wrong.** It is the visual form of the
+  "missing / untrusted data" caveat (rule 13). On a clean panel, nothing is drawn.
+- **Heatmaps: blank = measured, nothing happened.** No-data columns get a texture, so a
+  measured zero never looks like "no observation". Measured-zero cells are not tinted, since
+  that would ink almost every column.
+- **Missing is rarely random.** The member that stops reporting is often the sick one
+  (OOM-killed, saturated, partitioned), so a band over the survivors looks healthy *because*
+  the sick ones dropped out.
+  - A member that goes silent while still alive is an **outlier**: it is listed and drawn
+    with the value outliers.
+  - The group cloud normalizes intensity by **alive** members, so silent members visibly
+    thin it.
+  - Values over buckets where reporting < alive carry a caveat ("band over 41/44").
+- **Window views** (histogram, ECDF, CCDF, threshold readout) have no time axis. They show a
+  coverage badge ("covers 87% of window · 5m missing · 2 resets") that opens a mini rug.
+  Fractions and counts carry the caveat when coverage < 100%.
+- **Hover hints** on rug cells and textured columns show: span · state + reason · observed/
+  expected samples at the resolution · last seen · for groups, `reporting/alive` and the
+  silent members.
+- **Missing data travels to Claude and to findings.** Summaries report coverage %, the
+  longest gap, silent members, resets and unknown spans. A finding whose claim window
+  overlaps a blocking caveat is rejected, or must narrow its scope.
+- States are told apart by pattern (solid / dots / hatch / dotted), never by colour alone;
+  greys must pass 3:1 against the background in both themes.
+
+**Sources fabricate and hide data differently.** Prometheus-engine evaluation fills gaps
+up to its 5m lookback. `rate`/`increase` extrapolate to window edges (Prometheus) or use
+the sample before the window (VictoriaMetrics, so a possible fake spike after a gap).
+Thanos/Mimir switch to downsampled tiers and can return partial responses. Rules:
+- Read values only via `*_over_time` / `rollup` over the step window, never via instant
+  evaluation.
+- Whatever the source invents is flagged `source_filled`.
+- A bucket we can't judge is `unknown`, never `ok`.
+- Each adapter declares a `MissingDataSemantics` profile, pinned by fixtures. Per-backend
+  evidence and open questions are in `docs/data-source-quirks.md` (spike `1h9.10`).
 
 ---
 
@@ -294,7 +399,9 @@ signals as smoothed (window/α) in the metric card. [P, SfE]
 - Points ≤ pixels; target ≤2 points/px and ≤100 ms render; breach logs
   `render_budget_exceeded` and falls back coarser (spec §6.5). [P, C R5; TN]
 - Server sends ~1 bucket/px with first/last/min/max semantics (M4). [P, G/M4]
-- Isolated single samples between gaps must be visible (point marker). [X, C G3] → verify.
+- Isolated single samples between gaps must be visible: with stepped paths, a lone
+  bucket is a short horizontal segment; add a point marker if it is narrower than ~3 px.
+  [X, C G3] → verify (`q4a`).
 - Refresh at human-perceptible rates (~1 Hz), not per point; no continuous scroll
   animation. [P, C R6; E2 C T5]
 - Smoothing, when used: label "smoothed (window W)" and keep raw/envelope underneath. [X, C R7; P2 C R4]
@@ -334,33 +441,34 @@ views.
 
 ## 10. Gaps against current code
 
-Found while writing this guide; candidates for beads.
+Tracked as beads (`bd show <id>`).
 
-1. **Light-theme contrast**: `#E69F00` and `#56B4E9` < 3:1 on white. Add per-theme
-   darkened variants in `PALETTE` (via `plotColors`).
-2. **Heatmap colour-mapping disclosure**: legend/footer should state `log1p count` vs
-   `linear density`; consider Datadog-style linear/rank blend as an option.
-3. **Accessible panels**: ARIA name/description + data-table view.
-4. **Isolated samples**: confirm a lone point between nulls renders a marker in uPlot.
-5. **Success vs failure split** as a catalog-driven follow-up link for latency metrics.
-6. **Smoothing label** convention if/when a smoothing op lands.
-7. **Exemplar seam**: reserve a `exemplars` field on distribution datasets for when
-   traces arrive.
-8. **Indexed (ratio-to-baseline) view** on log axis as the sanctioned dual-axis
-   replacement alongside small multiples.
-9. **Fraction-over-threshold op** (tier-1 + MCP tool): fraction ≤ X over window, merged
-   across series, with bucket-edge [lo, hi] bounds and Wilson CI. Currently done ad hoc.
-10. **Threshold readout on histogram/ECDF panels**: draggable X → below / in-bucket / above. [H]
-11. **Traffic count strip** under percentile and heatmap plots. [H]
-12. **Summary-quantile guard**: catalog flag + validator rule against aggregating
-    pre-computed quantile series. [H] Generalize to the mergeability table. [SfE]
-13. **Classic-histogram `le`-set mismatch guard**: refuse/caveat summing buckets across
-    series whose bucket layouts differ. [SfE]
-14. **Quantile estimator in provenance footer.** [SfE]
-15. **Spectrum Nyquist cut** at 2×step. [SfE]
+| # | gap | bead |
+|---|---|---|
+| 1 | Light-theme contrast: `#E69F00`, `#56B4E9` < 3:1 on white; per-theme darkened variants | `jfd` |
+| 2 | Heatmap legend states colour mapping (`log1p` count / linear density); optional linear/rank blend | `4ok.13` |
+| 3 | Accessible panels: ARIA name/description + view-as-table | `8ie` |
+| 4 | Lone sample between gaps stays visible | `q4a` |
+| 5 | Follow-up link: latency split by success vs failure | `2as.19` |
+| 6 | Smoothing label convention | note on `4ok.9` |
+| 7 | Exemplar seam on distribution datasets | `09h` |
+| 8 | Indexed (ratio-to-baseline) view on log axis | `4ok.14` |
+| 9 | Fraction-over-threshold op: merged, bucket-edge bounds, Wilson CI [H] | `4ok.12` |
+| 10 | Threshold readout: draggable X → below / in-bucket / above [H] | `4ok.15` |
+| 11 | Traffic count strip under percentile/heatmap plots [H] | `4ok.16` |
+| 12 | Mergeability guard: pre-computed quantiles + non-mergeable statistics [H, SfE] | `2as.20` |
+| 13 | Classic-histogram `le`-set mismatch guard [SfE] | `4ok.17` |
+| 14 | Quantile estimator in provenance footer [SfE] | `4ok.18` |
+| 15 | Spectrum Nyquist cut at 2×step [SfE] | note on `4ok.7` |
+| 16 | Multi-threshold banded counts + survival-curve overlays [SfE] | note on `4ok.11` |
+| 17 | Missing data: `bucket_state`, rug, heatmap textures, stepped paths, localized caveats, failed-chunk `unknown` spans | spec 2026-10-02 (plan pending) |
+| 18 | Per-backend missing-data semantics (lookback, staleness, rate edges, tiers, partial responses) | `1h9.10` |
+| 19 | Group density cloud mark with silent members | spec 2026-10-02 §7.1; visual design to brainstorm |
 
 ## 11. Open questions (no evidence either way)
 
-Dark-mode perception; HiDPI pixel mapping of the sizing studies; effectiveness of
-annotation/deploy markers; live-chart awareness (Ragan et al. 2020 unread); best
-nonlinear heatmap colour mapping for exponential/native-histogram buckets.
+- Dark-mode perception; HiDPI pixel mapping of the sizing studies.
+- Effectiveness of annotation/deploy markers; live-chart awareness (Ragan et al. 2020 unread).
+- Best nonlinear heatmap colour mapping for exponential/native-histogram buckets.
+- `partial` threshold (0.9 of expected samples) under scrape jitter and OTel push intervals.
+- Group-cloud binning, colormap and outlier rule.
