@@ -38,6 +38,7 @@ LOCAL_MIN_GAPS = 2  # gaps a neighbourhood needs to stand on its own (else the o
 HOLE_RATIO = 2.0  # a gap over this many times its neighbourhood's median gap is a hole, not cadence
 SLOW_MIN_LONG = 2  # gaps longer than the step a neighbourhood needs before it can read as slow
 SLOW_MARGIN = 1.25  # interval this far above the step: slower than the step, not a step-rate one
+EDGE_SPAN = 2 * LOCAL_GAPS  # gaps at each window edge searched for a faster stretch there
 BASELINE_PASSES = 2  # re-estimates of the faster-than-step baseline without its short buckets
 SLOW_MISS_RATIO = 1.5  # a slower-than-step series misses its cadence after this many intervals
 SPILL_RATE = (0.8, 1.2)  # samples per bucket at which a scrape can spill into the next bucket
@@ -319,6 +320,7 @@ def _local_interval(nz: pl.DataFrame, gap: str, step_ms: int) -> pl.DataFrame:
         ),
     )
     nz = nz.with_columns(pl.col(f"_b{p}").shift(1).over(_S).alias(f"_p{p}") for p in parts)
+    nz = _faster_edges(nz, step_ms)
 
     def side(x: str, min_gaps: float = LOCAL_MIN_GAPS) -> tuple[pl.Expr, pl.Expr, pl.Expr]:
         c = pl.col(f"_{x}C")
@@ -354,9 +356,89 @@ def _local_interval(nz: pl.DataFrame, gap: str, step_ms: int) -> pl.DataFrame:
         _S,
         "ts_ms",
         pl.coalesce(pl.when(after).then(ai).otherwise(pi), gi).alias("_I"),
-        pl.when(pv | av).then(ps | as_).otherwise(gs).alias("_sl"),
+        # a gap in a step-rate stretch at the window edge, before a slower one, is not slower
+        (
+            pl.when(pv | av).then(ps | as_).otherwise(gs) & ~pl.col("_fastF") & ~pl.col("_fastL")
+        ).alias("_sl"),
         pl.coalesce(bi, gi).alias("_It"),
         pl.when(bv).then(bs).otherwise(gs).alias("_slt"),
+    )
+
+
+def _faster_edges(nz: pl.DataFrame, step_ms: int) -> pl.DataFrame:
+    """A stretch at a window edge (the series' first / last non-zero bucket) scraped at the step's
+    rate before (after) much slower scrapes, e.g. 15s ones next to 60s ones at a 15s step. The
+    neighbourhood past it reaches across the rate change and reads slow, which would hide a scrape
+    lost inside the stretch; so its gaps are not slower than the step (`_fastF` / `_fastL`: the
+    gap lies in such a stretch at the start / end). This only takes slowness away, and only where
+    that cannot unpair a spill: never in a series with a bucket of 2 or more (see the end).
+
+    The stretch is the CUSUM change point: the prefix (suffix) of the span whose time falls
+    furthest behind the span's own Σgap / Σsamples, its inner end pulled back to its last gap
+    within the step. It counts when it falls behind by more than a bucket boundary's snap and one
+    spilled sample (step + interval), is CHANGE_RATIO faster than the rest of the span (a rate
+    change by the definition INTERVAL_CHANGE flags), has LOCAL_MIN_GAPS gaps and is not slower
+    than the step itself, even with one sample fewer
+    (Σgap / (Σsamples - 1) <= SLOW_MARGIN x step). `nz` is sorted, with the kept-gap parts `_k*`,
+    their cumulative sums `_s*` and the gaps `_g`."""
+    nz = nz.with_columns(
+        pl.int_range(pl.len()).over(_S).alias("_row"), (pl.len().over(_S) - 1).alias("_last")
+    )
+    row, last = pl.col("_row"), pl.col("_last")
+    s = lambda p: pl.col(f"_s{p}")
+    edges = {  # the span's gaps, the rows a stretch may end (start) at, its sums to there
+        "F": ((row >= 1) & (row <= EDGE_SPAN), (row >= 1) & (row <= EDGE_SPAN), s),
+        "L": (
+            row > last - EDGE_SPAN,
+            (row >= last - EDGE_SPAN) & (row < last),
+            lambda p: s(p).last().over(_S) - s(p),
+        ),
+    }
+    parts = ("G", "C", "N", "L")
+    for e, (span, cuts, stretch) in edges.items():
+        nz = nz.with_columns(
+            pl.when(span).then(pl.col(f"_k{p}")).otherwise(0.0).sum().over(_S).alias(f"_span{p}")
+            for p in ("G", "C")
+        )
+        behind = pl.when(cuts).then(
+            stretch("G") - pl.col("_spanG") / pl.col("_spanC") * stretch("C")
+        )
+        behind = behind.fill_nan(None).alias("_behind")
+        nz = nz.with_columns(behind).with_columns(
+            pl.col("_behind").fill_null(float("inf")).arg_min().over(_S).alias("_cut")
+        )
+        # its inner end at its last gap within the step: a slower gap snapped short by jitter
+        # (45s ones read 30s) lies at the far rate, its 0s are not the stretch's
+        quick = pl.col("_g") <= step_ms
+        inner = (
+            pl.when(quick & (row <= pl.col("_cut"))).then(row).max().over(_S)
+            if e == "F"
+            else pl.when(quick & (row > pl.col("_cut"))).then(row).min().over(_S) - 1
+        )
+        nz = nz.with_columns(inner.fill_null(pl.col("_cut")).alias("_cut"))
+        nz = nz.with_columns(  # the stretch's sums
+            pl.when(row == pl.col("_cut")).then(stretch(p)).max().over(_S).alias(f"_str{p}")
+            for p in parts
+        )
+        i = pl.col("_strG") / pl.col("_strC")
+        rest = (pl.col("_spanG") - pl.col("_strG")) / (pl.col("_spanC") - pl.col("_strC"))
+        noise = step_ms + pl.col("_spanG") / pl.col("_spanC")
+        counts = (
+            (pl.col("_behind").min().over(_S) < -noise)
+            & (CHANGE_RATIO * i <= rest)
+            & (pl.col("_strN") >= LOCAL_MIN_GAPS)
+            # at the step's rate even with one sample fewer (its few gaps snap to whole steps): not
+            # a short slower stretch, which this would turn EMPTY
+            & (pl.col("_strG") / (pl.col("_strC") - 1) <= SLOW_MARGIN * step_ms)
+        )
+        inside = (row >= 1) & (row <= pl.col("_cut")) if e == "F" else row > pl.col("_cut")
+        nz = nz.with_columns((counts & inside).fill_null(False).alias(f"_fast{e}"))
+    # in a series with a bucket of 2 or more `_spilled` may pair a 0 with a spilled 2, and which
+    # pairs depends on slowness: taking it away could unpair a 0 and pair a lost one instead
+    spills = pl.col("_c").max().over(_S) >= 2
+    scratch = ["_row", "_last", "_spanG", "_spanC", "_behind", "_cut"]
+    return nz.with_columns((pl.col(f"_fast{e}") & ~spills).alias(f"_fast{e}") for e in edges).drop(
+        scratch + [f"_str{p}" for p in parts]
     )
 
 

@@ -156,10 +156,23 @@ samples in n): either side of a rate change reads at its own rate; a hole lies a
 reads at the slower one.
 
 A neighbourhood is **slower than the step** when `I` > 1.25 × step with at least 2 gaps longer than
-the step; a gap is slower when either neighbourhood is. A neighbourhood cut short by the window
-edge (fewer than 16 gaps before its end or after its start) rests on few gaps, where one sample
-spilled across its boundary moves `I` by 1 / Σsamples: it reads slower only if it still does with
-one sample more, or if the series' first (last) 16 gaps do. In a slower stretch a bucket with samples
+the step; a gap is slower when either neighbourhood is. The window edge is the series' first (last)
+non-zero bucket. A neighbourhood cut short by it (fewer than 16 gaps between the edge and the gap)
+rests on few gaps, where one sample spilled across its boundary moves `I` by 1 / Σsamples: it reads
+slower only if it still does with one sample more, or if the series' first (last) 16 gaps do. Lost
+scrapes look like slowness: k of them among n gaps of a step-rate stretch give `I` = (n + k) / n ×
+step, slower than the step once k > n / 4. A 16-gap neighbourhood needs 5 before it hides them; a
+shorter one fewer (3 within 11 gaps), so slowness resting on fewer than 16 gaps must not be granted
+more easily than that, at the cost of a marginally slower stretch shorter than about 16 gaps at the
+edge (20 s scrapes at a 15 s step) reading `empty` in its 0 buckets: a hidden loss is worse than a
+false `empty`. A stretch at the edge scraped at the step's rate (`I` ≤ 1.25 × step even with one sample fewer) and
+`CHANGE_RATIO` (2 ×) faster than the rest of the 32 gaps there (the prefix, or suffix, whose time
+falls furthest behind the span's Σgap / Σsamples, by more than a bucket boundary's snap and one
+spilled sample, ending at its last gap within the step) is not slower than the step: the
+neighbourhood past it reaches across the rate change and would hide a scrape lost inside it. That
+rule only takes slowness away, and never in a series with a bucket of 2 or more samples, where which
+0 a spilled 2 pairs with depends on slowness (taking it away could unpair one 0 and pair a lost
+one). In a slower stretch a bucket with samples
 is `ok` (never `partial`), `expected` = step / I < 1, and a bucket without is `empty` only once the
 time since the series' last sample exceeds max(1.5 × I, I + step) (cadence missed; trailing
 silence likewise), else `ok`. Elsewhere every 0 bucket is `empty`, except at about one sample per

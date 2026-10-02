@@ -640,3 +640,127 @@ def test_two_zero_buckets_next_to_an_unknown_span_are_not_exactly_two(unknown_be
     st = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
     assert st[106 * S15] == State.EMPTY
     assert st[107 * S15] == (State.EMPTY if unknown_before else State.OK)
+
+
+# --- window edges (9li): loss clusters at the edge stay EMPTY, a faster stretch before a slower ---
+
+
+def _lost_states(n, lost):
+    """15s scrapes mid-bucket (no spills) in n 15s buckets, those of buckets `lost` (1-based)
+    dropped; returns {bucket number: state}."""
+    ts = [S15 * k - S15 // 2 for k in range(1, n + 1) if k not in lost]
+    out = _compute_rows(_count_rows(ts, S15), step=S15, end=n * S15, res=S15)
+    return {t // S15: s for t, s in zip(out["ts_ms"].to_pylist(), out["state"].to_pylist())}
+
+
+@pytest.mark.parametrize("lost", [(7, 9, 11), (3, 5, 7), (3, 5, 8)])
+@pytest.mark.parametrize("where", ["start", "end"])
+def test_loss_cluster_at_the_window_edge_is_empty_exactly_there(lost, where):
+    # three lost scrapes within ~10 gaps of the edge: a neighbourhood that short around them reads
+    # slower than the step (Σgap / Σsamples over 1.25 x step) though the series is at step rate. A
+    # mid-series 16-gap neighbourhood needs 5 such losses; the edge must not need fewer
+    n = 240
+    if where == "end":
+        lost = tuple(n + 1 - k for k in lost)
+    st = _lost_states(n, lost)
+    assert sorted(k for k, s in st.items() if s == State.EMPTY) == sorted(lost)
+
+
+@pytest.mark.parametrize("n", [20, 34])
+def test_loss_cluster_in_a_short_series_is_empty_exactly_there(n):
+    # every neighbourhood is cut short by both edges
+    st = _lost_states(n, (5, 7, 9))
+    assert [k for k, s in st.items() if s == State.EMPTY] == [5, 7, 9]
+    assert {s for k, s in st.items() if k not in (5, 7, 9)} == {State.OK}
+
+
+def test_two_lost_scrapes_and_a_spill_at_the_window_start_stay_empty():
+    # a step-rate series near a bucket boundary (0 2 pairs) that lost the scrapes of buckets 3 and
+    # 5: the stretch from the edge to its change point (8 gaps, 11 samples in 210s) reads slow, but
+    # holds 2s and is not slow with one sample more, so it does not hide the two
+    counts = "0101011102020201111112110111112021111021" + "1" * 200
+    rows = [((i + 1) * S15, "a", 1.0, int(c)) for i, c in enumerate(counts) if c != "0"]
+    st = states(_compute_rows(rows, step=S15, res=S15))
+    assert [i + 1 for i, s in enumerate(st[:40]) if s == State.EMPTY] == [3, 5]
+
+
+@pytest.mark.parametrize(("fast", "lost"), [(12, 4), (14, 5), (20, 9)])
+def test_lost_scrape_in_a_faster_stretch_at_the_window_start_is_empty(fast, lost):
+    # 15s scrapes, then 60s ones: the 16 gaps after a fast gap reach into the 60s stretch and read
+    # slow, which hid the lost scrape. The fast stretch is 4x faster than the rest of the edge
+    # span and at the step's rate even with one sample fewer (11+ gaps: 1 loss in a shorter one
+    # looks like a 20s stretch, gaps 15 30 15 15): it has no slow gaps
+    ts = [16_000 + S15 * i for i in range(fast)]
+    ts += list(range(ts[-1] + 60_000, HOUR, 60_000))
+    lost_t = ts.pop(lost)
+    out = _compute_rows(_count_rows(ts, S15), step=S15, res=S15)
+    st = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
+    assert st[-(-lost_t // S15) * S15] == State.EMPTY
+    assert list(st.values()).count(State.EMPTY) == 1
+
+
+def test_faster_stretch_that_is_itself_slower_than_the_step_keeps_its_cadence():
+    # 30s scrapes, then 120s ones, in 15s buckets: the 30s stretch is faster than the rest but
+    # still slower than the step, so its 0 buckets hold its cadence
+    ts = [16_000 + 30_000 * i for i in range(12)]
+    ts += list(range(ts[-1] + 120_000, HOUR, 120_000))
+    out = _compute_rows(_count_rows(ts, S15), step=S15, res=S15)
+    assert State.EMPTY not in states(out)
+
+
+@pytest.mark.parametrize("where", ["start", "end"])
+def test_loss_in_a_faster_stretch_of_a_series_that_spills_stays_empty(where):
+    # 10s scrapes at a 15s step (counts 1 2 1 2 ...: spill-like 2s) at the window edge after 45s
+    # ones, seven of them lost. Taking slowness away there would change which 0s pair with a 2
+    # and unpair a lost one: in a series that may spill, the faster stretch keeps 430's reading
+    ph, n = 6519, 25
+    slow = list(range(ph + 45_000, HOUR - n * 10_000, 45_000))
+    ts = slow + [slow[-1] + 10_000 * (i + 1) for i in range(n)]
+    ts = [t for i, t in enumerate(ts) if i not in {80, 89, 91, 93, 94, 95, 97}]
+    if where == "start":
+        ts = sorted(HOUR + S15 - t for t in ts)
+    out = _compute_rows(_count_rows(ts, S15), step=S15, res=S15)
+    empty = {t for t, s in zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()) if s == 2}
+    lost = {3_555_000, 3_585_000}
+    if where == "start":
+        lost = {-(-(HOUR + S15 - t) // S15) * S15 for t in (3_555_000 - 7_500, 3_585_000 - 7_500)}
+    assert lost <= empty
+
+
+def test_lost_scrapes_in_faster_stretches_at_both_edges_are_empty():
+    # a short series: 15s scrapes, 60s ones, 15s ones again; one scrape lost in each fast part
+    ts = [S15 * k - S15 // 2 for k in range(1, 15)]
+    ts += [ts[-1] + 60_000 * i for i in range(1, 31)]
+    ts += [ts[-1] + S15 * i for i in range(1, 15)]
+    end = -(-ts[-1] // S15) * S15
+    lost = (ts[4], ts[-5])
+    kept = [t for t in ts if t not in lost]
+    out = _compute_rows(_count_rows(kept, S15), step=S15, end=end, res=S15)
+    empty = [t for t, s in zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()) if s == 2]
+    assert empty == [-(-t // S15) * S15 for t in lost]
+
+
+def _slow_after(fast_i, slow_i, n, phase, lost=()):
+    ts = [phase + fast_i * i for i in range(n)]
+    ts += list(range(ts[-1] + slow_i, HOUR, slow_i))
+    kept = [t for i, t in enumerate(ts) if i not in set(lost)]
+    out = _compute_rows(_count_rows(kept, S15), step=S15, res=S15)
+    empty = {t for t, s in zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()) if s == 2}
+    lost_b = {-(-ts[i] // S15) * S15 for i in lost}
+    return empty, lost_b
+
+
+def test_short_20s_stretch_before_50s_ones_is_not_turned_empty():
+    # 5 scrapes 20s apart (gaps 15 30 15 15: Σgap / Σsamples = 1.25 x step, on the margin by the
+    # snap of so few gaps) before 50s ones: slower than the step, its 0 bucket holds the cadence
+    empty, _ = _slow_after(20_000, 50_000, 5, 7_289)
+    assert empty == set()
+
+
+def test_long_20s_stretch_with_losses_before_50s_ones_reads_as_430():
+    # a slower-than-step stretch is not a step-rate one: the faster-stretch rule leaves it, and
+    # it reads exactly as in 430 (slow: a 0 is EMPTY only once the cadence is missed). Before the
+    # one-sample-fewer check the rule read 11 more of its buckets EMPTY
+    lost = (3, 8, 12, 13, 14, 15, 16, 17, 69, 82)
+    empty, _ = _slow_after(20_000, 50_000, 37, 2_448, lost)
+    assert sorted(t // 1000 for t in empty) == [120, 270, 285, 300, 315, 330, 345, 360, 2415]
