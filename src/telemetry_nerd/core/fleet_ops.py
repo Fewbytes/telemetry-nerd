@@ -13,6 +13,7 @@ import math
 import re
 from collections import OrderedDict
 from collections.abc import Callable
+from typing import NamedTuple
 
 import numpy as np
 import polars as pl
@@ -25,6 +26,15 @@ from telemetry_nerd.analysis.fleet import (
     Outlier,
     analyse,
     trimmed_interval,
+)
+from telemetry_nerd.analysis.fleet_clusters import (
+    MAX_CLUSTERS,
+    MIN_CLUSTER,
+    N_NULL,
+    SPLIT_ALPHA,
+    TEST_ALPHA,
+    Groups,
+    analyse_groups,
 )
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.catalog.rules import Facts
@@ -58,6 +68,20 @@ def _arr(a: np.ndarray) -> list[float | None]:
     return [None if not math.isfinite(float(v)) else float(f"{float(v):.5g}") for v in a]
 
 
+class FleetRun(NamedTuple):
+    """One analysed fleet. A tuple (index access stays as before: meta, step, ts, labels, names,
+    fleet, caveats); `groups` (behaviour groups, lkn.10) is appended."""
+
+    meta: DatasetMeta
+    step: int
+    ts: list[int]
+    labels: list[dict]
+    names: list[str]
+    fleet: Fleet
+    caveats: list[str]
+    groups: Groups | None = None
+
+
 def member_names(labels: list[dict], by: list[str] | None) -> list[str]:
     """`by` labels if given, else the labels that vary across members."""
     keys = by or sorted({k for lb in labels for k in lb if len({x.get(k) for x in labels}) > 1})
@@ -76,7 +100,7 @@ class FleetOps:
         self._datasets = datasets
         self._signal = signal
         self._facts = facts
-        self._memo: OrderedDict[tuple, tuple] = OrderedDict()
+        self._memo: OrderedDict[tuple, FleetRun] = OrderedDict()
         self._last: dict[str, dict] = {}  # dataset -> options of the latest fleet() call
 
     def last_config(self, dataset_id: str) -> dict:
@@ -92,9 +116,7 @@ class FleetOps:
         return meta
 
     # analysis -----------------------------------------------------------------------
-    def run(
-        self, dataset_id: str, by: list[str] | None, scale: str, normalise: str
-    ) -> tuple[DatasetMeta, int, list[int], list[dict], list[str], Fleet, list[str]]:
+    def run(self, dataset_id: str, by: list[str] | None, scale: str, normalise: str) -> FleetRun:
         key = (dataset_id, tuple(by or ()), scale, normalise)
         if key in self._memo:
             self._memo.move_to_end(key)
@@ -141,7 +163,11 @@ class FleetOps:
             )
         self._check_units(meta, labels)
         f = analyse(y, scale=scale, normalise=normalise)  # type: ignore[arg-type]
-        res = (meta, step, ts, labels, names, f, caveats + f.caveats)
+        groups = analyse_groups(y, f, labels)
+        caveats = caveats + f.caveats
+        if groups is not None:  # outliers are judged within each group; > 10% no longer holds
+            caveats = [c for c in caveats if c != "many_outliers"] + ["clustered"]
+        res = FleetRun(meta, step, ts, labels, names, f, caveats, groups)
         self._memo[key] = res
         if len(self._memo) > MEMO:
             self._memo.popitem(last=False)
@@ -167,9 +193,11 @@ class FleetOps:
         scale: str = "auto",
         normalise: str = "none",
     ) -> dict:
-        _, step, ts, labels, names, f, caveats = self.run(dataset_id, by, scale, normalise)
+        run = self.run(dataset_id, by, scale, normalise)
+        _, step, ts, labels, names, f, caveats, groups = run
         self._last[dataset_id] = {"by": by, "scale": scale, "normalise": normalise}
         caveats = list(caveats)  # the memoised list stays as computed
+        ranked = self.ranked_outliers(run)
         m_, t_ = f.z.shape
         sp = f.spread
         eff = format_duration(step)
@@ -215,14 +243,93 @@ class FleetOps:
                 "alive_max": int(sp.alive.max()), "missing_share": _r(missing, 3),
             },
             "churn": churn,
-            "outliers": [self._outlier(dataset_id, eff, f, o, names, labels, ts)
-                         for o in f.outliers[:MAX_LISTED]],
+            "outliers": [self._outlier(dataset_id, eff, gf, o, gn, gl, ts) | extra
+                         for gf, o, gn, gl, extra in ranked[:MAX_LISTED]],
             "tests": self._tests(f),
             "caveats": caveats,
             "draw": f'show("{dataset_id}", question, mark="fleet")',
         }  # fmt: skip
-        if len(f.outliers) > MAX_LISTED:
-            out["more_outliers"] = len(f.outliers) - MAX_LISTED
+        if groups is not None:
+            out["clusters"] = self._clusters(f, groups, names, labels)
+        if len(ranked) > MAX_LISTED:
+            out["more_outliers"] = len(ranked) - MAX_LISTED
+        return out
+
+    @staticmethod
+    def ranked_outliers(run: FleetRun) -> list[tuple[Fleet, Outlier, list[str], list[dict], dict]]:
+        """Outliers by score: the fleet's, or when it is split into behaviour groups, each
+        group's (judged against its own group) tagged with the group id. Each item: (the fleet
+        the outlier was judged in, outlier, member names and labels of that fleet, extra keys)."""
+        f, names, labels, groups = run.fleet, run.names, run.labels, run.groups
+        if groups is None:
+            return [(f, o, names, labels, {}) for o in f.outliers]
+        out = []
+        for k, g in enumerate(groups.groups):
+            gn = [names[i] for i in g.members]
+            gl = [labels[i] for i in g.members]
+            out += [(g.fleet, o, gn, gl, {"cluster": f"c{k + 1}"}) for o in g.fleet.outliers]
+        out.sort(key=lambda r: -r[1].score)
+        return out
+
+    @staticmethod
+    def _clusters(f: Fleet, groups: Groups, names: list[str], labels: list[dict]) -> dict:
+        c = groups.clustering
+        log = f.scale == "log"
+        best = groups.explained_by[0] if groups.explained_by else None
+        items = []
+        for k, g in enumerate(groups.groups):
+            gid = f"c{k + 1}"
+            lv = math.exp(g.level) if log else g.level
+            item: dict = {
+                "id": gid, "size": len(g.members),
+                "members": [names[i] for i in g.members[:MAX_LISTED]],
+                "level_vs_fleet": {"ratio" if log else "difference": _r(lv, 3)},
+                "tested": len(g.fleet.tested), "outliers": len(g.fleet.outliers),
+                "caveats": g.fleet.caveats,
+            }  # fmt: skip
+            if len(g.members) > MAX_LISTED:
+                item["more_members"] = len(g.members) - MAX_LISTED
+            if best is not None:
+                item["label_values"] = {best["label"]: best["values"].get(k, [])}
+            items.append(item)
+        out: dict = {
+            "k": len(groups.groups),
+            "rule": (
+                "recursive 2-means on each member's deviation from the fleet (20% trimmed means "
+                f"over {c.blocks} time blocks: level and shape); a split is kept when its cluster "
+                "index (within / total SS) is below a single Gaussian's with the same covariance "
+                f"(SigClust, up to {N_NULL} seeded simulations, each test at p < {_r(TEST_ALPHA, 2)}: "
+                f"{SPLIT_ALPHA} family-wise over the splits) and both parts have "
+                f">= {MIN_CLUSTER} members; at most {MAX_CLUSTERS} groups. Each group is analysed "
+                f"as its own fleet at family-wise {ALPHA}/k"
+            ),
+            "split_tests": [
+                {
+                    "sizes": list(t.sizes),
+                    "cluster_index": _r(t.ci, 3),
+                    "null_cluster_index_median": _r(t.null_ci_median, 3),
+                    "p": _r(t.p, 3),
+                    "accepted": t.accepted,
+                    "simulations": t.simulations,
+                }
+                for t in c.tests
+            ],
+            "groups": items,
+            "fleet_level_outliers": len(f.outliers),
+            "explained_by": [
+                {"label": e["label"], "adjusted_rand": _r(e["ari"], 3)}
+                for e in groups.explained_by[:3]
+            ],
+        }
+        if not groups.explained_by:
+            out["note"] = (
+                "no label separates the groups (adjusted Rand >= 0.5): the difference is in "
+                "behaviour only; look for a configuration or placement the labels do not carry"
+            )
+        if groups.assigned_by_label:
+            out["assigned_by_label"] = [names[i] for i in groups.assigned_by_label[:MAX_LISTED]]
+        if groups.unassigned:
+            out["unassigned"] = len(groups.unassigned)
         return out
 
     @staticmethod
@@ -345,21 +452,24 @@ class FleetOps:
 
     # panel payload --------------------------------------------------------------------
     def panel(self, dataset_id: str, cfg: dict) -> dict:
-        _, step, ts, labels, names, f, caveats = self.run(
+        run = self.run(
             dataset_id, cfg.get("by"), cfg.get("scale", "auto"), cfg.get("normalise", "none")
         )
+        _, step, ts, _labels, names, f, caveats, groups = run
         caveats = list(caveats)
         sp = f.spread
+        ranked = self.ranked_outliers(run)
         drawn = []
-        for o in f.outliers[:MAX_DRAWN]:
+        for gf, o, gn, gl, extra in ranked[:MAX_DRAWN]:
             drawn.append({
-                "id": names[o.member], "labels": labels[o.member], "kind": o.kind,
+                "id": gn[o.member], "labels": gl[o.member], "kind": o.kind,
                 "direction": o.direction, "score": _r(o.score, 3),
-                "values": _arr(f.values[o.member]),
+                "values": _arr(gf.values[o.member]),
                 "since_ms": ts[o.since] if o.since is not None else None,
                 "episodes": [[ts[e.start], ts[e.end]] for e in o.episodes],
+                **extra,
             })  # fmt: skip
-        return {
+        payload = {
             "kind": "fleet",
             "effective_step_ms": step,
             "ts": ts,
@@ -372,6 +482,13 @@ class FleetOps:
             "n": [int(v) for v in sp.n],
             "alive": [int(v) for v in sp.alive],
             "outliers": drawn,
-            "outlier_count": len(f.outliers),
+            "outlier_count": len(ranked),
             "caveats": caveats,
         }
+        if groups is not None:  # per-group bands (additive; lkn.10)
+            payload["clusters"] = [
+                {"id": f"c{k + 1}", "size": len(g.members),
+                 "band": {b: _arr(getattr(g.fleet.spread, b)) for b in ("median", "q25", "q75")}}
+                for k, g in enumerate(groups.groups)
+            ]  # fmt: skip
+        return payload

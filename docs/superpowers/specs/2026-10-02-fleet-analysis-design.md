@@ -150,11 +150,43 @@ episode. Each carries an `evidence` statistic (`fleet_member_offset` | `fleet_me
 `fleet_member_excursion`) for finding_create.
 
 **Heterogeneous fleets.** When > 10% of the tested members are flagged, caveat `many_outliers`:
-members differ systematically (sizes, roles, zones). Hint: `normalise="member"` to compare shapes,
-or query per sub-group (a label) and analyse each. Clustering into k behaviour groups is a
-follow-up.
+members differ systematically (sizes, roles, zones). The fleet is then split into behaviour
+groups (lkn.10, below); when it cannot be split, the caveat stays with the hint:
+`normalise="member"` to compare shapes, or query per sub-group (a label) and analyse each.
 
-## Churn and missing data (series-bundles semantics)
+## Behaviour groups (lkn.10)
+
+Code: `analysis/fleet_clusters.py`. Runs only when the fleet has `many_outliers` (so a homogeneous
+fleet, which trips that < 0.3% of the time, is never split), and must then still pass a test.
+
+- **Features.** Each member's deviation from the fleet d_it (log ratio or difference to the per-step
+  median of the others), as 20% trimmed means over 8 time blocks: the level and the shape of the
+  deviation, in the scale's own units (no standardisation needed). Members missing half of a block
+  are clustered without, then join the nearest group centre on their observed blocks.
+- **k-selection rule.** Recursive 2-means (k-means++, 4 restarts, seeded). A split is accepted when
+  its cluster index CI = within-cluster SS / total SS is smaller than a single Gaussian's with the
+  group's own sample covariance would give (SigClust: Liu, Hayes, Nobel & Marron 2008), and both
+  parts keep >= 5 members (a lone deviant member is an outlier, not a group). Each part is tested
+  again; at most 6 groups, so at most 11 tests: each runs at 1% / 11 (Bonferroni: inventing a group
+  anywhere stays under 1%) by sequential Monte Carlo (Besag & Clifford 1991): up to 1100 seeded
+  null simulations, stopped at the first one as tight as the data (then p >= 1/2, not significant);
+  accepted only when none is. The covariance includes any between-group spread, so the null is
+  wide and the test conservative. With a plain 1% per test (first version) one 30/70 fleet in 300
+  had its large group split again at p = 2/201. Ungated on homogeneous fleets the test splits
+  0% (M = 30/100, normal, t(3), AR(0.9), and a wide unimodal level spread, sd 30%; 300 each).
+- **Explanation.** Labels whose values reproduce the groups, by adjusted Rand index (>= 0.5 to be
+  listed; ~0 for labels that name every member, like pod). The best label's values per group are
+  reported. When the best label explains the groups at ARI >= 0.8, a member whose label value maps
+  (>= 80% of that value's members) to another group is moved there (`assigned_by_label`): behaviour
+  cannot place a member that drifts from one group's level to the other's, its label can, and a
+  member that behaves like the other group is then named in its own (the interesting case).
+  With no explaining label, the note says the difference is in behaviour only.
+- **Per-group analysis.** Each group is analysed as its own fleet (same scale and normalisation) at
+  family-wise alpha / k, so the error over all groups stays 1%. Outliers are judged against their
+  own group and carry `cluster`; caveat `clustered` replaces `many_outliers`. The fleet-level band
+  is still the whole fleet; the panel payload adds per-group bands.
+
+## Churn and missing data## Churn and missing data (series-bundles semantics)
 
 - `appeared`: first seen after the window start (+ tolerance max(3 steps, 5%)).
 - `stopped_reporting`: last seen before the end (same tolerance), with `since`. The source cannot
@@ -174,7 +206,11 @@ follow-up.
   churn: {appeared, stopped_reporting, note?}, outliers: [{member, labels, kind, direction, score,
   tests, z, since, since_window_start, offset, change?, at?, episodes?, evidence}], tests: {
   family_wise_alpha, leave_one_out, member_threshold_z, excursion_thresholds_z, ...}, caveats,
-  draw}`. At most 10 outliers listed (by score; `more_outliers` counts the rest).
+  draw, clusters?}`. At most 10 outliers listed (by score; `more_outliers` counts the rest).
+  `clusters` (only when split): `{k, rule, split_tests: [{sizes, cluster_index,
+  null_cluster_index_median, p, accepted}], groups: [{id, size, members, level_vs_fleet, tested,
+  outliers, caveats, label_values}], fleet_level_outliers, explained_by: [{label, adjusted_rand}],
+  note?, assigned_by_label?, unassigned?}`; each outlier then has `cluster`.
 - `show(dataset, question, mark="fleet")` (uses the latest `fleet` options, else defaults): band
   (min-max, 10-90, 25-75 as nested grey fills: spread is intensity, no boundary lines), median
   line, outlier members drawn and labelled (<= 6, Okabe-Ito), a coverage strip at steps where
@@ -191,19 +227,24 @@ persistent x1.8, transient x2.7 for 12 steps mid-window, drifting 0 -> x2.2 over
 False alarm = share of homogeneous fleets in which ANY member is named (design: 1%). Detection =
 the planted member named with the right kind (drifting may be `shifted`).
 
-| scenario | false alarm (any member) | by test level/change/spike/episode/long | detect persistent/transient/drifting |
-|---|---|---|---|
-| M=10 AR(0.6) normal | 0.3% | 0.3% / 0.0% / 0.0% / 0.0% / 0.0% | - |
-| M=30 AR(0.6) normal | 0.3% | 0.0% / 0.0% / 0.0% / 0.3% / 0.0% | 99.7% / 100.0% / 100.0% |
-| M=100 AR(0.6) normal | 0.3% | 0.0% / 0.3% / 0.0% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% |
-| M=300 AR(0.6) normal | 0.0% | 0.0% / 0.0% / 0.0% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% |
-| M=100 white normal | 2.0% | 0.0% / 0.7% / 0.3% / 0.7% / 0.3% | 100.0% / 100.0% / 100.0% |
-| M=100 AR(0.9) normal | 0.7% | 0.3% / 0.3% / 0.0% / 0.0% / 0.0% | 100.0% / 99.7% / 100.0% |
-| M=100 AR(0.6) t(4) | 1.0% | 0.0% / 0.3% / 0.0% / 0.0% / 0.7% | 100.0% / 100.0% / 100.0% |
-| M=30 AR(0.6) t(4) | 0.7% | 0.0% / 0.7% / 0.0% / 0.0% / 0.0% | 99.3% / 100.0% / 100.0% |
-| M=100 AR(0.6) 10% missing | 0.3% | 0.0% / 0.0% / 0.0% / 0.3% / 0.0% | 100.0% / 100.0% / 100.0% |
-| M=100 no heterogeneity | 1.3% | 1.0% / 0.3% / 0.0% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% |
-| M=100 AR(0.6) t(3) | 1.3% | 0.0% / 0.7% / 0.7% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% |
+| scenario | false alarm (any member) | by test level/change/spike/episode/long | detect persistent/transient/drifting | split into groups |
+|---|---|---|---|---|
+| M=10 AR(0.6) normal | 0.3% | 0.3% / 0.0% / 0.0% / 0.0% / 0.0% | - | 0.0% |
+| M=30 AR(0.6) normal | 0.3% | 0.0% / 0.0% / 0.0% / 0.3% / 0.0% | 99.7% / 100.0% / 100.0% | 0.0% |
+| M=100 AR(0.6) normal | 0.3% | 0.0% / 0.3% / 0.0% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% | 0.0% |
+| M=300 AR(0.6) normal | 0.0% | 0.0% / 0.0% / 0.0% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% | 0.0% |
+| M=100 white normal | 2.0% | 0.0% / 0.7% / 0.3% / 0.7% / 0.3% | 100.0% / 100.0% / 100.0% | 0.0% |
+| M=100 AR(0.9) normal | 0.7% | 0.3% / 0.3% / 0.0% / 0.0% / 0.0% | 100.0% / 99.7% / 100.0% | 0.0% |
+| M=100 AR(0.6) t(4) | 1.0% | 0.0% / 0.3% / 0.0% / 0.0% / 0.7% | 100.0% / 100.0% / 100.0% | 0.0% |
+| M=30 AR(0.6) t(4) | 0.7% | 0.0% / 0.7% / 0.0% / 0.0% / 0.0% | 99.3% / 100.0% / 100.0% | 0.0% |
+| M=100 AR(0.6) 10% missing | 0.3% | 0.0% / 0.0% / 0.0% / 0.3% / 0.0% | 100.0% / 100.0% / 100.0% | 0.0% |
+| M=100 no heterogeneity | 1.3% | 1.0% / 0.3% / 0.0% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% | 0.0% |
+| M=100 AR(0.6) t(3) | 1.3% | 0.0% / 0.7% / 0.7% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% | 0.0% |
+
+Two sizes 30/70 (members 0-29 twice the size, `size` label; planted persistent and transient
+in the small group, drifting in the large): split exactly 100.0%, planted
+named in their group with their kind 99.7%, nothing else named 99.7%.
+The last column: homogeneous fleets split into groups (design: never).
 
 Before lkn.14 (raw-z episode scan, Gumbel bar without its fit noise), the heavy-tailed rows were:
 
@@ -226,7 +267,6 @@ no long-episode alarm in 30 t(3) fleets.
 
 ## Out of scope (follow-ups)
 
-- Clustering members into k behaviour groups (heterogeneous fleets): lkn.10.
 - Series x time heatmap sorted by deviation; small multiples of the top-k outliers: lkn.11.
 - Browser / e2e check of the panel: lkn.12.
 - Using the `bucket_state` companion (partial buckets, unknown spans, ended vs silent): lkn.13.

@@ -158,6 +158,35 @@ def test_show_fleet_panel_draws_band_n_and_at_most_six_outliers(tmp_path):
     assert all(len(o["values"]) == 288 for o in data["outliers"])
 
 
+def test_heterogeneous_fleet_is_split_into_explained_groups(tmp_path):
+    """lkn.10: two instance sizes (30/70): groups, the label that explains them, outliers
+    named against their own group, per-group bands in the panel."""
+    svc = make_service(tmp_path)
+    y, planted = fleet(18, m=100, plant=True)
+    y[:30] *= 2.0
+    labels = [{"pod": f"api-{i:03d}", "size": "small" if i < 30 else "large"} for i in range(100)]
+    d = put(svc, y, labels=labels)
+    out = svc.fleet(d, by=["pod"])
+    cl = out["clusters"]
+    assert cl["k"] == 2 and sorted(g["size"] for g in cl["groups"]) == [30, 70]
+    assert cl["explained_by"][0]["label"] == "size"
+    assert cl["split_tests"][0]["accepted"] and cl["split_tests"][0]["p"] < 0.01
+    small = next(g for g in cl["groups"] if g["size"] == 30)
+    assert small["label_values"] == {"size": ["small"]}
+    assert 1.8 < small["level_vs_fleet"]["ratio"] < 2.2
+    assert "clustered" in out["caveats"] and "many_outliers" not in out["caveats"]
+    found = {o["member"]: o for o in out["outliers"]}
+    assert set(found) == {f"pod=api-{i:03d}" for i in planted.values()}
+    assert found[f"pod=api-{planted['persistent']:03d}"]["cluster"] == small["id"]
+    assert found[f"pod=api-{planted['drifting']:03d}"]["cluster"] != small["id"]
+    for o in out["outliers"]:
+        StatisticRef.model_validate(o["evidence"])
+    data = svc.panel_data(svc.show(d, "CPU by size: who is off?", mark="fleet").panel.id, 800)
+    assert data["outlier_count"] == 3 and all("cluster" in o for o in data["outliers"])
+    assert [c["size"] for c in data["clusters"]] == [70, 30]
+    assert len(data["clusters"][0]["band"]["median"]) == 288
+
+
 async def test_mcp_fleet_tool_and_refusal(tmp_path):
     from mcp import Client
 

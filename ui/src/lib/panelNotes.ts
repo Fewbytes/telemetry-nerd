@@ -54,6 +54,7 @@ const CAVEATS: Record<string, Describe> = {
   member_coverage_unknown: () => "Aggregated at the source: missing member series cannot be seen.",
   heavy_tailed_noise: () => "The members' noise has heavier tails than normal: spike and short-episode thresholds follow the other members' own peaks, so only excursions unusual for this fleet are named.",
   many_outliers: () => "More than 10% of the members were named: they differ systematically (sizes, roles, zones). Compare shapes with normalise=\"member\" or split the fleet by a label.",
+  clustered: () => "The members form behaviour groups (e.g. sizes or roles): each group was analysed as its own fleet, and outliers are named against their own group. The band is the whole fleet.",
   members_skipped: () => "Some members had too little data to be tested; they are in the band but not judged.",
   too_few_members_for_outliers: () => "Fewer than 10 members had enough data: the band is shown, no member is judged.",
   members_missing: () => "Some members did not report at some steps: the band is over the members that did (n per step), never imputed; the strip at the bottom marks those steps.",
