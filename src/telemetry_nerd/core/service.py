@@ -78,6 +78,7 @@ from telemetry_nerd.core.panel_payloads import (
 )
 from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.profiles import ProfileService
+from telemetry_nerd.core.seasonal_ops import SeasonalOps, seasonal_hint
 from telemetry_nerd.core.series_diagnostics import SeriesDiagnostics, resolve_baseline
 from telemetry_nerd.core.signal_ops import SignalOps
 from telemetry_nerd.core.summary import summarize, summarize_distribution
@@ -178,6 +179,7 @@ class TelemetryService:
     signal: SignalOps = field(init=False)
     diagnostics: SeriesDiagnostics = field(init=False)
     profiles: ProfileService = field(init=False)
+    seasonal: SeasonalOps = field(init=False)
     _scrape_cache: dict = field(default_factory=dict, init=False, repr=False)
     #: compute a T1 operating profile in the background when a time-series panel is shown
     auto_profile: bool = False
@@ -187,6 +189,39 @@ class TelemetryService:
         self.diagnostics = SeriesDiagnostics(self.signal)
         self.profiles = ProfileService(
             self.sources, self.cache, ProfileStore(self.workspace.connection), self.ws, self.clock
+        )
+        self.seasonal = SeasonalOps(self.datasets, self.signal, self.query, self._profile_periods)
+
+    def _profile_periods(self, source: str, expr: str) -> list[str]:
+        p = self.profiles.cached(source, expr)
+        if p is None:
+            return []
+        return sorted({s.seasonal.period for s in p.series if s.seasonal is not None})
+
+    async def compare_seasonal(
+        self,
+        dataset_id: str,
+        cycles: list[str] | None = None,
+        tz: str = "UTC",
+        exclude: list[str] | None = None,
+        actor: Actor = "claude",
+    ) -> dict:
+        """Now vs the same phase of previous cycles, band from their spread (lkn.2)."""
+        cfg = await self.seasonal.fetch(dataset_id, cycles, tz, exclude, actor)
+        return self.seasonal.summary(dataset_id, cfg)
+
+    def seasonal_suggestion(self, dataset_id: str, mark: str = "auto") -> str | None:
+        """Hint for `show`: the cached operating profile has a daily/weekly seasonal model."""
+        meta = self.datasets.meta(dataset_id)
+        if mark != "auto" or meta.representation != "bucket_agg" or meta.derived:
+            return None
+        periods = self._profile_periods(meta.source, meta.expr)
+        if not {"hour_of_day", "hour_of_week"} & set(periods):
+            return None
+        cyc = "week" if "hour_of_week" in periods else "day"
+        return (
+            f"the operating profile is seasonal ({', '.join(periods)}): ask whether now is "
+            f'unusual for this time of {cyc} with compare_seasonal("{dataset_id}")'
         )
 
     def _source(self, name: str) -> Source:
@@ -821,12 +856,21 @@ class TelemetryService:
         max_period: str | None = None,
     ) -> dict:
         """Dominant periods with intervals and false-alarm probabilities (bead 4ok.7)."""
-        return self.signal.spectrum_summary(
+        out = self.signal.spectrum_summary(
             dataset_id,
             top,
             parse_duration(min_period) if min_period else None,
             parse_duration(max_period) if max_period else None,
         )
+        found = [
+            (p["period_s"], *p["interval_s"])
+            for s in out["series"]
+            for p in s["peaks"]
+            if p["significant"]
+        ]
+        if hint := seasonal_hint(dataset_id, found):
+            out["suggest"] = hint
+        return out
 
     def analyze(
         self,
@@ -836,11 +880,19 @@ class TelemetryService:
     ) -> dict:
         """Periodicity, stability, SPC against a stated baseline, shape -> verdict (lkn.1)."""
         now = self.clock()
-        return self.diagnostics.summary(
+        out = self.diagnostics.summary(
             dataset_id,
             parse_time(baseline_start, now) if baseline_start else None,
             parse_time(baseline_end, now) if baseline_end else None,
         )
+        found = [
+            (p["period_s"], *p["interval_s"])
+            for s in out["series"]
+            for p in s.get("frequency", {}).get("periods", [])
+        ]
+        if hint := seasonal_hint(dataset_id, found):
+            out["suggest"] = hint
+        return out
 
     def filter(
         self,
@@ -995,6 +1047,9 @@ class TelemetryService:
                 resolve_baseline(meta, w.start_ms, w.end_ms)  # validates; the label is fixed
                 w = Window(start_ms=w.start_ms, end_ms=w.end_ms, label="baseline")
             spec.layers = [Layer(mark="spc", data=dataset_id, windows=[w] if w else [])]
+        elif mark == "seasonal":
+            cfg = self.seasonal.last_config(dataset_id)
+            spec.layers = [Layer(mark="seasonal", data=dataset_id, seasonal=cfg)]
         elif meta.derived and mark == "auto":
             d = meta.derived
             views = offered_views(d["op"])
@@ -1114,6 +1169,13 @@ class TelemetryService:
             out = self.diagnostics.panel(
                 dataset_id, w["start_ms"] if w else None, w["end_ms"] if w else None
             )
+            return {
+                "panel": panel.to_dict(),
+                "dataset": self.datasets.meta(dataset_id).to_dict(),
+                **out,
+            }
+        if layer0["mark"] == "seasonal":
+            out = self.seasonal.panel(dataset_id, layer0["seasonal"])
             return {
                 "panel": panel.to_dict(),
                 "dataset": self.datasets.meta(dataset_id).to_dict(),

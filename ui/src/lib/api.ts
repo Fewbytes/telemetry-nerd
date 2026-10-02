@@ -1,3 +1,4 @@
+import type { SeasonalSeries } from "../chart/seasonal";
 import type { SpcBaseline, SpcSeries } from "../chart/spc";
 export interface ChartSpec {
   layers: {
@@ -63,6 +64,9 @@ export interface SpectrogramPanelData extends PanelDataBase {
   series: { id: string; labels: Record<string, string>; ts: number[]; rows: { lo_s: number[]; hi_s: number[] };
     power: ((number | null)[])[]; level: (number | null)[] }[];
 }
+export interface SeasonalPanelData extends PanelDataBase {
+  kind: "seasonal"; effective_step_ms: number; tz: string; series: SeasonalSeries[];
+}
 export interface SpcPanelData extends PanelDataBase {
   kind: "spc"; effective_step_ms: number; baseline: SpcBaseline; series: SpcSeries[];
   skipped: { labels: Record<string, string>; reason: string }[];
@@ -112,7 +116,7 @@ export interface HistogramPanelData extends PanelDataBase {
   kind: "histogram"; mark: "histogram" | "ecdf" | "quantile_curve" | "ccdf"; effective_step_ms: number; value_merge: number;
   series: { id: string; labels: Record<string, string>; windows: WindowHist[] }[];
 }
-export type PanelData = TimePanelData | HeatmapPanelData | HistogramPanelData | SpectrumPanelData | SpectrogramPanelData | SpcPanelData;
+export type PanelData = TimePanelData | HeatmapPanelData | HistogramPanelData | SpectrumPanelData | SpectrogramPanelData | SpcPanelData | SeasonalPanelData;
 export interface WorkspaceEvent {
   seq: number; ts_ms: number; actor: "claude" | "user" | "system"; type: string;
   object_id: string | null; klass: "intentional" | "ambient" | "internal";

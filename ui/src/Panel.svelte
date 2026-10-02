@@ -13,6 +13,7 @@
   import SpectrumPlot from "./components/SpectrumPlot.svelte";
   import SpectrogramPlot from "./components/SpectrogramPlot.svelte";
   import SpcPlot from "./components/SpcPlot.svelte";
+  import SeasonalPlot from "./components/SeasonalPlot.svelte";
   import { fmtRatio, indexSeries, ratioTicks } from "./chart/indexed";
   import { drawMarginal, marginalHeader } from "./chart/marginal";
   import { overlayChips, overlayDraw } from "./chart/overlays";
@@ -497,6 +498,13 @@
       {#each sc.series as s, i (s.id)}
         <SpcPlot data={sc} series={s} width={fetchWidth}
           onRendered={(ms, pts) => onFacetRendered(i, sc.series.length, ms, pts, 220)} />
+      {/each}
+    {/if}
+    {#if data && data.kind === "seasonal"}
+      {@const sz = data}
+      {#each sz.series as s, i (s.id)}
+        <SeasonalPlot data={sz} series={s} width={fetchWidth}
+          onRendered={(ms, pts) => onFacetRendered(i, sz.series.length, ms, pts, 220)} />
       {/each}
     {/if}
     {#if data && data.kind === "spectrogram"}

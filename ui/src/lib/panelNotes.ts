@@ -38,12 +38,16 @@ const CAVEATS: Record<string, Describe> = {
   mostly_edge: () => "Most of this series is within the filter's edge zone: use a shorter cutoff or a longer range.",
   weak_filter: () => "The cutoff is under 8 steps: it barely smooths.",
   coarsened: () => "Averaged to a coarser step first (point cap): shorter periods were not examined.",
-  red_noise: () => "Long periods are overstated: the series is autocorrelated, so false-alarm odds are optimistic there.",
+  red_noise: () => "The series is autocorrelated: long periods look stronger than white noise would explain, so peaks are only called significant against AR(1) red noise (dotted level).",
   sampling_artifact: () => "A peak matches the sampling pattern (periodic gaps), not the signal.",
   too_few_points: () => "Some series have too few points for a spectrum and were skipped.",
   too_gappy: () => "Some series are more than half gaps and were skipped.",
   constant: () => "Some series are constant and were skipped.",
   skipped_series: () => "Some series did not qualify and were skipped.",
+  cycles_excluded: () => "Some previous cycles were left out of the reference (missing data, excluded dates, or atypical); see the legend.",
+  heavy_tails: () => "Previous cycles had excursions beyond the normal-theory threshold, so the extreme-point threshold was raised to the largest of them.",
+  small_residual_pool: () => "Few previous-cycle residuals: the band edges are rough.",
+  dst_within_window: () => "The window crosses a daylight-saving change: points after it are an hour off the local-time alignment.",
   overflow: () => "Some observations are above the largest bucket edge; their values are unknown (top strip).",
 };
 
@@ -145,6 +149,7 @@ export function describeShown(
 ): string {
   if (kind === "spectrum") return "Periodogram (Lomb-Scargle): the share of variance a sinusoid of each period explains, with the 1% false-alarm level; peaks carry intervals.";
   if (kind === "spc") return "Control chart: the series against a centre line and 3σ band computed from the shaded baseline only; flagged points break SPC rules.";
+  if (kind === "seasonal") return "Seasonal comparison: now against the same window in previous cycles (faint), their median (dashed) and a 90% band from the spread across those cycles; dots are points too extreme for any previous cycle.";
   if (kind === "spectrogram") return "Spectrogram: how the periodicity changes over time, one window per column; the window sets the period resolution.";
   if (mark === "percentiles") {
     return `Per ${step} column, the source bucket holding each percentile (estimator: bucket-edge bounds, never interpolated), only where the column has n ≥ 10/(1−q).`;

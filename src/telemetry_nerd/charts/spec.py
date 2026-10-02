@@ -25,6 +25,7 @@ Mark = Literal[
     "spectrum",
     "spectrogram",
     "spc",
+    "seasonal",
 ]
 SPECTRAL_MARKS = {"spectrum", "spectrogram"}
 WINDOW_MARKS = {"histogram", "ecdf", "quantile_curve", "ccdf"}
@@ -52,6 +53,7 @@ class Layer(BaseModel):
     overlap: float | None = Field(default=None, ge=0, lt=0.95)
     min_period_ms: int | None = None
     max_period_ms: int | None = None
+    seasonal: dict | None = None  # compare_seasonal config: tz, exclude, reference datasets
 
 
 class YLimit(BaseModel):

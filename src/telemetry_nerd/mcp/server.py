@@ -42,6 +42,10 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
 - "Is this metric stable / drifting / shifted / periodic / in control?": `analyze(dataset)`, then
   `show(dataset, question, mark="spc")`. State the verdict with its reasons and numbers, the
   baseline window the control limits came from, n_eff, and caveats; cite `evidence`.
+- "Is now unusual for this time of day / week?": `compare_seasonal(dataset)` (also when
+  analyze/spectrum/show `suggest` it), then `show(dataset, question, mark="seasonal")`. State the
+  reference it chose (cycles, alignment/timezone, excluded cycles), the ratio with the normal
+  range, and say so when history is insufficient. Never for percentile series.
 - Filters: `filter(dataset, kind, period, reason)` only when the question needs it: lowpass for
   trend/sustained shift, highpass to remove baseline/diurnal before looking for spikes/steps,
   bandpass around a spectrum peak. Never filter percentiles or raw counters. `show` the result;
@@ -189,6 +193,39 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         Draw it with show(dataset, question, mark="spc", windows=[{start, end}] = the baseline)."""
         try:
             return _dump(service.analyze(dataset, baseline_start, baseline_end))
+        except (NotFound, ValueError) as e:
+            raise ToolError(str(e)) from e
+
+    @mcp.tool()
+    async def compare_seasonal(
+        dataset: str,
+        cycles: list[str] | None = None,
+        tz: str = "UTC",
+        exclude: list[str] | None = None,
+    ) -> str:
+        """Is now unusual for this time of day / week? Compares the dataset's window with the
+        same phase of previous cycles.
+
+        cycles: which references to consider, of "previous" (the 4 preceding windows: the
+        non-seasonal baseline), "1d" (same window on the previous 7 days), "1w" (previous 4
+        weeks); default all. Each previous cycle is fetched (cached). The reference is chosen by
+        leave-one-cycle-out error (a more specific cycle must win by 5%) and stated.
+        tz: IANA timezone for alignment (default UTC): "same hour yesterday" in local time across
+        DST is 23h/25h back. exclude: local dates (e.g. ["2026-12-25"]) whose cycles to drop
+        (holidays); missing cycles and atypical ones (t prediction interval) are dropped too,
+        each listed with its reason.
+        The band is the median of the kept cycles +- quantiles of leave-one-cycle-out residuals
+        (the spread ACROSS cycles, never one reference week). Verdict per series: usual |
+        unusual (direction higher/lower/mixed) | insufficient_history (< 3 usable cycles), from
+        three detectors at 1% each: window level (ratio vs a t interval with k-1 df), extreme
+        points (Sidak over the window), share of points outside the band. `ratio.evidence` is
+        a statistic for finding_create. Refused on percentile series (hint: histograms per
+        cycle), distributions and raw counters. Draw with show(dataset, question,
+        mark="seasonal")."""
+        try:
+            return _dump(await service.compare_seasonal(dataset, cycles, tz, exclude))
+        except SourceError as e:
+            raise ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e)) from e
         except (NotFound, ValueError) as e:
             raise ToolError(str(e)) from e
 
@@ -609,6 +646,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         bucket edges). The last four need windows.
         spc (time series): control chart from analyze: series, centre line, 3-sigma band,
         violations, shaded baseline; windows=[{start, end}] is the baseline (default first half).
+        seasonal (time series, after compare_seasonal): now vs previous cycles (faint), their
+        median and 90% band, flagged points; the user can switch to the ratio view.
         spectrum / spectrogram (time series): periodicity panels; spectrogram needs `segment`
         (e.g. "30m", state it in your answer) and takes `overlap` (default 0.5). view: for a panel
         drawn from filter(): the default view (overlay | filtered | removed | raw).
@@ -660,6 +699,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             out["drawn_dataset"] = res.panel.dataset_ids[0]
         if ctx is not None and ctx.notes:
             out["y_range_notes"] = ctx.notes
+        if hint := service.seasonal_suggestion(dataset, mark):
+            out["suggest"] = hint
         return _dump(out)
 
     ws = service.ws
