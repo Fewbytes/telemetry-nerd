@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <title>Telemetry Nerd</title>
+  <!-- Drawn on a 32-unit grid: 2 units = 1 px at 16 px. Straight edges sit on even coordinates
+       and strokes are 2 units wide, so they land on whole pixels at both 16 and 32 px. -->
+  <defs>
+    <clipPath id="lens-l"><circle cx="10" cy="14" r="5"/></clipPath>
+    <clipPath id="lens-r"><circle cx="22" cy="14" r="5"/></clipPath>
+  </defs>
+  <ellipse cx="16" cy="17" rx="15" ry="14" fill="#f2b544" stroke="#1b2124" stroke-width="2"/>
+  <path d="M11 23 Q16 27 21 23" fill="none" stroke="#1b2124" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="10" cy="14" r="6" fill="#ffffff"/>
+  <circle cx="22" cy="14" r="6" fill="#ffffff"/>
+  <!-- histogram: touching bins -->
+  <g clip-path="url(#lens-l)" fill="#1f6f8b">
+    <rect x="6" y="14" width="2" height="4"/>
+    <rect x="8" y="10" width="2" height="8"/>
+    <rect x="10" y="12" width="2" height="6"/>
+    <rect x="12" y="16" width="2" height="2"/>
+  </g>
+  <!-- solid bell -->
+  <path clip-path="url(#lens-r)" d="M17 18 C19.5 18 20.2 9 22 9 C23.8 9 24.5 18 27 18 Z" fill="#1f6f8b"/>
+  <g fill="none" stroke="#1b2124" stroke-width="2">
+    <circle cx="10" cy="14" r="6"/>
+    <circle cx="22" cy="14" r="6"/>
+  </g>
+</svg>

@@ -48,3 +48,7 @@ e2e:
     just dev-up
     just ui-build
     cd ui && npx playwright install chromium && npx playwright test
+
+# Render brand PNGs, favicon.ico and the social card from assets/brand/*.svg into assets/brand/dist.
+brand:
+    uv run --script scripts/build_brand.py
