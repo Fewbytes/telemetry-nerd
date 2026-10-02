@@ -21,7 +21,6 @@ from telemetry_nerd.analysis.stats import t_quantile
 ALPHA = 0.05
 MIN_SUBSTEPS = 4  # fewer usable sub-steps: the window is not judged
 STEADY_CHANGE = 0.10  # a significant trend moving L or lambda by more than this is "not steady"
-FLOW_TOLERANCE = 0.0  # flow imbalance is judged by its interval alone
 
 
 @dataclass(frozen=True)

@@ -189,13 +189,7 @@ class LittlesOps:
         join: list[str] = []
         bound = None
         if binding:
-            b = self._binding(source, binding)
-            if b is None:
-                raise ValueError(
-                    f"no littles_law binding for {binding!r} on {source!r} (hint: "
-                    "catalog_bind(kind='littles_law', ...) or pass arrival_rate, latency and "
-                    "concurrency)"
-                )
+            b = self._binding(source, binding)  # raises when there is none
             roles.update(b.winner.roles)
             join = list(b.winner.join_on)
             bound = {"key": binding, "origin": b.winner.origin, "roles": dict(b.winner.roles)}

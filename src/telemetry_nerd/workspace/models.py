@@ -338,7 +338,7 @@ class GroupRole(_Strict):
     why: str | None = None
     gap: str | None = None
     error: str | None = None
-    #: binding_verdict (czt.4): {status, direction, pattern, onset_ms, onset_interval, text}
+    #: binding_verdict (czt.4): {status, direction, pattern, text, at_capacity, onset?}
     verdict: dict | None = None
 
 

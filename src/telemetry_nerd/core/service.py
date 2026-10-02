@@ -87,7 +87,7 @@ from telemetry_nerd.charts.ycontext import (
 )
 from telemetry_nerd.charts.yview import value_stats
 from telemetry_nerd.core import fleet_payloads
-from telemetry_nerd.core.binding_ops import BindingViews
+from telemetry_nerd.core.binding_ops import BindingOps
 from telemetry_nerd.core.card_payload import (
     MAX_METRICS,
     gap_pct,
@@ -257,11 +257,11 @@ class TelemetryService:
     #: tier-2 run directories (<data_dir>/runs); None when tier-2 is not wired
     runs_root: Path | None = None
     code: CodeOps = field(init=False)
-    bindings: BindingViews = field(init=False)
+    bindings: BindingOps = field(init=False)
     verdicts: VerdictOps = field(init=False)
 
     def __post_init__(self) -> None:
-        self.bindings = BindingViews(self)
+        self.bindings = BindingOps(self)
         self.verdicts = VerdictOps(self)
         self.signal = SignalOps(self.datasets, self.ws.catalog_facts)
         self.diagnostics = SeriesDiagnostics(

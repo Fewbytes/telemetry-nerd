@@ -39,20 +39,6 @@ from telemetry_nerd.workspace.models import GroupRole, MetricSuggestion, PanelGr
 if TYPE_CHECKING:
     from telemetry_nerd.core.service import TelemetryService
 
-#: role -> short label of how it is drawn, for the group summary and the UI
-FORM_LABELS = {
-    "rate": "per-second rate",
-    "error_ratio": f"errors / requests, Wilson {int(RATIO_LEVEL * 100)}% band",
-    "errors": "errors per second",
-    "distribution": "latency distribution (heatmap; percentile bands view)",
-    "mean": "mean (sum / count)",
-    "value": "as reported",
-    "utilization": "share of capacity in use (natural 0-1 axis)",
-    "saturation": "work waiting",
-    "concurrency": "requests in flight",
-}
-
-
 #: what fetching or drawing one role may fail with: the role shows the error, the rest still draw
 ROLE_FAILURES = (SourceError, ValueError, NotFound, LookupError)
 
@@ -93,7 +79,7 @@ def _gap_role(b: Resolved, role: str) -> GroupRole:
     )  # fmt: skip
 
 
-class BindingViews:
+class BindingOps:
     def __init__(self, svc: TelemetryService) -> None:
         self.svc = svc
 
@@ -294,10 +280,7 @@ class BindingViews:
         svc = self.svc
         base: dict[str, Any] = {"role": "check", "form": "littles"}
         try:
-            out = await svc.check_littles_law(
-                actor=actor, source=group.source, by=list(b.join_on),
-                start=str(rng.start_ms), end=str(rng.end_ms), **littles_selectors(infos, mt),
-            )  # fmt: skip
+            out = await self.check_littles(group.source, b, infos, mt, rng, actor)
             res = svc.show(
                 out["datasets"]["concurrency"], f"Is {b.key}'s L consistent with λ·W?", actor,
                 mark="littles", group=GroupRef(id=group.id, role="check"),
@@ -306,6 +289,22 @@ class BindingViews:
             return GroupRole(**base, view="error", error=str(e))
         notes = [f"verdict: {out['verdict']} (check_littles_law, window {out['window']})"]
         return GroupRole(**base, panel=res.panel.id, view="model", notes=notes)
+
+    async def check_littles(
+        self,
+        source: str,
+        b: Resolved,
+        infos: Mapping[str, MetricInfo],
+        mt: Mapping[str, str],
+        rng: TimeRange,
+        actor: Actor,
+    ) -> dict:
+        """check_littles_law (czt.2) on a Little's law binding's metrics over `rng`, by its
+        join_on (show_binding's model panel, binding_verdict's model_check)."""
+        return await self.svc.check_littles_law(
+            actor=actor, source=source, by=list(b.join_on),
+            start=str(rng.start_ms), end=str(rng.end_ms), **littles_selectors(infos, mt),
+        )  # fmt: skip
 
     @staticmethod
     def grid_step(rng: TimeRange, step: str, res_ms: int, plans: Iterable[RolePlan]) -> int:

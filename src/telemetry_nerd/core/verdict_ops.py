@@ -32,8 +32,8 @@ from telemetry_nerd.analysis.verdicts import (
     share_threshold,
 )
 from telemetry_nerd.catalog.relations import BINDING_ROLES
-from telemetry_nerd.core.binding_ops import ROLE_FAILURES, BindingViews, parse_range
-from telemetry_nerd.core.binding_view import RolePlan, littles_selectors, natural_bound
+from telemetry_nerd.core.binding_ops import ROLE_FAILURES, BindingOps, parse_range
+from telemetry_nerd.core.binding_view import RolePlan, natural_bound
 from telemetry_nerd.core.events import Actor
 from telemetry_nerd.core.uncertainty import mark_statistics
 from telemetry_nerd.core.wire import add_caveats, sig, sig_pair, statistic
@@ -222,7 +222,7 @@ class VerdictOps:
             rng, step_ms = TimeRange(g.start_ms, g.end_ms), g.step_ms
         else:
             rng = parse_range(start, end, svc.clock())
-            step_ms = BindingViews.grid_step(rng, step, res_ms, plans.values())
+            step_ms = BindingOps.grid_step(rng, step, res_ms, plans.values())
         scheme, basis = self._scheme(reference, source, plans)
         k = DEFAULT_K[scheme]
         when = {
@@ -446,10 +446,7 @@ class VerdictOps:
 
     async def _littles(self, source, b, infos, mt, rng: TimeRange, actor: Actor) -> dict:
         try:
-            out = await self.svc.check_littles_law(
-                actor=actor, source=source, by=list(b.join_on),
-                start=str(rng.start_ms), end=str(rng.end_ms), **littles_selectors(infos, mt),
-            )  # fmt: skip
+            out = await self.svc.bindings.check_littles(source, b, infos, mt, rng, actor)
         except ROLE_FAILURES as e:
             return {"error": str(e)}
         t = out["total"]

@@ -10,7 +10,7 @@ in one family-wise error budget, and nothing averages percentiles.
 MCP `binding_verdict(source, kind+key | group | suggestion, range | start/end, step,
 reference="auto"|"previous"|"day"|"week"|"profile", tz, matchers, error_matcher, alpha=0.05)`
 and `TelemetryService.binding_verdict(...)`. Roles are resolved and planned exactly as
-`show_binding` does (`BindingViews.resolve` + `plan_role`, czt.3), fetched through the same
+`show_binding` does (`BindingOps.resolve` + `plan_role`, czt.3), fetched through the same
 `_fetch` (error ratio = errors / requests per member and step; latency = the histogram).
 With `group=pgN` the group's window, step, matchers and error matcher are used and the group's
 roles are annotated (`GroupRole.verdict`, `PanelGroup.verdict`): the UI shows a badge per role

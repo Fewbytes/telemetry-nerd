@@ -446,10 +446,10 @@ async def test_littles_check_refusal_is_a_card_not_a_failure(tmp_path):
 
 
 def test_a_bound_bucket_series_stands_for_its_classic_histogram(tmp_path):
-    from telemetry_nerd.core.binding_ops import BindingViews
+    from telemetry_nerd.core.binding_ops import BindingOps
 
     svc = make_service(tmp_path, BindingSource())
     names = ["lat_seconds_bucket", "lat_seconds_count", "lat_seconds_sum"]
     svc.ws.catalog.relearn("default", names, 1, complete=True)
-    info = BindingViews(svc)._info("default", "lat_seconds_bucket", frozenset())
+    info = BindingOps(svc)._info("default", "lat_seconds_bucket", frozenset())
     assert (info.name, info.type, info.native) == ("lat_seconds", "histogram", False)
