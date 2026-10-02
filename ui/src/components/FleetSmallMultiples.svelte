@@ -3,6 +3,8 @@
   import "uplot/dist/uPlot.min.css";
   import { OUTLIER_COLORS, bandFills, outlierText, toFleetUplot, type FleetData } from "../chart/fleet";
   import { decimate, sharedRange } from "../chart/fleetHeat";
+  import { HIDDEN_SERIES, plotAxes } from "../chart/plotKit";
+  import { fmtTimeZ } from "../lib/format";
   import { plotColors, theme } from "../lib/theme.svelte";
 
   let { data, width, k = 6, onRendered }: {
@@ -14,7 +16,6 @@
   const shown = $derived(data.outliers.slice(0, k));
   const cols = $derived(width >= 900 ? 3 : width >= 560 ? 2 : 1);
   const cellW = $derived(Math.floor((width - GAP * (cols - 1)) / cols));
-  const fmtTime = (ms: number) => new Date(ms).toISOString().slice(11, 16) + "Z";
   let host = $state<HTMLDivElement | null>(null);
 
   $effect(() => {
@@ -33,19 +34,15 @@
       const m = toFleetUplot(one);
       const maxPts = Math.max(2, 2 * (cellW - 44)); // <= 2 points per px
       const cols_ = decimate(m.data as (number | null)[][], m.roles, maxPts);
-      const edge: uPlot.Series = { stroke: "transparent", width: 0, points: { show: false } };
       const series: uPlot.Series[] = [{}, ...m.roles.slice(1).map((r): uPlot.Series =>
         r === "median" ? { stroke, width: 1.2, points: { show: false } }
         : r === "outlier" ? { stroke: OUTLIER_COLORS[i % OUTLIER_COLORS.length], width: 1.8, points: { show: false } }
-        : edge)];
+        : HIDDEN_SERIES)];
       plots.push(new uPlot({
         width: cellW, height: H, series,
         bands: m.bands.map((b, j) => ({ ...b, fill: fills[j] })),
         scales: { y: { range: () => range } },
-        axes: [
-          { stroke, grid: { stroke: grid }, ticks: { stroke: grid }, size: 22, font: "10px sans-serif" },
-          { stroke, grid: { stroke: grid }, ticks: { stroke: grid }, size: 44, font: "10px sans-serif" },
-        ],
+        axes: plotAxes(stroke, grid, { size: 44, font: "10px sans-serif" }, { size: 22, font: "10px sans-serif" }),
         legend: { show: false },
         cursor: { show: false },
       }, cols_ as uPlot.AlignedData, slot));
@@ -59,7 +56,7 @@
 <div class="sm" bind:this={host} data-fleet-multiples={shown.length} style:grid-template-columns="repeat({cols}, {cellW}px)">
   {#each shown as o, i (o.id)}
     <figure>
-      <figcaption><span class="swatch" style:background={OUTLIER_COLORS[i % OUTLIER_COLORS.length]}></span>{outlierText(o, fmtTime)}</figcaption>
+      <figcaption><span class="swatch" style:background={OUTLIER_COLORS[i % OUTLIER_COLORS.length]}></span>{outlierText(o, fmtTimeZ)}</figcaption>
       <div></div>
     </figure>
   {/each}

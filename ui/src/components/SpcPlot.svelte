@@ -2,6 +2,7 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import { baselineSpan, DECIDING, markTip, nearestMark, spcLegend, toSpcUplot, violationMarks, type SpcMark } from "../chart/spc";
+  import { drawDots, HIDDEN_SERIES, plotAxes } from "../chart/plotKit";
   import { seriesName } from "../chart/toUplot";
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { SpcPanelData } from "../lib/api";
@@ -38,7 +39,6 @@
     const m = toSpcUplot(series, data.effective_step_ms);
     const xs = m.data[0] as number[];
     const step = data.effective_step_ms;
-    const hidden = { stroke: "transparent", width: 0, points: { show: false } };
     const fills = [
       mode === "dark" ? "rgba(140,140,140,0.18)" : "rgba(120,120,120,0.12)",
       ...Array(3).fill(mode === "dark" ? "rgba(170,170,170,0.30)" : "rgba(80,80,80,0.22)"),
@@ -52,16 +52,11 @@
           { label: "centre", stroke, width: 1, dash: [6, 3], points: { show: false } },
           { label: "−3σ", stroke: grid, width: 1, points: { show: false } },
           { label: "+3σ", stroke: grid, width: 1, points: { show: false } },
-          { label: "+3σ 99% lo", ...hidden }, { label: "+3σ 99% hi", ...hidden },
-          { label: "−3σ 99% lo", ...hidden }, { label: "−3σ 99% hi", ...hidden },
-          { label: "centre 99% lo", ...hidden }, { label: "centre 99% hi", ...hidden },
+          ...["+3σ 99% lo", "+3σ 99% hi", "−3σ 99% lo", "−3σ 99% hi", "centre 99% lo", "centre 99% hi"].map((label) => ({ ...HIDDEN_SERIES, label })),
         ],
         bands: m.bands.map((b, k) => ({ ...b, fill: fills[k] })),
         legend: { show: false },
-        axes: [
-          { stroke, grid: { stroke: grid }, ticks: { stroke: grid } },
-          { stroke, grid: { stroke: grid }, ticks: { stroke: grid } },
-        ],
+        axes: plotAxes(stroke, grid),
         cursor: { drag: { x: false, y: false }, points: { show: false } },
         hooks: {
           drawClear: [
@@ -80,18 +75,7 @@
             },
           ],
           draw: [
-            (p: uPlot) => {
-              const c = p.ctx, dpr = window.devicePixelRatio || 1;
-              c.save();
-              c.lineWidth = 1.5 * dpr;
-              c.strokeStyle = VIOLATION; c.fillStyle = VIOLATION;
-              for (const mk of drawn) {
-                const x = p.valToPos(mk.x, "x", true), y = p.valToPos(mk.y, "y", true);
-                c.beginPath(); c.arc(x, y, 3.5 * dpr, 0, 2 * Math.PI);
-                if (mk.deciding) c.fill(); else c.stroke();
-              }
-              c.restore();
-            },
+            (p: uPlot) => drawDots(p, drawn, VIOLATION, (mk) => mk.deciding),
           ],
           setCursor: [
             (p: uPlot) => {

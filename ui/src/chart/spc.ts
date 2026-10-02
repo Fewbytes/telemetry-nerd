@@ -29,7 +29,7 @@ const RULE_TEXT: Record<string, string> = {
   ewma: "EWMA",
   cusum: "CUSUM",
 };
-export const ruleText = (r: string) => RULE_TEXT[r] ?? r;
+const ruleText = (r: string) => RULE_TEXT[r] ?? r;
 /** What each rule means, for the hover over a flagged point. */
 const RULE_DETAIL: Record<string, string> = {
   outside_limits: "outside centre ± 3σ (marginal σ from the baseline)",
@@ -40,7 +40,7 @@ const RULE_DETAIL: Record<string, string> = {
   ewma: "EWMA (λ 0.2, L 3) crossed its limit: a small sustained shift (deciding)",
   cusum: "CUSUM (k 0.5, h 5) crossed its limit: a sustained shift (deciding)",
 };
-export const ruleDetail = (r: string) => RULE_DETAIL[r] ?? r;
+const ruleDetail = (r: string) => RULE_DETAIL[r] ?? r;
 
 /** Intervals of the level and sigma, as offsets from the centre curve; null when absent. */
 export function limitIntervals(s: SpcSeries): { dlo: number; dhi: number; slo: number; shi: number } | null {

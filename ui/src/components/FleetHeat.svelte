@@ -4,6 +4,7 @@
     DIVERGING, GAP, binHeat, divergingLut, heatLegendText, heatTip, labelYs, lutIndex, rowPx, type HeatGrid,
   } from "../chart/fleetHeat";
   import { setupCanvas } from "../chart/canvas";
+  import { fmtTimeZ } from "../lib/format";
   import { theme } from "../lib/theme.svelte";
 
   let { data, width, onRendered }: {
@@ -18,7 +19,6 @@
   const plotH = $derived((heat?.rows.length ?? 1) * rowH);
   let canvas = $state<HTMLCanvasElement | null>(null);
   let tip = $state<{ x: number; y: number; text: string } | null>(null);
-  const fmtTime = (ms: number) => new Date(ms).toISOString().slice(11, 16) + "Z";
   const stops = $derived(DIVERGING[theme.effective === "dark" ? "dark" : "light"].join(", "));
   let grid: HeatGrid | null = null;
 
@@ -70,7 +70,7 @@
       const f = i / ticks, ti = Math.min(data.ts.length - 1, Math.round(f * (data.ts.length - 1)));
       ctx.textAlign = i === 0 ? "left" : i === ticks ? "right" : "center";
       ctx.fillRect(Math.min(W - 1, f * W), H, 1, 3);
-      ctx.fillText(fmtTime(data.ts[ti]), f * W, H + 4);
+      ctx.fillText(fmtTimeZ(data.ts[ti]), f * W, H + 4);
     }
     ctx.restore();
     // outlier labels in the gutter: ink text, the outlier's colour as a swatch (colour never carries the text)
@@ -99,7 +99,7 @@
     const r = h.rows[Math.floor(y / rowH)];
     const c = Math.min(data.ts.length - 1, Math.floor((x / plotW) * data.ts.length));
     const absent = r.first < 0 || c < r.first || c > r.last;
-    const text = absent && r.z[c] == null ? `${r.id} · ${fmtTime(data.ts[c])} · not reporting (before first / after last report)` : heatTip(r, r.z[c], fmtTime(data.ts[c]));
+    const text = absent && r.z[c] == null ? `${r.id} · ${fmtTimeZ(data.ts[c])} · not reporting (before first / after last report)` : heatTip(r, r.z[c], fmtTimeZ(data.ts[c]));
     tip = { x: e.offsetX + 12, y: e.offsetY + 12, text };
   }
 </script>

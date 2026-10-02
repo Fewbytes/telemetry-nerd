@@ -2,6 +2,7 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import { flagMarks, seasonalLegend, toSeasonalUplot, verdictText, type SeasonalView } from "../chart/seasonal";
+  import { drawDots, plotAxes } from "../chart/plotKit";
   import { seriesName } from "../chart/toUplot";
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { SeasonalPanelData } from "../lib/api";
@@ -41,25 +42,11 @@
         series: [{}, ...m.roles.slice(1).map((r, i) => (r === "cycle" ? { ...style.cycle, label: `−${series.cycles[i].j}` } : style[r]))],
         bands: m.bands.map((b) => ({ ...b, fill: mode === "dark" ? "rgba(140,140,140,0.20)" : "rgba(120,120,120,0.14)" })),
         scales: logY ? { y: { distr: 3, log: 2 } } : {},
-        axes: [
-          { stroke, grid: { stroke: grid }, ticks: { stroke: grid } },
-          { stroke, grid: { stroke: grid }, ticks: { stroke: grid }, label: v === "ratio" ? (logY ? "now ÷ reference (log)" : "now − reference") : undefined },
-        ],
+        axes: plotAxes(stroke, grid, { label: v === "ratio" ? (logY ? "now ÷ reference (log)" : "now − reference") : undefined }),
         legend: { show: false },
         cursor: { drag: { x: false, y: false } },
         hooks: {
-          draw: [
-            (p: uPlot) => {
-              const c = p.ctx, dpr = window.devicePixelRatio || 1;
-              c.save();
-              c.fillStyle = FLAG;
-              for (const mk of marks) {
-                const x = p.valToPos(mk.x, "x", true), y = p.valToPos(mk.y, "y", true);
-                c.beginPath(); c.arc(x, y, 3.5 * dpr, 0, 2 * Math.PI); c.fill();
-              }
-              c.restore();
-            },
-          ],
+          draw: [(p: uPlot) => drawDots(p, marks, FLAG)],
         },
       },
       m.data, host,

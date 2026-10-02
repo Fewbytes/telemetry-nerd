@@ -2,6 +2,8 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import { OUTLIER_COLORS, bandFills, coverageGaps, fleetLegend, outlierText, toFleetUplot } from "../chart/fleet";
+  import { HIDDEN_SERIES, plotAxes } from "../chart/plotKit";
+  import { fmtTimeZ } from "../lib/format";
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { FleetPanelData } from "../lib/api";
   import FleetHeat from "./FleetHeat.svelte";
@@ -18,7 +20,6 @@
   const views: [View, string][] = [["band", "band + outliers"], ["heat", "member × time"], ["multiples", "small multiples"]];
 
   let el = $state<HTMLDivElement | null>(null);
-  const fmtTime = (ms: number) => new Date(ms).toISOString().slice(11, 16) + "Z";
 
   $effect(() => {
     const host = el;
@@ -30,7 +31,6 @@
     const gaps = coverageGaps(data);
     const dark = mode === "dark";
     const fills = bandFills(dark);
-    const edge: uPlot.Series = { stroke: "transparent", width: 0, points: { show: false } };
     const labelOf: Record<string, string> = { lo: "min", hi: "max", q10: "10%", q90: "90%", q25: "25%", q75: "75%" };
     let k = 0;
     const series: uPlot.Series[] = [{}, ...m.roles.slice(1).map((r): uPlot.Series => {
@@ -39,16 +39,13 @@
         const o = data.outliers[k];
         return { label: o.id, stroke: OUTLIER_COLORS[k++ % OUTLIER_COLORS.length], width: 1.5, points: { show: false } };
       }
-      return { ...edge, label: labelOf[r] };
+      return { ...HIDDEN_SERIES, label: labelOf[r] };
     })];
     const u = new uPlot(
       {
         width, height, series,
         bands: m.bands.map((b, i) => ({ ...b, fill: fills[i] })),
-        axes: [
-          { stroke, grid: { stroke: grid }, ticks: { stroke: grid } },
-          { stroke, grid: { stroke: grid }, ticks: { stroke: grid }, label: data.normalise === "member" ? "× own median" : undefined },
-        ],
+        axes: plotAxes(stroke, grid, { label: data.normalise === "member" ? "× own median" : undefined }),
         legend: { show: false },
         cursor: { drag: { x: false, y: false } },
         hooks: {
@@ -101,14 +98,14 @@
   {:else if view === "multiples"}
     <FleetSmallMultiples {data} {width} {onRendered} />
   {:else}
-  <div class="legend">{fleetLegend(data)}</div>
-  {#if data.outliers.length}
-    <ul class="outliers">
-      {#each data.outliers as o, i (o.id)}
-        <li><span class="swatch" style:background={OUTLIER_COLORS[i % OUTLIER_COLORS.length]}></span>{outlierText(o, fmtTime)}</li>
-      {/each}
-    </ul>
-  {/if}
+    <div class="legend">{fleetLegend(data)}</div>
+    {#if data.outliers.length}
+      <ul class="outliers">
+        {#each data.outliers as o, i (o.id)}
+          <li><span class="swatch" style:background={OUTLIER_COLORS[i % OUTLIER_COLORS.length]}></span>{outlierText(o, fmtTimeZ)}</li>
+        {/each}
+      </ul>
+    {/if}
   {/if}
 </div>
 

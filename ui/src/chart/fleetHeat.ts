@@ -5,16 +5,16 @@ import type { FleetData, FleetHeat, FleetHeatRow } from "./fleet";
 // ColorBrewer PuOr: diverging, colour-blind safe (blue-content vs orange, no red-green). Orange is
 // above the other members, purple below. Light theme: neutral grey centre, darker toward the ends.
 // Dark theme: dark neutral centre, lighter toward the ends, so deviation is always "more contrast".
-export type Mode = "light" | "dark";
+type Mode = "light" | "dark";
 export const DIVERGING: Record<Mode, string[]> = {
   light: ["#542788", "#8061a8", "#b2abd2", "#e6e6e6", "#f1a340", "#d97a14", "#b35806"],
   dark: ["#d4c9ff", "#9a86e0", "#5b4a9c", "#2f333b", "#a8631a", "#e08a2c", "#ffc880"],
 };
 // absent anchors are ordered low -> high; the neutral midpoint sits at index 3 of 7
-export const Z_CAP = 6;
-export const MIN_ROW_PX = 4; // 2 px per column x 4 px per row is the heatmap budget's cell
-export const MAX_ROW_PX = 14;
-export const HEAT_TARGET_PX = 420;
+const Z_CAP = 6;
+const MIN_ROW_PX = 4; // 2 px per column x 4 px per row is the heatmap budget's cell
+const MAX_ROW_PX = 14;
+const HEAT_TARGET_PX = 420;
 
 const hex = (h: string): number[] => {
   const n = parseInt(h.slice(1), 16);
