@@ -104,9 +104,9 @@ def structure(pos, ts_ms, t_s, y, span_ms) -> Structure:
 
 
 def _chart(ts_ms, y, step_ms, pos, t_s, baseline, harm, reference, profile) -> ControlChart:
-    shape, cycle = profile if profile is not None else (None, None)
+    seasonal, cycle = profile if profile is not None else (None, None)
     if reference is None:
-        return control_chart(pos, t_s, y, baseline, harm, shape, cycle)
+        return control_chart(pos, t_s, y, baseline, harm, seasonal, cycle)
     rts, ry = np.asarray(reference[0], np.int64), np.asarray(reference[1], float)
     k = rts.size
     if k == 0:
@@ -117,7 +117,7 @@ def _chart(ts_ms, y, step_ms, pos, t_s, baseline, harm, reference, profile) -> C
     base = np.r_[np.ones(k, bool), np.zeros(y.size, bool)]
     chart = control_chart(
         positions(ts_all, step_ms), (ts_all - ts_all[0]) / 1000.0, np.r_[ry, y], base, harm,
-        shape, cycle,
+        seasonal, cycle,
     )  # fmt: skip
     return chart.tail(k)
 
@@ -172,12 +172,12 @@ def diagnose(
     peaks = [p for p in cands if p.period_ms / 1000 in periods]
     harm = fit_harmonics(t_s, first.resid, periods)
     yd = y - harm.curve(t_s)
-    st_ = structure(pos, ts_ms, t_s, yd, span_ms) if periods else first
-    tr, shifts, model, resid = st_.trend, st_.shifts, st_.model, st_.resid
+    final = structure(pos, ts_ms, t_s, yd, span_ms) if periods else first
+    tr, shifts, model, resid = final.trend, final.shifts, final.model, final.resid
     sigma_within = robust_sigma(resid) or float(np.std(resid))
     tau = tau_int(pos, resid)
     ne = n_eff(n, tau)
-    st = kpss(yd)
+    stationarity = kpss(yd)
     vr = variance_ratio(pos, resid)
     sh = shape(y, tau_raw)
     chart = _chart(ts_ms, y, step_ms, pos, t_s, baseline, harm if peaks else None, reference, profile)  # fmt: skip
@@ -238,9 +238,9 @@ def diagnose(
             f"heavy tails: excess kurtosis {sh.excess_kurtosis:.2g} "
             f"[{sh.kurtosis_interval[0]:.2g}, {sh.kurtosis_interval[1]:.2g}]"
         )
-    if st.p_upper <= 0.01 and not structured:
+    if stationarity.p_upper <= 0.01 and not structured:
         noisy.append(
-            f"not level-stationary (KPSS {st.stat:.2g}, p <= 0.01) but no single trend or "
+            f"not level-stationary (KPSS {stationarity.stat:.2g}, p <= 0.01) but no single trend or "
             "shift explains it: wandering / red noise"
         )
     if chart.in_control is False and not structured:
@@ -262,5 +262,5 @@ def diagnose(
     order = sorted(labels, key=VERDICTS.index)
     return Diagnosis(
         order[0], order[1:], reasons, n, tau, ne, peaks, confirmed, cands, harm if peaks else None, tr, shifts,
-        sigma_within, st, vr, sh, chart, model, caveats,
+        sigma_within, stationarity, vr, sh, chart, model, caveats,
     )  # fmt: skip

@@ -9,7 +9,7 @@ Design: docs/superpowers/specs/2026-10-02-series-diagnostics-design.md.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -119,23 +119,28 @@ def _long_run_sigma(pos: np.ndarray, resid: np.ndarray) -> float:
     return fit.sigma_e / (1 - phi) if phi > 0 else fit.sigma_e
 
 
+def _delta(pos, before, after) -> tuple[float, tuple[float, float], float]:
+    """Mean after - mean before of adjacent segments, its 1 - ALPHA interval, and the long-run
+    sigma of the two-segment residuals it rests on."""
+    slr = _long_run_sigma(pos, np.r_[before - before.mean(), after - after.mean()])
+    delta = float(after.mean() - before.mean())
+    half = z_of(1 - ALPHA / 2) * slr * math.sqrt(1 / before.size + 1 / after.size)
+    return delta, (delta - half, delta + half), slr
+
+
 def _one_split(pos, ts_ms, y) -> Shift | None:
     n = y.size
     if n < 2 * MIN_SEGMENT:
         return None
     k, s = _split_cusum(y)
     a, b = y[:k], y[k:]
-    resid = np.r_[a - a.mean(), b - b.mean()]
-    slr = _long_run_sigma(pos, resid)
+    delta, interval, slr = _delta(pos, a, b)
     if slr == 0:
         return None
     stat = s / (slr * math.sqrt(n))
-    delta = float(b.mean() - a.mean())
-    half = z_of(1 - ALPHA / 2) * slr * math.sqrt(1 / a.size + 1 / b.size)
     return Shift(
-        k, int(ts_ms[k]), delta, (delta - half, delta + half), kolmogorov_sf(stat), stat,
-        int(a.size), int(b.size),
-    )  # fmt: skip
+        k, int(ts_ms[k]), delta, interval, kolmogorov_sf(stat), stat, int(a.size), int(b.size)
+    )
 
 
 def changepoints(pos: np.ndarray, ts_ms: np.ndarray, y: np.ndarray) -> list[Shift]:
@@ -149,7 +154,7 @@ def changepoints(pos: np.ndarray, ts_ms: np.ndarray, y: np.ndarray) -> list[Shif
         if sh is None or sh.p >= ALPHA:
             continue
         k = a + sh.index
-        found.append(Shift(k, sh.ts_ms, sh.delta, sh.interval, sh.p, sh.stat, sh.n_before, sh.n_after))  # fmt: skip
+        found.append(replace(sh, index=k))
         todo += [(a, k), (k, b)]
     found.sort(key=lambda s: s.index)
     # re-estimate each delta between its neighbouring changepoints
@@ -157,12 +162,8 @@ def changepoints(pos: np.ndarray, ts_ms: np.ndarray, y: np.ndarray) -> list[Shif
     bounds = [0, *[s.index for s in found], y.size]
     for i, sh in enumerate(found):
         before, after = y[bounds[i] : bounds[i + 1]], y[bounds[i + 1] : bounds[i + 2]]
-        seg = slice(bounds[i], bounds[i + 2])
-        resid = np.r_[before - before.mean(), after - after.mean()]
-        slr = _long_run_sigma(pos[seg], resid)
-        delta = float(after.mean() - before.mean())
-        half = z_of(1 - ALPHA / 2) * slr * math.sqrt(1 / before.size + 1 / after.size)
-        out.append(Shift(sh.index, sh.ts_ms, delta, (delta - half, delta + half), sh.p, sh.stat, int(before.size), int(after.size)))  # fmt: skip
+        delta, interval, _ = _delta(pos[bounds[i] : bounds[i + 2]], before, after)
+        out.append(replace(sh, delta=delta, interval=interval, n_before=int(before.size), n_after=int(after.size)))  # fmt: skip
     return out
 
 

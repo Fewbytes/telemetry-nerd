@@ -344,10 +344,7 @@ class SeriesDiagnostics:
         if c is None or c.mode == "insufficient_data":
             return {"mode": "insufficient_data", "reason": c.reason if c else None}
         bwin = [iso(base[0]), iso(base[1])]
-        nb = {
-            "n": c.n_baseline,
-            "n_eff": sig(c.n_eff_baseline, 3),
-        }  # the baseline's, not the series'
+        nb = {"n": c.n_baseline, "n_eff": sig(c.n_eff_baseline, 3)}  # not the series'
         # level + seasonal: the centre at rest (a separate reference is not in c.centre)
         level = float(np.nanmedian(c.centre[c.baseline])) if c.baseline.any() else c.level
         detectors = {
@@ -362,9 +359,9 @@ class SeriesDiagnostics:
             {"t": iso(int(ts[i])), "rules": rules}
             for i, rules in list(viol.items())[:MAX_VIOLATIONS_LISTED]
         ]
-        out = {
+        return {
             "mode": c.mode,
-            "baseline": {"n": c.n_baseline, "n_eff": sig(c.n_eff_baseline, 3)},
+            "baseline": nb,
             "centre": {
                 "value": sig(level), "interval": sig_pair(c.centre_interval),
                 "seasonal_periods_s": [sig(p) for p in c.seasonal_periods_s],
@@ -404,7 +401,6 @@ class SeriesDiagnostics:
             },
             "first_violations": first,
         }  # fmt: skip
-        return out
 
     # panel payload -------------------------------------------------------------
     def panel(
@@ -428,10 +424,9 @@ class SeriesDiagnostics:
             if c is None or c.mode == "insufficient_data":
                 item |= {"mode": "insufficient_data", "reason": c.reason if c else d.reasons[0]}
             else:
-                centre = c.centre
                 item |= {
                     "mode": c.mode,
-                    "centre": [sig(v, 6) for v in centre],
+                    "centre": [sig(v, 6) for v in c.centre],
                     "sigma": sig(c.sigma, 6),
                     "n_baseline": c.n_baseline,
                     "n_eff_baseline": sig(c.n_eff_baseline, 3),
