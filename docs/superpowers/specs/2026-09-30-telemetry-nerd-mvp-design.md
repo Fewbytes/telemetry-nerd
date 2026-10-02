@@ -31,7 +31,9 @@ conclusions.
    computing (MATLAB, R, epidemiology, physics), not on dashboard tools. Conventional
    views are available only on explicit user request and carry a caveat.
 4. **Every number carries its uncertainty and its aggregation.** Intervals, counts,
-   min/max envelopes, and representation metadata travel with the data.
+   min/max envelopes, and representation metadata travel with the data. Where the
+   uncertainty is not known it is said to be unknown, visibly — never treated as zero
+   (§5.3).
 5. **Every graph answers an explicit question.** Panels cannot be created without one.
 6. **Bulk data never enters Claude's context.** Claude works with handles and compact
    summaries; the server holds the data.
@@ -162,8 +164,9 @@ A step smaller than the native resolution raises a `fake_resolution` caveat.
 **Scope:** `{source, selector, time_range, step, aggregation, baseline_range?}`. Rendered
 with the claim, e.g. *"p99 ↑2.1× · checkout, pod=~checkout-.* · 14:00–14:30 · 30s step"*.
 
-**Evidence ref:** one of `{panel}`, `{dataset, statistic: {name, value, interval, method,
-params}}`, `{annotation}`, `{fit}`.
+**Evidence ref:** one of `{panel}`, `{dataset, statistic: {name, value, interval | exact |
+uncertainty_unknown, method, params}}`, `{annotation}`, `{fit}`. A stored finding carries
+`evidence_flags`: per evidence item, the uncertainty flags the server derived for it (§5.3).
 
 **Invariants:**
 
@@ -171,7 +174,8 @@ params}}`, `{annotation}`, `{fit}`.
 - Deletes are soft; evidence links never break.
 - Refuted hypotheses and rejected findings remain visible (filtered/collapsed). Ruling
   things out is valuable.
-- A statistic without an interval cannot be evidence unless marked `exact`.
+- A statistic states its uncertainty: an interval, `exact`, or `uncertainty_unknown: true`
+  (unknown is citable, never silent: the finding shows "uncertainty unknown", §5.3).
 - A fit tagged `weak_fit` cannot back a finding.
 
 ### 3.4 Relations and model bindings
@@ -291,7 +295,9 @@ MVP op set:
 CIs and tests use block bootstrap or effective sample size by default.
 
 **Uncertainty defaults:** Wilson intervals for ratios, Poisson intervals for small counts,
-bucket-edge bounds for histogram quantiles, cross-series spread for aggregates.
+bucket-edge bounds for histogram quantiles, cross-series spread for aggregates. Every op
+derives an interval for what it reports (§5.3, principle 3); an op over a dataset whose
+uncertainty is unknown still reports its own interval, flagged `input_uncertainty_unknown`.
 
 **Histograms first:** when histograms exist, latency is analysed as a distribution
 (heatmap, ECDF, exact fraction-over-threshold, distribution-shift statistics). Quantiles
@@ -351,8 +357,8 @@ thread cannot be reliably timed out.
   `run_code(code, inputs=[handles])` makes the daemon export the declared input datasets as
   Arrow IPC files (+ meta JSON); in the kernel `tn.dataset(handle)` memory-maps them
   (zero-copy via the page cache). `tn.put(df, meta)` / `tn.put_fit(...)` write Arrow files +
-  meta JSON into the same directory; after the run the daemon ingests them, enforces the
-  evidence rule and records lineage (inputs = declared, outputs = put). Adapters and
+  meta JSON into the same directory; after the run the daemon ingests them, assigns each
+  output its uncertainty status (§5.3) and records lineage (inputs = declared, outputs = put). Adapters and
   credentials never reach the kernel. Run directories are kept while their code node is
   referenced (re-run, debugging) and garbage-collected otherwise.
   - Rejected: **shared memory** (segment ownership and leaks on kernel crash; Docker's 64 MB
@@ -371,9 +377,10 @@ thread cannot be reliably timed out.
     run that succeeded; temp/orphan/size-mismatched files are reported, never ingested.
     Output meta: `like` (inherit step/range/unit/scheme from an input), `representation`
     (`bucket_agg`/`sample`/`distribution`; `estimate` only via `put_fit`), `labels` (series
-    label columns), `unit`, `caveats`, `parents`, and `uncertainty {method, level, kind}` with
-    `lo`/`hi` columns or `exact` (integral values only); unknown keys or columns are refused,
-    not dropped. Outputs inherit their parents' caveats. Derived series id =
+    label columns), `unit`, `caveats`, `parents`, and `uncertainty {method, level, kind,
+    propagation?}` with `lo`/`hi` columns or `exact` (integral values only); unknown keys or
+    columns are refused, not dropped. Outputs inherit their parents' caveats except the
+    uncertainty-status ones, which are recomputed per output (§5.3). Derived series id =
     hash(`code:<node>`, labels). Lineage: parents = all declared inputs unless the code
     narrows them explicitly (reads are not tracked: an input can shape a result without
     being read through `tn`). Fits are `estimate` datasets whose params have the evidence
@@ -388,22 +395,85 @@ thread cannot be reliably timed out.
   fields: code, inputs, status `running → ok | failed`, exec_status (`ok|error|timeout|crashed`,
   `interrupted` for runs a stopped daemon left running, `not_run` when export failed), duration,
   bounded stdout/stderr, result, error + traceback, restarted, outputs (dataset, name,
-  representation, rows, caveats, evidence_ok) and ingest issues. Inputs are validated before a
+  representation, rows, caveats, uncertainty status) and ingest issues. Inputs are validated before a
   node exists; after that every outcome is a finished node, never an exception. A finished
   node is never changed: `rerun_code(code_node)` makes a new node with `rerun_of`. Events:
   `code.started` (the caller's actor), then actor `code` for `dataset.created` per output and
   `code.finished`. Run dirs are GC'd at daemon start and after each run, keeping running nodes,
   the 20 newest, and nodes whose outputs a panel, a finding or another dataset's parents
-  reference. Evidence: `finding_create` rejects a statistic or panel backed by a code output
-  that `core.code_outputs.evidence_problem` refuses (it wraps `exchange.run.evidence_blocker`:
-  no declared uncertainty; fit params must be cited exactly as stored, by name).
+  reference. Evidence: `finding_create` rejects only fabrication
+  (`core.code_outputs.evidence_problem`: a fit cited as a panel; a fit parameter not cited
+  exactly as stored, by name); uncertainty problems are flags, not refusals (§5.3,
+  `core.uncertainty.evidence_flags`).
   HTTP (read-only, for the UI): `GET /api/code`, `GET /api/code/{id}`; the workspace snapshot
   and `workspace_get` list nodes without their code text.
-- **Evidence rule:** outputs must declare uncertainty or `exact`; otherwise they are tagged
-  `no_uncertainty` and are ineligible as evidence.
+- **Evidence rule (revised 2026-10-02, x2x):** outputs should declare uncertainty or `exact`;
+  otherwise they are tagged `no_uncertainty` — uncertainty *unknown*, not zero. They stay
+  citable; a finding citing them carries the `uncertainty_unknown` flag (MCP result,
+  `workspace_get`, findings UI). The status rules are §5.3.
 - **MCP:** `run_code(code, inputs)` returns stdout (truncated), the produced handles, a
   compact summary and the traceback on failure. Bulk data never comes back through it.
 - **Promotion path:** useful tier-2 functions become tier-1 ops.
+
+### 5.3 Uncertainty policy
+
+**Decision (2026-10-02, user; beads x2x, x2x.1, dl7, 4jk).** Three principles:
+
+1. **Unknown is unknown, not zero and not forbidden.** A value without a known uncertainty
+   (`no_uncertainty`) has *unknown* trust. It may be cited, but everything that cites it
+   says "uncertainty unknown" visibly; it is never silently treated as exact, and never
+   refused for that reason alone. Refusals are kept for fabrication only (a fit parameter
+   not cited exactly as stored, a fit cited as a panel).
+2. **Error aggregation is maximalist.** Errors propagate through transforms (delta method /
+   derivatives, residuals, interval arithmetic, Monte Carlo over input intervals); where
+   propagation is not possible the worst case (the max) is taken. A later step's declared
+   interval never shrinks the error below what propagation implies: an interval that left
+   out its inputs' error is marked as a lower bound.
+3. **Derive before giving up.** External tools and transforms often report no uncertainty;
+   derive one where possible (bootstrap, effective n, bucket bounds, Wilson/Poisson,
+   propagation) before falling back to "unknown".
+
+**Dataset uncertainty status** (caveat codes, `exchange.fmt.UNCERTAINTY_STATUS`; at most
+one per dataset; recomputed for each output, never inherited from a parent as is):
+
+| Status | Meaning |
+|---|---|
+| none (clean) | interval or `exact` declared, and every input's error is either absent (source data), exact, or propagated |
+| `no_uncertainty` | no interval and not exact: uncertainty unknown |
+| `input_uncertainty_unknown` | own interval declared, but an input's uncertainty is unknown (or itself only a lower bound): the interval is a lower bound |
+| `uncertainty_not_propagated` | own interval declared, inputs carry intervals, and the code did not say it propagated them: the interval is a lower bound |
+
+**Propagation in the tier-2 exchange** (`exchange.fmt.output_uncertainty_status`). The
+daemon cannot know what code did to its inputs, so propagation is *declared*:
+`uncertainty.propagation` (or a fit's `propagation`) names how the inputs' intervals were
+folded into this output's `lo`/`hi` ("delta method", "interval arithmetic", "Monte Carlo
+over input intervals", "max of input half-widths"). Rules, over the output's parents:
+any parent unknown (any status above other than clean) → `input_uncertainty_unknown`
+(unknown cannot be propagated; propagation does not clear it); else any parent with a
+declared interval and no `propagation` → `uncertainty_not_propagated`; else clean.
+Source (queried) datasets carry no declared interval and count as measured values; an
+`exact` output asserts no error at all, so only an unknown parent flags it. A parent the
+code did not use can be dropped from lineage with `meta.parents`.
+
+**Tier-1 statistics** (`core.uncertainty`). An op's `evidence` statistic carries the op's own
+derived interval. When the dataset it was computed over is not clean (or an ancestor is
+not), the op marks the statistic `params.input_uncertainty = "unknown"` and adds the
+`input_uncertainty_unknown` caveat; over a dataset with a declared interval the op did not
+propagate, `params.input_uncertainty = "not_propagated"`. `core.uncertainty.mark_statistics`
+does this for any op result; new ops (e.g. `check_littles_law`) call it with their input
+datasets.
+
+**Findings.** `finding_create` stores `evidence_flags: [{evidence: <index>, flag, message}]`,
+derived server-side from each cited item (`core.uncertainty.evidence_flags`) plus any
+`params.input_uncertainty` an op put on a statistic:
+
+| Flag | When |
+|---|---|
+| `uncertainty_unknown` | the cited value has no interval: a statistic with `uncertainty_unknown: true`, a fit parameter stored without one, a panel drawing a `no_uncertainty` dataset |
+| `input_uncertainty_unknown` | the value has an interval (or is exact) but what it was computed from has unknown uncertainty: the interval is a lower bound |
+| `uncertainty_not_propagated` | the interval leaves out the inputs' known intervals: a lower bound |
+
+The `finding_create` result, `workspace_get` (per finding) and the findings UI show them.
 
 ## 6. Charts and UI
 
