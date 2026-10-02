@@ -89,8 +89,8 @@ Research bead: `telemetry-nerd-1h9.10`. Findings written 2026-10-02.
   `prom__count_selector_w60`): a `count_over_time` of the adapter's expression path
   (`(expr)[step:res]`) reports samples that do not exist. The adapter therefore takes `count`
   from the expression's selector (`count_over_time(sel[step])`, lifted through its
-  aggregations) and drops filled values; expressions it cannot derive (several selectors,
-  filters, vector matching) are "cannot tell" (`counts_are_observed`). Bead
+  aggregations) and drops filled values; binary arithmetic between derivable operands takes the per-bucket minimum of the operands'
+  counts (`telemetry-nerd-mig`); expressions it cannot derive (filters, set operators, vector matching, offset) are "cannot tell" (`counts_are_observed`). Bead
   `telemetry-nerd-1h9.11`; tests `test_subquery_windows_fill_gaps_but_the_adapter_reports_only_observed_samples`,
   `test_fetch_values_keeps_only_values_of_buckets_that_observed_samples`.
 

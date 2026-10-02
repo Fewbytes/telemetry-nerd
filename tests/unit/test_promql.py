@@ -44,9 +44,18 @@ def test_build_queries_vm_expression_uses_subquery_for_values_and_selector_for_c
 
 def test_build_queries_expression_without_derivable_count_keeps_the_subquery_count():
     src = PromQLSource("prom", BASE, flavor="prometheus", resolution_ms=15_000)
+    q = src.build_queries("rate(x[5m]) / on(a) rate(y[5m])", 60_000)
+    assert q["count"] == "count_over_time((rate(x[5m]) / on(a) rate(y[5m]))[1m:15s])"
+    assert q["avg"] == "avg_over_time((rate(x[5m]) / on(a) rate(y[5m]))[1m:15s])"
+
+
+def test_build_queries_ratio_counts_fold_to_the_smaller_operand():
+    src = PromQLSource("prom", BASE, flavor="prometheus", resolution_ms=15_000)
     q = src.build_queries("rate(x[5m]) / rate(y[5m])", 60_000)
-    assert q["count"] == "count_over_time((rate(x[5m]) / rate(y[5m]))[1m:15s])"
-    assert q["avg"] == "avg_over_time((rate(x[5m]) / rate(y[5m]))[1m:15s])"
+    assert q["count"] == (
+        "((count_over_time(x[1m])) <= (count_over_time(y[1m]))) or "
+        "((count_over_time(y[1m])) and (count_over_time(x[1m])))"
+    )
 
 
 def test_build_queries_prometheus_flavor():
@@ -430,8 +439,8 @@ async def test_fetch_values_without_derivable_count_is_one_plain_query():
         )
     )
     src = PromQLSource("s", BASE, flavor="prometheus")
-    res = await src.fetch_values("x / y", RNG, 60_000)
-    assert [c.request.url.params["query"] for c in route.calls] == ["x / y"]
+    res = await src.fetch_values("x / on(a) y", RNG, 60_000)
+    assert [c.request.url.params["query"] for c in route.calls] == ["x / on(a) y"]
     assert res.buckets.num_rows == 1
 
 

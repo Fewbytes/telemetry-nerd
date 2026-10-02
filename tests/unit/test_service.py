@@ -190,6 +190,14 @@ async def test_panel_data_reports_missing_buckets(tmp_path):
     assert data["bucket_state_more"] == 0
 
 
+async def test_ratio_panel_is_observed_not_all_unknown(tmp_path):
+    svc = make_service(tmp_path)
+    for expr, unknown in [("rate(err[5m]) / rate(total[5m])", False), ("a / on(job) b", True)]:
+        ds = (await svc.query(expr, start="now-2h", end="now-1h", step="1m"))["dataset"]
+        data = svc.panel_data(svc.show(ds, "Ratio?").panel.id, width_px=2000)
+        assert ("untrusted_data" in data["caveats"]) is unknown, expr
+
+
 async def test_clean_panel_has_no_bucket_state(tmp_path):
     svc = make_service(tmp_path)
     ds = (await svc.query("up", start="now-2h", end="now-1h", step="1m"))["dataset"]

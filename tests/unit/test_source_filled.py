@@ -48,7 +48,7 @@ def flags_of(m, r):
 # --- 1h9.15 -----------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("expr", ["x / y", "x > 0", "topk(3, x)", "x offset 5m"])
+@pytest.mark.parametrize("expr", ["x / on(a) y", "x > 0", "topk(3, x)", "x offset 5m"])
 def test_unobservable_expression_is_all_unknown_and_source_filled(expr):
     m, r = meta(expr), result(hole=())
     assert set(states_of(m, r)) == {int(State.UNKNOWN)}
@@ -56,7 +56,7 @@ def test_unobservable_expression_is_all_unknown_and_source_filled(expr):
 
 
 def test_unobservable_expression_in_presence_mode_too():
-    m = DatasetMeta(**{**meta("x / y").__dict__, "representation": "quantile"})
+    m = DatasetMeta(**{**meta("x / on(a) y").__dict__, "representation": "quantile"})
     assert set(states_of(m, result())) == {int(State.UNKNOWN)}
 
 
@@ -66,8 +66,14 @@ def test_observable_expression_keeps_count_based_states():
     assert set(flags_of(m, result())) == {0}
 
 
+def test_ratio_between_observables_keeps_count_based_states():
+    m = meta("sum(rate(a[5m])) / sum(rate(b[5m]))")
+    assert states_of(m, result()) == [0, 0, 2, 2, 2, 0, 0, 0]
+    assert set(flags_of(m, result())) == {0}
+
+
 def test_unobservable_caveat_is_one_dataset_level_reason():
-    m, r = meta("x / y"), result(hole=())
+    m, r = meta("x / on(a) y"), result(hole=())
     [c] = from_bucket_state(derive_states(m, r), {"a": "a"}, STEP)
     assert (c.code, c.message) == ("untrusted_data", UNOBSERVABLE_MESSAGE)
     assert "subquery fills gaps" in c.message
@@ -75,7 +81,7 @@ def test_unobservable_caveat_is_one_dataset_level_reason():
 
 
 def test_summary_reports_one_unknown_span_for_the_window():
-    m, r = meta("x / y"), result(hole=())
+    m, r = meta("x / on(a) y"), result(hole=())
     out = summarize(m, r, now_ms=10**12, settle_ms=0, states=derive_states(m, r))
     assert len(out["unknown_spans"]) == 1
     assert "untrusted_data" in out["caveats"]
@@ -84,7 +90,7 @@ def test_summary_reports_one_unknown_span_for_the_window():
 
 
 def test_claims_on_unobservable_expression_are_blocked_and_say_how_to_rephrase():
-    m, r = meta("x / y"), result(hole=())
+    m, r = meta("x / on(a) y"), result(hole=())
     [c] = claim_coverage(derive_states(m, r), STEP, 8 * STEP, STEP)
     assert (c.code, c.severity) == ("untrusted_data", "blocks_claim")
     assert "subquery fills gaps" in c.message
@@ -194,7 +200,7 @@ def test_coarsened_post_gap_with_failed_span_keeps_the_failure_reason():
 
 
 def test_failed_span_on_an_unobservable_expression_names_both():
-    base = meta("x / y")
+    base = meta("x / on(a) y")
     m = DatasetMeta(**{**base.__dict__, "failed_spans": [[3 * STEP, 4 * STEP, "boom"]]})
     r = result(hole=())
     [c] = from_bucket_state(derive_states(m, r), {"a": "a"}, STEP, [(3 * STEP, 4 * STEP, "boom")])

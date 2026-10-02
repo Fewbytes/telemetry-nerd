@@ -203,7 +203,14 @@ fills (`subquery_fills_gaps`, verified on Prometheus and VictoriaMetrics), so it
 - *Exact where derivable*: one vector selector, label-preserving functions (`rate`, `increase`,
   `*_over_time`, `abs`, `clamp`, `histogram_count`, ...) with literal other arguments, arithmetic
   with literals, aggregations sum/avg/min/max/count/group/stddev/stdvar (by/without), and
-  `histogram_quantile(q, ...)` as an aggregation `without (le, vmrange)`. `count` comes from
+  `histogram_quantile(q, ...)` as an aggregation `without (le, vmrange)`, and arithmetic between
+  two or more derivable vector operands (`a / b`, `rate(err[5m]) / rate(total[5m])`,
+  `100 * (1 - a / b)`; `telemetry-nerd-mig`). For a binary op, `observed` per bucket is the
+  smaller of the operands' observed sample counts (a ratio is only as observed as its sparser
+  side); series present on only one side are not in the result, as they are not in the
+  expression's. The count queries of the operands are folded pairwise with
+  `((x) <= (y)) or ((y) and (x))`; any underivable operand makes the whole expression cannot-tell.
+  `count` comes from
   `count_over_time(sel[step])` lifted through the same aggregations with `sum`, so its series are
   the expression's own. For an aggregate, `observed` = samples of all members (member coverage
   stays unknown, as today). A value in a bucket with no observed sample is filled and dropped
@@ -212,7 +219,7 @@ fills (`subquery_fills_gaps`, verified on Prometheus and VictoriaMetrics), so it
   cheaper selector count); `fetch_values` (quantile path) adds one count query and keeps only
   values of buckets that observed samples (masks lookback fill on summary/gauge series, VM
   previous-sample values, windows longer than the step).
-- *Cannot tell otherwise* (two selectors, filters/comparisons, set operators, vector matching,
+- *Cannot tell otherwise* (filters/comparisons, `bool`, set operators, vector matching,
   `offset`/`@`, topk, label_replace, nested subqueries, unknown functions): the adapter keeps the
   subquery count (it still weights the bucket mean), and `counts_are_observed(expr)` is False:
   consumers must mark those buckets `unknown` + `source_filled` (reason `subquery_fills_gaps`),

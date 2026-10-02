@@ -15,7 +15,10 @@ It is derived only where that is exact:
 * aggregations sum/avg/min/max/count/group/stddev/stdvar with by/without (observed = the
   members' samples), and `histogram_quantile(q, ...)` as an aggregation `without (le, vmrange)`.
 
-Anything else (two selectors, comparisons/filters, set operators, vector matching, topk,
+* arithmetic between two or more such operands (`a / b`): observed = the smaller operand count
+  per series and bucket (see `observed_count_query`).
+
+Anything else (comparisons/filters, set operators, vector matching, offset/@, topk,
 label_replace, unknown functions) returns None: the source cannot tell how many samples are
 behind a value, and consumers must say so (`counts_are_observed`).
 """
@@ -213,14 +216,23 @@ def _lift_call(text: str, masked: str, call: re.Match) -> tuple[str, list[str]] 
     return None
 
 
-def observed_count_query(expr: str, window: str) -> str | None:
-    """Query for the samples the source observed behind each value of `expr`, per series and
-    bucket `window` (e.g. "1m"), or None if no exact count can be derived."""
-    text = _strip_comments(expr)
-    try:
-        lifted = _lift(text, _mask_strings(text))
-    except ValueError:  # unbalanced parentheses: let the source report the syntax error
-        return None
+def _count_query(text: str, masked: str, window: str) -> str | None:
+    text, masked = _peel(text, masked)
+    spans = _operands(masked)
+    if spans is not None and len(spans) > 1:
+        vectors = [(a, b) for a, b in spans if not _LITERAL.match(masked[a:b])]
+        if len(vectors) == 1:  # literals around one operand: it may itself be a ratio
+            a, b = vectors[0]
+            return _count_query(text[a:b], masked[a:b], window)
+        if len(vectors) >= 2:
+            parts = [_count_query(text[a:b], masked[a:b], window) for a, b in vectors]
+            if any(part is None for part in parts):
+                return None
+            query = parts[0]
+            for part in parts[1:]:
+                query = _min2(str(query), str(part))
+            return query
+    lifted = _lift(text, masked)
     if lifted is None:
         return None
     selector, wrappers = lifted
@@ -228,6 +240,28 @@ def observed_count_query(expr: str, window: str) -> str | None:
     for wrapper in reversed(wrappers):
         query = f"{wrapper} ({query})"
     return query
+
+
+def _min2(x: str, y: str) -> str:
+    """Per-series minimum of two count vectors, keeping only series present on both sides:
+    `x <= y` keeps x where it is the smaller (or equal), `y and x` keeps y's series that also
+    exist in x, and `or` adds those where y is the smaller."""
+    return f"(({x}) <= ({y})) or (({y}) and ({x}))"
+
+
+def observed_count_query(expr: str, window: str) -> str | None:
+    """Query for the samples the source observed behind each value of `expr`, per series and
+    bucket `window` (e.g. "1m"), or None if no exact count can be derived.
+
+    For arithmetic between two or more observable vector operands (`a / b`, `(a / b) * c`) the
+    operands' count queries are folded pairwise with `_min2`: observed per bucket is the smaller
+    of the operands' observed sample counts (a ratio is only as observed as its sparser side).
+    Series present on only one side are absent, as they are from the expression's own result."""
+    text = _strip_comments(expr)
+    try:
+        return _count_query(text, _mask_strings(text), window)
+    except ValueError:  # unbalanced parentheses: let the source report the syntax error
+        return None
 
 
 def counts_are_observed(expr: str) -> bool:

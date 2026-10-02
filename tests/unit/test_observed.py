@@ -37,7 +37,14 @@ DERIVED = [
 ]
 
 CANNOT_TELL = [
-    "rate(x[5m]) / rate(y[5m])",  # two selectors
+    "a / on(job) b",
+    "a / ignoring(x) b",
+    "a / b offset 1m",
+    "topk(5, a / b)",
+    "a / b and c",
+    'label_replace(a / b, "x", "$1", "y", "(.*)")',
+    "up == 0",
+    "a / (b > 1)",
     "x / on(job) group_left sum(x)",  # vector matching
     "x > 5",  # a filter: samples observed where no value is returned
     "x == bool 1",
@@ -72,3 +79,31 @@ def test_cannot_tell_returns_none(expr):
 
 def test_window_is_the_bucket_and_comments_are_ignored():
     assert observed_count_query("rate(x[5m]) # per second\n", "30s") == "count_over_time(x[30s])"
+
+
+def _min2(x, y):
+    return f"(({x}) <= ({y})) or (({y}) and ({x}))"
+
+
+def test_ratio_of_aggregates_folds_with_min():
+    got = observed_count_query("sum(rate(a[5m])) / sum(rate(b[5m]))", "1m")
+    assert got == _min2("sum (count_over_time(a[1m]))", "sum (count_over_time(b[1m]))")
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "rate(err[5m]) / rate(total[5m])",
+        "node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes",
+        "100 * (1 - a / b)",
+        "(a / b) * c",
+    ],
+)
+def test_binary_arithmetic_between_observables_is_observed(expr):
+    assert observed_count_query(expr, "1m") is not None
+    assert counts_are_observed(expr)
+
+
+def test_three_operands_fold_pairwise():
+    inner = _min2("count_over_time(a[1m])", "count_over_time(b[1m])")
+    assert observed_count_query("(a / b) * c", "1m") == _min2(inner, "count_over_time(c[1m])")
