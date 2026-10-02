@@ -137,6 +137,7 @@ export function describeShown(
   mark = "",
 ): string {
   if (kind === "spectrum") return "Periodogram (Lomb-Scargle): the share of variance a sinusoid of each period explains, with the 1% false-alarm level; peaks carry intervals.";
+  if (kind === "spc") return "Control chart: the series against a centre line and 3σ band computed from the shaded baseline only; flagged points break SPC rules.";
   if (kind === "spectrogram") return "Spectrogram: how the periodicity changes over time, one window per column; the window sets the period resolution.";
   if (mark === "percentiles") {
     return `Per ${step} column, the source bucket holding each percentile (estimator: bucket-edge bounds, never interpolated), only where the column has n ≥ 10/(1−q).`;

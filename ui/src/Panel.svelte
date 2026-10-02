@@ -12,6 +12,7 @@
   import { drawnFor, VIEW_LABELS, type DataViewName } from "./chart/dataview";
   import SpectrumPlot from "./components/SpectrumPlot.svelte";
   import SpectrogramPlot from "./components/SpectrogramPlot.svelte";
+  import SpcPlot from "./components/SpcPlot.svelte";
   import { fmtRatio, indexSeries, ratioTicks } from "./chart/indexed";
   import { drawMarginal, marginalHeader } from "./chart/marginal";
   import { overlayChips, overlayDraw } from "./chart/overlays";
@@ -479,6 +480,13 @@
     {/if}
     {#if data && data.kind === "spectrum"}
       <SpectrumPlot data={data} width={fetchWidth} onRendered={(ms, pts) => onFacetRendered(0, 1, ms, pts, 240)} />
+    {/if}
+    {#if data && data.kind === "spc"}
+      {@const sc = data}
+      {#each sc.series as s, i (s.id)}
+        <SpcPlot data={sc} series={s} width={fetchWidth}
+          onRendered={(ms, pts) => onFacetRendered(i, sc.series.length, ms, pts, 220)} />
+      {/each}
     {/if}
     {#if data && data.kind === "spectrogram"}
       {@const sg = data}
