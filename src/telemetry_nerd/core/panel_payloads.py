@@ -32,7 +32,7 @@ from telemetry_nerd.analysis.quantiles import column_quantiles
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.charts.indexed import shifted, window_baselines
 from telemetry_nerd.charts.spec import ChartSpec
-from telemetry_nerd.model.bucket_state import State
+from telemetry_nerd.model.bucket_state import State, coarsen, compute, grid
 from telemetry_nerd.model.distribution import DIST_N_MIN, QUANTILE_CHOICES
 from telemetry_nerd.model.time import TimeRange, format_duration, iso
 from telemetry_nerd.workspace.store import Panel
@@ -56,6 +56,20 @@ def state_payload(states) -> list[dict]:
             "flags": g["flags"].to_list(),
         })  # fmt: skip
     return sorted(out, key=lambda s: s["id"])
+
+
+def column_states(meta, dist):
+    """Distribution columns as presence buckets: a returned column is observed even when n = 0."""
+    cols = pl.from_arrow(dist.columns).select(
+        "ts_ms", "series_id", pl.col("n").cast(pl.Float64).alias("avg"),
+        pl.col("n").cast(pl.Float64).alias("min"), pl.col("n").cast(pl.Float64).alias("max"),
+        pl.lit(1, pl.Int64).alias("count"),
+    )  # fmt: skip
+    return compute(
+        cols.to_arrow(), dist.series["series_id"].to_pylist(), start_ms=meta.start_ms,
+        end_ms=meta.end_ms, step_ms=meta.step_ms, resolution_ms=meta.step_ms, mode="presence",
+        failed=[tuple(f) for f in meta.failed_spans],
+    )  # fmt: skip
 
 
 def series_labels(series_table) -> dict[str, dict]:
@@ -88,6 +102,7 @@ def histogram_panel_data(panel, meta, dist, labels, caveats, width_px) -> dict:
     raw = pl.from_arrow(dist.rows)
     rows, value_merge = merge_values(raw, dist.scheme, max(4, width_px // HIST_PX_PER_BAR))
     cols = pl.from_arrow(dist.columns)
+    states = pl.from_arrow(column_states(meta, dist))
 
     def hists(frame):
         return [
@@ -104,6 +119,14 @@ def histogram_panel_data(panel, meta, dist, labels, caveats, width_px) -> dict:
         if exact is not None:
             src = exact[k].get(sid) or empty_window(w)
             out["source"] = {"lo": src["lo"], "hi": src["hi"], "c": src["c"]}
+        # columns are (ts - step, ts], so the window's columns have ts in (start, end]
+        g = states.filter(
+            (pl.col("series_id") == sid)
+            & (pl.col("ts_ms") > out["start_ms"])
+            & (pl.col("ts_ms") <= out["end_ms"])
+        )
+        out["expected_columns"] = len(grid(out["start_ms"] + 1, out["end_ms"], meta.step_ms))
+        out["unknown"] = bool((g["state"] == int(State.UNKNOWN)).any())
         return out
 
     series = [
@@ -132,6 +155,10 @@ def heatmap_panel_data(panel, meta, dist, labels, caveats, width_px) -> dict:
         rows, cols = rebucket_time(rows, cols, step)
     # source buckets holding each q: time-summed counts (additive), never value-merged
     bands = column_quantiles(rows, cols, QUANTILE_CHOICES)
+    states = column_states(meta, dist)
+    if factor > 1:
+        states = coarsen(states, step)
+    by_sid = {s["id"]: s for s in state_payload(states)}
     facet_h = FACET_HEIGHT_SINGLE if len(labels) <= 1 else FACET_HEIGHT_MULTI
     rows, value_merge = merge_values(rows, dist.scheme, max(4, facet_h // PX_PER_ROW))
     series = []
@@ -144,6 +171,7 @@ def heatmap_panel_data(panel, meta, dist, labels, caveats, width_px) -> dict:
             "cells": {"ts": r["ts_ms"].to_list(), "lo": r["bucket_lo"].to_list(),
                       "hi": r["bucket_hi"].to_list(), "c": r["count"].to_list()},
             "quantiles": bands.get(sid, {}),
+            "state": by_sid.get(sid),
         })  # fmt: skip
     return {
         "kind": "heatmap", "mark": panel.spec["layers"][0]["mark"],

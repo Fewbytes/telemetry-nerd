@@ -3,6 +3,7 @@ import math
 
 import pytest
 
+from telemetry_nerd.analysis.histogram import from_matrix, histogram_expr
 from telemetry_nerd.charts.spec import Window
 from telemetry_nerd.core.service import ChartRejected
 from telemetry_nerd.sources.base import SourceError
@@ -226,3 +227,43 @@ async def test_fraction_over_refuses_a_bad_window(tmp_path):
     out = await svc.query_distribution("lat_bucket", start="now-2h", end="now-1h", step="1m")
     with pytest.raises(ValueError, match="after"):
         svc.fraction_over(out["dataset"], 1.0, start="now-1h", end="now-2h")
+
+
+class HoleyHistSource(FakeSource):
+    async def fetch_histogram(self, selector, by, rng, step_ms):
+        self.calls += 1
+        ts = list(range(rng.start_ms, rng.end_ms + 1, step_ms))
+        hole = set(ts[2:4])
+        result = [
+            {"metric": {"instance": f"i{k}", "le": le},
+             "values": [[t / 1000, str(c * (k + 1))] for t in ts if not (k == 1 and t in hole)]}
+            for k in range(self.n_series) for le, c in self.cumulative.items()
+        ]  # fmt: skip
+        return from_matrix(self.name, result, expr=histogram_expr(selector, by, step_ms))
+
+
+async def test_heatmap_series_carry_column_state(tmp_path):
+    svc = make_service(tmp_path, HoleyHistSource())
+    out = await svc.query_distribution(
+        "lat_bucket", by=["instance"], start="now-2h", end="now-1h", step="1m"
+    )
+    data = svc.panel_data(svc.show(out["dataset"], "Dist?").panel.id, width_px=4000)
+    states = {s["labels"]["instance"]: s["state"] for s in data["series"]}
+    assert states["i0"] is None
+    assert states["i1"]["state"].count(2) == 2  # State.EMPTY
+
+
+async def test_histogram_windows_report_column_coverage(tmp_path):
+    svc = make_service(tmp_path, HoleyHistSource())
+    out = await svc.query_distribution(
+        "lat_bucket", by=["instance"], start="now-2h", end="now-1h", step="1m"
+    )
+    meta = svc.datasets.meta(out["dataset"])
+    res = svc.show(out["dataset"], "Dist?", mark="histogram",
+                   windows=[Window(start_ms=meta.start_ms, end_ms=meta.start_ms + 6 * 60_000,
+                                   label="w")])  # fmt: skip
+    data = svc.panel_data(res.panel.id, 600)
+    w = {s["labels"]["instance"]: s["windows"][0] for s in data["series"]}
+    assert w["i1"]["columns"] < w["i1"]["expected_columns"]
+    assert w["i1"]["unknown"] is False
+    assert w["i0"]["columns"] == w["i0"]["expected_columns"]
