@@ -3,7 +3,20 @@ import type { SeriesData } from "../lib/api";
 import type { OverlayDraw } from "./overlays";
 
 // Okabe-Ito: colorblind-safe categorical palette. The series budget (≤5) fits it.
-export const PALETTE = ["#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9"];
+// Dark-theme values: all ≥3:1 against --bg #16181d (WCAG SC 1.4.11).
+export const PALETTE_DARK = ["#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9"];
+// Light-theme values: same hues, darkened just enough that every entry still clears
+// 3:1 against --bg #ffffff (the full-saturation orange and sky-blue fail there — see
+// docs/telemetry-graphing-guide.md §6). Hue order is unchanged; verified by
+// colormap.test.ts's contrast assertions.
+export const PALETTE_LIGHT = ["#0072B2", "#BB8100", "#009E73", "#C870A1", "#1C95D9"];
+// Back-compat default for callers without a theme (dark-safe values). Prefer
+// `seriesPalette(mode)` wherever the current theme is known.
+export const PALETTE = PALETTE_DARK;
+
+export function seriesPalette(mode: "light" | "dark"): string[] {
+  return mode === "light" ? PALETTE_LIGHT : PALETTE_DARK;
+}
 
 export interface UplotModel {
   data: uPlot.AlignedData;
@@ -71,6 +84,8 @@ export interface ToUplotOpts {
   edges?: number[][] | Record<string, number[][]>;
   /** reference layers (2as.11): normal band under each series, last-week ghost, limit line */
   overlays?: OverlayDraw;
+  /** per-theme series colours (seriesPalette(mode)); defaults to the dark-safe PALETTE */
+  palette?: string[];
 }
 
 export const LIMIT_COLOR = "#D55E00"; // Okabe-Ito vermilion: a hazard, not a series colour
@@ -91,6 +106,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
   const uSeries: uPlot.Series[] = [{}];
   const bands: uPlot.Band[] = [];
   const legendHidden: number[] = [];
+  const palette = opts.palette ?? PALETTE;
 
   const contextColumn = (c: SeriesData, f: "avg" | "min" | "max") => {
     const out: (number | null)[] = Array(xs.length).fill(null);
@@ -111,7 +127,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
   };
 
   series.forEach((s, k) => {
-    const color = PALETTE[k % PALETTE.length];
+    const color = palette[k % palette.length];
     const base = s.labels ? seriesName(s.labels) : s.id;
     const band = ov?.normal?.[s.id];
     if (band) {

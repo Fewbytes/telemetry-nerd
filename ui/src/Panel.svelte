@@ -6,7 +6,7 @@
     closePanel, fetchPanelData, refreshYContext, reportRender, selectYView, setMarginal, selectDataView, setOverlays,
     type Annotation, type Panel, type PanelData, type Thread, type Where, type YView,
   } from "./lib/api";
-  import { PALETTE, rgba, seriesName, toUplot } from "./chart/toUplot";
+  import { rgba, seriesName, toUplot } from "./chart/toUplot";
   import { drawRug, facetTop, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, rugMoreLabel, type RugCell } from "./chart/rug";
   import { describeShown, panelNotes } from "./lib/panelNotes";
   import { windowBadge } from "./lib/coverage";
@@ -304,7 +304,7 @@
     const anns = untrack(() => panelAnns);
     const mode = theme.effective; // tracked: rebuild the plot when the theme flips
     const colors = readAnnotationColors(el);
-    const { stroke, grid } = plotColors(el, mode);
+    const { stroke, grid, palette } = plotColors(el, mode);
     const dpr = window.devicePixelRatio || 1;
     const drawnNow = untrack(() => drawn);
     const model = toUplot(
@@ -316,6 +316,7 @@
         context: untrack(() => filtDrawn?.context),
         edges: untrack(() => (viewNow === "raw" ? undefined : d.filter?.edges)),
         overlays: overlayDraw(d.overlays),
+        palette,
       },
     );
     const width = (el.clientWidth || 800) - margW;
@@ -396,7 +397,7 @@
                         tint: (row) => {
                           const k = order.get(bs[row].id);
                           // not drawn as a line: faint neutral, never the solid EMPTY grey
-                          return k === undefined ? rgba(fg, 0.12) : rgba(PALETTE[k % PALETTE.length], 0.2);
+                          return k === undefined ? rgba(fg, 0.12) : rgba(palette[k % palette.length], 0.2);
                         },
                         grey, line: grey,
                       });

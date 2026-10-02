@@ -5,6 +5,8 @@
 // DOM guards keep the module importable in node-environment vitest tests
 // (no matchMedia/localStorage/document there); tests stub them.
 
+import { seriesPalette } from "../chart/toUplot";
+
 export type Theme = "system" | "light" | "dark";
 export type Resolved = "light" | "dark";
 
@@ -72,9 +74,13 @@ export const theme = new ThemeStore();
 export function plotColors(
   el: HTMLElement,
   mode: Resolved,
-): { stroke: string; grid: string } {
-  void mode; // tracked: rebuild plot when theme changes
+): { stroke: string; grid: string; palette: string[] } {
   const cs = getComputedStyle(el);
   const token = (name: string, fallback: string) => cs.getPropertyValue(name).trim() || fallback;
-  return { stroke: token("--muted", "#666"), grid: token("--grid", "#e8e8e8") };
+  return {
+    stroke: token("--muted", "#666"),
+    grid: token("--grid", "#e8e8e8"),
+    // per-theme darkened variants so every series colour clears 3:1 against --bg (WCAG SC 1.4.11)
+    palette: seriesPalette(mode),
+  };
 }
