@@ -266,7 +266,9 @@ class Groups:
     unassigned: list[int]
 
 
-def analyse_groups(y: np.ndarray, f: Fleet, labels: list[dict]) -> Groups | None:
+def analyse_groups(
+    y: np.ndarray, f: Fleet, labels: list[dict], unknown: np.ndarray | None = None
+) -> Groups | None:
     """Behaviour groups of a heterogeneous fleet (only when `many_outliers`), each analysed as
     its own fleet at alpha / k. None when the fleet is not split."""
     if "many_outliers" not in f.caveats:
@@ -287,7 +289,10 @@ def analyse_groups(y: np.ndarray, f: Fleet, labels: list[dict]) -> Groups | None
         mem = [int(i) for i in np.flatnonzero(groups == k)]
         if len(mem) < MIN_MEMBERS:
             continue
-        g = analyse(y[mem], scale=f.scale, normalise=f.normalise, alpha=group_alpha(c.k))
+        g = analyse(
+            y[mem], scale=f.scale, normalise=f.normalise, alpha=group_alpha(c.k),
+            unknown=None if unknown is None else unknown[mem],
+        )  # fmt: skip
         lv = level[mem]
         out.append(
             Group(mem, g, float(np.median(lv[np.isfinite(lv)])) if np.isfinite(lv).any() else 0.0)

@@ -276,10 +276,15 @@ def choose_scale(y: np.ndarray, scale: str = "auto") -> Scale:
     return "log" if obs.size and np.all(obs > 0) else "linear"
 
 
-def spread(y: np.ndarray) -> Spread:
+def spread(y: np.ndarray, unknown: np.ndarray | None = None) -> Spread:
+    """Per-step spread over the members that reported. `unknown` (members x steps, bucket_state
+    UNKNOWN: fetch failed, source cannot tell) cells are neither reporting nor missing: they
+    leave n and alive alike."""
     obs = ~np.isnan(y)
     n = obs.sum(axis=0)
     seen = np.maximum.accumulate(obs, axis=1)
+    if unknown is not None:
+        seen = seen & ~unknown
     alive = seen.sum(axis=0)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
@@ -360,9 +365,17 @@ def _step_or_trend(pos: np.ndarray, d: np.ndarray) -> tuple[str, int | None]:
 
 
 def analyse(
-    y_raw: np.ndarray, scale: str = "auto", normalise: Normalise = "none", alpha: float = ALPHA
+    y_raw: np.ndarray,
+    scale: str = "auto",
+    normalise: Normalise = "none",
+    alpha: float = ALPHA,
+    unknown: np.ndarray | None = None,
 ) -> Fleet:
-    """Spread, per-step deviations and outlying members of a fleet (members x steps, NaN gaps)."""
+    """Spread, per-step deviations and outlying members of a fleet (members x steps, NaN gaps).
+    `unknown`: member-steps whose data cannot be trusted (bucket_state UNKNOWN); their values
+    are dropped and they count neither as reporting nor as missing."""
+    if unknown is not None and unknown.any():
+        y_raw = np.where(unknown, np.nan, y_raw)
     m_, t_ = y_raw.shape
     if m_ < MIN_MEMBERS:
         raise ValueError(f"{m_} members: a fleet needs >= {MIN_MEMBERS} (hint: draw them as lines)")
@@ -379,10 +392,11 @@ def analyse(
             y = y - np.nanmedian(y, axis=1, keepdims=True)
     # the band in the units the user reads: raw, or normalised (ratio / difference to own median)
     band_y = y_raw if normalise == "none" else (np.exp(y) if sc == "log" else y)
-    sp = spread(band_y)
+    sp = spread(band_y, unknown)
     d, z, cnt, loo = loo_deviations(y)
     caveats: list[str] = []
-    alive_steps = np.array([t_ - f if f >= 0 else 0 for f in first])
+    known = np.ones((m_, t_), bool) if unknown is None else ~unknown
+    alive_steps = np.array([int(known[i, f:].sum()) if f >= 0 else 0 for i, f in enumerate(first)])
     nz = np.sum(~np.isnan(z), axis=1)
     tested = [i for i in range(m_) if nz[i] >= MIN_OBS and nz[i] >= 0.5 * alive_steps[i]]
     untested = [i for i in range(m_) if i not in tested]

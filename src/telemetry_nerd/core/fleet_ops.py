@@ -40,13 +40,17 @@ from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.catalog.rules import Facts
 from telemetry_nerd.core.signal_ops import SignalOps
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
-from telemetry_nerd.model.bucket_state import grid
+from telemetry_nerd.model.bucket_state import Flag, State, coarsen, grid
+from telemetry_nerd.model.caveats import Caveat, Where, runs
+from telemetry_nerd.model.companions import dataset_bundle
 from telemetry_nerd.model.time import TimeRange, format_duration, iso
 
 MAX_STEPS = 1440  # longer ranges are averaged per member to a coarser step first
 MAX_LISTED = 10
 MAX_DRAWN = 6
 CHURN_TOL = 0.05  # appeared / stopped: beyond max(3 steps, 5% of the window) from the edge
+MISSING_WARN = 0.05  # members_missing / members_partial warn above this share of member-steps
+MAX_WHERE_SERIES = 50  # located caveats name at most this many series (the message counts all)
 MEMO = 16
 _QUANTILE_EXPR = re.compile(r"\b(histogram_quantile|quantile_over_time)\s*\(", re.IGNORECASE)
 
@@ -68,6 +72,14 @@ def _arr(a: np.ndarray) -> list[float | None]:
     return [None if not math.isfinite(float(v)) else float(f"{float(v):.5g}") for v in a]
 
 
+class Coverage(NamedTuple):
+    """The dataset's bucket_state laid on the fleet grid (lkn.13); None arrays without one."""
+
+    state: np.ndarray | None  # members x steps State codes
+    stale: np.ndarray | None  # members x steps: STALE_MARKER flag
+    located: list[Caveat]  # structured caveats, where = {series ids, spans}
+
+
 class FleetRun(NamedTuple):
     """One analysed fleet. A tuple (index access stays as before: meta, step, ts, labels, names,
     fleet, caveats); `groups` (behaviour groups, lkn.10) is appended."""
@@ -80,6 +92,8 @@ class FleetRun(NamedTuple):
     fleet: Fleet
     caveats: list[str]
     groups: Groups | None = None
+    coverage: Coverage | None = None
+    series_ids: list[str] | None = None
 
 
 def member_names(labels: list[dict], by: list[str] | None) -> list[str]:
@@ -162,16 +176,102 @@ class FleetOps:
                 "rates; which aggregation is right depends on the metric)"
             )
         self._check_units(meta, labels)
-        f = analyse(y, scale=scale, normalise=normalise)  # type: ignore[arg-type]
-        groups = analyse_groups(y, f, labels)
+        cov = self._coverage(meta, result, sids, ts, step)
+        unknown = None if cov.state is None else cov.state == State.UNKNOWN
+        f = analyse(y, scale=scale, normalise=normalise, unknown=unknown)  # type: ignore[arg-type]
+        groups = analyse_groups(y, f, labels, unknown)
         caveats = caveats + f.caveats
         if groups is not None:  # outliers are judged within each group; > 10% no longer holds
             caveats = [c for c in caveats if c != "many_outliers"] + ["clustered"]
-        res = FleetRun(meta, step, ts, labels, names, f, caveats, groups)
+        cov = cov._replace(located=cov.located + self._located(meta, f, cov, sids, ts, step))
+        for c in cov.located:
+            if c.severity != "info" and c.code not in caveats:
+                caveats.append(c.code)
+        res = FleetRun(meta, step, ts, labels, names, f, caveats, groups, cov, sids)
         self._memo[key] = res
         if len(self._memo) > MEMO:
             self._memo.popitem(last=False)
         return res
+
+    def _coverage(self, meta, result, sids: list[str], ts: list[int], step: int) -> Coverage:
+        """bucket_state (series-bundles spec §5) on the fleet grid, coarsened like the values."""
+        bundle = dataset_bundle(self._datasets, meta, result)
+        states = bundle.companions.get("bucket_state")
+        if states is None or not ts:
+            return Coverage(None, None, list(bundle.caveats))
+        if step != meta.step_ms:
+            states = coarsen(states, step)
+        df = pl.from_arrow(states)
+        assert isinstance(df, pl.DataFrame)
+        row = {sid: i for i, sid in enumerate(sids)}
+        r = np.array([row.get(x, -1) for x in df["series_id"].to_list()], dtype=int)
+        off = df["ts_ms"].to_numpy().astype(np.int64) - ts[0]
+        c = off // step
+        ok = (r >= 0) & (off % step == 0) & (c >= 0) & (c < len(ts))
+        state = np.full((len(sids), len(ts)), int(State.EMPTY), np.uint8)
+        state[r[ok], c[ok]] = df["state"].to_numpy()[ok]
+        flags = np.zeros((len(sids), len(ts)), np.uint16)
+        flags[r[ok], c[ok]] = df["flags"].to_numpy()[ok]
+        return Coverage(state, (flags & int(Flag.STALE_MARKER)) > 0, list(bundle.caveats))
+
+    @staticmethod
+    def _located(meta, f: Fleet, cov: Coverage, sids, ts, step) -> list[Caveat]:
+        """Fleet caveats that know where they apply: unknown spans (excluded from n and alive),
+        partial buckets (fewer samples than expected: values from fewer samples), members missing
+        (alive, no report)."""
+        out: list[Caveat] = []
+        sp = f.spread
+        m_ = len(sids)
+
+        def where(mask_ms: np.ndarray, members: list[int]) -> Where:
+            spans = runs([ts[j] for j in np.flatnonzero(mask_ms)], step)
+            ids = None if len(members) == m_ else [sids[i] for i in members[:MAX_WHERE_SERIES]]
+            return Where(spans=spans, series=ids)
+
+        def total(mask_ms: np.ndarray) -> str:
+            return format_duration(int(mask_ms.sum()) * step)
+
+        alive_cells = float(np.sum(sp.alive))
+        if cov.state is not None:
+            unk = cov.state == State.UNKNOWN
+            if unk.any():
+                steps = unk.any(axis=0)
+                members = [int(i) for i in np.flatnonzero(unk.any(axis=1))]
+                reasons = sorted({str(x[2]) for x in meta.failed_spans}) or [
+                    "source could not tell"
+                ]
+                out.append(Caveat(
+                    code="untrusted_data",
+                    message=f"Data unknown for {total(steps)} ({'; '.join(reasons)}): those "
+                    "member-steps are left out of n and alive, neither reporting nor missing.",
+                    where=where(steps, members), source="bucket_state",
+                ))  # fmt: skip
+            part = cov.state == State.PARTIAL
+            if part.any():
+                share = float(part.sum()) / alive_cells if alive_cells else 0.0
+                members = [int(i) for i in np.flatnonzero(part.any(axis=1))]
+                out.append(Caveat(
+                    code="members_partial",
+                    severity="warn" if share > MISSING_WARN else "info",
+                    message=f"{len(members)} of {m_} members reported fewer samples than expected "
+                    f"in some buckets ({share:.1%} of member-steps): those values rest on fewer "
+                    "samples.",
+                    where=where(part.any(axis=0), members), source="bucket_state",
+                ))  # fmt: skip
+        missing = 1 - float(np.sum(sp.n)) / alive_cells if alive_cells else 0.0
+        if missing > MISSING_WARN:
+            seen = np.maximum.accumulate(~np.isnan(f.values), axis=1)
+            silent = seen & np.isnan(f.values)
+            if cov.state is not None:
+                silent &= cov.state != State.UNKNOWN
+            members = [int(i) for i in np.flatnonzero(silent.any(axis=1))]
+            out.append(Caveat(
+                code="members_missing",
+                message=f"{len(members)} of {m_} members did not report at some steps "
+                f"({missing:.1%} of alive member-steps); n per step counts those that did.",
+                where=where(sp.n < sp.alive, members), source="fleet",
+            ))  # fmt: skip
+        return out
 
     def _check_units(self, meta: DatasetMeta, labels: list[dict]) -> None:
         names = sorted({lb["__name__"] for lb in labels if "__name__" in lb})
@@ -194,7 +294,7 @@ class FleetOps:
         normalise: str = "none",
     ) -> dict:
         run = self.run(dataset_id, by, scale, normalise)
-        _, step, ts, labels, names, f, caveats, groups = run
+        _, step, ts, labels, names, f, caveats, groups, cov, _sids = run
         self._last[dataset_id] = {"by": by, "scale": scale, "normalise": normalise}
         caveats = list(caveats)  # the memoised list stays as computed
         ranked = self.ranked_outliers(run)
@@ -202,28 +302,38 @@ class FleetOps:
         sp = f.spread
         eff = format_duration(step)
         tol = max(3, math.ceil(CHURN_TOL * t_))
+        # steps whose data is unknown (fetch failed) cannot show a member absent or silent
+        known = np.ones((m_, t_), bool) if cov is None or cov.state is None else (
+            cov.state != State.UNKNOWN)  # fmt: skip
         appeared = [
             {"member": names[i], "first_seen": iso(ts[f.first_seen[i]])}
             for i in range(m_)
-            if f.first_seen[i] >= tol
+            if f.first_seen[i] >= tol and known[i, : f.first_seen[i]].sum() >= tol
         ]
-        stopped = [
-            {"member": names[i], "last_seen": iso(ts[f.last_seen[i]])}
-            for i in range(m_)
-            if 0 <= f.last_seen[i] < t_ - tol
-        ]
+        stopped = []
+        for i in range(m_):
+            last = f.last_seen[i]
+            if not (0 <= last < t_ - tol and known[i, last + 1 :].sum() >= tol):
+                continue
+            item = {"member": names[i], "last_seen": iso(ts[last])}
+            if cov is not None and cov.stale is not None and cov.stale[i, last:].any():
+                item["state"] = "ended"  # the source marked it stale: target or series went away
+            else:
+                item["state"] = "silent"  # alive, no samples (spec §5.2): ended or sick
+            stopped.append(item)
         never = sum(1 for i in range(m_) if f.first_seen[i] < 0)
         alive_sum = float(np.sum(sp.alive))
         missing = 1 - float(np.sum(sp.n)) / alive_sum if alive_sum else 0.0
-        if missing > 0.05:
+        if missing > MISSING_WARN and "members_missing" not in caveats:
             caveats.append("members_missing")
         churn: dict = {"appeared": appeared[:MAX_LISTED], "stopped_reporting": stopped[:MAX_LISTED]}
         if len(appeared) > MAX_LISTED or len(stopped) > MAX_LISTED:
             churn["counts"] = {"appeared": len(appeared), "stopped_reporting": len(stopped)}
-        if stopped:
+        if any(s["state"] == "silent" for s in stopped):
             churn["note"] = (
-                "a series that stops may have ended (replaced) or gone silent (the sick one): the "
-                "source cannot tell; check the stopped members"
+                "a silent member stopped without a staleness marker in the data (range queries do "
+                "not carry them), so the data cannot tell whether it ended (replaced) or went "
+                "silent (the sick one): check them"
                 + (" - as many appeared, likely replacement" if appeared and abs(len(appeared) - len(stopped)) <= 1 else "")
             )  # fmt: skip
         out = {
@@ -243,10 +353,12 @@ class FleetOps:
                 "alive_max": int(sp.alive.max()), "missing_share": _r(missing, 3),
             },
             "churn": churn,
-            "outliers": [self._outlier(dataset_id, eff, gf, o, gn, gl, ts) | extra
-                         for gf, o, gn, gl, extra in ranked[:MAX_LISTED]],
+            "outliers": [self._outlier(dataset_id, eff, gf, o, gn, gl, ts)
+                         | extra | self._partial(cov, gi, o)
+                         for gf, o, gn, gl, extra, gi in ranked[:MAX_LISTED]],
             "tests": self._tests(f),
             "caveats": caveats,
+            "located": [c.model_dump() for c in cov.located] if cov is not None else [],
             "draw": f'show("{dataset_id}", question, mark="fleet")',
         }  # fmt: skip
         if groups is not None:
@@ -256,19 +368,40 @@ class FleetOps:
         return out
 
     @staticmethod
-    def ranked_outliers(run: FleetRun) -> list[tuple[Fleet, Outlier, list[str], list[dict], dict]]:
+    def ranked_outliers(
+        run: FleetRun,
+    ) -> list[tuple[Fleet, Outlier, list[str], list[dict], dict, int]]:
         """Outliers by score: the fleet's, or when it is split into behaviour groups, each
         group's (judged against its own group) tagged with the group id. Each item: (the fleet
-        the outlier was judged in, outlier, member names and labels of that fleet, extra keys)."""
+        the outlier was judged in, outlier, member names and labels of that fleet, extra keys,
+        the member's index in the whole fleet)."""
         f, names, labels, groups = run.fleet, run.names, run.labels, run.groups
         if groups is None:
-            return [(f, o, names, labels, {}) for o in f.outliers]
+            return [(f, o, names, labels, {}, o.member) for o in f.outliers]
         out = []
         for k, g in enumerate(groups.groups):
             gn = [names[i] for i in g.members]
             gl = [labels[i] for i in g.members]
-            out += [(g.fleet, o, gn, gl, {"cluster": f"c{k + 1}"}) for o in g.fleet.outliers]
+            out += [
+                (g.fleet, o, gn, gl, {"cluster": f"c{k + 1}"}, g.members[o.member])
+                for o in g.fleet.outliers
+            ]
         out.sort(key=lambda r: -r[1].score)
+        return out
+
+    @staticmethod
+    def _partial(cov: Coverage | None, gi: int, o: Outlier) -> dict:
+        """Partial buckets of an outlier (values from fewer samples than expected), overall and
+        within each episode: an excursion that coincides with partial buckets is suspect."""
+        if cov is None or cov.state is None:
+            return {}
+        part = cov.state[gi] == State.PARTIAL
+        if not part.any():
+            return {}
+        out: dict = {"partial_buckets": int(part.sum())}
+        eps = [int(part[e.start : e.end + 1].sum()) for e in o.episodes[:5]]
+        if any(eps):
+            out["episode_partial_buckets"] = eps
         return out
 
     @staticmethod
@@ -455,12 +588,12 @@ class FleetOps:
         run = self.run(
             dataset_id, cfg.get("by"), cfg.get("scale", "auto"), cfg.get("normalise", "none")
         )
-        _, step, ts, _labels, names, f, caveats, groups = run
+        _, step, ts, _labels, names, f, caveats, groups, cov, _sids = run
         caveats = list(caveats)
         sp = f.spread
         ranked = self.ranked_outliers(run)
         drawn = []
-        for gf, o, gn, gl, extra in ranked[:MAX_DRAWN]:
+        for gf, o, gn, gl, extra, _gi in ranked[:MAX_DRAWN]:
             drawn.append({
                 "id": gn[o.member], "labels": gl[o.member], "kind": o.kind,
                 "direction": o.direction, "score": _r(o.score, 3),
@@ -484,6 +617,7 @@ class FleetOps:
             "outliers": drawn,
             "outlier_count": len(ranked),
             "caveats": caveats,
+            "located": [c.model_dump() for c in cov.located] if cov is not None else [],
         }
         if groups is not None:  # per-group bands (additive; lkn.10)
             payload["clusters"] = [

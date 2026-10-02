@@ -119,3 +119,20 @@ def test_fleet_preconditions():
     with pytest.raises(ValueError, match="log scale needs"):
         analyse(np.vstack([np.zeros((1, 50)), np.ones((9, 50))]), scale="log")
     assert analyse(np.vstack([np.zeros((1, 50)), np.ones((9, 50))])).scale == "linear"
+
+
+def test_unknown_member_steps_are_neither_reporting_nor_missing():
+    """lkn.13: bucket_state UNKNOWN cells leave n and alive alike; their values are dropped."""
+    y = np.array([[1.0, 1.0, 9.0], [2.0, 2.0, 9.0], [3.0, np.nan, 9.0]])
+    unknown = np.zeros(y.shape, bool)
+    unknown[:, 2] = True  # the last step's fetch failed (values are not trusted)
+    unknown[2, 1] = True
+    sp = spread(np.where(unknown, np.nan, y), unknown)
+    assert sp.n.tolist() == [3, 2, 0] and sp.alive.tolist() == [3, 2, 0]
+    y2, _ = fleet(9, m=30)
+    unk = np.zeros(y2.shape, bool)
+    unk[:5, 100:200] = True
+    f = analyse(y2, unknown=unk)
+    assert f.tested == list(range(30))  # tested on their 188 known steps
+    assert np.all(np.isnan(f.z[:5, 100:200]))
+    assert (f.spread.alive[100:200] == 25).all() and (f.spread.n[100:200] == 25).all()

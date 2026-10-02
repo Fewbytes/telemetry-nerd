@@ -188,14 +188,37 @@ fleet, which trips that < 0.3% of the time, is never split), and must then still
 
 ## Churn and missing data## Churn and missing data (series-bundles semantics)
 
-- `appeared`: first seen after the window start (+ tolerance max(3 steps, 5%)).
-- `stopped_reporting`: last seen before the end (same tolerance), with `since`. The source cannot
-  tell a series that ended (pod replaced) from one that went silent (the sick one), so both are
-  listed next to the outliers, never silently dropped (spec §5.2: silent members join the outlier
-  set). Appeared ~ stopped suggests replacement (stated).
-- `missing_share` and min n per step; caveat `members_missing` when > 5% (not `missing_data`: that code is the located
-  bucket_state caveat), `members_skipped` when some
-  members have too little data to be tested (listed by count).
+The dataset's `bucket_state` companion (series-bundles spec §5; carried through filters, coarsened
+with the values for long ranges) is laid on the fleet grid (lkn.13). Without one (a derived
+dataset whose op drops it) the fleet falls back to presence from values and says so
+(`companion_dropped`, info).
+
+- **Unknown** (fetch failed, source cannot tell): the member-step's value is dropped and it counts
+  neither as reporting nor as missing: it leaves n AND alive, so a failed chunk does not inflate
+  `missing_share`, does not trip `members_missing`, and is never a churn edge. Caveat
+  `untrusted_data` (same code and meaning as on time panels) located with `where = {spans,
+  series}` (series null = every member) and the failure reasons. The tested-member rule (half of
+  the alive steps) counts known steps only.
+- **Partial** buckets (fewer samples than the member's typical count): values kept, but located as
+  `members_partial` (members and spans; `warn` and in `caveats` above 5% of alive member-steps,
+  else `info`). Outliers carry `partial_buckets` and, for transients, `episode_partial_buckets`
+  per episode: an excursion that rests on half-empty buckets may be a collection artefact.
+- `appeared`: first seen after the window start (+ tolerance max(3 steps, 5%)), counting known steps
+  only.
+- `stopped_reporting`: last seen before the end (same tolerance, known steps), with `since` and
+  `state`: `ended` when a staleness marker (bucket_state flag `stale_marker`) is on its buckets
+  from the last sample on (the source says the target or series went away), else `silent`
+  (alive, no samples, spec §5.2: listed next to the outliers, never silently dropped). Today no
+  adapter sets `stale_marker`: Prometheus-family range queries never carry staleness markers
+  (`stale_marker_visible` is false for Prometheus, Thanos, Mimir; VictoriaMetrics shows them only
+  in raw range vectors), so every stopped member is `silent` and the note says the data cannot tell
+  ended from sick. Appeared ~ stopped suggests replacement (stated).
+- `missing_share` = 1 - sum n_t / sum alive_t and min n per step; caveat `members_missing` when
+  > 5% (not `missing_data`: that code is the per-series bucket_state caveat on time panels),
+  located: the members with silent steps and the spans where n < alive. `members_skipped` when
+  some members have too little data to be tested (listed by count).
+- `located` (summary and panel payload): the structured caveats above, plus the bundle's own
+  (`companion_dropped`, `member_coverage_unknown`); codes of non-info ones join `caveats`.
 - Source-aggregated expressions (`sum(...)`) are one series: refused (< 5 members).
 
 ## API
@@ -203,8 +226,9 @@ fleet, which trips that < 0.3% of the time, is never split), and must then still
 - MCP `fleet(dataset, by=None, scale="auto", normalise="none")` ->
   `{dataset, effective_step, members: {count, tested, untested, named_by, never_reported},
   scale, normalise, spread: {...}, coverage: {n_per_step, alive_max, missing_share},
-  churn: {appeared, stopped_reporting, note?}, outliers: [{member, labels, kind, direction, score,
-  tests, z, since, since_window_start, offset, change?, at?, episodes?, evidence}], tests: {
+  churn: {appeared, stopped_reporting: [{member, last_seen, state}], note?}, outliers: [{member,
+  labels, kind, direction, score, tests, z, since, since_window_start, offset, change?, at?,
+  episodes?, evidence, partial_buckets?, episode_partial_buckets?, cluster?}], located, tests: {
   family_wise_alpha, leave_one_out, member_threshold_z, excursion_thresholds_z, ...}, caveats,
   draw, clusters?}`. At most 10 outliers listed (by score; `more_outliers` counts the rest).
   `clusters` (only when split): `{k, rule, split_tests: [{sizes, cluster_index,
@@ -269,6 +293,5 @@ no long-episode alarm in 30 t(3) fleets.
 
 - Series x time heatmap sorted by deviation; small multiples of the top-k outliers: lkn.11.
 - Browser / e2e check of the panel: lkn.12.
-- Using the `bucket_state` companion (partial buckets, unknown spans, ended vs silent): lkn.13.
 - Name-encoded dimensions (2as.16): members whose identity is in the metric name; today members
   are told apart by labels only (a regex over `__name__` works when units agree).

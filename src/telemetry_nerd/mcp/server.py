@@ -291,7 +291,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         since the window began), effect (ratio or difference with 99% interval, from n_eff),
         transient episodes (sustained vs momentary relative to the autocorrelation time) and
         an `evidence` statistic for finding_create. Churn: members that appeared or stopped
-        reporting (silent members may be the sick ones).
+        reporting (state silent = may be the sick one; ended = staleness marker). Unknown spans
+        (failed fetches) leave n and alive; partial buckets are flagged on members/episodes;
+        `located` caveats carry where = {series, spans}. Heterogeneous fleets (> 10% named) are
+        split into behaviour groups when a SigClust test supports it (`clusters`: k, the label
+        that explains them, per-group outliers tagged `cluster`).
         by: label names that identify members (must be unique per series; default: the labels
         that vary). scale: auto (log = ratios when every value > 0) | log | linear.
         normalise: none | member (each member relative to its own median: compares shapes of
