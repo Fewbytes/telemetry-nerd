@@ -69,7 +69,6 @@ def compute(
     ts = grid(start_ms, end_ms, step_ms)
     if not ts or not series_ids:
         return STATE_SCHEMA.empty_table()
-    expected = max(1.0, step_ms / resolution_ms) if mode == "samples" else 1.0
     base = pl.DataFrame({"series_id": list(series_ids)}, schema={"series_id": pl.String}).join(
         pl.DataFrame({"ts_ms": ts}, schema={"ts_ms": pl.Int64}), how="cross"
     )
@@ -81,8 +80,16 @@ def compute(
     )
     obs = rows.select("ts_ms", "series_id", seen.alias("observed"))
     df = base.join(obs, on=["series_id", "ts_ms"], how="left").with_columns(
-        pl.col("observed").fill_null(0.0), pl.lit(expected).alias("expected")
+        pl.col("observed").fill_null(0.0)
     )
+    if mode == "samples":
+        # the series' own resolution, not the source's configured one (a source may scrape
+        # slower than its preset says): the typical count of a bucket that has samples
+        typical = pl.col("observed").filter(pl.col("observed") > 0).median().over("series_id")
+        expected = pl.max_horizontal(pl.lit(1.0), typical.fill_null(1.0))
+    else:
+        expected = pl.lit(1.0)
+    df = df.with_columns(expected.alias("expected"))
     first = (
         df.filter(pl.col("observed") > 0)
         .group_by("series_id")

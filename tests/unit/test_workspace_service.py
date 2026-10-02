@@ -512,3 +512,22 @@ async def test_distribution_evidence_is_skipped(tmp_path):
     assert svc.datasets.meta(ds).representation == "distribution"
     f = svc.ws.finding_create(claim_in(ds, 0, 60_000), "claude")
     assert f.caveats == []
+
+
+class CoarseScrapeSource(FakeSource):
+    """Configured at 15s but really scraped once a minute: one sample per 1m bucket."""
+
+    async def fetch(self, expr, rng, step_ms):
+        res = await super().fetch(expr, rng, step_ms)
+        b = res.buckets.to_pylist()
+        for r in b:
+            r["count"] = 1
+        return FetchResult(pa.Table.from_pylist(b, schema=BUCKET_SCHEMA), res.series)
+
+
+async def test_coarse_scrape_series_is_fully_covered_and_findings_are_accepted(tmp_path):
+    svc, ds, meta, _ = await _queried(tmp_path, CoarseScrapeSource())
+    summary = svc._time_summary(meta, svc.datasets.get(ds)[1], svc.clock())
+    assert "missing_data" not in summary["caveats"]
+    f = svc.ws.finding_create(claim_in(ds, meta.start_ms, meta.start_ms + 600_000), "claude")
+    assert f.caveats == []

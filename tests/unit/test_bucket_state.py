@@ -95,3 +95,39 @@ def test_empty_inputs(sids):
         mode="samples",
     )
     assert out.num_rows == 0 and out.schema == STATE_SCHEMA
+
+
+def test_expected_follows_the_series_not_the_configured_resolution():
+    # source says 15s (expected 4/bucket) but the series is scraped every 60s: 1 sample/bucket
+    out = run([(t * STEP, "a", 1.0, 1) for t in range(1, 6)])
+    assert states(out) == [State.OK] * 5
+    assert set(out["expected"].to_pylist()) == {1.0}
+
+
+def test_coarse_scrape_hole_is_still_empty():
+    out = run([(t * STEP, "a", 1.0, 1) for t in (1, 2, 4, 5)])
+    assert states(out) == [State.OK, State.OK, State.EMPTY, State.OK, State.OK]
+
+
+def test_recorded_wikimedia_series_has_no_partial_buckets():
+    import json
+    from pathlib import Path
+
+    path = next(
+        (Path(__file__).resolve().parent.parent / "fixtures" / "wikimedia").glob(
+            "*query-range-1e6d4893e7*.json"
+        )
+    )
+    raw = json.loads(json.loads(path.read_text())["response"]["body"])
+    values = raw["data"]["result"][0]["values"]
+    rows = [(int(t) * 1000, "a", float(v), int(float(v))) for t, v in values]
+    out = compute(
+        buckets(rows),
+        ("a",),
+        start_ms=rows[0][0],
+        end_ms=rows[-1][0],
+        step_ms=STEP,
+        resolution_ms=15_000,  # the Wikimedia preset's, though the series is scraped every 60s
+        mode="samples",
+    )
+    assert State.PARTIAL not in states(out) and State.EMPTY not in states(out)
