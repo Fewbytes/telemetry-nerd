@@ -587,3 +587,56 @@ def test_two_lost_scrapes_not_followed_at_once_by_a_spill_are_both_empty():
     by_ts = dict(zip(out["ts_ms"].to_pylist(), out["observed"].to_pylist()))
     assert [by_ts[k * S15] for k in range(116, 126)] == [1, 1, 1, 1, 0, 0, 1, 1, 2, 1]
     assert states(out).count(State.EMPTY) == 2
+
+
+# --- window edges (430): a neighbourhood cut short by the window edge, a 00 run at UNKNOWN ---
+
+
+def test_step_rate_series_does_not_read_slow_near_the_window_start():
+    # 60s scrapes in 60s buckets, early at 2, 4 and 7, late otherwise: counts 2 0 2 0 1 2 0 1 1...
+    # The two gaps before bucket 360 hold 3 samples in 240s (the first bucket's 2 opens the series,
+    # its gap unseen): 80s, slower than the step, for that one neighbourhood. Read slow, the 2 at
+    # 420 lost its spill pairing and the 0 at 300 (its spilled scrape) read EMPTY.
+    ts = [60_000 * k + (-1_000 if k in (2, 4, 7) else 1_000) for k in range(1, 60)]
+    rows = _count_rows(ts, 60_000)
+    counts = {b // 60_000: c for b, _, _, c in rows}
+    assert [counts.get(b, 0) for b in range(2, 11)] == [2, 0, 2, 0, 1, 2, 0, 1, 1]
+    out = _compute_rows(rows, step=60_000, res=15_000)
+    assert State.EMPTY not in states(out) and State.PARTIAL not in states(out)
+    assert 0.95 <= _alive_coverage(out) <= 1.05
+
+
+@pytest.mark.parametrize(
+    ("interval", "phase", "seed"),
+    [
+        (15_000, 0, 33),  # a false EMPTY at the window start
+        (15_000, 1_000, 104),
+        (15_000, 1_000, 15),  # at the window end
+        (15_000, 1_000, 18),
+        (60_000, 0, 33),
+        (60_000, 1_000, 104),  # at both
+    ],
+)
+def test_step_equal_to_interval_with_phase_near_a_bucket_boundary_has_no_empty(
+    interval, phase, seed
+):
+    ts = _sample_ts(interval, phase=phase, jitter=2_000, seed=seed)
+    out = _compute_rows(_count_rows(ts, interval), step=interval, res=15_000)
+    assert State.EMPTY not in states(out)
+
+
+@pytest.mark.parametrize("unknown_before", [False, True])
+def test_two_zero_buckets_next_to_an_unknown_span_are_not_exactly_two(unknown_before):
+    # scrapes late until 107, early from 108; 105 and 106 lost: counts ... 1 0 0 2 1 ... at
+    # buckets 105-109. Bounded by samples the run is exactly two 0s (a lost scrape next to one that
+    # spilled into the 2): the second is paired. After an UNKNOWN span the run may be longer than
+    # it shows: no pairing, both read EMPTY
+    ts = [S15 * k + (1_000 if k <= 107 else -1_000) for k in range(1, 240)]
+    kept = [t for k, t in enumerate(ts, start=1) if k not in (105, 106)]
+    failed = [(100 * S15, 105 * S15, "boom")] if unknown_before else ()
+    out = _compute_rows(_count_rows(kept, S15), step=S15, res=S15, failed=failed)
+    by_ts = dict(zip(out["ts_ms"].to_pylist(), out["observed"].to_pylist()))
+    assert [by_ts[k * S15] for k in range(106, 110)] == [0, 0, 2, 1]
+    st = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
+    assert st[106 * S15] == State.EMPTY
+    assert st[107 * S15] == (State.EMPTY if unknown_before else State.OK)

@@ -209,9 +209,13 @@ def _cadence(df: pl.DataFrame, step_ms: int) -> pl.DataFrame:
         ((zero & ~lone) | pl.col("_unk")).alias("_evx"),
     )
     run0 = (pl.col("_evx") & ~pl.col("_unk")).fill_null(False)
-    two = lambda k: run0.shift(k).over(_S).fill_null(False)
-    # the end of a run of exactly two 0 buckets: one lost scrape next to one that spilled
-    df = df.with_columns((run0 & two(1) & ~two(2) & ~two(-1) & near_one).alias("_ev00"))
+    at = lambda e, k: e.shift(k).over(_S).fill_null(False)
+    # the end of a run of exactly two 0 buckets: one lost scrape next to one that spilled. Bounded
+    # by samples: next to an UNKNOWN bucket (`_evx`) the run may be longer than it shows
+    evx = pl.col("_evx")
+    df = df.with_columns(
+        (run0 & at(run0, 1) & ~at(evx, 2) & ~at(evx, -1) & near_one).alias("_ev00")
+    )
     spilled = _spilled(df.filter(pl.col("_ev0") | pl.col("_ev2") | pl.col("_evx")), step_ms)
     df = df.join(spilled, on=[_S, "ts_ms"], how="left").sort(_S, "ts_ms")
     df = df.with_columns(
@@ -296,16 +300,21 @@ def _local_interval(nz: pl.DataFrame, gap: str, step_ms: int) -> pl.DataFrame:
     )
     nz = nz.join(glob, on=_S, how="left").sort(_S, "ts_ms")
     nz = nz.with_columns(pl.col(f"_k{p}").cum_sum().over(_S).alias(f"_s{p}") for p in parts)
+    s = lambda p: pl.col(f"_s{p}")
+    row, last = pl.int_range(pl.len()).over(_S), pl.len().over(_S) - 1
     nz = nz.with_columns(
         *(  # the k gaps ending here
-            (pl.col(f"_s{p}") - pl.col(f"_s{p}").shift(k).over(_S).fill_null(0.0)).alias(f"_b{p}")
-            for p in parts
+            (s(p) - s(p).shift(k).over(_S).fill_null(0.0)).alias(f"_b{p}") for p in parts
         ),
         *(  # the k gaps after this one
-            (
-                pl.col(f"_s{p}").shift(-k).over(_S).fill_null(pl.col(f"_s{p}").last().over(_S))
-                - pl.col(f"_s{p}")
-            ).alias(f"_a{p}")
+            (s(p).shift(-k).over(_S).fill_null(s(p).last().over(_S)) - s(p)).alias(f"_a{p}")
+            for p in parts
+        ),
+        *(  # the series' first and last k gaps (row 0 has no gap)
+            s(p).head(k + 1).last().over(_S).alias(f"_F{p}") for p in parts
+        ),
+        *(
+            (s(p).last().over(_S) - s(p).tail(k + 1).first().over(_S)).alias(f"_L{p}")
             for p in parts
         ),
     )
@@ -318,10 +327,22 @@ def _local_interval(nz: pl.DataFrame, gap: str, step_ms: int) -> pl.DataFrame:
         slow = valid & (i > SLOW_MARGIN * step_ms) & (pl.col(f"_{x}L") >= SLOW_MIN_LONG)
         return valid, i, slow.fill_null(False)
 
+    def cut_slow(x: str, edge: str, cut: pl.Expr) -> pl.Expr:
+        """Slowness of a side cut short by the window edge: it rests on few gaps, where one
+        sample spilled across its boundary moves the interval by 1/Σsamples (a step-rate series
+        would read slow for a bucket and lose its spill pairing). Slow only when it still is with
+        one more sample, or when the series' k gaps at that edge are."""
+        valid, _, slow = side(x)
+        one_more = pl.col(f"_{x}G") / (pl.col(f"_{x}C") + 1) > SLOW_MARGIN * step_ms
+        robust = (slow & one_more).fill_null(False) | side(edge)[2]
+        return pl.when(cut).then(valid & robust).otherwise(slow)
+
     _, gi, gs = side("glob", 1)
     gi = pl.coalesce(gi, step_ms / pl.max_horizontal(pl.lit(1.0), pl.col("_typ")))
-    pv, pi, ps = side("p")  # before the previous non-zero bucket
-    av, ai, as_ = side("a")  # after this one
+    pv, pi, _ = side("p")  # before the previous non-zero bucket
+    av, ai, _ = side("a")  # after this one
+    ps = cut_slow("p", "F", row <= k)
+    as_ = cut_slow("a", "L", row + k > last)
     bv, bi, bs = side("b")
     # I: of the side nearer this gap's own time per sample (a gap at the new rate after a change,
     # or the old rate before it; a hole is further above both: the slower one). Slower than the

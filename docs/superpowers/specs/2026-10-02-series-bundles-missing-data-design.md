@@ -156,7 +156,10 @@ samples in n): either side of a rate change reads at its own rate; a hole lies a
 reads at the slower one.
 
 A neighbourhood is **slower than the step** when `I` > 1.25 × step with at least 2 gaps longer than
-the step; a gap is slower when either neighbourhood is. In a slower stretch a bucket with samples
+the step; a gap is slower when either neighbourhood is. A neighbourhood cut short by the window
+edge (fewer than 16 gaps before its end or after its start) rests on few gaps, where one sample
+spilled across its boundary moves `I` by 1 / Σsamples: it reads slower only if it still does with
+one sample more, or if the series' first (last) 16 gaps do. In a slower stretch a bucket with samples
 is `ok` (never `partial`), `expected` = step / I < 1, and a bucket without is `empty` only once the
 time since the series' last sample exceeds max(1.5 × I, I + step) (cadence missed; trailing
 silence likewise), else `ok`. Elsewhere every 0 bucket is `empty`, except at about one sample per
@@ -164,7 +167,8 @@ bucket (step / I in [0.8, 1.2]): a scrape near a bucket boundary lands in the ne
 so a lone 0 bucket paired with a 2 bucket (either order, only 1s between, each 2 pairing one 0) is
 `ok`; an unpaired 0 is a lost scrape. A 2 opening a run (window start, after a hole or `unknown`
 span) pairs with a 0 out of sight and gives no credit to a later 0, except right after a run of
-exactly two 0s (one lost scrape next to one that spilled), whose second 0 it pairs. A 0 still waiting for its 2
+exactly two 0s bounded by samples (one lost scrape next to one that spilled; next to an
+`unknown` bucket the run may be longer), whose second 0 it pairs. A 0 still waiting for its 2
 at the window end, or before a hole or `unknown` span, is `ok` if the series was seen spilling.
 There `expected` is the series' samples per bucket over its at-or-faster-than-step gaps, robust
 to loss: holes and `empty` buckets' time are left out, and it is re-estimated twice without the
