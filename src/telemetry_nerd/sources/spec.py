@@ -110,7 +110,10 @@ class SourceSpec(BaseModel):
     auth: AuthRef | None = None
     politeness: Politeness = Field(default_factory=Politeness)
     #: another registered source with downsampled data of the same series (e.g. Thanos
-    #: downsample-1h) that serves long-window operating profiles (bead 2as.7)
+    #: downsample-1h) that serves long-window operating profiles (bead 2as.7). On Wikimedia this
+    #: pairing currently answers from raw data (2as.25: the tier needs `max_source_resolution`,
+    #: which the source does not send; raw is kept >= 300 d, exact and fast), so it is harmless and
+    #: kept for sources whose raw retention is short.
     profile_source: str | None = Field(default=None, pattern=NAME_PATTERN)
 
     @model_validator(mode="after")
