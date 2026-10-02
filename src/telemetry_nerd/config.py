@@ -42,6 +42,8 @@ class Settings:
         s.source_url = os.environ.get("TN_SOURCE_URL", s.source_url)
         s.source_flavor = os.environ.get("TN_SOURCE_FLAVOR", s.source_flavor)
         s.host = os.environ.get("TN_HOST", s.host)
+        if extra := os.environ.get("TN_ALLOWED_HOSTS"):
+            s.allowed_hosts += [h.strip() for h in extra.split(",") if h.strip()]
         raw_port = os.environ.get("TN_PORT")
         if raw_port is not None:
             try:

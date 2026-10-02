@@ -21,3 +21,10 @@ def test_host_from_env_and_wildcard_bind_advertises_loopback(monkeypatch):
     assert s.host == "0.0.0.0"
     assert s.ui_url == "http://127.0.0.1:7070"
     assert isinstance(s.data_dir, Path)
+
+
+def test_allowed_hosts_extend_from_env(monkeypatch):
+    monkeypatch.setenv("TN_ALLOWED_HOSTS", "tn.example.com, ,10.0.0.5")
+    hosts = Settings.from_env().allowed_hosts
+    assert hosts[-2:] == ["tn.example.com", "10.0.0.5"]
+    assert "127.0.0.1" in hosts
