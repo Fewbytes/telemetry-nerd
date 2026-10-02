@@ -41,8 +41,8 @@ export function yStats(series: SeriesData[], o: { quantile: boolean; nMin: numbe
   return { all: ext(values), meaningful: o.quantile ? ext(good) : null, quantile: o.quantile, lowN, values, points };
 }
 
-export const hasReference = (c: YContext | null | undefined): boolean => !!c && (!!c.profile || !!c.limit);
-export const hasBounds = (c: YContext | null | undefined): boolean => !!c && (c.natural_lo !== null || c.natural_hi !== null);
+const hasReference = (c: YContext | null | undefined): boolean => !!c && (!!c.profile || !!c.limit);
+const hasBounds = (c: YContext | null | undefined): boolean => !!c && (c.natural_lo !== null || c.natural_hi !== null);
 
 /** The drawn data unioned with the operating (normal) range and the physical limit. */
 export function refExtent(all: Extent, c: YContext | null | undefined): Extent {
@@ -82,7 +82,7 @@ function refusal(v: YView, st: YStats, ctx: YContext | null): string | null {
 }
 
 /** The catalog gives both ends: a ratio is [0,1], a percentage [0,100]. */
-export const closedBounds = (c: YContext | null | undefined): boolean =>
+const closedBounds = (c: YContext | null | undefined): boolean =>
   !!c && c.natural_lo !== null && c.natural_hi !== null;
 
 /** What "auto" means: the metric's fixed natural axis when the catalog bounds it on both sides and

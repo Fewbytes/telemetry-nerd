@@ -3,7 +3,7 @@
 import type { Panel, PanelGroup, RoleVerdict } from "./api";
 
 /** Role order per binding kind (the catalog's BINDING_ROLES). */
-export const ROLE_ORDER: Record<string, string[]> = {
+const ROLE_ORDER: Record<string, string[]> = {
   RED: ["rate", "errors", "duration"],
   USE: ["utilization", "saturation", "errors"],
   littles_law: ["arrival_rate", "latency", "concurrency", "check"], // check: czt.2's L vs λ·W panel
@@ -12,7 +12,7 @@ export const ROLE_ORDER: Record<string, string[]> = {
 export const KIND_LABELS: Record<string, string> = { RED: "RED", USE: "USE", littles_law: "Little's law" };
 
 /** The symbol a role carries in its model, shown next to its name. */
-export const ROLE_SYMBOLS: Record<string, string> = { arrival_rate: "λ", latency: "W", concurrency: "L" };
+const ROLE_SYMBOLS: Record<string, string> = { arrival_rate: "λ", latency: "W", concurrency: "L" };
 
 export const FORM_LABELS: Record<string, string> = {
   rate: "per-second rate",
@@ -27,9 +27,12 @@ export const FORM_LABELS: Record<string, string> = {
   littles: "L vs λ·W per window, propagated 95% interval",
 };
 
+/** A role id as plain words: `arrival_rate` -> "arrival rate". */
+export const roleName = (role: string): string => role.replace(/_/g, " ");
+
 export const roleTitle = (role: string): string => {
   if (role === "check") return "L vs λ·W";
-  const name = role.replace(/_/g, " ");
+  const name = roleName(role);
   return ROLE_SYMBOLS[role] ? `${name} (${ROLE_SYMBOLS[role]})` : name;
 };
 

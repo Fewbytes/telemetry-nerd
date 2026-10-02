@@ -4,7 +4,7 @@
   import { setContext } from "svelte";
   import PanelView from "../Panel.svelte";
   import { closeGroup, reframeGroup, type Annotation, type Panel, type PanelGroup, type Thread } from "../lib/api";
-  import { basisText, FORM_LABELS, groupDomain, KIND_LABELS, orderedRoles, roleTitle, verdictBadge } from "../lib/groups";
+  import { basisText, FORM_LABELS, groupDomain, KIND_LABELS, orderedRoles, roleName, roleTitle, verdictBadge } from "../lib/groups";
   import { GroupLink } from "../lib/groupLink.svelte";
   import { fmtStep } from "../lib/format";
 
@@ -67,15 +67,15 @@
   {#each roles as role (role)}
     {@const r = byRole.get(role)}
     {@const p = members[role]}
+    {@const badge = verdictBadge(r?.verdict)}
     <div class="role" data-role={role} data-role-view={r?.view ?? (p ? "panel" : "pending")}>
       <div class="role-label">
         <span class="role-name">{roleTitle(role)}</span>
         {#if r?.metric}<code>{r.metric}</code>{/if}
         {#if r?.form}<span class="form">{FORM_LABELS[r.form] ?? r.form}</span>{/if}
         {#if r?.members}<span class="members">{r.members} member{r.members === 1 ? "" : "s"}{r.view === "fleet" ? " · fleet" : ""}</span>{/if}
-        {#if verdictBadge(r?.verdict)}
-          {@const b = verdictBadge(r?.verdict)!}
-          <span class="verdict {b.tone}" data-role-verdict={r?.verdict?.status} title={b.title}>{b.label}</span>
+        {#if badge}
+          <span class="verdict {badge.tone}" data-role-verdict={r?.verdict?.status} title={badge.title}>{badge.label}</span>
         {/if}
       </div>
       {#if r?.notes?.length}
@@ -85,7 +85,7 @@
         <PanelView panel={p} {annotations} {threads} />
       {:else if r?.view === "gap"}
         <div class="gap-card" data-gap-card={role}>
-          <div class="gap-title">No {role.replace(/_/g, " ")} signal for {group.key}</div>
+          <div class="gap-title">No {roleName(role)} signal for {group.key}</div>
           {#if r.suggestion}
             <div>Instrument <code>{r.suggestion.name}</code> ({r.suggestion.type}{r.suggestion.labels.length ? `, labels ${r.suggestion.labels.join(", ")}` : ""}){r.why ? `: ${r.why}` : ""}.</div>
           {/if}
@@ -93,13 +93,13 @@
         </div>
       {:else if r?.view === "error"}
         <div class="gap-card error-card" data-role-error={role}>
-          <div class="gap-title">Could not draw {role.replace(/_/g, " ")}</div>
+          <div class="gap-title">Could not draw {roleName(role)}</div>
           <div>{r.error}</div>
         </div>
       {:else if p?.closed}
-        <div class="gap-card closed-card">{role.replace(/_/g, " ")}: panel {p.id} closed</div>
+        <div class="gap-card closed-card">{roleName(role)}: panel {p.id} closed</div>
       {:else}
-        <div class="gap-card pending-card">{role.replace(/_/g, " ")}: drawing…</div>
+        <div class="gap-card pending-card">{roleName(role)}: drawing…</div>
       {/if}
     </div>
   {/each}

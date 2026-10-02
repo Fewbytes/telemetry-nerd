@@ -51,7 +51,7 @@ export const GROUP_STYLES = {
     { line: "#CDE6CD", fill: "#93B893", dash: [1, 2] },
   ],
 } as const;
-export const GROUP_ALPHA = { light: 0.3, dark: 0.32 } as const;
+const GROUP_ALPHA = { light: 0.3, dark: 0.32 } as const;
 export const groupStyle = (dark: boolean, k: number) => GROUP_STYLES[dark ? "dark" : "light"][k % GROUP_STYLES.light.length];
 
 /** Time spans (ms) where the data is unknown (located `untrusted_data`): hatched, never read as values. */
@@ -136,7 +136,6 @@ export const bandFills = (dark: boolean): string[] => {
   return BAND_ALPHAS[m].map((a) => rgba(FLEET_HUE[m].fill, a));
 };
 
-/** Legend entries for the encoding row: three ribbons, the median line and the outlier marker. */
 /** `line`: the group's median colour and CSS border style (its dash), drawn across the swatch. */
 export interface KeyEntry { id: string; label: string; swatch: string; line?: { color: string; style: "solid" | "dashed" | "dotted" }; hatch?: boolean }
 const cssDash = (dash: readonly number[]): "solid" | "dashed" | "dotted" => (!dash.length ? "solid" : dash[0] <= 2 ? "dotted" : "dashed");
@@ -200,9 +199,8 @@ export function nearestOutlier(d: FleetData, idx: number, yVal: number, tol: num
 
 /** The fleet's drawn values as y stats: the spread's min-max and every drawn outlier. */
 export function fleetStats(d: FleetData) {
-  const vals = (a: (number | null)[]) => a;
   const mk = (id: string, avg: (number | null)[]) => ({ id, labels: {}, ts: d.ts, avg, min: avg, max: avg, count: avg.map(() => 1) });
-  const series = [mk("lo", vals(d.band.lo)), mk("hi", vals(d.band.hi)), ...d.outliers.map((o) => mk(o.id, o.values))];
+  const series = [mk("lo", d.band.lo), mk("hi", d.band.hi), ...d.outliers.map((o) => mk(o.id, o.values))];
   return yStats(series, { quantile: false, nMin: null });
 }
 
@@ -257,24 +255,18 @@ export function placeEndLabels(items: EndLabel[], h: number, top: number, bottom
   return out;
 }
 
-/** Where each drawn outlier's line ends: (step index, value), or null when it has no value. */
-export function outlierEnds(d: FleetData): ({ j: number; v: number } | null)[] {
-  return d.outliers.map((o) => {
-    let j = o.values.length - 1;
-    while (j >= 0 && o.values[j] === null) j--;
-    return j < 0 ? null : { j, v: o.values[j] as number };
-  });
+/** Where a line ends: (step index, value) of its last non-null value, or null when it has none. */
+function lineEnd(values: (number | null)[]): { j: number; v: number } | null {
+  let j = values.length - 1;
+  while (j >= 0 && values[j] === null) j--;
+  return j < 0 ? null : { j, v: values[j] as number };
 }
+
+/** Where each drawn outlier's line ends, for its end label. */
+export const outlierEnds = (d: FleetData): ({ j: number; v: number } | null)[] => d.outliers.map((o) => lineEnd(o.values));
 
 /** The interquartile ribbon of behaviour group `k`. */
 export const groupFill = (dark: boolean, k: number): string => rgba(groupStyle(dark, k).fill, GROUP_ALPHA[dark ? "dark" : "light"]);
 
-/** Where each group's median line ends: (step index, value), for its end label. */
-export function groupEnds(d: FleetData): ({ j: number; v: number } | null)[] {
-  return (d.clusters ?? []).map((c) => {
-    const m = c.band.median;
-    let j = m.length - 1;
-    while (j >= 0 && m[j] === null) j--;
-    return j < 0 ? null : { j, v: m[j] as number };
-  });
-}
+/** Where each group's median line ends, for its end label. */
+export const groupEnds = (d: FleetData): ({ j: number; v: number } | null)[] => (d.clusters ?? []).map((c) => lineEnd(c.band.median));
