@@ -70,9 +70,10 @@ def test_previous_window_baseline_is_fetched_stated_and_never_judged(svc):
     (w,) = b["windows"]
     assert w["end"] == "2026-10-14T06:00:00+00:00" and w["dataset"] != d
     (s,) = out["series"]
-    # no operating profile yet: a flat centre from the preceding window (another part of the
-    # daily cycle) is not a usable chart, and says so
-    assert s["spc"]["mode"] == "insufficient_data" and "n_eff" in s["spc"]["reason"]
+    # no operating profile was cached: it is computed for this analysis (3af) rather than
+    # judging against a flat centre from another part of the daily cycle
+    assert out["seasonal_centre"]["status"] == "computed_now", out.get("seasonal_centre")
+    assert s["spc"]["centre"]["seasonal"].endswith("profile")
     assert "uses this reference baseline" in out["draw"]
 
 
@@ -172,3 +173,62 @@ async def test_mcp_analyze_with_reference_baseline(tmp_path):
         mcp, "analyze", {"dataset": d, "baseline": "week", "baseline_start": "2026-10-14T06:00:00Z"}
     )
     assert bad.is_error and "drop baseline_start" in text_of(bad)
+
+
+# --- the profile is computed on demand when the centre needs it (telemetry-nerd-3af) ----------
+
+
+def test_analyze_computes_the_missing_profile_for_a_short_baseline(svc):
+    d = window(svc)
+    assert svc.profiles.cached("default", "queue_depth") is None
+    out = asyncio.run(svc.analyze_profiled(d))
+    assert out["seasonal_centre"]["status"] == "computed_now"
+    assert "30d" in out["seasonal_centre"]["reason"]
+    assert out["series"][0]["spc"]["centre"]["seasonal"].endswith("profile")
+    again = asyncio.run(svc.analyze_profiled(d))  # cached now: used, nothing recomputed
+    assert again["seasonal_centre"]["status"] == "profile"
+
+
+def test_a_slow_profile_is_pending_and_says_re_run(svc, monkeypatch):
+    import telemetry_nerd.core.service as service_mod
+
+    monkeypatch.setattr(service_mod, "PROFILE_WAIT_S", 0.01)
+    src = svc.sources.get("default")
+    fetch = src.fetch
+
+    async def slow(expr, rng, step_ms):
+        if step_ms == H:  # the profile's hourly history
+            await asyncio.sleep(0.5)
+        return await fetch(expr, rng, step_ms)
+
+    src.fetch = src.fetch_values = slow
+    d = window(svc)
+    out = asyncio.run(svc.analyze_profiled(d))
+    assert out["seasonal_centre"]["status"] == "pending"
+    assert "re-run" in out["seasonal_centre"]["reason"]
+    assert "seasonal_profile_pending" in out["caveats"]
+
+
+def test_an_unprofilable_series_says_why_the_cycle_is_not_modelled(svc):
+    from telemetry_nerd.sources.base import SourceUnavailable
+
+    src = svc.sources.get("default")
+    fetch = src.fetch
+
+    async def failing(expr, rng, step_ms):
+        if step_ms == H:
+            raise SourceUnavailable("history down")
+        return await fetch(expr, rng, step_ms)
+
+    src.fetch = src.fetch_values = failing
+    out = asyncio.run(svc.analyze_profiled(window(svc)))
+    assert out["seasonal_centre"]["status"] == "unavailable"
+    assert "history down" in out["seasonal_centre"]["reason"]
+    assert "seasonal_profile_unavailable" in out["caveats"]
+
+
+def test_a_baseline_of_two_days_needs_no_profile(svc):
+    d = window(svc, start=W0 - 4 * DAY, hours=24 * 4)
+    out = asyncio.run(svc.analyze_profiled(d))
+    assert "seasonal_centre" not in out
+    assert svc.profiles.cached("default", "queue_depth") is None

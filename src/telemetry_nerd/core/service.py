@@ -8,6 +8,7 @@ import math
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -178,6 +179,7 @@ MIN_SCAN_WINDOW_MS = 300_000
 MAX_SCAN_WINDOW_MS = 6 * 3_600_000
 SCRAPE_CACHE_MS = 3_600_000  # a measured scrape interval is reused for an hour
 PROFILE_WAIT_S = 8.0  # how long `show` waits for a first-view operating profile
+DAY_MS = 86_400_000
 DIST_TARGET_COLUMNS = 300
 
 
@@ -1485,9 +1487,86 @@ class TelemetryService:
             "window as an input",
         )  # fmt: skip
         ref = await self.diagnostics.fetch_reference(dataset_id, baseline, cycles, tz, actor)
-        out = self.diagnostics.summary(dataset_id, ref=ref)
-        self.diagnostics.remember(dataset_id, ref)
-        return self._analyze_hint(dataset_id, out)
+
+        def run() -> dict:
+            out = self.diagnostics.summary(dataset_id, ref=ref)
+            self.diagnostics.remember(dataset_id, ref)
+            return self._analyze_hint(dataset_id, out)
+
+        return await self._seasonal_centre(dataset_id, run(), run)
+
+    async def analyze_profiled(
+        self,
+        dataset_id: str,
+        baseline_start: str | None = None,
+        baseline_end: str | None = None,
+    ) -> dict:
+        """analyze, computing the operating profile first when the SPC centre needs its
+        seasonal shape and none is cached (telemetry-nerd-3af)."""
+        out = self.analyze(dataset_id, baseline_start, baseline_end)
+        return await self._seasonal_centre(
+            dataset_id, out, lambda: self.analyze(dataset_id, baseline_start, baseline_end)
+        )
+
+    async def _seasonal_centre(self, dataset_id: str, out: dict, rerun: Callable[[], dict]) -> dict:
+        """A baseline shorter than 2 days cannot fit a daily/weekly cycle itself; the SPC centre
+        then needs the operating profile's seasonal shape. Without a cached profile, compute it
+        (bounded wait; it keeps computing in the background) and re-run, and say what happened:
+        never a silent flat centre. `seasonal_centre.status`: profile (used), computed_now (just
+        computed and used), not_seasonal (the profile has no cycle to follow), pending, or
+        unavailable (no profile can be computed: why)."""
+        meta = self.datasets.meta(dataset_id)
+
+        def uses_profile(o: dict) -> bool:
+            return any(
+                "profile" in str((s.get("spc") or {}).get("centre", {}).get("seasonal") or "")
+                for s in o.get("series", [])
+            )
+
+        def flag(o: dict, status: str, reason: str, caveat: str | None = None) -> dict:
+            o["seasonal_centre"] = {"status": status, "reason": reason}
+            if caveat and caveat not in o.setdefault("caveats", []):
+                o["caveats"].append(caveat)
+            return o
+
+        if uses_profile(out):
+            return flag(out, "profile", "the operating profile's seasonal shape is the centre")
+        if meta.code_node or meta.derived or self.profiles.cached(meta.source, meta.expr):
+            return out  # no profile applies, or the cached one was already considered
+        if _baseline_cover_ms(out.get("baseline") or {}) >= 2 * DAY_MS:
+            return out  # the baseline fits a daily cycle itself
+        try:
+            self.profiles.target(meta.source, meta.expr)
+            prof = await asyncio.wait_for(
+                self.profiles.ensure(meta.source, meta.expr), PROFILE_WAIT_S
+            )
+        except TimeoutError:
+            return flag(
+                out, "pending",
+                "the baseline spans < 2 days and the operating profile (its seasonal shape) is "
+                "still being computed: the centre is flat for now; re-run analyze shortly",
+                "seasonal_profile_pending",
+            )  # fmt: skip
+        except (SourceError, ValueError) as e:
+            return flag(
+                out, "unavailable",
+                f"the baseline spans < 2 days and no operating profile can be computed ({e}): "
+                "a daily/weekly cycle is not modelled in the centre",
+                "seasonal_profile_unavailable",
+            )  # fmt: skip
+        new = rerun()
+        history = format_duration(prof.window_ms)
+        if uses_profile(new):
+            return flag(
+                new, "computed_now",
+                f"the operating profile ({history}) was computed for this analysis; its "
+                "seasonal shape is the centre",
+            )  # fmt: skip
+        return flag(
+            new, "not_seasonal",
+            f"the operating profile ({history}) models no daily/weekly cycle for these series "
+            "(none found, or too little history to fit one): the centre is flat",
+        )  # fmt: skip
 
     def _analyze_hint(self, dataset_id: str, out: dict) -> dict:
         found = [
@@ -1996,3 +2075,18 @@ def _series_stats(buckets) -> list:
         scan_series(g.sort("ts_ms")["avg"].to_list())
         for _, g in df.group_by("series_id", maintain_order=True)
     ]
+
+
+def _baseline_cover_ms(baseline: dict) -> int:
+    """Time an analyze baseline spans: its window, or the sum of its reference windows."""
+    wins = baseline.get("windows") or [baseline]
+    total = 0
+    for w in wins:
+        try:
+            start, end = w["start"], w["end"]
+            total += int(
+                (datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds() * 1000
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return total

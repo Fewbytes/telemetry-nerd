@@ -295,7 +295,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         (previous <= 4, day <= 7, week <= 4) for a longer baseline. When the baseline spans
         fewer than 2 daily/weekly cycles and the operating profile is seasonal, the centre line
         follows the profile's seasonal shape (re-fitted without the judged hours): a seasonal
-        residual chart (spc.centre.seasonal = "profile").
+        residual chart (spc.centre.seasonal = "profile"). Without a cached profile it is
+        computed first (bounded wait); `seasonal_centre` says what happened: profile,
+        computed_now, not_seasonal, pending (re-run shortly) or unavailable (why).
         Returns per series: verdict, also, reasons (with numbers), and the sections; headline
         numbers carry an `evidence` statistic for finding_create. Caveats: coarsened, gaps,
         red_noise, short_baseline, near_random_walk, seasonal_not_in_baseline.
@@ -310,7 +312,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                 return _dump(
                     await service.analyze_reference(dataset, baseline, baseline_cycles, tz)
                 )
-            return _dump(service.analyze(dataset, baseline_start, baseline_end))
+            return _dump(await service.analyze_profiled(dataset, baseline_start, baseline_end))
         except SourceError as e:
             raise _source_error(e) from e
         except (NotFound, ValueError) as e:
