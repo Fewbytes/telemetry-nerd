@@ -406,6 +406,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         timeout: str = "30s",
         replace: bool = False,
         profile_source: str | None = None,
+        timezone: str = "UTC",
     ) -> str:
         """Connect a Prometheus-compatible source at runtime (no daemon restart).
 
@@ -426,6 +427,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         profile_source: name of another source with downsampled data of the same series (e.g. a
         Thanos downsample-1h datasource, connected with resolution=1h); long-window operating
         profiles are read from it.
+        timezone: IANA timezone (e.g. Europe/Berlin) the operating profile counts hour-of-day and
+        hour-of-week in. Set it where load follows people (business hours, DST shifts); default UTC.
         The source is probed before it is saved; it persists across daemon restarts.
         Returns {source, status}.
         """
@@ -454,6 +457,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                         "timeout_s": parse_duration(timeout) / 1000,
                     },
                     "profile_source": profile_source,
+                    "timezone": timezone,
                 }
             )
             return _dump(await service.source_connect(spec, replace=replace))
@@ -733,7 +737,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         the 1h step; quantile expressions are profiled as per-hour quantiles (never averaged).
         Returns kind, coverage, robust range over hourly values (p0.5..p99.5, median, MAD),
         envelope (robust tails of intra-hour min/max), absolute min/max, and per series the
-        seasonal model chosen by leave-one-out error (none | hour_of_day | hour_of_week, UTC)
+        seasonal model chosen by leave-one-out error (none | hour_of_day | hour_of_week, counted in the source's timezone: UTC unless source_connect set one)
         with its amplitude and band width. Read the caveats: short_history, gaps,
         low_n_tails, looks_like_counter, quantile_series."""
         try:

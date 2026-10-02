@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from telemetry_nerd.model.time import check_timezone
 from telemetry_nerd.sources.base import SourceError
 
 NAME_PATTERN = r"^[a-z][a-z0-9_-]{0,31}$"
@@ -115,6 +116,14 @@ class SourceSpec(BaseModel):
     #: which the source does not send; raw is kept >= 300 d, exact and fast), so it is harmless and
     #: kept for sources whose raw retention is short.
     profile_source: str | None = Field(default=None, pattern=NAME_PATTERN)
+    #: IANA timezone the operating profile counts hours in: human-driven load follows local time
+    #: and shifts an hour across DST, which UTC buckets smear (bead 2as.24)
+    timezone: str = "UTC"
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_timezone(cls, v: str) -> str:
+        return check_timezone(v)
 
     @model_validator(mode="after")
     def _profile_source_is_another(self) -> SourceSpec:

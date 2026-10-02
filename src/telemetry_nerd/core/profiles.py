@@ -154,6 +154,7 @@ class OperatingProfile(ProfileStats):
             "source": self.source,
             "profiled_from": self.profiled_from,
             "window": format_duration(self.window_ms),
+            "timezone": self.tz,
             "step": format_duration(self.step_ms),
             "rate_window": format_duration(self.rate_window_ms) if self.rate_window_ms else None,
             "computed_at_ms": self.computed_at_ms,
@@ -258,8 +259,13 @@ class ProfileService:
         if row is None or row.data is None:
             return None
         p = OperatingProfile.model_validate_json(row.data)
-        p.stale = self.clock() - p.computed_at_ms >= self.ttl_ms
+        # a profile counted in another timezone than the source's now is wrong, whatever its age
+        p.stale = self.clock() - p.computed_at_ms >= self.ttl_ms or p.tz != self._tz(source)
         return p
+
+    def _tz(self, source: str) -> str:
+        spec = self.sources.spec(source)
+        return spec.timezone if spec is not None else "UTC"
 
     def cached(self, source: str, expr: str) -> OperatingProfile | None:
         """The stored profile (maybe stale), never computing. None when there is none yet or
@@ -319,7 +325,7 @@ class ProfileService:
             if sid not in wanted:
                 continue
             ts = g["ts_ms"].to_numpy()
-            seas = seasonal_profile(ts - p.step_ms, g["avg"].to_numpy())
+            seas = seasonal_profile(ts - p.step_ms, g["avg"].to_numpy(), tz=p.tz)
             if seas is not None and seas.period != "none":
                 out.append((labels.get(sid, {}), seas))
         res = (
@@ -429,6 +435,7 @@ class ProfileService:
             step_ms=step,
             extremes=extremes,
             kind=t.kind,
+            tz=self._tz(source),
         )
         if result.partial:
             caveats = [*caveats, "partial"]

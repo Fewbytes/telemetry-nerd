@@ -73,3 +73,11 @@ computed for at most 12 series; beyond that only ranges (caveat `seasonal_series
   name in the catalog, the catalog gets an `operating_profile_ref` claim (origin `stats`).
   One internal `profile.computed` event per computation.
 - MCP: `operating_profile(expr, source)`: compact summary (no bucket arrays).
+
+## Local-time seasonality (2as.24)
+`SourceSpec.timezone` (IANA, default UTC; `source_connect(timezone=...)`) sets the clock the seasonal
+buckets count in. Hour-of-day and hour-of-week are taken on the source's wall clock (DST-aware, floor
+for half-hour zones), so a 09:00 ramp stays in one bucket across a DST change instead of smearing two
+UTC buckets. `Seasonal.tz` and `ProfileStats.tz` record it, `band_at`/`seasonal_shape` read it, and a
+stored profile whose tz differs from the source's is stale and recomputed on next view. The timezone is
+configured, not learned: guessing it from load shape is unreliable for global services.

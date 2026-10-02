@@ -6,6 +6,8 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
+from zoneinfo import ZoneInfo
 
 _DURATION = re.compile(r"^(\d+)(ms|s|m|h|d|w)$")
 _UNIT_MS = {
@@ -72,3 +74,19 @@ class TimeRange:
         start = (self.start_ms // step_ms) * step_ms
         end = -(-self.end_ms // step_ms) * step_ms
         return TimeRange(start, end)
+
+
+@lru_cache(maxsize=16)
+def zone(tz: str) -> ZoneInfo:
+    return ZoneInfo(tz)
+
+
+def check_timezone(tz: str) -> str:
+    """The IANA name if it is one; ValueError otherwise (user input)."""
+    try:
+        zone(tz)
+    except Exception as e:  # ZoneInfoNotFoundError, ValueError on malformed keys
+        raise ValueError(
+            f"unknown timezone {tz!r}: use an IANA name like Europe/Berlin or UTC"
+        ) from e
+    return tz

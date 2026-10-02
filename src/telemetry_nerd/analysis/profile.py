@@ -9,6 +9,7 @@ Design notes: docs/superpowers/specs/2026-10-01-operating-profile-design.md.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Literal
 
 import numpy as np
@@ -16,10 +17,12 @@ import polars as pl
 import pyarrow as pa
 from pydantic import BaseModel
 
+from telemetry_nerd.model.time import zone
+
 HOUR_MS = 3_600_000
 DAY_HOURS = 24
 WEEK_HOURS = 168
-#: 1970-01-01 was a Thursday; hour-of-week index 0 is Monday 00:00 UTC
+#: 1970-01-01 was a Thursday; hour-of-week index 0 is Monday 00:00 (in the profile's timezone)
 _EPOCH_HOW_OFFSET = 3 * DAY_HOURS
 
 MIN_BUCKET_N = 3  # fewer samples per seasonal bucket: no level (never faked)
@@ -97,6 +100,8 @@ class SeriesProfile(BaseModel):
 
 class ProfileStats(BaseModel):
     kind: Kind
+    #: timezone the seasonal hours are counted in (the source's: human load follows local time)
+    tz: str = "UTC"
     step_ms: int
     start_ms: int  # first bucket ts (end of the first hour)
     end_ms: int  # last bucket ts
@@ -108,13 +113,39 @@ class ProfileStats(BaseModel):
     caveats: list[str]
 
 
-def hour_of_week(ts_ms: int) -> int:
-    """Hour index of the hour containing ts, Monday 00:00 UTC = 0."""
-    return int((ts_ms // HOUR_MS + _EPOCH_HOW_OFFSET) % WEEK_HOURS)
+def utc_offset_ms(instant_ms: np.ndarray, tz: str) -> np.ndarray:
+    """UTC offset of the timezone at each instant (DST-aware), in ms. Zero for UTC."""
+    x = np.asarray(instant_ms, np.int64)
+    if tz == "UTC":
+        return np.zeros_like(x)
+    z = zone(tz)
+    # offsets change a few times a year: look each distinct hour up once
+    hours, inverse = np.unique(x // HOUR_MS, return_inverse=True)
+    offs = np.array(
+        [
+            int(datetime.fromtimestamp(h * 3600, UTC).astimezone(z).utcoffset().total_seconds())
+            * 1000
+            for h in hours
+        ],
+        np.int64,
+    )
+    return offs[inverse]
 
 
-def _bucket_index(period: Period, hour_start_ms: np.ndarray) -> np.ndarray:
-    hours = hour_start_ms // HOUR_MS
+def local_hours(instant_ms: np.ndarray, tz: str) -> np.ndarray:
+    """Whole hours since the epoch on the timezone's wall clock (floor: half-hour zones land
+    their hour on the hour that contains it)."""
+    x = np.asarray(instant_ms, np.int64)
+    return (x + utc_offset_ms(x, tz)) // HOUR_MS
+
+
+def hour_of_week(ts_ms: int, tz: str = "UTC") -> int:
+    """Hour index of the hour containing ts, Monday 00:00 (local to `tz`) = 0."""
+    return int((local_hours(np.array([ts_ms]), tz)[0] + _EPOCH_HOW_OFFSET) % WEEK_HOURS)
+
+
+def _bucket_index(period: Period, hour_start_ms: np.ndarray, tz: str = "UTC") -> np.ndarray:
+    hours = local_hours(hour_start_ms, tz)
     if period == "none":
         return np.zeros_like(hours)
     if period == "hour_of_day":
@@ -125,7 +156,7 @@ def _bucket_index(period: Period, hour_start_ms: np.ndarray) -> np.ndarray:
 def band_at(seasonal: Seasonal, ts_ms: int) -> SeasonalBucket:
     """The seasonal bucket for the hour containing `ts_ms` (an instant, not a bucket end:
     callers holding bucket-end timestamps pass ts - step)."""
-    i = int(_bucket_index(seasonal.period, np.array([ts_ms], dtype=np.int64))[0])
+    i = int(_bucket_index(seasonal.period, np.array([ts_ms], dtype=np.int64), seasonal.tz)[0])
     return seasonal.buckets[i]
 
 
@@ -144,7 +175,7 @@ def seasonal_shape(seasonal: Seasonal, instant_ms: np.ndarray) -> np.ndarray:
     if not ok.any():
         return np.full(x.size, np.nan)
     centres = np.flatnonzero(ok) + 0.5
-    hours = x / HOUR_MS
+    hours = (x + utc_offset_ms(x, seasonal.tz)) / HOUR_MS
     if seasonal.period == "hour_of_week":
         hours = hours + _EPOCH_HOW_OFFSET
     phase = np.mod(hours, size)
@@ -206,13 +237,16 @@ def _fit(period: Period, idx: np.ndarray, x: np.ndarray):
 
 
 def seasonal_profile(
-    hour_start_ms: np.ndarray, x: np.ndarray, band_coverage: float = BAND_COVERAGE
+    hour_start_ms: np.ndarray,
+    x: np.ndarray,
+    band_coverage: float = BAND_COVERAGE,
+    tz: str = "UTC",
 ) -> Seasonal | None:
     if x.size < MIN_BUCKET_N:
         return None
     fits = {}
     for period in _PERIODS:
-        idx = _bucket_index(period, hour_start_ms)
+        idx = _bucket_index(period, hour_start_ms, tz)
         counts, levels, resid = _fit(period, idx, x)
         full = int(np.sum(counts >= MIN_BUCKET_N))
         if full >= MIN_ELIGIBLE_SHARE * _PERIOD_LEN[period]:
@@ -228,7 +262,7 @@ def seasonal_profile(
             chosen = period
     idx, counts, levels, resid = fits[chosen]
     ok = ~np.isnan(resid)
-    hod = _bucket_index("hour_of_day", hour_start_ms)
+    hod = _bucket_index("hour_of_day", hour_start_ms, tz)
     pools = [resid[ok & (hod == h)] for h in range(DAY_HOURS)]
     by_hod = chosen != "none" and all(p.size >= MIN_POOL_N for p in pools)
     a = (1 - band_coverage) / 2
@@ -263,6 +297,7 @@ def seasonal_profile(
     finite = levels[~np.isnan(levels)]
     return Seasonal(
         period=chosen,
+        tz=tz,
         buckets=buckets,
         band_coverage=band_coverage,
         residual_pool="hour_of_day" if by_hod else "all",
@@ -293,6 +328,7 @@ def compute_profile(
     kind: Kind,
     max_seasonal_series: int = MAX_SEASONAL_SERIES,
     band_coverage: float = BAND_COVERAGE,
+    tz: str = "UTC",
 ) -> ProfileStats:
     expected = (end_ms - start_ms) // step_ms + 1
     df = pl.from_arrow(buckets)
@@ -358,7 +394,7 @@ def compute_profile(
     for sp in per[:max_seasonal_series]:
         g = groups[sp.series_id]
         sp.seasonal = seasonal_profile(
-            g["ts_ms"].to_numpy() - step_ms, g["avg"].to_numpy(), band_coverage
+            g["ts_ms"].to_numpy() - step_ms, g["avg"].to_numpy(), band_coverage, tz
         )
     if len(per) > max_seasonal_series:
         caveats.append("seasonal_series_capped")
@@ -370,6 +406,7 @@ def compute_profile(
     pooled = range_stats(valid["avg"].to_numpy(), valid["min"].to_numpy(), valid["max"].to_numpy())
     return ProfileStats(
         kind=kind,
+        tz=tz,
         step_ms=step_ms,
         start_ms=start_ms,
         end_ms=end_ms,
