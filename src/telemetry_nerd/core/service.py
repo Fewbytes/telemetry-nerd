@@ -1191,52 +1191,35 @@ class TelemetryService:
         panel = self.workspace.get_panel(panel_id)
         dataset_id = panel.dataset_ids[0]
         layer0 = panel.spec["layers"][0]
-        if layer0["mark"] == "spectrum":
-            out = self.signal.spectrum_panel(
+        mark = layer0["mark"]
+        analysis: dict | None = None
+        if mark == "spectrum":
+            analysis = self.signal.spectrum_panel(
                 dataset_id, layer0.get("min_period_ms"), layer0.get("max_period_ms"), width_px
             )
-            return {
-                "panel": panel.to_dict(),
-                "dataset": self.datasets.meta(dataset_id).to_dict(),
-                **out,
-            }
-        if layer0["mark"] == "spc":
+        elif mark == "spc":
             w = (layer0.get("windows") or [None])[0]
-            out = self.diagnostics.panel(
+            analysis = self.diagnostics.panel(
                 dataset_id,
                 w["start_ms"] if w else None,
                 w["end_ms"] if w else None,
                 layer0.get("spc"),
             )
-            return {
-                "panel": panel.to_dict(),
-                "dataset": self.datasets.meta(dataset_id).to_dict(),
-                **out,
-            }
-        if layer0["mark"] == "fleet":
+        elif mark == "fleet":
             cfg = layer0.get("fleet") or {}
-            out = self.fleets.panel(dataset_id, cfg)
-            out["heat"] = fleet_payloads.heat(self.fleets, dataset_id, cfg)
-            return {
-                "panel": panel.to_dict(),
-                "dataset": self.datasets.meta(dataset_id).to_dict(),
-                **out,
-            }
-        if layer0["mark"] == "seasonal":
-            out = self.seasonal.panel(dataset_id, layer0["seasonal"])
-            return {
-                "panel": panel.to_dict(),
-                "dataset": self.datasets.meta(dataset_id).to_dict(),
-                **out,
-            }
-        if layer0["mark"] == "spectrogram":
-            out = self.signal.spectrogram_panel(
+            analysis = self.fleets.panel(dataset_id, cfg)
+            analysis["heat"] = fleet_payloads.heat(self.fleets, dataset_id, cfg)
+        elif mark == "seasonal":
+            analysis = self.seasonal.panel(dataset_id, layer0["seasonal"])
+        elif mark == "spectrogram":
+            analysis = self.signal.spectrogram_panel(
                 dataset_id, layer0["segment_ms"], layer0["overlap"], FACET_HEIGHT_SINGLE
             )
+        if analysis is not None:  # an analysis panel: its own payload, no series
             return {
                 "panel": panel.to_dict(),
                 "dataset": self.datasets.meta(dataset_id).to_dict(),
-                **out,
+                **analysis,
             }
         if self.datasets.meta(dataset_id).representation == "distribution":
             return self._distribution_panel_data(panel, dataset_id, width_px)

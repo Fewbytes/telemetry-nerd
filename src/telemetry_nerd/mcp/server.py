@@ -112,6 +112,10 @@ def _issues(e: ValidationError) -> str:
     )
 
 
+def _source_error(e: SourceError) -> ToolError:
+    return ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e))
+
+
 def _fail(e: Exception) -> ToolError:
     """Message plus a hint so Claude can fix the call."""
     if isinstance(e, ValidationError):
@@ -148,7 +152,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             # pi-lens-ignore: python-sql-injection
             return _dump(await service.query(expr, start, end, step, source))
         except SourceError as e:
-            raise ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e)) from e
+            raise _source_error(e) from e
         except ValueError as e:
             raise ToolError(str(e)) from e
 
@@ -222,7 +226,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                 )
             return _dump(service.analyze(dataset, baseline_start, baseline_end))
         except SourceError as e:
-            raise ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e)) from e
+            raise _source_error(e) from e
         except (NotFound, ValueError) as e:
             raise ToolError(str(e)) from e
 
@@ -265,7 +269,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                 await service.compare_seasonal(dataset, cycles, tz, exclude, threshold=threshold)
             )
         except SourceError as e:
-            raise ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e)) from e
+            raise _source_error(e) from e
         except (NotFound, ValueError) as e:
             raise ToolError(str(e)) from e
 
@@ -358,7 +362,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                 await service.query_distribution(selector, by or [], start, end, step, source)
             )
         except SourceError as e:
-            raise ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e)) from e
+            raise _source_error(e) from e
         except ValueError as e:
             raise ToolError(str(e)) from e
 
@@ -384,9 +388,6 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             return _dump(service.fraction_over(dataset, x, start, end, by_series))
         except (NotFound, ValueError) as e:
             raise ToolError(str(e)) from e
-
-    def _source_error(e: SourceError) -> ToolError:
-        return ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e))
 
     @mcp.tool()
     async def source_connect(
