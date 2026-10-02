@@ -183,6 +183,7 @@
     data
       ? panelNotes(data.caveats, {
           yScaledToData: panel.spec.y.range_mode === "data",
+          located: data.located,
           yContext: yctx,
           auto: panel.spec.auto ?? null,
           unit: panel.spec.y.unit,

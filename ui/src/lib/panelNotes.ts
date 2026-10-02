@@ -1,10 +1,11 @@
-import type { DatasetMeta, YContext } from "./api";
+import type { Caveat, DatasetMeta, Where, YContext } from "./api";
 import { fmtValue } from "../chart/axis";
 
 export interface Note {
   kind: "caveat" | "info";
   key: string;
   text: string;
+  where?: Where | null;
 }
 
 type Describe = (nMin: number | null, dist: boolean) => string;
@@ -48,6 +49,9 @@ const CAVEATS: Record<string, Describe> = {
   heavy_tails: () => "Previous cycles had excursions beyond the normal-theory threshold, so the extreme-point threshold was raised to the largest of them.",
   small_residual_pool: () => "Few previous-cycle residuals: the band edges are rough.",
   dst_within_window: () => "The window crosses a daylight-saving change: points after it are an hour off the local-time alignment.",
+  missing_data: () => "Some series have buckets with no or too few samples (see the coverage rug).",
+  untrusted_data: () => "Part of the window could not be fetched or judged; it is hatched.",
+  member_coverage_unknown: () => "Aggregated at the source: missing member series cannot be seen.",
   overflow: () => "Some observations are above the largest bucket edge; their values are unknown (top strip).",
 };
 
@@ -68,14 +72,21 @@ export function panelNotes(
     yView?: { label: string; reason: string | null; author: string; refused: string | null } | null;
     filter?: { label: string; reason: string } | null;
     indexed?: { label: string; skipped: string[]; hidden: number; nonPositive: number } | null;
+    located?: Caveat[];
     marginal?: { what: string; ref: string; n: number[]; nMin: number; author: string; reason: string | null } | null;
   },
 ): Note[] {
-  const notes: Note[] = caveats.map((key) => ({
-    kind: "caveat",
-    key,
-    text: caveatText(key, opts.nMin, opts.representation),
-  }));
+  const locatedCodes = new Set((opts.located ?? []).map((c) => c.code));
+  const notes: Note[] = caveats
+    .filter((key) => !locatedCodes.has(key))
+    .map((key) => ({
+      kind: "caveat",
+      key,
+      text: caveatText(key, opts.nMin, opts.representation),
+    }));
+  (opts.located ?? []).forEach((c, i) =>
+    notes.push({ kind: c.severity === "info" ? "info" : "caveat", key: `${c.code}:${i}`, text: c.message, where: c.where ?? null }),
+  );
   if (opts.filter) {
     notes.push({ kind: "info", key: "filter", text: `Filtered: ${opts.filter.label} — ${opts.filter.reason}. Raw is one click away.` });
   }

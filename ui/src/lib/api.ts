@@ -86,10 +86,12 @@ export interface QuantileBand { ts: number[]; lo: (number | null)[]; hi: (number
 export interface HeatSeries {
   id: string; labels: Record<string, string>;
   ts: number[]; n: number[]; cover: number[]; cells: HeatCells;
+  state?: BucketStatePayload | null;
   quantiles?: Record<string, QuantileBand>; // key String(q); band only where n >= minSamples(q)
 }
 export interface WindowHist {
   label: string; start_ms: number; end_ms: number; n: number; columns: number;
+  expected_columns?: number; unknown?: boolean;
   lo: (number | null)[]; hi: (number | null)[]; c: number[];
   /** source buckets, only present when `lo/hi/c` were value-merged into bars */
   source?: { lo: (number | null)[]; hi: (number | null)[]; c: number[] };
@@ -97,7 +99,10 @@ export interface WindowHist {
 export interface BucketSchemeInfo {
   kind: string; edges: number[]; schema: number | null; per_decade: number | null; description: string;
 }
-interface PanelDataBase { panel: Panel; dataset: DatasetMeta; caveats: string[] }
+export interface BucketStatePayload { id: string; ts: number[]; state: number[]; observed: number[]; expected: number[]; flags: number[] }
+export interface Where { spans?: [number, number][] | null; series?: string[] | null }
+export interface Caveat { code: string; severity: "info" | "warn" | "blocks_claim"; message: string; where?: Where | null; source: string }
+interface PanelDataBase { panel: Panel; dataset: DatasetMeta; caveats: string[]; located?: Caveat[] }
 /** Reference layers on a time panel (bead 2as.11): availability always, data only when on. */
 export interface OverlayFlags { normal: boolean; limit: boolean; ghost: boolean }
 export interface BandSeries { ts: number[]; lo: (number | null)[]; hi: (number | null)[] }
@@ -108,7 +113,7 @@ export interface OverlaysPayload {
   limit: { available: boolean; reason?: string; label?: string; metric?: string; hi?: number; series?: SeriesData[] };
   ghost: { available: boolean; loaded: boolean; label?: string; series?: GhostSeries[] };
 }
-export interface TimePanelData extends PanelDataBase { kind: "time"; overlays?: OverlaysPayload; effective_step_ms: number; series: SeriesData[]; marginal?: MarginalData | null; index?: IndexPayload | null; raw?: SeriesData[]; removed?: SeriesData[]; filter?: FilterInfo }
+export interface TimePanelData extends PanelDataBase { kind: "time"; bucket_state?: BucketStatePayload[]; overlays?: OverlaysPayload; effective_step_ms: number; series: SeriesData[]; marginal?: MarginalData | null; index?: IndexPayload | null; raw?: SeriesData[]; removed?: SeriesData[]; filter?: FilterInfo }
 export interface HeatmapPanelData extends PanelDataBase {
   kind: "heatmap"; mark: "heatmap" | "percentiles"; effective_step_ms: number; value_merge: number; facet_height_px: number; series: HeatSeries[];
 }

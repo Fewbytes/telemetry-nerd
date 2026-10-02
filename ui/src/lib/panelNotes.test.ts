@@ -14,6 +14,13 @@ describe("panelNotes", () => {
       ["info", "y_scaled_to_data"],
     ]);
   });
+  it("turns located caveats into notes with where, superseding the bare code", () => {
+    const located = [{ code: "missing_data", severity: "warn" as const, message: "i1: no samples for 3m.",
+      where: { spans: [[1, 2]] as [number, number][], series: ["s1"] }, source: "bucket_state" }];
+    const notes = panelNotes(["missing_data", "settling"], { yScaledToData: false, nMin: null, located });
+    expect(notes.map((n) => n.key)).toEqual(["settling", "missing_data:0"]);
+    expect(notes[1]).toMatchObject({ kind: "caveat", text: "i1: no samples for 3m.", where: { series: ["s1"] } });
+  });
   it("has no notes when there is nothing to warn about", () => {
     expect(panelNotes([], { yScaledToData: false, nMin: null })).toEqual([]);
   });
