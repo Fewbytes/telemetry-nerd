@@ -43,6 +43,7 @@ from telemetry_nerd.charts.spec import (
     auto_spec,
     validate,
 )
+from telemetry_nerd.charts.units import metric_names
 from telemetry_nerd.charts.ycontext import (
     counter_rate_metric,
     limit_expr,
@@ -50,6 +51,14 @@ from telemetry_nerd.charts.ycontext import (
     selector_parts,
 )
 from telemetry_nerd.charts.yview import value_stats
+from telemetry_nerd.core.card_payload import (
+    MAX_METRICS,
+    binding_row,
+    field_rows,
+    gap_pct,
+    profile_card,
+    relation_row,
+)
 from telemetry_nerd.core.events import Actor, EventLog
 from telemetry_nerd.core.panel_payloads import (
     ghost_payload,
@@ -96,6 +105,7 @@ def auto_step(rng: TimeRange, resolution_ms: int, target_buckets: int = 600) -> 
 
 
 MAX_BUCKETS_PER_QUERY = 50_000
+SCRAPE_CACHE_MS = 3_600_000  # a measured scrape interval is reused for an hour
 PROFILE_WAIT_S = 8.0  # how long `show` waits for a first-view operating profile
 DIST_TARGET_COLUMNS = 300
 
@@ -154,6 +164,7 @@ class TelemetryService:
     presence: PresenceRegistry = field(default_factory=PresenceRegistry)
     signal: SignalOps = field(init=False)
     profiles: ProfileService = field(init=False)
+    _scrape_cache: dict = field(default_factory=dict, init=False, repr=False)
     #: compute a T1 operating profile in the background when a time-series panel is shown
     auto_profile: bool = False
 
@@ -393,6 +404,81 @@ class TelemetryService:
                 res["inside_bucket"] = [_edge_text(r.bucket[0]), _edge_text(r.bucket[1])]
             out.append(res)
         return {"dataset": dataset_id, "x": x, "series": out}
+
+    async def panel_card(self, panel_id: str) -> dict:
+        """The metric card for a panel (bead 2as.12): catalog claims with provenance for each
+        catalogued metric in the expression, the operating profile and measurable data quality."""
+        p = self.workspace.get_panel(panel_id)
+        meta, result = self.datasets.get(p.dataset_ids[0])
+        parts = selector_parts(meta.expr)
+        names = sorted(metric_names(meta.expr), key=lambda n: (parts is None or n != parts[0], n))
+        known = [n for n in names if self.ws.catalog.has_metric(meta.source, n)][:MAX_METRICS]
+        metrics = []
+        for name in known:
+            entry = self.ws.catalog.entry(meta.source, name)
+            rels = self.ws.catalog_relations(meta.source, name)
+            gaps = []
+            for b in rels["bindings"]:
+                for role, gid in self.ws.relations.binding_gaps(
+                    "catalog", meta.source, b.kind, b.key
+                ).items():
+                    gaps.append({"id": gid, "binding": f"{b.kind}/{b.key}", "role": role})
+            metrics.append(
+                {
+                    "metric": name,
+                    "present": entry.present,
+                    "fields": field_rows(entry),
+                    "relations": [relation_row(r) for r in rels["relations"]],
+                    "bindings": [binding_row(b) for b in rels["bindings"]],
+                    "gaps": gaps,
+                }
+            )
+        return {
+            "source": meta.source,
+            "metrics": metrics,
+            "learned": bool(metrics),
+            "profile": await self._card_profile(meta),
+            "quality": await self._card_quality(meta, result, known[0] if known else None, parts),
+        }
+
+    async def _card_profile(self, meta: DatasetMeta) -> dict:
+        have = self.profiles.cached(meta.source, meta.expr)
+        if have is not None:
+            return profile_card(have)
+        try:
+            self.profiles.target(meta.source, meta.expr)
+        except SourceError as e:
+            return {"available": False, "reason": str(e)}
+        self.profiles.request(meta.source, meta.expr)  # compute in the background
+        return {"available": False, "reason": "not computed yet (it is being computed now)"}
+
+    async def _card_quality(self, meta, result, metric: str | None, parts) -> dict:
+        interval, why = None, None
+        selector = meta.expr if parts is not None else metric
+        if selector is None:
+            why = "the expression is not a single metric"
+        else:
+            hit = self._scrape_cache.get((meta.source, selector))
+            if hit is not None and self.clock() - hit[0] < SCRAPE_CACHE_MS:
+                interval, why = hit[1], hit[2]
+            else:
+                try:
+                    interval = await self._source(meta.source).scrape_interval(selector)
+                    why = None if interval else "fewer than 3 recent samples"
+                except SourceError as e:
+                    why = str(e)
+                self._scrape_cache[(meta.source, selector)] = (self.clock(), interval, why)
+        series = self.datasets.series_count(meta.id)
+        return {
+            "step_ms": meta.step_ms,
+            "resolution_ms": meta.resolution_ms,
+            "scrape_interval_ms": interval,
+            "scrape_interval_reason": why,
+            "series": series,
+            "gap_pct": gap_pct(result.buckets, meta.start_ms, meta.end_ms, meta.step_ms),
+            "resets": {"measured": False, "reason": "needs sample statistics (not built yet)"},
+            "cardinality": {"in_panel": series, "catalog": None},
+        }
 
     async def y_context(self, panel_id: str, actor: Actor = "system") -> YContext | None:
         """Work out what the catalog says about a time panel's y axis and record it (bead 2as.10).

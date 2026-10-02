@@ -154,6 +154,15 @@ class RelationStore:
         ).fetchone()
         return row[0] if row else None
 
+    def binding_gaps(self, level: str, source: str, kind: str, key: str) -> dict[str, str]:
+        """role -> gap id for the gaps this binding has raised."""
+        rows = self._db.execute(
+            "SELECT role, gap_id FROM catalog_binding_gaps "
+            "WHERE level = ? AND source = ? AND kind = ? AND key = ?",
+            (level, source, kind, key),
+        ).fetchall()
+        return dict(rows)
+
     def set_binding_gap(
         self, level: str, source: str, kind: str, key: str, role: str, gap_id: str
     ) -> None:

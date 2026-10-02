@@ -264,6 +264,23 @@ def create_app(
         )
 
     @_api
+    async def panel_card(request: Request) -> object:
+        return await service.panel_card(request.path_params["id"])
+
+    @_api
+    async def catalog_claim_create(request: Request) -> object:
+        """The user confirms or edits a catalog field: origin user, confidence 1."""
+        body = await _body(request, source=str, metric=str, field=str)
+        if "value" not in body:
+            raise _BadRequest("missing field 'value'", "send the value to record")
+        if not service.ws.catalog.has_metric(body["source"], body["metric"]):
+            raise NotFound(f"unknown metric {body['metric']!r} on {body['source']!r}")
+        claim = service.ws.catalog_claim(
+            body["source"], body["metric"], body["field"], body["value"], "user", "user"
+        )
+        return claim.model_dump()
+
+    @_api
     async def panel_overlays(request: Request) -> object:
         body = await _body(request)
         flags = {}
@@ -656,6 +673,8 @@ def create_app(
         Route("/api/panels/{id}/y-view", panel_y_view, methods=["POST"]),
         Route("/api/panels/{id}/y-context", panel_y_context, methods=["POST"]),
         Route("/api/panels/{id}/overlays", panel_overlays, methods=["POST"]),
+        Route("/api/panels/{id}/card", panel_card),
+        Route("/api/catalog/claims", catalog_claim_create, methods=["POST"]),
         Route("/api/panels/{id}/marginal", panel_marginal, methods=["POST"]),
         Route("/api/panels/{id}/data-view", panel_data_view, methods=["POST"]),
         Route("/api/panels/{id}/data", panel_data),
