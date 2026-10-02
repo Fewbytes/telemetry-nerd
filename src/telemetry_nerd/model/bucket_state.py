@@ -157,6 +157,9 @@ def _interval_change(df: pl.DataFrame) -> tuple[pl.DataFrame, pl.Expr]:
         .group_by("series_id")
         .agg(
             pl.col("observed").median().alias(f"_m_{h}"),
+            pl.col("observed").mean().alias(f"_mean_{h}"),
+            pl.col("observed").quantile(0.25).alias(f"_q1_{h}"),
+            pl.col("observed").quantile(0.75).alias(f"_q3_{h}"),
             pl.len().alias(f"_n_{h}"),
             pl.col("ts_ms").min().alias(f"_a_{h}"),
             pl.col("ts_ms").max().alias(f"_b_{h}"),
@@ -165,7 +168,14 @@ def _interval_change(df: pl.DataFrame) -> tuple[pl.DataFrame, pl.Expr]:
     }
     exp = nz.group_by("series_id").agg(pl.col("expected").first().alias("_exp"))
     st = half["early"].join(half["late"], on="series_id").join(exp, on="series_id")
-    lo, hi = pl.min_horizontal("_m_early", "_m_late"), pl.max_horizontal("_m_early", "_m_late")
+    lo = pl.min_horizontal("_mean_early", "_mean_late")
+    hi = pl.max_horizontal("_mean_early", "_mean_late")
+    # clear separation, not just a ratio: alternating low counts (2,1,2,1) are steady jitter
+    separated = (
+        pl.when(pl.col("_mean_late") >= pl.col("_mean_early"))
+        .then(pl.col("_q1_late") > pl.col("_q3_early"))
+        .otherwise(pl.col("_q1_early") > pl.col("_q3_late"))
+    )
     dist = lambda m: (m / pl.col("_exp")).log().abs()
     late_is_odd = dist(pl.col("_m_late")) >= dist(pl.col("_m_early"))
     st = (
@@ -173,6 +183,7 @@ def _interval_change(df: pl.DataFrame) -> tuple[pl.DataFrame, pl.Expr]:
             (pl.col("_n_early") >= CHANGE_MIN_BUCKETS)
             & (pl.col("_n_late") >= CHANGE_MIN_BUCKETS)
             & (hi >= CHANGE_RATIO * lo)
+            & separated
         )
         .with_columns(
             pl.when(late_is_odd).then(pl.col("_a_late")).otherwise(pl.col("_a_early")).alias("_lo"),

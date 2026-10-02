@@ -163,7 +163,7 @@ def test_jittery_steady_series_has_no_rate_change():
 
 
 def test_rate_change_needs_three_buckets_per_half():
-    out = run(_change_rows([4, 4, 4, 4, 1, 1]), end=6 * STEP)  # 3 + 3 -> flagged
+    out = run(_change_rows([4, 4, 4, 1, 1, 1]), end=6 * STEP)  # 3 + 3 -> flagged
     assert any(f & int(Flag.INTERVAL_CHANGE) for f in _flags(out))
     out = run(_change_rows([4, 4, 4, 4, 4, 1]), end=6 * STEP)  # halves 3 + 3, medians 4 vs 4
     assert not any(f & int(Flag.INTERVAL_CHANGE) for f in _flags(out))
@@ -180,3 +180,15 @@ def test_rate_change_not_judged_in_presence_mode_or_source_filled():
         resolution_ms=RES, mode="samples", source_filled=True,
     )  # fmt: skip
     assert not any(f & int(Flag.INTERVAL_CHANGE) for f in _flags(out))
+
+
+def test_alternating_low_counts_are_steady_not_a_rate_change():
+    for counts in ([2, 1, 2, 1, 2, 1], [2, 1] * 5):
+        out = run(_change_rows(counts), end=len(counts) * STEP)
+        assert not any(f & int(Flag.INTERVAL_CHANGE) for f in _flags(out)), counts
+
+
+def test_clear_and_noisy_rate_changes_are_flagged():
+    for counts in ([4, 4, 4, 1, 1, 1], [4, 3, 4, 4, 1, 1, 2, 1]):
+        out = run(_change_rows(counts), end=len(counts) * STEP)
+        assert any(f & int(Flag.INTERVAL_CHANGE) for f in _flags(out)), counts

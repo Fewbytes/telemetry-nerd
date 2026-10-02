@@ -125,3 +125,12 @@ def test_rate_change_caveat_per_series_with_spans():
     assert c.severity == "info" and c.where.series == ["a"]
     assert c.where.spans == [(4 * STEP, 8 * STEP)]
     assert '{instance="a"}' in c.message and "15s → 60s" in c.message
+
+
+def test_one_sample_per_bucket_says_at_least_the_step():
+    t = table(_rows("a", [1] * 5, 1))
+    [c] = interval_caveats(t, {"a": "A"}, STEP, RES)
+    assert "at least every 60s" in c.message
+    t = table(_rows("a", [2] * 5, 2))  # 30s: implied, not a floor
+    [c] = interval_caveats(t, {"a": "A"}, STEP, RES)
+    assert "about every 30s" in c.message

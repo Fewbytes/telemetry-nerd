@@ -94,8 +94,11 @@ def interval_caveats(
     groups: dict[int, list[str]] = {}
     for sid, secs in diff.items():
         groups.setdefault(secs, []).append(sid)
+    step_s = max(1, round(step_ms / 1000))
     parts = [
-        f"{', '.join(names.get(sid, sid) for sid in ids)}: sampled about every {secs}s"
+        f"{', '.join(names.get(sid, sid) for sid in ids)}: sampled "
+        # one sample per bucket is a floor: the series may be scraped even slower than the step
+        f"{'at least' if secs == step_s else 'about'} every {secs}s"
         for secs, ids in sorted(groups.items())
     ]
     message = (
