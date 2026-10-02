@@ -45,6 +45,8 @@ export function refExtent(all: Extent, c: YContext | null | undefined): Extent {
   let { lo, hi } = all;
   if (c?.profile) { lo = Math.min(lo, c.profile.lo); hi = Math.max(hi, c.profile.hi); }
   if (c?.limit) hi = Math.max(hi, c.limit.hi);
+  // every hard bound counts (a threshold is drawn but never stretches the axis)
+  for (const l of c?.lines ?? []) if ((l.kind ?? "limit") === "limit") hi = Math.max(hi, l.hi);
   return { lo, hi };
 }
 
@@ -171,7 +173,8 @@ export function badgeText(v: YView, r: YResolved, unit: string | null, indexLabe
   if (r.reference && ctx) {
     const inc = [];
     if (ctx.profile) inc.push(`${ctx.profile.label} ${fmtValue(ctx.profile.lo, unit)}–${fmtValue(ctx.profile.hi, unit)}`);
-    if (ctx.limit) inc.push(`limit ${ctx.limit.metric} ${fmtValue(ctx.limit.hi, unit)}`);
+    const limits = (ctx.lines ?? []).filter((l) => (l.kind ?? "limit") === "limit");
+    for (const l of limits.length ? limits : ctx.limit ? [ctx.limit] : []) inc.push(`limit ${l.metric} ${fmtValue(l.hi, unit)}`);
     parts.push(`includes ${inc.join(", ")}`);
   }
   const { above, below, maxAbove } = r.clipped;

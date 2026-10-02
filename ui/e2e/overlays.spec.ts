@@ -37,13 +37,13 @@ test("reference layers: limit line and normal band on by default, last week on d
 
   // the limit line is on and drawn from the first paint; the band joins once the profile exists
   await expect(layers.locator('[data-overlay="limit"]')).toHaveAttribute("aria-pressed", "true");
-  await expect(el).toHaveAttribute("data-overlays", /limit/);
+  await expect(el).toHaveAttribute("data-overlays", /lines/);
   // provenance (bead 2as.15): the limit's origin and confidence are on the chip, not a magic number
   await expect(layers.locator('[data-overlay="limit"]')).toHaveAttribute("title", /origin: claude \(confidence 0\.80\)/);
-  // a resolved bound always comes with a reframing suggestion, offered but never applied
-  const reframe = el.getByRole("group", { name: "Reframing suggestions" });
-  await expect(reframe.locator('[data-reframing="headroom"]')).toBeVisible();
-  await expect(reframe.locator('[data-reframing="percent_of_limit"]')).toBeVisible();
+  // a resolved bound comes with reframings (proposals, never applied silently)
+  const reframes = el.getByRole("group", { name: "Reframings" });
+  await expect(reframes.getByRole("button", { name: /headroom/ })).toBeVisible();
+  await expect(reframes.getByRole("button", { name: /% of/ })).toBeVisible();
   await expect(layers.locator('[data-overlay="normal"]')).toBeEnabled({ timeout: 20_000 });
   await expect(el).toHaveAttribute("data-overlays", /normal/, { timeout: 20_000 });
   await expect(layers.locator('[data-overlay="ghost"]')).toHaveAttribute("aria-pressed", "false");
@@ -55,13 +55,13 @@ test("reference layers: limit line and normal band on by default, last week on d
 
   // switching the limit off removes only that layer, and it survives a reload
   await layers.locator('[data-overlay="limit"]').click();
-  await expect(el).not.toHaveAttribute("data-overlays", /limit/);
+  await expect(el).not.toHaveAttribute("data-overlays", /lines/);
   await expect(el).toHaveAttribute("data-overlays", /normal/);
   await page.reload();
   const again = page.locator(`[data-panel-id="${panel.id}"]`);
   await expect(again.locator('[data-overlay="limit"]')).toHaveAttribute("aria-pressed", "false");
   await expect(again.locator('[data-overlay="ghost"]')).toHaveAttribute("aria-pressed", "true");
-  await expect(again).not.toHaveAttribute("data-overlays", /limit/);
+  await expect(again).not.toHaveAttribute("data-overlays", /lines/);
 });
 
 test("a metric with no bounded_by relation has a disabled limit chip that says why", async ({ page, request }) => {
@@ -72,5 +72,5 @@ test("a metric with no bounded_by relation has a disabled limit chip that says w
   await page.goto("/");
   const chip = page.locator(`[data-panel-id="${panel.id}"]`).locator('[data-overlay="limit"]');
   await expect(chip).toBeDisabled();
-  await expect(chip).toHaveAttribute("title", /no bounded_by relation/);
+  await expect(chip).toHaveAttribute("title", /no bounded_by, threshold_by or same_quantity relation/);
 });

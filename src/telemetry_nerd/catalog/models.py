@@ -7,6 +7,7 @@ computed on read, so a lower-ranked claim that contradicts the winner stays visi
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Iterable
 from typing import Any, Literal, get_args
 
@@ -39,6 +40,7 @@ FieldName = Literal[
     "description",
     "histogram_family",
     "operating_profile_ref",
+    "thresholds",
 ]
 FIELDS = frozenset(get_args(FieldName))
 
@@ -47,6 +49,32 @@ _METRIC_TYPES = frozenset(get_args(MetricType))
 _BOUNDS = frozenset({"≥0", "[0,1]", "[0,100]", "none"})
 _ADDITIVITY = frozenset({"additive", "intensive", "none"})
 _TEXT = frozenset({"unit", "role", "description", "operating_profile_ref"})
+
+
+THRESHOLD_TONES = ("bad", "warn", "info")
+
+
+def _validate_thresholds(value: Any) -> None:
+    """Known good/bad lines for a metric (an SLO, a renewal window): drawn on its chart."""
+    if not isinstance(value, list) or not value or len(value) > 8:
+        raise ValueError("thresholds must be a list of 1 to 8 {value, label, tone} objects")
+    for t in value:
+        ok = (
+            isinstance(t, dict)
+            and set(t) <= {"value", "label", "tone", "direction"}
+            and isinstance(t.get("value"), int | float)
+            and not isinstance(t.get("value"), bool)
+            and math.isfinite(t["value"])
+            and isinstance(t.get("label"), str)
+            and 0 < len(t["label"].strip()) <= 80
+            and t.get("tone", "info") in THRESHOLD_TONES
+            and t.get("direction", "above") in ("above", "below")
+        )
+        if not ok:
+            raise ValueError(
+                "each threshold needs a finite `value`, a short `label`, `tone` "
+                "bad|warn|info and optionally `direction` above|below"
+            )
 
 
 def validate_value(field: str, value: Any) -> Any:
@@ -65,6 +93,8 @@ def validate_value(field: str, value: Any) -> Any:
     elif field in _TEXT:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{field} must be a non-empty string")
+    elif field == "thresholds":
+        _validate_thresholds(value)
     elif field == "histogram_family" and (
         not isinstance(value, list) or not value or not all(isinstance(v, str) for v in value)
     ):

@@ -230,6 +230,9 @@ unit = "B"
 bounds = "≥0"
 additivity_series = "additive"
 additivity_time = "additive"
+limits = [
+  { target = "node_network_speed_bytes", applies_to = "rate", join_on = ["instance", "device"], label = "link speed" },
+]
 role = "throughput"
 
 [[metric]]
@@ -532,3 +535,24 @@ additivity_series = "additive"
 additivity_time = "intensive"
 role = "state"
 description = "Collector success (1 = ok) / textfile read error (1 = error)."
+
+# Soft thresholds: the sensor's own critical and maximum readings, joined on the sensor labels.
+[[metric]]
+name = "node_hwmon_temp_celsius"
+thresholds = [
+  { target = "node_hwmon_temp_max_celsius", join_on = ["instance", "chip", "sensor"], tone = "warn", label = "sensor max" },
+  { target = "node_hwmon_temp_crit_celsius", join_on = ["instance", "chip", "sensor"], tone = "bad", label = "sensor critical" },
+]
+
+# --- reframings ------------------------------------------------------------------------
+[[reframe]]
+metric = "node_memory_MemFree_bytes"
+replace_with = "node_memory_MemAvailable_bytes"
+title = "show available memory instead"
+reason = "MemFree excludes reclaimable page cache, so it looks alarming on a healthy host; MemAvailable is the kernel's estimate of what new workloads can use."
+
+[[reframe]]
+metric = "node_filesystem_free_bytes"
+replace_with = "node_filesystem_avail_bytes"
+title = "show space available to users instead"
+reason = "free includes blocks reserved for root; avail is what non-root writers can actually use before they see ENOSPC."

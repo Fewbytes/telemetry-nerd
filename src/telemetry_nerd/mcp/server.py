@@ -585,7 +585,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     def catalog_write(source: str, claims: list[dict[str, Any]]) -> str:
         """Record what you have learned about metrics, up to 200 claims per call. Each claim:
         {metric, field, value, confidence, basis}. field is one of type, unit, bounds,
-        additivity_series, additivity_time, role, description, histogram_family. Relations between
+        additivity_series, additivity_time, role, description, histogram_family, thresholds ([{value, label,
+        tone bad|warn|info}]: known good/bad lines such as an SLO, drawn on the metric's charts). Relations between
         metrics (bounded_by, part_of, ...) go through catalog_relate.
         `basis` (required) is one line saying what you checked; confidence is at most 0.9
         (1.0 is reserved for the user). Writes are origin=claude: they never override a user
@@ -654,6 +655,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         200 per call. Each claim: {subject, kind, object, confidence, basis, params?, retract?}.
         kinds: derived_from, part_of (errors part_of requests), same_quantity, upstream_of,
         bounded_by (subject never exceeds object at the same labels: avail bounded_by size),
+        threshold_by (the object is a known threshold line for the subject: critical temperature,
+        request; params tone bad|warn|info),
+        bounded_by/threshold_by take params join_on (labels shared), matchers ({"resource": "memory"}),
+        applies_to ("rate" bounds rate(subject)), zero_is_unlimited, expr (derived target such as
+        "quota / period"), label,
         correlated (needs params {coefficient, lag_ms, scope}; evidence, capped at 0.7).
         `basis` is required; confidence at most 0.9. Set retract=true to say an edge does not hold
         (it removes a wrong pack edge without erasing history). Origin is always claude: user
@@ -819,9 +825,43 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             out["drawn_dataset"] = res.panel.dataset_ids[0]
         if ctx is not None and ctx.notes:
             out["y_range_notes"] = ctx.notes
+        if ctx is not None and ctx.reframes:  # proposals: accept one with `reframe`, never silent
+            out["reframings"] = [
+                {"index": i, "title": r.title, "reason": r.reason, "basis": r.basis}
+                for i, r in enumerate(ctx.reframes)
+            ]
+        if ctx is not None and ctx.lines:
+            out["context"] = [
+                {
+                    "kind": ln.kind,
+                    "line": ln.label or ln.metric,
+                    "origin": ln.origin,
+                    "basis": ln.basis,
+                }
+                for ln in ctx.lines
+            ]
         if hint := service.seasonal_suggestion(dataset, mark):
             out["suggest"] = hint
         return _dump(out)
+
+    @mcp.tool()
+    async def reframe(panel: str, index: int) -> str:
+        """Show a metric in a form that carries its own context: accept reframing `index` from a
+        panel's `show` answer (`reframings`), e.g. available instead of free memory, or used as a % of
+        its limit. Creates a NEW panel over the same window marked "reframed from <panel>"; the original
+        stays. Propose reframings to the user in your reply; call this when it helps the question."""
+        try:
+            res = await service.reframe(panel, index, "claude")
+        except (NotFound, ValueError, SourceError) as e:
+            raise ToolError(str(e)) from e
+        return _dump(
+            {
+                "panel": res.panel.id,
+                "url": f"{ui_url}/#/panel/{res.panel.id}",
+                "reframed_from": panel,
+                "warnings": [i.message for i in res.issues],
+            }
+        )
 
     ws = service.ws
 

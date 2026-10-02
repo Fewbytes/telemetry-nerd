@@ -3,7 +3,7 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import {
-    closePanel, fetchPanelData, refreshYContext, reportRender, selectYView, setMarginal, selectDataView, setOverlays,
+    closePanel, fetchPanelData, refreshYContext, reframePanel, reportRender, selectYView, setMarginal, selectDataView, setOverlays,
     type Annotation, type Panel, type PanelData, type Thread, type Where, type YView,
   } from "./lib/api";
   import { rgba, seriesName, toUplot } from "./chart/toUplot";
@@ -22,7 +22,7 @@
   import FleetPlot from "./components/FleetPlot.svelte";
   import { fmtRatio, indexSeries, ratioTicks } from "./chart/indexed";
   import { drawMarginal, marginalHeader } from "./chart/marginal";
-  import { overlayChips, overlayDraw, reframingChips } from "./chart/overlays";
+  import { overlayChips, overlayDraw } from "./chart/overlays";
   import { badgeText, contextStrip, hasReference, nonZeroOrigin, offeredViews, refExtent, resolveY, yStats } from "./chart/yview";
   import { measureFirstDraw } from "./chart/measureDraw";
   import { drawAnnotations, drawOps, readAnnotationColors } from "./chart/annotations";
@@ -282,6 +282,12 @@
       .then(() => load(fetchWidth || 800))
       .catch((e) => (error = String(e)))
       .finally(() => (overlayBusy = false));
+  };
+  // reframings (2as.15) are proposals: accepting one opens a new panel, this one is untouched
+  let reframeBusy = $state(false);
+  const reframe = (i: number) => {
+    reframeBusy = true;
+    reframePanel(panel.id, i).catch((e) => (error = String(e))).finally(() => (reframeBusy = false));
   };
   // a profile that finishes later arrives as a new y context: look at the layers again
   let ctxKey: string | null = null;
@@ -647,11 +653,14 @@
       {/each}
     </div>
   {/if}
-  {#if data?.kind === "time" && data.overlays?.limit.available && reframingChips(data.overlays).length}
-    <div class="legend reframings" role="group" aria-label="Reframing suggestions">
-      reframe (suggested, not applied):
-      {#each reframingChips(data.overlays) as r (r.transform)}
-        <span class="reframe-chip" data-reframing={r.transform} title={r.title}>{r.label}</span>
+  {#if data?.kind === "time" && yctx?.reframes?.length}
+    <div class="legend reframes" role="group" aria-label="Reframings">
+      reframe:
+      {#each yctx.reframes as r, i (r.title)}
+        <button
+          type="button" data-reframe={i} title={`${r.reason} (${r.basis}). Opens a new panel; this one stays.`}
+          disabled={reframeBusy} onclick={() => reframe(i)}
+        >{r.title}</button>
       {/each}
     </div>
   {/if}

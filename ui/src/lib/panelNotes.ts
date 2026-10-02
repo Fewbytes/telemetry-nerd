@@ -1,3 +1,4 @@
+import { provenance } from "../chart/overlays";
 import type { Caveat, DatasetMeta, Where, YContext } from "./api";
 import { fmtValue } from "../chart/axis";
 
@@ -125,6 +126,12 @@ export function panelNotes(
       notes.push({ kind: "caveat", key: "marginal_low_n", text: `The marginal has fewer than ${mg.nMin} values in a window; its shape is noise (drawn faded).` });
     }
   }
+  if (opts.auto?.transform === "reframe") {
+    notes.push({
+      kind: "caveat", key: "auto_reframe",
+      text: `Reframed, not the metric as asked: ${opts.auto.reason}. The original is dataset ${opts.auto.source_dataset}.`,
+    });
+  }
   if (opts.auto?.transform === "rate") {
     notes.push({
       kind: "info", key: "auto_rate",
@@ -152,13 +159,21 @@ export function contextNotes(c: YContext | null, unit: string | null = null): No
   const out: Note[] = [];
   const parts = [];
   if (c.profile) parts.push(`${c.profile.label} ${fmtValue(c.profile.lo, unit)}–${fmtValue(c.profile.hi, unit)}`);
-  if (c.limit) parts.push(`physical limit ${c.limit.metric} (${fmtValue(c.limit.hi, unit)})`);
+  const limits = (c.lines ?? []).filter((l) => (l.kind ?? "limit") === "limit");
+  for (const l of limits.length ? limits : c.limit ? [c.limit] : []) parts.push(`physical limit ${l.label ?? l.metric} (${fmtValue(l.hi, unit)})`);
   if (parts.length) out.push({ kind: "info", key: "y_reference", text: `The y range is the reference range: it includes the ${parts.join(" and the ")}, so small changes look small.` });
+  (c.lines ?? []).forEach((l, i) => {
+    const who = `origin: ${provenance(l.origin, l.confidence) || "unknown"}`;
+    const what = l.kind === "threshold" ? "threshold" : l.kind === "reference" ? "reference" : "limit";
+    const at = l.value != null || l.kind !== "reference" ? ` at ${fmtValue(l.hi, unit)}` : "";
+    out.push({ kind: "info", key: `context_line_${i}`, text: `${l.label ?? l.metric} (${what})${at}: ${who}; ${l.basis}.` });
+  });
   for (const n of c.notes) {
     const i = n.indexOf(": ");
     const key = i < 0 ? n : n.slice(0, i), text = i < 0 ? "" : n.slice(i + 2);
     if (key === "profile_pending") out.push({ kind: "info", key, text: "The normal range is still being computed; it will join the y range shortly." });
     else if (key === "profile_unavailable") out.push({ kind: "info", key, text: `No normal range yet: ${text}` });
+    else if (key === "context_unavailable") out.push({ kind: "caveat", key, text: `Context line not drawn: ${text}` });
     else if (key === "limit_unavailable") out.push({ kind: "caveat", key, text: `Physical limit not applied: ${text}` });
     // natural_bounds_unknown is the common case for derived expressions: not worth a note
   }

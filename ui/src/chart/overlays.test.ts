@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OverlaysPayload, SeriesData } from "../lib/api";
-import { overlayChips, overlayDraw, provenance, reframingChips } from "./overlays";
+import { overlayChips, overlayDraw, provenance } from "./overlays";
 import { LIMIT_COLOR, toUplot } from "./toUplot";
 
 const ov = (o: Partial<OverlaysPayload> = {}): OverlaysPayload => ({
@@ -51,18 +51,6 @@ describe("provenance", () => {
     expect(provenance("pack", 0.85)).toBe("pack (confidence 0.85)");
     expect(provenance("rule")).toBe("rule");
     expect(provenance(undefined)).toBe("");
-  });
-});
-
-describe("reframingChips", () => {
-  it("surfaces every reframing suggestion attached to the limit, with its expr and reason", () => {
-    const chips = reframingChips(ov());
-    expect(chips.map((c) => c.transform)).toEqual(["headroom", "percent_of_limit"]);
-    expect(chips[0].title).toMatch(/carries the bound with it/);
-    expect(chips[0].title).toContain(chips[0].expr);
-  });
-  it("is empty when there is no resolved limit", () => {
-    expect(reframingChips(ov({ limit: { available: false, reason: "x" } }))).toEqual([]);
   });
 });
 

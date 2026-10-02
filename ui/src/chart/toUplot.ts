@@ -89,6 +89,15 @@ export interface ToUplotOpts {
 }
 
 export const LIMIT_COLOR = "#D55E00"; // Okabe-Ito vermilion: a hazard, not a series colour
+// thresholds by tone: distinct from series colours and from the limit; ≥3:1 on both themes
+export const THRESHOLD_COLORS = { bad: "#C2185B", warn: "#B26B00", info: "#0072B2" } as const;
+export const REFERENCE_COLOR = "#7A7F87";
+
+export function lineStyle(l: { kind?: string; tone?: string | null }): { stroke: string; width: number; dash: number[] } {
+  if (l.kind === "threshold") return { stroke: THRESHOLD_COLORS[(l.tone as keyof typeof THRESHOLD_COLORS) ?? "info"] ?? THRESHOLD_COLORS.info, width: 1.5, dash: [3, 3] };
+  if (l.kind === "reference") return { stroke: REFERENCE_COLOR, width: 1, dash: [2, 4] };
+  return { stroke: LIMIT_COLOR, width: 1.5, dash: [8, 4] };
+}
 
 export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {}): UplotModel {
   const all = new Set<number>(grid ? gridTimes(grid) : []);
@@ -97,6 +106,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
   const ov = opts.overlays;
   Object.values(ov?.normal ?? {}).forEach((b) => b.ts.forEach((t) => all.add(t)));
   ov?.limit?.forEach((s) => s.ts.forEach((t) => all.add(t)));
+  ov?.lines?.forEach((l) => l.series?.forEach((s) => s.ts.forEach((t) => all.add(t))));
   ov?.ghost?.forEach((s) => s.ts.forEach((t) => all.add(t)));
   const xs = [...all].sort((a, b) => a - b);
   const index = new Map(xs.map((t, i) => [t, i]));
@@ -231,6 +241,19 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
     legendHidden.push(data.length);
     data.push(onGrid(l.ts, l.avg));
     uSeries.push({ label: `limit ${l.labels ? seriesName(l.labels) : i + 1}`, stroke: LIMIT_COLOR, width: 1.5, dash: [8, 4], spanGaps: false, points: { show: false } });
+  });
+
+  ov?.lines?.forEach((l) => {
+    // context lines (2as.15): a hard limit in the hazard colour, thresholds by tone, references faint
+    const style = lineStyle(l);
+    const name = l.label ?? l.metric;
+    const columns: (number | null)[][] = l.series?.length ? l.series.map((s) => onGrid(s.ts, s.avg)) : l.value != null ? [xs.map(() => l.value!)] : [];
+    columns.forEach((col, i) => {
+      legendHidden.push(data.length);
+      data.push(col);
+      const suffix = l.series && l.series.length > 1 && l.series[i]?.labels ? ` ${seriesName(l.series[i].labels)}` : "";
+      uSeries.push({ label: `${name}${suffix}`, stroke: style.stroke, width: style.width, dash: style.dash, spanGaps: false, points: { show: false } });
+    });
   });
 
   const stepped = grid !== undefined && opts.stepped !== false;

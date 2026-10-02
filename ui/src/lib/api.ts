@@ -12,15 +12,25 @@ export interface ChartSpec {
     views?: YView[]; selected?: YView | null; context?: YContext | null;
   };
   overlays?: OverlayFlags;
-  auto?: { transform: "rate"; source_dataset: string; reason: string } | null;
+  auto?: { transform: "rate" | "reframe"; source_dataset: string; reason: string } | null;
   signal?: { filter: string; kind: string; reason: string; offered: string[]; default: string; selected?: string | null } | null;
   references?: Record<string, { mode: string; label: string; start_ms: number; end_ms: number; shift_ms: number; series: string; dist?: string | null }>;
   marginal?: { reference: "previous" | "week"; author?: string; reason?: string | null } | null;
 }
 /** What the catalog says about the y axis (bead 2as.10). */
+/** A line drawn from catalog context (2as.15): a hard limit, a threshold or a reference series. */
+export interface ContextLine {
+  metric: string; dataset?: string | null; hi: number; basis: string;
+  kind?: "limit" | "threshold" | "reference"; label?: string | null; origin?: string | null;
+  confidence?: number | null; tone?: "bad" | "warn" | "info" | null; value?: number | null;
+}
+/** A proposed way to show the metric that carries its own context; accepting makes a new panel. */
+export interface Reframing { title: string; reason: string; basis: string; expr: string; kind: "substitute" | "percent_of_limit"; unit?: string | null }
 export interface YContext {
   natural_lo: number | null; natural_hi: number | null; bounds: string | null; bounds_origin: string | null;
-  limit: { metric: string; dataset: string; hi: number; basis: string } | null;
+  limit: ContextLine | null;
+  lines?: ContextLine[];
+  reframes?: Reframing[];
   profile: { lo: number; hi: number; label: string } | null;
   notes: string[];
 }
@@ -108,16 +118,14 @@ export interface Where { spans?: [number, number][] | null; series?: string[] | 
 export interface Caveat { code: string; severity: "info" | "warn" | "blocks_claim"; message: string; where?: Where | null; source: string }
 interface PanelDataBase { panel: Panel; dataset: DatasetMeta; caveats: string[]; located?: Caveat[] }
 /** Reference layers on a time panel (bead 2as.11): availability always, data only when on. */
+export interface LineData extends ContextLine { series?: SeriesData[] }
 export interface OverlayFlags { normal: boolean; limit: boolean; ghost: boolean }
 export interface BandSeries { ts: number[]; lo: (number | null)[]; hi: (number | null)[] }
 export interface GhostSeries { id: string; ts: number[]; avg: (number | null)[]; count: (number | null)[] }
-/** A transform that would carry a resolved bound with it (e.g. headroom, % of limit) instead of
- *  a separate limit line (bead 2as.15). Always a suggestion: never applied for you. */
-export interface Reframing { transform: "headroom" | "percent_of_limit"; expr: string; label: string; reason: string; origin: string }
 export interface OverlaysPayload {
   flags: OverlayFlags;
   normal: { available: boolean; reason?: string; label?: string; stale?: boolean; series?: Record<string, BandSeries>; unmatched?: string[] };
-  limit: { available: boolean; reason?: string; label?: string; metric?: string; hi?: number; origin?: string; confidence?: number; basis?: string; series?: SeriesData[]; reframings?: Reframing[] };
+  limit: { available: boolean; reason?: string; label?: string; metric?: string; hi?: number; series?: SeriesData[]; lines?: LineData[]; origin?: string | null; confidence?: number | null; basis?: string | null };
   ghost: { available: boolean; loaded: boolean; label?: string; series?: GhostSeries[] };
 }
 export interface TimePanelData extends PanelDataBase { kind: "time"; bucket_state?: BucketStatePayload[]; bucket_state_more?: number; overlays?: OverlaysPayload; effective_step_ms: number; series: SeriesData[]; marginal?: MarginalData | null; index?: IndexPayload | null; raw?: SeriesData[]; removed?: SeriesData[]; filter?: FilterInfo }
@@ -280,6 +288,7 @@ export const setMarginal = (id: string, reference: "previous" | "week" | null) =
 export const selectDataView = (id: string, view: string) => postJSON<Panel>(`/api/panels/${id}/data-view`, { view });
 
 /** Recompute a panel's y context, e.g. once its operating profile has finished computing. */
+export const reframePanel = (id: string, index: number) => postJSON<{ panel: Panel }>(`/api/panels/${id}/reframe`, { index });
 export const refreshYContext = (id: string) => postJSON<unknown>(`/api/panels/${id}/y-context`);
 
 /** Switch reference layers; turning the ghost on makes the daemon fetch last week. */

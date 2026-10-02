@@ -19,7 +19,13 @@ from telemetry_nerd.catalog.models import ORIGIN_RANK, Origin
 
 Level = Literal["catalog", "workspace"]
 RelationKind = Literal[
-    "derived_from", "part_of", "same_quantity", "upstream_of", "bounded_by", "correlated"
+    "derived_from",
+    "part_of",
+    "same_quantity",
+    "upstream_of",
+    "bounded_by",
+    "threshold_by",
+    "correlated",
 ]
 RELATION_KINDS = frozenset(get_args(RelationKind))
 #: endpoint order carries no meaning, so (a, b) and (b, a) are one edge
@@ -150,6 +156,61 @@ def canonical_ends(kind: str, subject: str, obj: str) -> tuple[str, str]:
     return (min(subject, obj), max(subject, obj)) if kind in SYMMETRIC else (subject, obj)
 
 
+#: kinds whose target is drawn on the subject's chart (bead 2as.15): a hard limit, or a soft
+#: threshold such as a critical temperature or a request
+BOUND_KINDS = frozenset({"bounded_by", "threshold_by"})
+TONES = ("bad", "warn", "info")
+_BOUND_PARAMS = {"join_on", "matchers", "applies_to", "zero_is_unlimited", "expr", "tone", "label"}
+
+
+def validate_bound_params(kind: str, params: Mapping[str, Any]) -> None:
+    """Optional params of bounded_by / threshold_by: how the target lines up with the subject.
+
+    join_on: labels the two share (default: all of them); matchers: extra label values selecting
+    the target series (`resource="memory"`); applies_to: `level` (default) or `rate`, for a bound on
+    rate(subject); zero_is_unlimited: a 0 in the target means "no limit"; expr: a derived target
+    over catalogued metrics (`quota / period`); tone and label describe a threshold."""
+    unknown = set(params) - _BOUND_PARAMS
+    if unknown:
+        raise ValueError(f"{kind} params not understood: {sorted(unknown)}")
+    if "join_on" in params:
+        j = params["join_on"]
+        if (
+            not isinstance(j, list)
+            or not j
+            or not all(isinstance(x, str) and _LABEL.fullmatch(x) for x in j)
+        ):
+            raise ValueError("join_on must be a non-empty list of label names")
+    if "matchers" in params:
+        m = params["matchers"]
+        if (
+            not isinstance(m, dict)
+            or not m
+            or not all(
+                isinstance(k, str) and _LABEL.fullmatch(k) and isinstance(v, str)
+                for k, v in m.items()
+            )
+        ):
+            raise ValueError("matchers must map label names to string values")
+    if params.get("applies_to", "level") not in ("level", "rate"):
+        raise ValueError("applies_to must be 'level' or 'rate'")
+    if "zero_is_unlimited" in params and not isinstance(params["zero_is_unlimited"], bool):
+        raise ValueError("zero_is_unlimited must be true or false")
+    if "expr" in params and (
+        not isinstance(params["expr"], str) or not 0 < len(params["expr"].strip()) <= 300
+    ):
+        raise ValueError("expr must be a non-empty string of at most 300 characters")
+    if "tone" in params:
+        if kind != "threshold_by":
+            raise ValueError("tone only applies to threshold_by")
+        if params["tone"] not in TONES:
+            raise ValueError(f"tone must be one of {list(TONES)}")
+    if "label" in params and (
+        not isinstance(params["label"], str) or not 0 < len(params["label"]) <= 80
+    ):
+        raise ValueError("label must be a short non-empty string")
+
+
 def validate_relation(kind: str, subject: str, obj: str, params: Mapping[str, Any]) -> None:
     if kind not in RELATION_KINDS:
         raise ValueError(
@@ -167,6 +228,8 @@ def validate_relation(kind: str, subject: str, obj: str, params: Mapping[str, An
             raise ValueError(
                 "correlated needs params.scope: where/when the association was measured"
             )
+    elif kind in BOUND_KINDS:
+        validate_bound_params(kind, params)
     elif params:
         raise ValueError(f"{kind} takes no params, got {sorted(params)}")
 

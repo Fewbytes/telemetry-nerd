@@ -87,6 +87,17 @@ Rules that keep the catalog honest:
 - **`bounded_by`** is a relation (`catalog_relate`), not a field: this metric never exceeds the
   object at the same label set (available <= total). Do not use it for usage-vs-limit across
   different label sets.
+- **Context drawn on charts.** `bounded_by` (a hard limit), `threshold_by` (a soft line: critical
+  temperature, a request) and `same_quantity` (a reference series) are drawn on the metric's panels
+  with your origin and basis on hover, so write the basis for a reader, not for yourself. Params say
+  how the target lines up: `join_on` (labels both share; a container's memory and its k8s limit share
+  only namespace/pod/container), `matchers` (`{"resource": "memory"}` selects the target series),
+  `applies_to: "rate"` (the limit bounds rate(metric), e.g. link speed), `zero_is_unlimited`,
+  `expr` (a derived target such as `quota / period`), `tone` and `label` for thresholds. A constant
+  known good/bad value (an SLO, a renewal window) is a `thresholds` field claim:
+  `[{"value": 0.25, "label": "SLO p99", "tone": "bad"}]`. Never write an empirical range as good or bad.
+  When a pack proposes a reframing (`show` answers with `reframings`, e.g. available instead of free
+  memory), tell the user why; call `reframe` only when it serves the question. It opens a new panel.
 - **Additivity.** `additive` means summing across series (or over time, for increases) is
   meaningful. Ratios, percentages, averages and per-host gauges like load are `intensive`.
 - **Prefer fixing over adding.** A correct unit on a metric the investigation uses is worth more

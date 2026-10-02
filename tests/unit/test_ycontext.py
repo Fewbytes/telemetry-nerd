@@ -4,13 +4,10 @@ import pytest
 
 from telemetry_nerd.charts.spec import ChartSpec, YContext
 from telemetry_nerd.charts.ycontext import (
-    RATE_BOUND_CONFIDENCE,
     counter_rate_metric,
     counter_rate_parts,
     limit_expr,
     natural_range,
-    rate_bound,
-    reframing_specs,
     selector_parts,
 )
 from telemetry_nerd.charts.yview import ValueStats, YView, check_view
@@ -45,39 +42,6 @@ def test_counter_rate_parts_carries_the_matchers():
     assert counter_rate_parts('rate(reqs_total{job="x"}[5m])') == ("reqs_total", '{job="x"}')
     assert counter_rate_parts("increase(reqs_total[1h])") == ("reqs_total", "")
     assert counter_rate_parts("sum(rate(reqs_total[5m]))") is None
-
-
-def test_rate_bound_known_metrics():
-    label, expr, basis = rate_bound("node_network_receive_bytes_total", '{device="eth0"}')
-    assert label == "node_network_speed_bytes"
-    assert expr == 'node_network_speed_bytes{device="eth0"}'
-    assert "link speed" in basis
-
-    label, expr, basis = rate_bound("container_cpu_usage_seconds_total", '{pod="p"}')
-    assert label == "container_spec_cpu_quota/container_spec_cpu_period"
-    assert expr == '(container_spec_cpu_quota{pod="p"} / container_spec_cpu_period{pod="p"})'
-    assert "quota" in basis.lower()
-
-    assert rate_bound("unknown_counter_total", "") is None
-    assert 0 < RATE_BOUND_CONFIDENCE < 1
-
-
-def test_reframing_specs_never_apply_silently_and_carry_both_transforms():
-    specs = reframing_specs(
-        "node_memory_MemFree_bytes",
-        'node_memory_MemTotal_bytes{instance="a"}',
-        "node_memory_MemTotal_bytes",
-    )
-    transforms = {t for t, *_ in specs}
-    assert transforms == {"headroom", "percent_of_limit"}
-    headroom = next(s for s in specs if s[0] == "headroom")
-    assert headroom[1] == '(node_memory_MemTotal_bytes{instance="a"}) - (node_memory_MemFree_bytes)'
-    assert "no separate limit line" in headroom[3]
-    pct = next(s for s in specs if s[0] == "percent_of_limit")
-    assert (
-        pct[1] == '100 * (node_memory_MemFree_bytes) / (node_memory_MemTotal_bytes{instance="a"})'
-    )
-    assert "same risk at any scale" in pct[3]
 
 
 class Recording(FakeSource):
@@ -178,10 +142,8 @@ async def test_physical_limit_is_the_bounding_metric_under_the_same_labels(svc):
     assert ctx.limit.origin == "pack" and "node_exporter" in ctx.limit.basis
     assert ctx.limit.confidence == pytest.approx(0.85)
     # a resolved bound always comes with a reframing suggestion, never applied silently
-    transforms = {r.transform for r in ctx.reframings}
-    assert transforms == {"headroom", "percent_of_limit"}
-    assert all(r.origin == "rule" for r in ctx.reframings)
-    headroom = next(r for r in ctx.reframings if r.transform == "headroom")
+    assert {r.kind for r in ctx.reframes} == {"headroom", "percent_of_limit"}
+    headroom = next(r for r in ctx.reframes if r.kind == "headroom")
     assert headroom.expr == f'(node_filesystem_size_bytes{{mountpoint="/"}}) - ({expr})'
 
 
@@ -189,7 +151,7 @@ async def test_container_memory_working_set_is_bounded_by_the_configured_limit(s
     expr = 'container_memory_working_set_bytes{pod="p",container="c"}'
     ctx, _ = await ctx_of(svc, expr)
     assert ctx.limit is not None and ctx.limit.metric == "container_spec_memory_limit_bytes"
-    assert 'container_spec_memory_limit_bytes{pod="p",container="c"}' in svc.src.exprs
+    assert '(container_spec_memory_limit_bytes{pod="p",container="c"}) > 0' in svc.src.exprs
 
 
 async def test_network_rate_is_bounded_by_the_link_speed(svc):
@@ -197,21 +159,22 @@ async def test_network_rate_is_bounded_by_the_link_speed(svc):
     ctx, _ = await ctx_of(svc, expr)
     assert ctx.limit is not None and ctx.limit.metric == "node_network_speed_bytes"
     assert 'node_network_speed_bytes{device="eth0"}' in svc.src.exprs
-    assert (ctx.limit.origin, ctx.limit.confidence) == ("rule", RATE_BOUND_CONFIDENCE)
-    assert "link speed" in ctx.limit.basis
+    assert (ctx.limit.origin, ctx.limit.confidence) == ("pack", 0.85)
+    assert ctx.limit.label == "link speed" and "node_exporter" in ctx.limit.basis
     # a usable number carries its own context once reframed; no separate limit line needed
-    assert any(r.transform == "percent_of_limit" for r in ctx.reframings)
+    assert {r.kind for r in ctx.reframes} == {"percent_of_limit", "headroom"}
 
 
 async def test_cpu_rate_is_bounded_by_cfs_quota_over_period(svc):
     expr = 'rate(container_cpu_usage_seconds_total{pod="p"}[5m])'
     ctx, _ = await ctx_of(svc, expr)
     assert ctx.limit is not None
-    assert ctx.limit.metric == "container_spec_cpu_quota/container_spec_cpu_period"
+    assert ctx.limit.label == "CPU limit (cores)"
     assert (
-        '(container_spec_cpu_quota{pod="p"} / container_spec_cpu_period{pod="p"})' in svc.src.exprs
+        '(container_spec_cpu_quota{pod="p"} / container_spec_cpu_period{pod="p"}) > 0'
+        in svc.src.exprs
     )
-    assert ctx.limit.origin == "rule"
+    assert ctx.limit.origin == "pack"
 
 
 async def test_zero_limit_is_treated_as_unlimited_not_a_bound(tmp_path):

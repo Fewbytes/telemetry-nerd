@@ -59,46 +59,43 @@ class Layer(BaseModel):
     fleet: dict | None = None  # fleet config: by, scale, normalise
 
 
-#: who vouches for a bound/threshold (spec §context model, bead 2as.15); shown on hover and in
-#: the metric card, never left as an unexplained magic number. A relation claim's own `Origin`
-#: (catalog/models.py) covers most values; "k8s"/"empirical"/"model" are context-resolver-only.
-ContextOrigin = str
-
-
 class YLimit(BaseModel):
-    """A physical limit: a `bounded_by` relation's target, or a rule-derived ceiling on a rate
-    (e.g. link speed, CFS quota/period). Carries provenance (bead 2as.15): who claims it bounds
-    this metric, and how sure they are."""
+    """A line drawn on a panel from catalog context (bead 2as.15): a hard limit (`bounded_by`),
+    a threshold (`threshold_by` or a `thresholds` claim) or a reference series (`same_quantity`).
+
+    A metric target has its own dataset over the panel's window and step; a constant threshold has
+    only `value`. Every line says where it came from: no unexplained numbers."""
 
     metric: str
-    dataset: str  # time dataset of the bounding metric over the panel's window and step
-    hi: float
-    basis: str = "bounded_by"
-    origin: ContextOrigin = "pack"
-    confidence: float = 1.0
+    dataset: str | None = None  # time dataset of the target; None for a constant
+    hi: float  # the largest value on the line: what the y range must include for a limit
+    basis: str = "bounded_by"  # how the context was derived, shown on hover
+    kind: Literal["limit", "threshold", "reference"] = "limit"
+    label: str | None = None
+    origin: str | None = None  # pack / claude / user / stats ...
+    confidence: float | None = None
+    tone: Literal["bad", "warn", "info"] | None = None  # thresholds
+    value: float | None = None  # a constant threshold
+
+
+class YReframe(BaseModel):
+    """A proposed way to show this metric so the picture carries its own context. Never applied
+    silently: accepting one creates a new panel and leaves this one as it is."""
+
+    title: str
+    reason: str
+    basis: str
+    expr: str  # the replacement expression over the same window and step
+    kind: Literal["substitute", "percent_of_limit", "headroom"]
+    unit: str | None = None
 
 
 class YProfile(BaseModel):
-    """Operating range (robust, long window); filled by the T1 operating profile (2as.7).
-
-    Always empirical: it describes what was observed, never a declared good/bad threshold."""
+    """Operating range (robust, long window); filled by the T1 operating profile (2as.7)."""
 
     lo: float
     hi: float
     label: str = "normal range"
-    origin: ContextOrigin = "empirical"
-
-
-class Reframing(BaseModel):
-    """A transform that would carry a resolved bound with it instead of drawing a separate limit
-    line (bead 2as.15: used -> available/headroom, used -> % of limit). Always a suggestion: the
-    panel is never silently switched to it, and applying one is a visible caveat."""
-
-    transform: Literal["headroom", "percent_of_limit"]
-    expr: str  # the transformed expression, offered as a follow-up query
-    label: str
-    reason: str
-    origin: ContextOrigin = "rule"
 
 
 class YContext(BaseModel):
@@ -108,9 +105,10 @@ class YContext(BaseModel):
     natural_hi: float | None = None
     bounds: str | None = None  # the catalog claim the natural bounds came from
     bounds_origin: str | None = None
-    limit: YLimit | None = None
+    limit: YLimit | None = None  # the strongest hard limit: it is part of the y range
+    lines: list[YLimit] = Field(default_factory=list)  # every context line, limit included
+    reframes: list[YReframe] = Field(default_factory=list)
     profile: YProfile | None = None
-    reframings: list[Reframing] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)  # honest gaps, shown to the user
 
     @property
@@ -161,7 +159,7 @@ class AutoForm(BaseModel):
     """The panel shows a different form of the signal than the dataset it was asked to show,
     chosen from what the catalog knows (bead 2as.14). The original dataset is untouched."""
 
-    transform: Literal["rate"]
+    transform: Literal["rate", "reframe"]
     source_dataset: str  # what was asked for
     reason: str
 

@@ -391,32 +391,59 @@ def normal_payload(profile, series: list[dict], step_ms: int, window: str) -> di
 
 
 def limit_payload(datasets, ctx, meta, labels, width_px: int) -> dict:
-    """The bounded_by metric drawn as a limit line, or why there is none."""
-    if ctx is None or ctx.limit is None:
+    """Context lines (limits, thresholds, reference series) drawn on the chart, or why there are none.
+
+    `lines` carries every line with its provenance; `label`/`metric`/`hi`/`series` keep describing the
+    primary hard limit for older clients."""
+    if ctx is None or not ctx.lines:
         why = next(
             (
                 n.split(": ", 1)[-1]
                 for n in (ctx.notes if ctx else [])
-                if n.startswith("limit_unavailable")
+                if n.startswith(("limit_unavailable", "context_unavailable"))
             ),
             None,
         )
         return {
             "available": False,
-            "reason": why or "the catalog has no bounded_by relation for this metric",
+            "reason": why
+            or "the catalog has no bounded_by, threshold_by or same_quantity relation for this metric",
         }
-    _, res = datasets.get(ctx.limit.dataset)
-    table, _ = lod(res.buckets, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px)
+    lines = []
+    for ln in ctx.lines:
+        out = {
+            "kind": ln.kind,
+            "metric": ln.metric,
+            "label": ln.label or (f"limit {ln.metric}" if ln.kind == "limit" else ln.metric),
+            "hi": ln.hi,
+            "tone": ln.tone,
+            "value": ln.value,
+            "origin": ln.origin,
+            "confidence": ln.confidence,
+            "basis": ln.basis,
+        }
+        if ln.dataset is not None:
+            _, res = datasets.get(ln.dataset)
+            table, _ = lod(
+                res.buckets, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px
+            )
+            out["series"] = series_payload(table, series_labels(res.series))
+        lines.append(out)
+    primary = ctx.limit
     return {
         "available": True,
-        "label": f"limit {ctx.limit.metric}",
-        "metric": ctx.limit.metric,
-        "hi": ctx.limit.hi,
-        "origin": ctx.limit.origin,
-        "confidence": ctx.limit.confidence,
-        "basis": ctx.limit.basis,
-        "series": series_payload(table, series_labels(res.series)),
-        "reframings": [r.model_dump() for r in ctx.reframings],
+        "label": f"limit {primary.metric}" if primary else f"{len(lines)} context lines",
+        "metric": primary.metric if primary else None,
+        "hi": primary.hi if primary else None,
+        "series": next(
+            (
+                ln["series"]
+                for ln in lines
+                if primary and ln["metric"] == primary.metric and "series" in ln
+            ),
+            None,
+        ),
+        "lines": lines,
     }
 
 

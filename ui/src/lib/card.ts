@@ -32,8 +32,12 @@ export function cardSummary(card: MetricCard): string {
   return bits.join(" · ");
 }
 
-export const fmtValue = (v: unknown): string =>
-  v === null || v === undefined ? "—" : Array.isArray(v) ? v.join(", ") : String(v);
+export const fmtValue = (v: unknown): string => {
+  if (v === null || v === undefined) return "—";
+  if (!Array.isArray(v)) return String(v);
+  // thresholds are objects: {label, value, tone}
+  return v.map((x) => (x && typeof x === "object" && "value" in x ? `${(x as { label?: string }).label ?? "threshold"} = ${(x as { value: number }).value}` : String(x))).join(", ");
+};
 
 /** Confirming pins the value that is shown now; editing records what the user typed. */
 export const isPinned = (f: CardField): boolean => f.origin === "user";

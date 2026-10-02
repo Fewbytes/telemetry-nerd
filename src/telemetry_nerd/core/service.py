@@ -7,6 +7,7 @@ import math
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
 import polars as pl
 
@@ -30,6 +31,13 @@ from telemetry_nerd.analysis.reference import reference_window
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.analysis.samples import pool, scan_series
 from telemetry_nerd.catalog.profiles import ProfileStore
+from telemetry_nerd.charts.context_lines import (
+    ContextSpec,
+    headroom,
+    line_expr,
+    percent_of_limit,
+    swap_metric,
+)
 from telemetry_nerd.charts.dataview import SignalViews, offered_views
 from telemetry_nerd.charts.spec import (
     SPECTRAL_MARKS,
@@ -39,23 +47,20 @@ from telemetry_nerd.charts.spec import (
     Layer,
     Marginal,
     Reference,
-    Reframing,
     ValidationIssue,
     Window,
     YContext,
     YLimit,
     YProfile,
+    YReframe,
     auto_spec,
     validate,
 )
 from telemetry_nerd.charts.units import metric_names, raw_counters
 from telemetry_nerd.charts.ycontext import (
-    RATE_BOUND_CONFIDENCE,
+    counter_rate_metric,
     counter_rate_parts,
-    limit_expr,
     natural_range,
-    rate_bound,
-    reframing_specs,
     selector_parts,
 )
 from telemetry_nerd.charts.yview import value_stats
@@ -711,6 +716,39 @@ class TelemetryService:
                     return self.show(rate, question, actor, auto=form, **kw)
         return self.show(dataset_id, question, actor, raw_ok=raw, **kw)
 
+    async def reframe(self, panel_id: str, index: int, actor: Actor = "user") -> ShowResult:
+        """Accept a proposed reframing (bead 2as.15): a NEW panel over the same window and step,
+        marked as reframed from this one, which is left exactly as it was. Never applied silently."""
+        p = self.workspace.get_panel(panel_id)
+        spec = ChartSpec.model_validate(p.spec)
+        options = spec.y.context.reframes if spec.y.context else []
+        if not 0 <= index < len(options):
+            raise ValueError(
+                f"panel {panel_id} has {len(options)} reframings; index {index} is out of range"
+            )
+        choice = options[index]
+        meta = self.datasets.meta(p.dataset_ids[0])
+        ds = (
+            await self.query(
+                choice.expr,
+                start=str(meta.start_ms),
+                end=str(meta.end_ms),
+                step=format_duration(meta.step_ms),
+                source=meta.source,
+                actor=actor,
+            )
+        )["dataset"]
+        form = AutoForm(
+            transform="reframe",
+            source_dataset=p.dataset_ids[0],
+            reason=f"reframed from {panel_id}: {choice.title}. {choice.reason}",
+        )
+        res = self.show(
+            ds, f"{p.question} ({choice.title})", actor, unit=choice.unit, auto=form, raw_ok=True
+        )
+        await self.y_context(res.panel.id, actor)
+        return res
+
     async def y_context(self, panel_id: str, actor: Actor = "system") -> YContext | None:
         """Work out what the catalog says about a time panel's y axis and record it (bead 2as.10).
 
@@ -725,8 +763,7 @@ class TelemetryService:
         meta = self.datasets.meta(p.dataset_ids[0])
         ctx = YContext()
         parts = selector_parts(meta.expr)
-        rate_parts = None if parts is not None else counter_rate_parts(meta.expr)
-        metric = parts[0] if parts else (rate_parts[0] if rate_parts else None)
+        metric = parts[0] if parts else counter_rate_metric(meta.expr)
         if metric is None:
             ctx.notes.append("natural_bounds_unknown: the expression is not a single metric")
         elif parts is not None:
@@ -736,39 +773,27 @@ class TelemetryService:
         elif self.ws.catalog_facts(meta.source, metric).type == "counter":
             # a rate of a counter is never negative, whatever the counter's own bounds say
             ctx.natural_lo, ctx.bounds, ctx.bounds_origin = 0.0, "≥0", "counter rate"
-        limit_fetch_expr: str | None = None
-        if parts is not None:
-            if rels := self.ws.catalog_bound_relations(meta.source, parts[0]):
-                r = rels[0]
-                limit_fetch_expr = limit_expr(parts[1], r.object)
-                ctx.limit = await self._fetch_limit(
-                    meta,
-                    limit_fetch_expr,
-                    r.object,
-                    r.winner.origin,
-                    r.winner.confidence,
-                    r.winner.basis or "bounded_by",
-                    ctx.notes,
-                )
-        elif metric is not None:
-            matchers = rate_parts[1] if rate_parts else ""
-            if found := rate_bound(metric, matchers):
-                label, limit_fetch_expr, basis = found
-                ctx.limit = await self._fetch_limit(
-                    meta, limit_fetch_expr, label, "rule", RATE_BOUND_CONFIDENCE, basis, ctx.notes
-                )
-                if ctx.limit is None:
-                    limit_fetch_expr = None
-            elif self.ws.catalog_bounded_by(meta.source, metric):
-                ctx.notes.append(
-                    "limit_unavailable: the physical limit bounds the metric itself, not its rate"
-                )
-        if ctx.limit is not None and limit_fetch_expr is not None:
-            # a transform that would carry the bound with it, offered but never applied silently
-            ctx.reframings = [
-                Reframing(transform=t, expr=e, label=lbl, reason=why)
-                for t, e, lbl, why in reframing_specs(meta.expr, limit_fetch_expr, ctx.limit.metric)
-            ]
+        specs = self.ws.catalog_context_specs(meta.source, metric) if metric else []
+        level = parts is not None  # a plain selector; otherwise a rate of a counter (or nothing)
+        rate_parts = counter_rate_parts(meta.expr)
+        panel_matchers = (parts or rate_parts or ("", ""))[1]
+        for spec in specs:
+            applies = spec.params.get("applies_to", "level")
+            if metric is not None and applies == "rate" and level:
+                continue  # a bound on the rate says nothing about the running total
+            if applies == "level" and not level:
+                if spec.kind == "limit":
+                    ctx.notes.append(
+                        "limit_unavailable: the physical limit bounds the metric itself, not its rate"
+                    )
+                continue
+            if line := await self._fetch_context_line(meta, panel_matchers, spec, ctx.notes):
+                ctx.lines.append(line)
+        limits = [ln for ln in ctx.lines if ln.kind == "limit"]
+        ctx.limit = max(limits, key=lambda ln: ln.hi, default=None)
+        if metric is not None:
+            self.ws.raise_context_gaps(meta.source, metric, "system")
+            ctx.reframes = self._reframes(meta, metric, panel_matchers, specs, ctx.lines)
         ctx.profile = await self._fetch_profile(meta, ctx.notes)
         self.ws.set_y_context(p.id, ctx, actor)
         return ctx
@@ -795,16 +820,19 @@ class TelemetryService:
             return None
         return YProfile(lo=lo, hi=hi, label=f"normal range ({format_duration(prof.window_ms)})")
 
-    async def _fetch_limit(
-        self,
-        meta: DatasetMeta,
-        expr: str,
-        target: str,
-        origin: str,
-        confidence: float,
-        basis: str,
-        notes: list[str],
+    async def _fetch_context_line(
+        self, meta: DatasetMeta, panel_matchers: str, spec: ContextSpec, notes: list[str]
     ) -> YLimit | None:
+        """One context line for a panel: a constant, or the target metric fetched under the
+        panel's own labels over its window and step. A source failure is a note, not an error."""
+        common: dict[str, Any] = {
+            "metric": spec.target, "basis": spec.basis, "kind": spec.kind, "label": spec.label,
+            "origin": spec.origin, "confidence": spec.confidence, "tone": spec.tone,
+        }  # fmt: skip
+        if spec.value is not None:
+            return YLimit(hi=spec.value, value=spec.value, **common)
+        note = "limit_unavailable" if spec.kind == "limit" else "context_unavailable"
+        expr = line_expr(spec.target, spec.params, panel_matchers)
         try:
             ds = (
                 await self.query(
@@ -819,19 +847,67 @@ class TelemetryService:
             m, result = self.datasets.get(ds)
             hi = value_stats(result.buckets, m.representation, m.n_min).hi
         except (SourceError, ValueError) as e:
-            notes.append(f"limit_unavailable: {target} could not be fetched ({e})")
+            notes.append(f"{note}: {spec.target} could not be fetched ({e})")
+            return None
+        if hi is not None and hi <= 0 and spec.params.get("zero_is_unlimited"):
+            notes.append(
+                f"{note}: {spec.target} is 0 here, which means unlimited, so no line is drawn"
+            )
             return None
         if hi is None:
-            notes.append(f"limit_unavailable: {target} has no data under these labels")
+            notes.append(f"{note}: {spec.target} has no data under these labels")
             return None
-        if hi <= 0:
-            # 0 commonly means "unlimited" (e.g. container_spec_memory_limit_bytes); a zero or
-            # negative ceiling is never a usable axis bound regardless of the convention
-            notes.append(f"limit_unavailable: {target} is {hi:g} (0 commonly means unlimited)")
-            return None
-        return YLimit(
-            metric=target, dataset=ds, hi=hi, basis=basis, origin=origin, confidence=confidence
-        )
+        return YLimit(dataset=ds, hi=hi, **common)
+
+    def _reframes(
+        self,
+        meta: DatasetMeta,
+        metric: str,
+        panel_matchers: str,
+        specs: list[ContextSpec],
+        lines: list[YLimit],
+    ) -> list[YReframe]:
+        """Ways to show the metric that carry their own context: pack substitutions, and
+        used-as-a-fraction-of-its-limit where a hard limit was found for this panel."""
+        out = []
+        for rule in self.ws.catalog_reframes(meta.source, metric):
+            if (expr := swap_metric(meta.expr.strip(), rule.metric, rule.replace_with)) is not None:
+                out.append(
+                    YReframe(
+                        title=rule.title, reason=rule.reason, basis=rule.basis, expr=expr,
+                        kind="substitute",
+                    )
+                )  # fmt: skip
+        drawn = {(ln.metric, ln.kind) for ln in lines}
+        for spec in specs:
+            if (
+                spec.kind != "limit"
+                or spec.value is not None
+                or (spec.target, "limit") not in drawn
+            ):
+                continue
+            bound = line_expr(spec.target, spec.params, panel_matchers)
+            out.append(
+                YReframe(
+                    title=f"show as % of {spec.label or spec.target}",
+                    reason="used as a fraction of its limit needs no second axis to be read",
+                    basis=f"{spec.origin} {spec.kind}: {spec.target}",
+                    expr=percent_of_limit(meta.expr.strip(), bound, spec.params.get("join_on")),
+                    kind="percent_of_limit",
+                    unit="%",
+                )
+            )
+            out.append(
+                YReframe(
+                    title=f"show headroom to {spec.label or spec.target}",
+                    reason="what is left carries the limit with it: no second line to compare against",
+                    basis=f"{spec.origin} {spec.kind}: {spec.target}",
+                    expr=headroom(meta.expr.strip(), bound, spec.params.get("join_on")),
+                    kind="headroom",
+                )
+            )
+            break  # the strongest limit only
+        return out
 
     async def ensure_reference(self, panel_id: str, mode: str, actor: Actor) -> Reference:
         p = self.workspace.get_panel(panel_id)

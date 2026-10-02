@@ -26,7 +26,7 @@ from telemetry_nerd.catalog.models import (
     resolve,
     validate_value,
 )
-from telemetry_nerd.catalog.packs import PackIndex, builtin_packs
+from telemetry_nerd.catalog.packs import PackIndex, ReframeRule, builtin_packs
 from telemetry_nerd.catalog.relation_store import RelationStore
 from telemetry_nerd.catalog.relations import (
     CORRELATED_MAX_CONFIDENCE,
@@ -54,6 +54,7 @@ from telemetry_nerd.catalog.search import overview as family_overview
 from telemetry_nerd.catalog.search import search as search_entries
 from telemetry_nerd.catalog.store import CatalogStore, FamilyStore
 from telemetry_nerd.channel.format import describe_event
+from telemetry_nerd.charts.context_lines import MAX_LINES, MAX_REFERENCES, ContextSpec
 from telemetry_nerd.charts.dataview import SignalViews
 from telemetry_nerd.charts.indexed import check_index, shifted
 from telemetry_nerd.charts.spec import ChartSpec, Marginal, Reference, YContext
@@ -650,11 +651,12 @@ class WorkspaceService:
                 origin="pack",
                 confidence=spec.confidence,
                 basis=spec.basis,
+                params=spec.params,
                 ts_ms=ts,
             )
             for m in discovery.metrics
             for spec in self.packs.relations_for(m.name)
-            if spec.object in name_set and spec.object != m.name
+            if spec.needs <= name_set and spec.object != m.name
         ]
         relations_changed = self.relations.put_relations(pack_relations)
         summary = {
@@ -707,6 +709,9 @@ class WorkspaceService:
         subject, target = canonical_ends(kind, subject, target)
         for end in (subject, target):
             self._check_endpoint(level, source, end)
+        if level == "catalog" and params.get("expr"):
+            for name in metric_names(params["expr"]):  # a derived target needs every metric it uses
+                self._check_endpoint(level, source, name)
         scope = source if level == "catalog" else ""
         self.relations.put_relations(
             [
@@ -1326,17 +1331,94 @@ class WorkspaceService:
         win = resolve(c for c in claims if c.field == "bounds")
         return (win.value, win.origin) if win else None
 
-    def catalog_bound_relations(self, source: str, metric: str) -> list[ResolvedRelation]:
-        """`bounded_by` relations from `metric` (at the same labels), strongest claim first; each
-        carries the winning claim's origin, confidence and basis (bead 2as.15 provenance)."""
-        rels = self.relations.relations("catalog", source, metric=metric, kind="bounded_by")
-        rels = [r for r in rels if r.subject == metric]
-        rels.sort(key=lambda r: (-r.winner.confidence, r.object))
-        return rels
+    def catalog_context_specs(self, source: str, metric: str) -> list[ContextSpec]:
+        """Context the catalog holds for a metric's chart (bead 2as.15): hard limits, thresholds
+        (metric-valued relations and constant `thresholds` claims) and reference series, each with
+        who said so. Limits first, then thresholds, then references; capped so a chart stays legible."""
+        out: list[ContextSpec] = []
+        for r in self.relations.relations("catalog", source, metric=metric):
+            w = r.winner
+            if r.kind in ("bounded_by", "threshold_by") and r.subject == metric:
+                kind = "limit" if r.kind == "bounded_by" else "threshold"
+                tone = w.params.get("tone", "warn") if kind == "threshold" else None
+                out.append(
+                    ContextSpec(
+                        kind, r.object, w.origin, w.confidence, w.basis or r.kind, w.params,
+                        w.params.get("label"), tone,
+                    )
+                )  # fmt: skip
+            elif r.kind == "same_quantity":
+                other = r.object if r.subject == metric else r.subject
+                out.append(
+                    ContextSpec(
+                        "reference", other, w.origin, w.confidence, w.basis or r.kind, w.params
+                    )
+                )
+        claims = self.catalog.claims_for(source, metric)
+        if win := resolve(c for c in claims if c.field == "thresholds"):
+            out += [
+                ContextSpec(
+                    "threshold", t["label"], win.origin, win.confidence,
+                    win.citation or f"{win.origin} claim", {}, t["label"], t.get("tone", "info"),
+                    float(t["value"]),
+                )
+                for t in win.value
+            ]  # fmt: skip
+        rank = {"limit": 0, "threshold": 1, "reference": 2}
+        out.sort(key=lambda c: (rank[c.kind], -c.confidence, c.target))
+        refs = 0
+        kept = []
+        for c in out:
+            if c.kind == "reference":
+                refs += 1
+                if refs > MAX_REFERENCES:
+                    continue
+            kept.append(c)
+        return kept[:MAX_LINES]
+
+    def catalog_reframes(self, source: str, metric: str) -> list[ReframeRule]:
+        """Pack reframings whose replacement the source actually has."""
+        return [
+            r
+            for r in self.packs.reframes_for(metric)
+            if self.catalog.has_metric(source, r.replace_with)
+        ]
+
+    @atomic
+    def raise_context_gaps(self, source: str, metric: str, actor: Actor = "system") -> list[str]:
+        """A gap for each context target a pack expects but the source does not export (once per
+        metric and target): charting the metric without it would hide a limit the pack knows of."""
+        created = []
+        for spec in self.packs.relations_for(metric):
+            missing = sorted(n for n in spec.needs if not self.catalog.has_metric(source, n))
+            if not missing or self.relations.binding_gap(
+                "catalog", source, "context", metric, missing[0]
+            ):
+                continue
+            target = missing[0]
+            line = spec.params.get("label") or (
+                "limit" if spec.kind == "bounded_by" else "threshold"
+            )
+            gap = self.gap_create(
+                GapIn(
+                    missing_signal=f"{target} (the {line} for {metric})",
+                    needed_for=f"{line} line on charts of {metric}: {spec.basis}",
+                    suggestion=MetricSuggestion(
+                        name=target, type="gauge", labels=list(spec.params.get("join_on") or [])
+                    ),
+                ),
+                actor,
+            )
+            self.relations.set_binding_gap("catalog", source, "context", metric, target, gap.id)
+            created.append(gap.id)
+        return created
 
     def catalog_bounded_by(self, source: str, metric: str) -> list[str]:
         """Metrics `metric` never exceeds (at the same labels), strongest claim first."""
-        return [r.object for r in self.catalog_bound_relations(source, metric)]
+        rels = self.relations.relations("catalog", source, metric=metric, kind="bounded_by")
+        rels = [r for r in rels if r.subject == metric]
+        rels.sort(key=lambda r: (-r.winner.confidence, r.object))
+        return [r.object for r in rels]
 
     @atomic
     def set_y_context(self, panel_id: str, ctx: YContext, actor: Actor) -> Panel:
@@ -1352,6 +1434,8 @@ class WorkspaceService:
             {
                 "bounds": ctx.bounds,
                 "limit": ctx.limit.metric if ctx.limit else None,
+                "lines": [f"{ln.kind}:{ln.metric}" for ln in ctx.lines],
+                "reframes": [r.title for r in ctx.reframes],
                 "profile": ctx.profile is not None,
                 "notes": ctx.notes,
             },

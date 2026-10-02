@@ -191,6 +191,9 @@ additivity_series = "additive"
 additivity_time = "additive"
 role = "cpu-time"
 description = "Cumulative CPU time. rate() is the number of cores in use; compare it with the CPU limit."
+limits = [
+  { target = "container_spec_cpu_quota", expr = "container_spec_cpu_quota / container_spec_cpu_period", applies_to = "rate", zero_is_unlimited = true, join_on = ["namespace", "pod", "container"], label = "CPU limit (cores)" },
+]
 
 [[metric]]
 name = "container_cpu_cfs_periods_total"
@@ -240,8 +243,13 @@ unit = "B"
 bounds = "≥0"
 additivity_series = "additive"
 additivity_time = "intensive"
+limits = [
+  { target = "container_spec_memory_limit_bytes", zero_is_unlimited = true, join_on = ["namespace", "pod", "container"], label = "memory limit (OOM kill)" },
+]
+thresholds = [
+  { target = "kube_pod_container_resource_requests", matchers = { resource = "memory" }, join_on = ["namespace", "pod", "container"], tone = "info", label = "memory request" },
+]
 role = "memory"
-bounded_by = ["container_spec_memory_limit_bytes"]
 description = "Usage minus inactive file cache: what the kubelet uses for eviction and what the OOM killer compares with the limit (container_spec_memory_limit_bytes; 0 there means unlimited, so no line is drawn)."
 
 [[metric]]

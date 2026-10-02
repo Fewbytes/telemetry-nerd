@@ -12,12 +12,14 @@ import tomllib
 from dataclasses import dataclass, field
 from functools import lru_cache
 from importlib import resources
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from telemetry_nerd.catalog.models import validate_value
+from telemetry_nerd.catalog.relations import validate_bound_params
 from telemetry_nerd.catalog.rules import ClaimSpec
+from telemetry_nerd.charts.units import metric_names
 
 PACK_CONFIDENCE = 0.85
 
@@ -62,6 +64,48 @@ class PackError(ValueError):
     pass
 
 
+class BoundSpec(BaseModel):
+    """A hard limit (`[[metric.limits]]`) or a threshold (`[[metric.thresholds]]`) drawn on the
+    chart of the metric it sits under: how the target metric lines up with it (bead 2as.15)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    target: str
+    expr: str | None = None  # derived target over catalogued metrics, e.g. "quota / period"
+    join_on: list[str] | None = None
+    matchers: dict[str, str] | None = None
+    applies_to: Literal["level", "rate"] = "level"
+    zero_is_unlimited: bool = False
+    tone: Literal["bad", "warn", "info"] | None = None  # thresholds only
+    label: str | None = None
+
+    def params(self) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for k in ("expr", "join_on", "matchers", "tone", "label"):
+            if (v := getattr(self, k)) is not None:
+                out[k] = v
+        if self.applies_to != "level":
+            out["applies_to"] = self.applies_to
+        if self.zero_is_unlimited:
+            out["zero_is_unlimited"] = True
+        return out
+
+    def metrics(self) -> set[str]:
+        """Every metric this target needs from the source."""
+        return {self.target} | (set(metric_names(self.expr)) if self.expr else set())
+
+
+class Reframe(BaseModel):
+    """`[[reframe]]`: a panel showing `metric` is better shown with `replace_with`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    metric: str
+    replace_with: str
+    reason: str
+    title: str | None = None
+
+
 class PackEntry(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -76,6 +120,8 @@ class PackEntry(BaseModel):
     role: str | None = None
     description: str | None = None
     bounded_by: list[str] | None = None
+    limits: list[BoundSpec] | None = None
+    thresholds: list[BoundSpec] | None = None
 
     @model_validator(mode="after")
     def _check(self) -> PackEntry:
@@ -100,6 +146,12 @@ class PackEntry(BaseModel):
             not self.bounded_by or not all(isinstance(t, str) and t for t in self.bounded_by)
         ):
             raise ValueError("bounded_by must be a non-empty list of metric names")
+        for spec in self.limits or []:
+            if spec.tone is not None:
+                raise ValueError("tone belongs on thresholds, not limits")
+            validate_bound_params("bounded_by", spec.params())
+        for spec in self.thresholds or []:
+            validate_bound_params("threshold_by", spec.params())
         return self
 
     def values(self) -> dict[str, Any]:
@@ -127,12 +179,25 @@ class RelationSpec:
     object: str
     confidence: float
     basis: str
+    params: dict[str, Any] = field(default_factory=dict)
+    #: every metric the source must have for this relation to apply
+    needs: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
+class ReframeRule:
+    metric: str
+    replace_with: str
+    title: str
+    reason: str
+    basis: str
 
 
 @dataclass(frozen=True)
 class LoadedPack:
     pack: Pack
     entries: tuple[PackEntry, ...]
+    reframes: tuple[Reframe, ...] = ()
 
     def exact_names(self) -> set[str]:
         out: set[str] = set()
@@ -146,6 +211,7 @@ def parse_pack(text: str) -> LoadedPack:
         raw = tomllib.loads(text)
         pack = Pack.model_validate(raw.get("pack", {}))
         entries = tuple(PackEntry.model_validate(m) for m in raw.get("metric", []))
+        reframes = tuple(Reframe.model_validate(r) for r in raw.get("reframe", []))
     except (tomllib.TOMLDecodeError, ValueError) as e:
         raise PackError(str(e)) from e
     seen: set[str] = set()
@@ -154,7 +220,7 @@ def parse_pack(text: str) -> LoadedPack:
             if n in seen:
                 raise PackError(f"pack {pack.name}: duplicate exact entry for {n!r}")
             seen.add(n)
-    return LoadedPack(pack, entries)
+    return LoadedPack(pack, entries, reframes)
 
 
 @dataclass
@@ -162,17 +228,52 @@ class PackIndex:
     packs: tuple[LoadedPack, ...] = field(default_factory=tuple)
 
     def relations_for(self, metric: str) -> list[RelationSpec]:
-        """`bounded_by` shorthand entries as relation claims (metric <= target, same labels)."""
-        out: dict[str, RelationSpec] = {}
+        """Relations a pack asserts for `metric`: the `bounded_by` shorthand (metric <= target at
+        the same labels), `limits` (hard bounds with optional params) and `thresholds`."""
+        out: dict[tuple[str, str], RelationSpec] = {}
         for lp in self.packs:
             cite = f"pack {lp.pack.name}@{lp.pack.version}: {lp.pack.citation}"
             for e in lp.entries:
-                if e.bounded_by and e.matches(metric):
-                    for target in e.bounded_by:
+                if not e.matches(metric):
+                    continue
+                for target in e.bounded_by or []:
+                    out.setdefault(
+                        ("bounded_by", target),
+                        RelationSpec(
+                            "bounded_by", target, PACK_CONFIDENCE, cite, {}, frozenset({target})
+                        ),
+                    )
+                for kind, specs in (("bounded_by", e.limits), ("threshold_by", e.thresholds)):
+                    for s in specs or []:
                         out.setdefault(
-                            target, RelationSpec("bounded_by", target, PACK_CONFIDENCE, cite)
+                            (kind, s.target, s.applies_to, s.label or ""),
+                            RelationSpec(
+                                kind,
+                                s.target,
+                                PACK_CONFIDENCE,
+                                cite,
+                                s.params(),
+                                frozenset(s.metrics()),
+                            ),
                         )
         return list(out.values())
+
+    def reframes_for(self, metric: str) -> list[ReframeRule]:
+        out = []
+        for lp in self.packs:
+            cite = f"pack {lp.pack.name}@{lp.pack.version}: {lp.pack.citation}"
+            out += [
+                ReframeRule(
+                    r.metric,
+                    r.replace_with,
+                    r.title or f"show {r.replace_with} instead",
+                    r.reason,
+                    cite,
+                )
+                for r in lp.reframes
+                if r.metric == metric
+            ]
+        return out
 
     def claims_for(self, metric: str) -> list[ClaimSpec]:
         """Pack claims for a metric. Within a pack an exact entry beats a regex entry on the
