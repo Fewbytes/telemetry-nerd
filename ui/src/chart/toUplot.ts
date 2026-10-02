@@ -51,7 +51,12 @@ const EPS_S = 0.001;
 export function stepify(data: (number | null)[][], stepS: number): (number | null)[][] {
   const [xs, ...cols] = data;
   const x2: number[] = [];
-  for (const x of xs as number[]) x2.push(x - stepS + EPS_S, x);
+  let prev = -Infinity;
+  for (const x of xs as number[]) {
+    // an off-grid x within one step of its predecessor must not start before it ends
+    x2.push(Math.max(x - stepS + EPS_S, prev + EPS_S), x);
+    prev = x;
+  }
   return [x2, ...cols.map((c) => c.flatMap((v) => [v, v]))];
 }
 
@@ -81,6 +86,8 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
   const xs = [...all].sort((a, b) => a - b);
   const index = new Map(xs.map((t, i) => [t, i]));
   const data: (number | null)[][] = [xs.map((t) => t / 1000)];
+  // what uPlot gets (stepped or not); legend callbacks index into this, not into `data`
+  let final: (number | null)[][] = data;
   const uSeries: uPlot.Series[] = [{}];
   const bands: uPlot.Band[] = [];
   const legendHidden: number[] = [];
@@ -180,7 +187,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
     // one legend row per series: the value plus its envelope, instead of separate min/max rows
     const withEnvelope = (_u: uPlot, v: number | null, _si: number, i: number | null) => {
       if (v == null || i == null) return "--";
-      const lo = data[avgIdx + 1][i], hi = data[avgIdx + 2][i];
+      const lo = final[avgIdx + 1][i], hi = final[avgIdx + 2][i];
       return lo == null || hi == null ? fmt(v) : `${fmt(v)} [${fmt(lo)}–${fmt(hi)}]`;
     };
     legendHidden.push(avgIdx + 1, avgIdx + 2);
@@ -211,6 +218,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
   });
 
   const stepped = grid !== undefined && opts.stepped !== false;
-  const out = stepped ? stepify(data as (number | null)[][], grid.step / 1000) : data;
+  const out = stepped ? stepify(data, grid.step / 1000) : data;
+  final = out;
   return { data: out as uPlot.AlignedData, series: uSeries, bands, legendHidden, points: xs.length * series.length };
 }

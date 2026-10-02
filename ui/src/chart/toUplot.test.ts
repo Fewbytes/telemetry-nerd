@@ -104,6 +104,12 @@ describe("toUplot filter context", () => {
 });
 
 describe("stepify", () => {
+  it("keeps x strictly ascending when an off-grid x is within one step of its predecessor", () => {
+    const out = stepify([[60, 90, 180], [1, 2, 3]], 60);
+    const x = out[0] as number[];
+    expect(x.every((v, i) => i === 0 || v > x[i - 1])).toBe(true);
+    expect(x[2]).toBeCloseTo(60.001);
+  });
   it("draws each bucket across its interval and keeps lone buckets visible", () => {
     const out = stepify([[60, 120, 180], [1, null, 3]], 60);
     expect(out[0]).toEqual([0.001, 60, 60.001, 120, 120.001, 180]);
@@ -117,4 +123,13 @@ it("steps by default when a grid is given, but counts buckets for the render bud
   expect(m.data[0]).toEqual([0.001, 60, 60.001, 120]);
   expect(m.data[1]).toEqual([1, 1, 2, 2]);
   expect(m.points).toBe(2);
+});
+
+it("legend envelope reads the bucket under a stepped (doubled) index", () => {
+  const grid = { start: 60_000, end: 180_000, step: 60_000 };
+  const m = toUplot([s("a", { i: "a" }, [60_000, 120_000, 180_000], [10, 20, 30])], grid);
+  const value = m.series[1].value as (u: unknown, v: number | null, si: number, i: number | null) => string;
+  // bucket 3 (avg 30, min 29, max 31) occupies doubled indices 4 and 5
+  for (const i of [4, 5]) expect(value({}, 30, 1, i)).toMatch(/29.*31/);
+  for (const i of [0, 1]) expect(value({}, 10, 1, i)).toMatch(/9.*11/);
 });
