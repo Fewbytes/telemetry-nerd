@@ -382,3 +382,42 @@ async def test_cancelled_run_does_not_stay_running(svc, kernels):
         await task
     node = svc.code.get("c1")
     assert (node.status, node.exec_status) == ("failed", "cancelled")
+
+
+async def test_mcp_code_get_pages_stdout_and_reads_traceback(svc):
+    mcp = build_mcp(svc, "http://x")
+    await call(mcp, "run_code", {"code": "print('x' * 9000)\nprint('END')"})
+    r = json.loads(text_of(await call(mcp, "code_get", {"code_node": "c1", "part": "stdout"})))
+    assert (r["offset"], len(r["text"]), r["total_chars"]) == (0, 4000, 9005)
+    assert r["next_offset"] == 4000
+    seen, page = r["text"], r
+    while page["next_offset"] is not None:
+        page = json.loads(
+            text_of(await call(mcp, "code_get", {"code_node": "c1", "part": "stdout",
+                                                 "offset": page["next_offset"], "limit": 5000}))
+        )  # fmt: skip
+        seen += page["text"]
+    assert seen == "x" * 9000 + "\nEND\n"
+    assert page["next_offset"] is None
+
+    await call(mcp, "run_code", {"code": "print('before')\n{}['missing']"})
+    tb = json.loads(text_of(await call(mcp, "code_get", {"code_node": "c2", "part": "traceback"})))
+    assert "KeyError" in tb["text"] and tb["status"] == "failed"
+    code = json.loads(text_of(await call(mcp, "code_get", {"code_node": "c2", "part": "code"})))
+    assert code["text"] == "print('before')\n{}['missing']"
+    allp = json.loads(text_of(await call(mcp, "code_get", {"code_node": "c2"})))
+    for section in ("## code", "## stdout", "## traceback", "## error"):
+        assert section in allp["text"]
+
+
+async def test_mcp_code_get_rejects_bad_arguments(svc):
+    mcp = build_mcp(svc, "http://x")
+    await call(mcp, "run_code", {"code": "print(1)"})
+    for args in (
+        {"code_node": "c99"},
+        {"code_node": "c1", "part": "bogus"},
+        {"code_node": "c1", "offset": -1},
+        {"code_node": "c1", "limit": 0},
+        {"code_node": "c1", "limit": 10**6},
+    ):
+        assert (await call(mcp, "code_get", args)).is_error, args

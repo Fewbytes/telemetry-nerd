@@ -1082,6 +1082,19 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         return _dump(service.code.result(node))
 
     @mcp.tool()
+    def code_get(code_node: str, part: str = "all", offset: int = 0, limit: int = 4000) -> str:
+        """Read a code node's stored text, one bounded page at a time: the full code, stdout,
+        stderr or traceback that run_code only returns shortened. part: all (labelled sections)
+        | stdout | stderr | traceback | code. offset/limit in characters (limit at most 20000);
+        follow next_offset while it is not null. Text only, never dataset rows: use `show` or
+        `query` for data. Returns {code_node, part, status, offset, total_chars, text,
+        next_offset, note?}."""
+        try:
+            return _dump(service.code.text_page(code_node, part, offset, limit))
+        except (NotFound, ValueError) as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
     def hypothesis_create(statement: str) -> str:
         """Record a hypothesis to test. Returns {hypothesis: id}."""
         try:

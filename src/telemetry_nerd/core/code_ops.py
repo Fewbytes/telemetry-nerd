@@ -47,6 +47,10 @@ MAX_TIMEOUT_S = 3600.0
 SHORT_OUTPUT = 1200
 SHORT_TRACEBACK = 2000
 TOP_SERIES = 3
+#: code_get paging: default and maximum characters per call
+PAGE_DEFAULT = 4000
+PAGE_MAX = 20000
+CODE_PARTS = ("all", "stdout", "stderr", "traceback", "code")
 
 
 class CodeDisabled(RuntimeError):
@@ -57,7 +61,7 @@ def _short(text: str | None, limit: int) -> str | None:
     if not text or len(text) <= limit:
         return text or None
     half = limit // 2
-    return f"{text[:half]}\n... [{len(text) - limit} characters cut; full text in the UI] ...\n{text[-half:]}"
+    return f"{text[:half]}\n... [{len(text) - limit} characters cut; read the rest with code_get] ...\n{text[-half:]}"
 
 
 def _tail(text: str | None, limit: int) -> str | None:
@@ -324,6 +328,49 @@ class CodeOps:
 
     def list(self) -> list[CodeNode]:
         return self.ws.objects.list_code()
+
+    def text_page(
+        self, node_id: str, part: str = "all", offset: int = 0, limit: int = PAGE_DEFAULT
+    ) -> dict:
+        """One bounded page of a node's stored text (code, stdout, stderr, traceback, or all of
+        them as labelled sections). Characters, not bytes; never dataset rows. `next_offset`
+        is set while more text remains."""
+        if part not in CODE_PARTS:
+            raise ValueError(f"part {part!r} must be one of {', '.join(CODE_PARTS)}")
+        if offset < 0:
+            raise ValueError("offset must be >= 0")
+        if not 0 < limit <= PAGE_MAX:
+            raise ValueError(f"limit must be between 1 and {PAGE_MAX} characters")
+        node = self.get(node_id)
+        texts = {
+            "code": node.code,
+            "stdout": node.stdout,
+            "stderr": node.stderr,
+            "traceback": node.traceback or "",
+        }
+        if part == "all":
+            sections = [(k, v) for k, v in texts.items() if v]
+            if node.error:
+                sections.append(("error", node.error))
+            if node.result is not None:
+                sections.append(("result", node.result))
+            text = "\n\n".join(f"## {k}\n{v}" for k, v in sections)
+        else:
+            text = texts[part]
+        page = text[offset : offset + limit]
+        end = offset + len(page)
+        out: dict = {
+            "code_node": node.id,
+            "part": part,
+            "status": node.status,
+            "offset": offset,
+            "total_chars": len(text),
+            "text": page,
+            "next_offset": end if end < len(text) else None,
+        }
+        if node.truncated and part in ("all", "stdout", "stderr"):
+            out["note"] = "the kernel cut stdout/stderr (head and tail kept) before it was stored"
+        return out
 
     def result(self, node: CodeNode) -> dict:
         """The compact run_code answer: never bulk data."""
