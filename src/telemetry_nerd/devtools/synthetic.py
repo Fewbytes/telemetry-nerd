@@ -106,6 +106,7 @@ def demo_text(start_ms: int, end_ms: int, interval_ms: int = 15_000, seed: int =
         )
     # d's 15-minute hole is anchored to wall-clock time (one per 3h block): seeds overlap in the
     # persistent dev VM, and a hole placed relative to each seed's range is filled by the next.
+    # (Renamed from tn_demo_gappy_seconds: old seeds left that series hole-free in dev VMs.)
     hole = range(GAPPY_HOLE_OFFSET_MS, GAPPY_HOLE_OFFSET_MS + GAPPY_HOLE_MS)
     born = start_ms + (end_ms - start_ms) // 2
     born -= born % interval_ms
@@ -115,8 +116,8 @@ def demo_text(start_ms: int, end_ms: int, interval_ms: int = 15_000, seed: int =
         if ts % GAPPY_HOLE_PERIOD_MS not in hole
     ]
     gappy_e = [(ts, 0.07) for ts in range(born, end_ms, interval_ms)]
-    parts.append(exposition("tn_demo_gappy_seconds", {"instance": "d"}, gappy_d))
-    parts.append(exposition("tn_demo_gappy_seconds", {"instance": "e"}, gappy_e))
+    parts.append(exposition("tn_demo_holes_seconds", {"instance": "d"}, gappy_d))
+    parts.append(exposition("tn_demo_holes_seconds", {"instance": "e"}, gappy_e))
     return "".join(parts)
 
 

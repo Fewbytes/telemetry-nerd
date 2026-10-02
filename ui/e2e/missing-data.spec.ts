@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 
 test("a series with a hole shows a coverage rug and a located caveat", async ({ page, request }) => {
   const q = await request.post("/api/query", {
-    data: { expr: "tn_demo_gappy_seconds", start: "now-6h", end: "now-10m", step: "1m" },
+    data: { expr: "tn_demo_holes_seconds", start: "now-6h", end: "now-10m", step: "1m" },
   });
   expect(q.ok()).toBeTruthy();
   const { dataset, summary } = await q.json();

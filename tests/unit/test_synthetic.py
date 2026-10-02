@@ -56,7 +56,7 @@ def _gappy(start, end, instance):
     return [
         int(ln.rsplit(" ", 1)[1])
         for ln in lines
-        if ln.startswith("tn_demo_gappy_seconds") and f'instance="{instance}"' in ln
+        if ln.startswith("tn_demo_holes_seconds") and f'instance="{instance}"' in ln
     ]
 
 
