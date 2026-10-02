@@ -32,7 +32,7 @@ import time
 import uuid
 import weakref
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Self
 
@@ -219,7 +219,7 @@ class KernelManager:
                         restarted=restarted,
                     )
             deadline = time.monotonic() + timeout
-            pre = preamble(dict(env or {}), _str(cwd))
+            pre = preamble(dict(env or {}), None if cwd is None else os.fspath(cwd))
             try:
                 res = await self._run(k, pre, timeout, deadline, silent=True)
                 if res.status == "ok":
@@ -229,9 +229,7 @@ class KernelManager:
                 res = await self._crashed(k, f"{type(e).__name__}: {e}")
             if self._kernels.get(workspace_id) is k:
                 k.last_used = self._clock()
-            return _replace(
-                res, duration_s=self._clock() - t0, restarted=res.restarted or restarted
-            )
+            return replace(res, duration_s=self._clock() - t0, restarted=res.restarted or restarted)
 
     async def shutdown(self, workspace_id: str) -> None:
         """Kill the workspace's kernel (if any); the next `execute` starts a fresh one."""
@@ -433,7 +431,7 @@ class KernelManager:
             )
             if (reply := _reply(work)) is not None:
                 res = _from_reply(reply, cap)
-                return _replace(res, status="timeout", error=f"{timeout_msg}; interrupted")
+                return replace(res, status="timeout", error=f"{timeout_msg}; interrupted")
             restarted = await self._restart(k)
             return _with_output(
                 ExecResult(
@@ -510,18 +508,8 @@ def _reply(work: asyncio.Future[dict[str, Any]]) -> dict[str, Any] | None:
     return work.result()
 
 
-def _str(p: str | os.PathLike[str] | None) -> str | None:
-    return None if p is None else os.fspath(p)
-
-
-def _replace(res: ExecResult, **changes: Any) -> ExecResult:
-    from dataclasses import replace
-
-    return replace(res, **changes)
-
-
 def _with_output(res: ExecResult, cap: _Capture) -> ExecResult:
-    return _replace(
+    return replace(
         res,
         stdout=cap.stdout.value(),
         stderr=cap.stderr.value(),

@@ -114,17 +114,17 @@ def evidence_problem(meta: DatasetMeta, statistic: dict | None) -> str | None:
         name = statistic["name"]
         if blocked := evidence_blocker(meta, name):
             return blocked
-        p = (meta.fit or {})["params"][name]
-        iv = list(statistic["interval"]) if statistic.get("interval") is not None else None
-        stored_iv = list(p["interval"]) if p.get("interval") is not None else None
-        if (statistic["value"], iv, bool(statistic.get("exact"))) != (
-            p["value"],
-            stored_iv,
-            bool(p.get("exact")),
-        ):
+        value, interval, exact = _as_cited((meta.fit or {})["params"][name])
+        if _as_cited(statistic) != (value, interval, exact):
             return (
-                f"fit parameter {name!r} of {meta.id} is value={p['value']}, "
-                f"interval={stored_iv}, exact={bool(p.get('exact'))}: cite it as stored"
+                f"fit parameter {name!r} of {meta.id} is value={value}, "
+                f"interval={interval}, exact={exact}: cite it as stored"
             )
         return None
     return evidence_blocker(meta)
+
+
+def _as_cited(stat: dict) -> tuple:
+    """(value, interval as a list or None, exact) of a cited statistic or a stored fit param."""
+    interval = stat.get("interval")
+    return stat["value"], None if interval is None else list(interval), bool(stat.get("exact"))

@@ -94,11 +94,8 @@ def normalize_output(meta: Mapping, tables: Mapping[str, pa.Table]) -> dict[str,
                 table = _cast(table, c, pa.float64())
         if table.column("ts_ms").null_count:
             raise ExchangeError(f"{name}: ts_ms has nulls")
-        duplicates(
-            table,
-            [*_series_key(meta, table), "ts_ms", *(["bucket_lo"] if rep == DISTRIBUTION and name == "rows" else [])],
-            name,
-        )  # fmt: skip
+        bucket = ["bucket_lo"] if rep == DISTRIBUTION and name == "rows" else []
+        duplicates(table, [*_series_key(meta, table), "ts_ms", *bucket], name)
         out[name] = table
     rows = out["rows"]
     if rep in TIME_SERIES:

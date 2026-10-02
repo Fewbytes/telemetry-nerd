@@ -17,6 +17,7 @@ loses data: outputs are datasets in the store and the code + inputs live on the 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 from collections.abc import Callable
@@ -179,15 +180,8 @@ class CodeOps:
             ingest = self.runs.ingest_run(node.id, succeeded=res.ok)
         except Exception as e:  # a broken run dir fails this node, never the daemon
             log.warning("run_code: ingest of %s failed", node.id, exc_info=True)
-            failed = ExecResult(
-                "error",
-                stdout=res.stdout,
-                stderr=res.stderr,
-                result=res.result,
-                error=f"ingest failed: {type(e).__name__}: {e}",
-                duration_s=res.duration_s,
-                restarted=res.restarted,
-                truncated=res.truncated,
+            failed = dataclasses.replace(
+                res, status="error", error=f"ingest failed: {type(e).__name__}: {e}", traceback=None
             )
             return self._finish(node, failed, None, res.status)
         return self._finish(node, res, ingest, res.status)
@@ -440,6 +434,12 @@ class CodeOps:
         return base
 
     def _series_summary(self, meta: DatasetMeta) -> dict:
+        """Per series: n, min/max of avg, the last value and its interval (6 significant digits).
+
+        Deliberately not `core.summary.summarize`: that one is show()'s view (mean, gaps,
+        coverage, the min/max *columns*, which a code output may leave null, 4 digits, series
+        by max), while a run_code answer reports what the code just produced, ending with the
+        last value and its declared interval."""
         _, res = self.datasets.get(meta.id)
         df = pl.from_arrow(res.buckets)
         assert isinstance(df, pl.DataFrame)
