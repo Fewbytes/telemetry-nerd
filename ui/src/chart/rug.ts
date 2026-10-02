@@ -1,5 +1,5 @@
 import type { BucketStatePayload } from "../lib/api";
-import { fmtRange } from "../lib/format";
+import { fmtRange, fmtStep } from "../lib/format";
 
 /** bucket_state codes (src/telemetry_nerd/model/bucket_state.py). */
 export const STATE = { OK: 0, PARTIAL: 1, EMPTY: 2, ABSENT: 3, UNKNOWN: 4 } as const;
@@ -74,16 +74,20 @@ const WORDS: Record<number, string> = {
   [STATE.ABSENT]: "series not seen yet", [STATE.UNKNOWN]: "unknown (fetch failed or source could not tell)",
 };
 
-export function rugHint(cell: RugCell, s: BucketStatePayload, stepMs: number, name: string, resolutionMs: number): string {
+/** `samples`: the state counts scrape samples (expected = the series' own rate in this bucket);
+ * otherwise it only records presence (quantiles, heatmap columns) and has no sample count. */
+export function rugHint(cell: RugCell, s: BucketStatePayload, stepMs: number, name: string, samples: boolean): string {
   const obs = s.observed[cell.i], exp = s.expected[cell.i];
   const lines = [`${name}`, `${fmtRange(cell.ts - stepMs, cell.ts)} · ${WORDS[cell.state] ?? cell.state}`];
-  if (cell.state !== STATE.ABSENT && cell.state !== STATE.UNKNOWN)
-    lines.push(`${obs} of ${exp} expected samples (every ${resolutionMs / 1000}s)`);
+  if (samples && exp > 0 && cell.state !== STATE.ABSENT && cell.state !== STATE.UNKNOWN) {
+    const every = Math.max(1000, Math.round(stepMs / exp / 1000) * 1000);
+    lines.push(`${obs} of ${Math.round(exp)} expected samples (series reports every ${fmtStep(every)})`);
+  }
   const seen = s.ts.filter((t, k) => t <= cell.ts && s.observed[k] > 0).at(-1);
   if (cell.state === STATE.EMPTY && seen !== undefined) lines.push(`last seen in bucket ending ${fmtRange(seen - stepMs, seen)}`);
   return lines.join("\n");
 }
 
-/** Label under the rug when the server left out series that also have missing data. */
+/** Label under the rug when the server left out series that also have non-ok coverage. */
 export const rugMoreLabel = (more: number): string =>
-  more > 0 ? `+${more} more series with missing data (see footer)` : "";
+  more > 0 ? `+${more} more series with coverage issues (see footer)` : "";

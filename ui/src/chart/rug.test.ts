@@ -32,10 +32,22 @@ describe("rug", () => {
   it("explains a cell in words", () => {
     const s = st("a", [STATE.EMPTY], [0]);
     const [cell] = rugCells([s], 60_000, toX);
-    const text = rugHint(cell, s, 60_000, '{instance="a"}', 15_000);
+    const text = rugHint(cell, s, 60_000, '{instance="a"}', true);
     expect(text).toContain("no samples");
-    expect(text).toContain("0 of 4 expected");
+    expect(text).toContain("0 of 4 expected samples (series reports every 15s)");
     expect(text).toContain('{instance="a"}');
+  });
+
+  it("derives the interval from the series' own expected count, not a preset", () => {
+    const s = { ...st("a", [STATE.PARTIAL], [0]), expected: [1] };
+    const [cell] = rugCells([s], 60_000, toX);
+    expect(rugHint(cell, s, 60_000, "a", true)).toContain("0 of 1 expected samples (series reports every 1m)");
+  });
+
+  it("has no samples line in presence mode (quantiles, heatmap columns)", () => {
+    const s = st("a", [STATE.EMPTY], [0]);
+    const [cell] = rugCells([s], 60_000, toX);
+    expect(rugHint(cell, s, 60_000, "a", false)).not.toContain("expected samples");
   });
 });
 
@@ -56,6 +68,6 @@ describe("rugMoreLabel", () => {
     expect(rugMoreLabel(0)).toBe("");
   });
   it("counts the omitted series and points to the footer", () => {
-    expect(rugMoreLabel(3)).toBe("+3 more series with missing data (see footer)");
+    expect(rugMoreLabel(3)).toBe("+3 more series with coverage issues (see footer)");
   });
 });

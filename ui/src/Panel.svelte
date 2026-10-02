@@ -188,7 +188,7 @@
     const s = data.bucket_state[c.row];
     activeNotes = notesAt(notes, s.id, c.ts);
     const sd = data.series.find((x) => x.id === s.id);
-    rugTip = { x: e.offsetX + 8, y: e.offsetY + 12, text: rugHint(c, s, data.effective_step_ms, sd?.labels ? seriesName(sd.labels) : s.id, data.dataset.resolution_ms) };
+    rugTip = { x: e.offsetX + 8, y: e.offsetY + 12, text: rugHint(c, s, data.effective_step_ms, sd?.labels ? seriesName(sd.labels) : s.id, data.dataset.representation !== "quantile") };
   }
   let margBusy = $state(false);
   const indexedOn = $derived((chosen?.mode as string | undefined) === "indexed");

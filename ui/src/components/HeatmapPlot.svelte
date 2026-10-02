@@ -65,7 +65,7 @@
     const st = series.state;
     const c = st ? hitRug(rugCellsNow, e.offsetX, e.offsetY) : null;
     if (!c || !st) { rugTip = null; return; }
-    rugTip = { x: e.offsetX + AXIS_LEFT + 8, y: (rugEl?.offsetTop ?? 0) + e.offsetY + 12, text: rugHint(c, st, data.effective_step_ms, seriesName(series.labels), data.dataset.resolution_ms) };
+    rugTip = { x: e.offsetX + AXIS_LEFT + 8, y: (rugEl?.offsetTop ?? 0) + e.offsetY + 12, text: rugHint(c, st, data.effective_step_ms, seriesName(series.labels), false) };
   }
 
   $effect(() => {

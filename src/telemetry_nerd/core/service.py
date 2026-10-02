@@ -1238,14 +1238,15 @@ class TelemetryService:
             spans = runs(ts, meta.step_ms)
             reasons = sorted({r for *_ab, r in meta.failed_spans})
             total = format_duration(sum(b - a for a, b in spans))
-            located.append(
-                Caveat(
-                    code="untrusted_data",
-                    message=f"Data unknown for {total} ({'; '.join(reasons)}).",
-                    where=Where(spans=spans),
-                    source="bucket_state",
+            if spans:  # a failed span wholly outside the window says nothing about it
+                located.append(
+                    Caveat(
+                        code="untrusted_data",
+                        message=f"Data unknown for {total} ({'; '.join(reasons)}).",
+                        where=Where(spans=spans),
+                        source="bucket_state",
+                    )
                 )
-            )
         if any(c.code == "missing_data" for c in located) and "gaps" in caveats:
             caveats.remove("gaps")
         for c in located:
