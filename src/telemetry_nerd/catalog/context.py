@@ -130,10 +130,6 @@ def otel_name(name: str, unit: str | None, kind: Kind) -> tuple[str, tuple[str, 
     return base, (base,)
 
 
-def _snake(camel: str) -> str:
-    return re.sub(r"(?<!^)(?=[A-Z])", "_", camel).lower()
-
-
 # Python -------------------------------------------------------------------------------------
 _PROM_CLASSES: dict[str, Kind] = {
     "Counter": "counter", "Gauge": "gauge", "Histogram": "histogram", "Summary": "summary",

@@ -400,3 +400,17 @@ async def test_mcp_show_proposes_reframings_and_reframe_accepts_one(host):
         )
         bad = await c.call_tool("reframe", {"panel": shown["panel"], "index": 5})
         assert bad.is_error and "out of range" in bad.content[0].text
+
+
+def test_a_context_stored_with_one_limit_still_loads_as_a_line():
+    from telemetry_nerd.charts.spec import YContext
+
+    old = {
+        "natural_lo": 0.0,
+        "limit": {"metric": "size", "dataset": "d1", "hi": 9.0, "basis": "bounded_by"},
+        "notes": [],
+    }
+    ctx = YContext.model_validate(old)
+    assert [ln.metric for ln in ctx.lines] == ["size"] and ctx.limit == ctx.lines[0]
+    assert ctx.model_dump()["limit"]["hi"] == 9.0  # still serialised for the UI
+    assert YContext().limit is None

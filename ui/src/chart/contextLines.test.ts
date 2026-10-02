@@ -15,7 +15,7 @@ const ref: LineData = { kind: "reference", metric: "client_latency", hi: 0.3, or
 const payload = (lines: LineData[]): OverlaysPayload => ({
   flags: { normal: false, limit: true, ghost: false },
   normal: { available: false, reason: "none" },
-  limit: { available: true, label: "limit mem_total", metric: "mem_total", hi: 100, lines },
+  limit: { available: true, lines },
   ghost: { available: true, loaded: false },
 });
 
@@ -46,14 +46,12 @@ describe("drawing context lines", () => {
     expect(lineStyle({ kind: "reference" })).toMatchObject({ stroke: REFERENCE_COLOR, width: 1 });
     expect(new Set([LIMIT_COLOR, ...Object.values(THRESHOLD_COLORS), REFERENCE_COLOR]).size).toBe(5);
   });
-  it("overlayDraw hands over lines when present, the legacy limit series otherwise", () => {
+  it("overlayDraw hands over the lines, and nothing when there are none or the layer is off", () => {
     expect(overlayDraw(payload([limit]))?.lines).toHaveLength(1);
-    const old = payload([]);
-    old.limit.lines = undefined;
-    old.limit.series = series(9);
-    const draw = overlayDraw(old)!;
-    expect(draw.lines).toBeUndefined();
-    expect(draw.limit).toHaveLength(1);
+    expect(overlayDraw(payload([]))).toBeUndefined();
+    const off = payload([limit]);
+    off.flags.limit = false;
+    expect(overlayDraw(off)).toBeUndefined();
   });
   it("toUplot adds a dashed column per line; a constant fills the whole grid", () => {
     const m = toUplot([{ id: "a", labels: { i: "a" }, ts, avg: [1, 2, 3], min: [1, 2, 3], max: [1, 2, 3], count: [4, 4, 4] }], undefined, {

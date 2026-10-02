@@ -6,10 +6,7 @@ window is end - start + step long. A reference is the same grid shifted back by 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
-RefMode = Literal["previous", "week", "profile"]
-REF_MODES: tuple[str, ...] = ("previous", "week", "profile")
 WEEK_MS = 7 * 86_400_000
 
 

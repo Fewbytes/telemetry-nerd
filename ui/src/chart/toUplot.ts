@@ -105,7 +105,6 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
   opts.context?.series.forEach((s) => s.ts.forEach((t) => all.add(t)));
   const ov = opts.overlays;
   Object.values(ov?.normal ?? {}).forEach((b) => b.ts.forEach((t) => all.add(t)));
-  ov?.limit?.forEach((s) => s.ts.forEach((t) => all.add(t)));
   ov?.lines?.forEach((l) => l.series?.forEach((s) => s.ts.forEach((t) => all.add(t))));
   ov?.ghost?.forEach((s) => s.ts.forEach((t) => all.add(t)));
   const xs = [...all].sort((a, b) => a - b);
@@ -234,13 +233,6 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
       data.push(contextColumn(ctx, "avg"));
       uSeries.push({ label: `${name} removed part`, stroke: rgba(color, 0.8), width: 1, dash: [3, 3], spanGaps: false });
     }
-  });
-
-  ov?.limit?.forEach((l, i) => {
-    // a physical limit: dashed hazard colour; drawn over the data so it is never hidden by it
-    legendHidden.push(data.length);
-    data.push(onGrid(l.ts, l.avg));
-    uSeries.push({ label: `limit ${l.labels ? seriesName(l.labels) : i + 1}`, stroke: LIMIT_COLOR, width: 1.5, dash: [8, 4], spanGaps: false, points: { show: false } });
   });
 
   ov?.lines?.forEach((l) => {

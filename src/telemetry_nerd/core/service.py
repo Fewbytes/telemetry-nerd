@@ -92,6 +92,7 @@ from telemetry_nerd.core.panel_payloads import (
     series_labels,
     series_payload,
     signal_payload,
+    without_data,
 )
 from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.profiles import ProfileService
@@ -836,8 +837,6 @@ class TelemetryService:
                 continue
             if line := await self._fetch_context_line(meta, panel_matchers, spec, ctx.notes):
                 ctx.lines.append(line)
-        limits = [ln for ln in ctx.lines if ln.kind == "limit"]
-        ctx.limit = max(limits, key=lambda ln: ln.hi, default=None)
         if metric is not None:
             self.ws.raise_context_gaps(meta.source, metric, "system")
             ctx.reframes = self._reframes(meta, metric, panel_matchers, specs, ctx.lines)
@@ -1487,7 +1486,7 @@ class TelemetryService:
         out = {"flags": ov.model_dump(), "normal": normal, "limit": limit, "ghost": ghost}
         for name in ("normal", "limit"):  # data only when on: availability always
             if not getattr(ov, name):
-                out[name] = {k: v for k, v in out[name].items() if k not in ("series", "unmatched")}
+                out[name] = without_data(out[name])
         return out
 
     async def set_overlays(

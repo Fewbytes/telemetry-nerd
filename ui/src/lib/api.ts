@@ -125,7 +125,7 @@ export interface GhostSeries { id: string; ts: number[]; avg: (number | null)[];
 export interface OverlaysPayload {
   flags: OverlayFlags;
   normal: { available: boolean; reason?: string; label?: string; stale?: boolean; series?: Record<string, BandSeries>; unmatched?: string[] };
-  limit: { available: boolean; reason?: string; label?: string; metric?: string; hi?: number; series?: SeriesData[]; lines?: LineData[]; origin?: string | null; confidence?: number | null; basis?: string | null };
+  limit: { available: boolean; reason?: string; label?: string; metric?: string; hi?: number; lines?: LineData[] };
   ghost: { available: boolean; loaded: boolean; label?: string; series?: GhostSeries[] };
 }
 export interface TimePanelData extends PanelDataBase { kind: "time"; bucket_state?: BucketStatePayload[]; bucket_state_more?: number; overlays?: OverlaysPayload; effective_step_ms: number; series: SeriesData[]; marginal?: MarginalData | null; index?: IndexPayload | null; raw?: SeriesData[]; removed?: SeriesData[]; filter?: FilterInfo }

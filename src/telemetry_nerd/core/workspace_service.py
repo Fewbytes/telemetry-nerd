@@ -13,10 +13,9 @@ from typing import Any
 from telemetry_nerd.analysis.samples import SampleStats
 from telemetry_nerd.catalog.browse import Browse
 from telemetry_nerd.catalog.browse import browse as browse_catalog
-from telemetry_nerd.catalog.context import GRAFANA_UNITS, MAX_BYTES, MAX_FILES, SOURCE_CONFIDENCE
+from telemetry_nerd.catalog.context import MAX_BYTES, MAX_FILES
 from telemetry_nerd.catalog.context import extract as extract_context
-from telemetry_nerd.catalog.context_yaml import confidence_of
-from telemetry_nerd.catalog.context_yaml import variants as name_variants
+from telemetry_nerd.catalog.context_claims import propose_from_extraction
 from telemetry_nerd.catalog.families import detect as detect_families
 from telemetry_nerd.catalog.models import (
     ORIGIN_RANK,
@@ -61,7 +60,6 @@ from telemetry_nerd.charts.dataview import SignalViews
 from telemetry_nerd.charts.indexed import check_index, shifted
 from telemetry_nerd.charts.spec import ChartSpec, Marginal, Reference, YContext
 from telemetry_nerd.charts.units import infer_unit_with_provenance, metric_names
-from telemetry_nerd.charts.ycontext import counter_rate_metric, selector_parts
 from telemetry_nerd.charts.yview import (
     BUILTIN_LABELS,
     INDEX_LABELS,
@@ -960,68 +958,9 @@ class WorkspaceService:
                 )
         found = extract_context(files)
         now = self.clock()
-        proposals: dict[tuple[str, str], Claim] = {}
-        notes: list[str] = []
-
-        def propose(metric: str, field_: str, value: Any, confidence: float, cite: str) -> None:
-            try:
-                validate_value(field_, value)
-            except ValueError:
-                return
-            key = (metric, field_)
-            old = proposals.get(key)
-            if old is not None and old.value != value:
-                kept = old if old.confidence >= confidence else None
-                notes.append(
-                    f"{metric} {field_}: {old.citation} says {old.value!r}, {cite} says {value!r}; "
-                    f"kept {'the first' if kept else 'the second'}"
-                )
-                if kept:
-                    return
-            elif old is not None and old.confidence >= confidence:
-                return
-            proposals[key] = Claim(
-                field=field_,
-                value=value,
-                origin="context",
-                confidence=confidence,
-                citation=cite,
-                ts_ms=now,
-            )  # type: ignore[arg-type]
-
-        unmatched: list[dict] = []
-        matched_metrics: set[str] = set()
-        via_pipeline = 0
-        for orig in found.definitions:
-            # the definition as registered, then as the collector / relabel rules would leave it
-            tried = [(orig, orig.confidence), *[
-                (v, confidence_of(v, True)) for v in name_variants(orig, found.transforms)
-            ]]  # fmt: skip
-            any_hit = False
-            for d, confidence in tried:
-                hits = [n for n in d.names if self.catalog.has_metric(source, n)]
-                if d.kind in ("histogram", "summary") and self.catalog.has_metric(source, d.base):
-                    hits.append(d.base)  # a native histogram is exposed under its base name
-                any_hit = any_hit or bool(hits)
-                via_pipeline += bool(hits) and d is not orig
-                for n in hits:
-                    matched_metrics.add(n)
-                    if d.help and d.help.strip():
-                        propose(n, "description", d.help.strip(), confidence, d.citation)
-                    if d.unit:
-                        propose(n, "unit", d.unit, confidence, d.citation)
-                    exact = n == d.base or n in d.names and d.kind in ("counter", "gauge")
-                    if (
-                        d.kind in ("counter", "gauge")
-                        and exact
-                        or d.kind in ("histogram", "summary")
-                        and n == d.base
-                    ):
-                        propose(n, "type", d.kind, confidence, d.citation)
-            if not any_hit:
-                unmatched.append({"name": orig.base, "where": f"{orig.path}:{orig.line}"})
-        for p in found.panels:
-            self._panel_context(source, p, propose, matched_metrics)
+        got = propose_from_extraction(found, lambda n: self.catalog.has_metric(source, n), now)
+        proposals, notes, unmatched = got.claims, got.notes, got.unmatched
+        matched_metrics, via_pipeline = got.matched, got.via_pipeline
 
         findings: list[str] = []
         rows = list(proposals.items())
@@ -1108,44 +1047,6 @@ class WorkspaceService:
                 | {"source": source, "findings": findings},
             )  # fmt: skip
         return out
-
-    def _panel_context(self, source: str, p, propose, matched: set[str]) -> None:
-        """A dashboard panel speaks for a metric only when every expression is about that one
-        metric: a plain selector or a rate of a counter. Its unit becomes that metric's unit."""
-        metrics: set[str] = set()
-        rate_forms: set[bool] = set()
-        for expr in p.exprs:
-            sel = selector_parts(expr)
-            rate = counter_rate_metric(expr)
-            m = sel[0] if sel else rate
-            if m is None:
-                return
-            metrics.add(m)
-            rate_forms.add(rate is not None and sel is None)
-        if len(metrics) != 1 or len(rate_forms) != 1:
-            return
-        (metric,) = metrics
-        (is_rate,) = rate_forms
-        if not self.catalog.has_metric(source, metric):
-            return
-        cite = f'dashboard: {p.path} panel "{p.title}"'
-        info = GRAFANA_UNITS.get(p.unit_id or "")
-        if info is not None:
-            unit, per_second = info
-            if per_second == is_rate and (is_rate or not per_second):
-                matched.add(metric)
-                propose(
-                    metric,
-                    "unit",
-                    unit,
-                    SOURCE_CONFIDENCE["dashboard"],
-                    f"{cite} (grafana unit {p.unit_id!r})",
-                )
-        if p.description and p.description.strip() and not is_rate:
-            matched.add(metric)
-            propose(
-                metric, "description", p.description.strip(), SOURCE_CONFIDENCE["dashboard"], cite
-            )
 
     def catalog_hot(self, source: str) -> set[str]:
         """Catalogued metrics this workspace has actually queried (any dataset expression)."""
@@ -1424,13 +1325,6 @@ class WorkspaceService:
             self.relations.set_binding_gap("catalog", source, "context", metric, target, gap.id)
             created.append(gap.id)
         return created
-
-    def catalog_bounded_by(self, source: str, metric: str) -> list[str]:
-        """Metrics `metric` never exceeds (at the same labels), strongest claim first."""
-        rels = self.relations.relations("catalog", source, metric=metric, kind="bounded_by")
-        rels = [r for r in rels if r.subject == metric]
-        rels.sort(key=lambda r: (-r.winner.confidence, r.object))
-        return [r.object for r in rels]
 
     @atomic
     def set_y_context(self, panel_id: str, ctx: YContext, actor: Actor) -> Panel:

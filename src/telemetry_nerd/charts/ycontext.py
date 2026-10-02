@@ -37,8 +37,3 @@ def counter_rate_metric(expr: str) -> str | None:
 
 def natural_range(bounds: str | None) -> tuple[float | None, float | None]:
     return NATURAL.get(bounds or "", (None, None))
-
-
-def limit_expr(matchers: str, target: str) -> str:
-    """The bounding metric under the same label matchers as the panel's selector."""
-    return f"{target}{matchers}"

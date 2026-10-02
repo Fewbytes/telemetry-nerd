@@ -9,12 +9,10 @@ export interface Chip {
   title: string;
 }
 
-const KIND_NAME = { limit: "limit", threshold: "threshold", reference: "reference" } as const;
-
 /** What the chip is called: a lone limit keeps the familiar name, a mix says what it holds. */
 export function limitLabel(lines: LineData[] | undefined): string {
-  if (!lines?.length || lines.every((x) => (x.kind ?? "limit") === "limit" && lines.length === 1)) return "limit line";
-  const kinds = [...new Set(lines.map((x) => KIND_NAME[x.kind ?? "limit"]))];
+  if (!lines?.length || (lines.length === 1 && (lines[0].kind ?? "limit") === "limit")) return "limit line";
+  const kinds = [...new Set(lines.map((x) => x.kind ?? "limit"))];
   return `${kinds.join(" + ")} (${lines.length})`;
 }
 
@@ -28,8 +26,7 @@ export function provenance(origin?: string | null, confidence?: number | null): 
 
 /** Every line says who put it there and why: no unexplained numbers. */
 export function lineTitle(l: LineData): string {
-  const what = KIND_NAME[l.kind ?? "limit"];
-  return `${l.label ?? l.metric} (${what}): origin: ${provenance(l.origin, l.confidence) || "unknown"}; ${l.basis}`;
+  return `${l.label ?? l.metric} (${l.kind ?? "limit"}): origin: ${provenance(l.origin, l.confidence) || "unknown"}; ${l.basis}`;
 }
 
 /** One chip per layer: why it is unavailable is the tooltip, never silence. */
@@ -46,7 +43,7 @@ export function overlayChips(ov: OverlaysPayload): Chip[] {
     {
       key: "limit", label: limitLabel(l.lines), on: ov.flags.limit && l.available, enabled: l.available,
       title: l.available
-        ? l.lines?.length ? l.lines.map(lineTitle).join("\n") : `${l.label}, from the bounded_by relation in the catalog${l.origin ? `; origin: ${provenance(l.origin, l.confidence)}` : ""}`
+        ? (l.lines ?? []).map(lineTitle).join("\n")
         : `context lines unavailable: ${l.reason ?? "no bounded_by relation"}`,
     },
     {
@@ -62,7 +59,6 @@ export function overlayChips(ov: OverlaysPayload): Chip[] {
 
 export interface OverlayDraw {
   normal?: Record<string, BandSeries>;
-  limit?: SeriesData[];
   lines?: LineData[];
   ghost?: GhostSeries[];
 }
@@ -72,10 +68,7 @@ export function overlayDraw(ov: OverlaysPayload | null | undefined): OverlayDraw
   if (!ov) return undefined;
   const out: OverlayDraw = {};
   if (ov.flags.normal && ov.normal.available && ov.normal.series) out.normal = ov.normal.series;
-  if (ov.flags.limit && ov.limit.available) {
-    if (ov.limit.lines?.length) out.lines = ov.limit.lines;
-    else if (ov.limit.series) out.limit = ov.limit.series;  // a payload from before context lines
-  }
+  if (ov.flags.limit && ov.limit.available && ov.limit.lines?.length) out.lines = ov.limit.lines;
   if (ov.flags.ghost && ov.ghost.loaded && ov.ghost.series?.length) out.ghost = ov.ghost.series;
   return Object.keys(out).length ? out : undefined;
 }

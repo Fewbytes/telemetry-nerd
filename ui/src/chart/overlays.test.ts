@@ -7,8 +7,11 @@ const ov = (o: Partial<OverlaysPayload> = {}): OverlaysPayload => ({
   flags: { normal: true, limit: true, ghost: false },
   normal: { available: true, label: "normal range (30d, same hour of week)", series: { a: { ts: [1000, 2000], lo: [1, 2], hi: [5, 6] } }, unmatched: [] },
   limit: {
-    available: true, label: "limit size_bytes", metric: "size_bytes", hi: 9, origin: "pack", confidence: 0.85, basis: "pack node_exporter@1.x: cite",
-    series: [{ id: "l", labels: { __name__: "size_bytes" }, ts: [1000, 2000], avg: [9, 9], min: [9, 9], max: [9, 9], count: [1, 1] }],
+    available: true,
+    lines: [{
+      kind: "limit", label: "limit size_bytes", metric: "size_bytes", hi: 9, origin: "pack", confidence: 0.85, basis: "pack node_exporter@1.x: cite",
+      series: [{ id: "l", labels: { __name__: "size_bytes" }, ts: [1000, 2000], avg: [9, 9], min: [9, 9], max: [9, 9], count: [1, 1] }],
+    }],
   },
   ghost: { available: true, loaded: false, label: "last week" },
   ...o,
@@ -53,7 +56,7 @@ describe("provenance", () => {
 describe("overlayDraw", () => {
   it("draws only layers that are on, available and carry data", () => {
     const d = overlayDraw(ov())!;
-    expect(Object.keys(d)).toEqual(["normal", "limit"]);
+    expect(Object.keys(d)).toEqual(["normal", "lines"]);
     expect(overlayDraw(ov({ flags: { normal: false, limit: false, ghost: false } }))).toBeUndefined();
     const g = overlayDraw(ov({ flags: { normal: false, limit: false, ghost: true }, ghost: { available: true, loaded: true, series: [{ id: "a", ts: [1000], avg: [1], count: [4] }] } }))!;
     expect(Object.keys(g)).toEqual(["ghost"]);
@@ -82,6 +85,7 @@ describe("toUplot overlays", () => {
   it("draws the limit as a dashed hazard-coloured line", () => {
     const m = toUplot(main, undefined, { overlays: overlayDraw(ov()) });
     const i = m.series.findIndex((x) => String(x.label).startsWith("limit "));
+    expect(i).toBeGreaterThan(0);
     expect(m.series[i]).toMatchObject({ stroke: LIMIT_COLOR });
     expect(m.series[i].dash).toBeTruthy();
     expect(m.data[i]).toEqual([9, 9]);

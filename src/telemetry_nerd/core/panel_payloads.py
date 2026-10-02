@@ -424,10 +424,8 @@ def normal_payload(profile, series: list[dict], step_ms: int, window: str) -> di
 
 
 def limit_payload(datasets, ctx, meta, labels, width_px: int) -> dict:
-    """Context lines (limits, thresholds, reference series) drawn on the chart, or why there are none.
-
-    `lines` carries every line with its provenance; `label`/`metric`/`hi`/`series` keep describing the
-    primary hard limit for older clients."""
+    """The panel's context lines (limits, thresholds, reference series), each with its provenance
+    and, for a metric target, its series; or why there are none."""
     if ctx is None or not ctx.lines:
         why = next(
             (
@@ -462,22 +460,16 @@ def limit_payload(datasets, ctx, meta, labels, width_px: int) -> dict:
             )
             out["series"] = series_payload(table, series_labels(res.series))
         lines.append(out)
-    primary = ctx.limit
-    return {
-        "available": True,
-        "label": f"limit {primary.metric}" if primary else f"{len(lines)} context lines",
-        "metric": primary.metric if primary else None,
-        "hi": primary.hi if primary else None,
-        "series": next(
-            (
-                ln["series"]
-                for ln in lines
-                if primary and ln["metric"] == primary.metric and "series" in ln
-            ),
-            None,
-        ),
-        "lines": lines,
-    }
+    return {"available": True, "lines": lines}
+
+
+def without_data(layer: dict) -> dict:
+    """An overlay layer as availability only: its series are dropped (a layer that is switched off
+    is not sent), its description and provenance stay."""
+    out = {k: v for k, v in layer.items() if k not in ("series", "unmatched")}
+    if "lines" in out:
+        out["lines"] = [{k: v for k, v in ln.items() if k != "series"} for ln in out["lines"]]
+    return out
 
 
 def ghost_payload(datasets, spec: ChartSpec, meta, width_px: int) -> dict:

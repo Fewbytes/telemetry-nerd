@@ -160,10 +160,11 @@ async def test_panel_data_reports_every_overlay_with_its_reason(svc):
     ov = svc.panel_data(pid, 800)["overlays"]
     assert ov["flags"] == {"normal": True, "limit": True, "ghost": False}
     assert ov["normal"]["available"] is False  # no profile yet
-    assert (
-        ov["limit"]["available"] is True and ov["limit"]["metric"] == "node_filesystem_size_bytes"
-    )
-    assert ov["limit"]["series"] and ov["limit"]["label"] == "limit node_filesystem_size_bytes"
+    assert ov["limit"]["available"] is True
+    [line] = ov["limit"]["lines"]
+    assert line["metric"] == "node_filesystem_size_bytes" and line["kind"] == "limit"
+    assert line["series"] and line["label"] == "limit node_filesystem_size_bytes"
+    assert line["origin"] == "pack" and line["basis"]
     assert ov["ghost"] == {"available": True, "loaded": False, "label": "last week"}
 
 
@@ -190,7 +191,9 @@ async def test_switching_a_layer_off_keeps_its_availability_but_drops_its_data(s
     await svc.set_overlays(pid, "user", limit=False)
     ov = svc.panel_data(pid, 800)["overlays"]
     assert ov["flags"]["limit"] is False
-    assert ov["limit"]["available"] is True and "series" not in ov["limit"]
+    assert ov["limit"]["available"] is True
+    assert ov["limit"]["lines"] and all("series" not in ln for ln in ov["limit"]["lines"])
+    assert ov["limit"]["lines"][0]["basis"]  # description and provenance stay
 
 
 async def test_ghost_fetches_last_week_once_and_draws_it_on_the_panel_grid(svc):

@@ -6,7 +6,6 @@ from telemetry_nerd.charts.spec import ChartSpec, YContext
 from telemetry_nerd.charts.ycontext import (
     counter_rate_metric,
     counter_rate_parts,
-    limit_expr,
     natural_range,
     selector_parts,
 )
@@ -32,10 +31,9 @@ def test_selector_parts_and_counter_rate_metric():
     assert counter_rate_metric("rate(a[5m]) / rate(b[5m])") is None
 
 
-def test_natural_range_and_limit_expr():
+def test_natural_range():
     assert natural_range("≥0") == (0.0, None) and natural_range("[0,1]") == (0.0, 1.0)
     assert natural_range("none") == (None, None) and natural_range(None) == (None, None)
-    assert limit_expr('{mountpoint="/"}', "size_bytes") == 'size_bytes{mountpoint="/"}'
 
 
 def test_counter_rate_parts_carries_the_matchers():

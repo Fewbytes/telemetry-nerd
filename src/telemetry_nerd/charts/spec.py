@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field, model_validator
 
 from telemetry_nerd.catalog.rules import facts_from_name
 from telemetry_nerd.charts.dataview import SignalViews
@@ -105,11 +105,28 @@ class YContext(BaseModel):
     natural_hi: float | None = None
     bounds: str | None = None  # the catalog claim the natural bounds came from
     bounds_origin: str | None = None
-    limit: YLimit | None = None  # the strongest hard limit: it is part of the y range
-    lines: list[YLimit] = Field(default_factory=list)  # every context line, limit included
+    lines: list[YLimit] = Field(
+        default_factory=list
+    )  # every context line: limits, thresholds, references
     reframes: list[YReframe] = Field(default_factory=list)
     profile: YProfile | None = None
     notes: list[str] = Field(default_factory=list)  # honest gaps, shown to the user
+
+    @model_validator(mode="before")
+    @classmethod
+    def _from_single_limit(cls, data: Any) -> Any:
+        """Panels stored before context lines carried one `limit`: it is the one line."""
+        if isinstance(data, dict) and data.get("limit") and not data.get("lines"):
+            return {**data, "lines": [data["limit"]]}
+        return data
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def limit(self) -> YLimit | None:
+        """The strongest hard limit (largest value): the one the y range must include."""
+        return max(
+            (ln for ln in self.lines if ln.kind == "limit"), key=lambda ln: ln.hi, default=None
+        )
 
     @property
     def has_reference(self) -> bool:
