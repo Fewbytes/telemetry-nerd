@@ -7,7 +7,7 @@
     type Annotation, type Panel, type PanelData, type Thread, type Where, type YView,
   } from "./lib/api";
   import { PALETTE, rgba, seriesName, toUplot } from "./chart/toUplot";
-  import { drawRug, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, rugMoreLabel, type RugCell } from "./chart/rug";
+  import { drawRug, facetTop, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, rugMoreLabel, type RugCell } from "./chart/rug";
   import { describeShown, panelNotes } from "./lib/panelNotes";
   import { windowBadge } from "./lib/coverage";
   import { focusRects, notesAt } from "./chart/focus";
@@ -507,7 +507,7 @@
               data={hm} series={[s]} qs={heatQs} width={fetchWidth} height={hm.facet_height_px}
               unit={hm.panel.spec.y.unit}
               onRendered={(ms, cells) => onFacetRendered(i, hm.series.length, ms, cells, hm.facet_height_px)}
-              onBrush={(b) => (selection = { ...b, top: i * (hm.facet_height_px + 14 + 30) + 4 })}
+              onBrush={(b) => (selection = { ...b, top: facetTop(hm.series.map(() => false), i, hm.facet_height_px) })}
             />
             <CountStrip data={hm} series={[s]} width={fetchWidth} />
           {/each}
@@ -519,7 +519,7 @@
           unit={hm.panel.spec.y.unit}
           color={heatColor} cmapName={heatCmap} overlayQ={heatQ} focusWhere={focus}
           onRendered={(ms, cells) => onFacetRendered(i, hm.series.length, ms, cells, hm.facet_height_px)}
-          onBrush={(b) => (selection = { ...b, top: i * (hm.facet_height_px + 14 + 30) + 4 })}
+          onBrush={(b) => (selection = { ...b, top: facetTop(hm.series.map((f) => !!f.state), i, hm.facet_height_px) })}
         />
         <CountStrip data={hm} series={[s]} width={fetchWidth} />
       {/each}
@@ -607,7 +607,7 @@
     {/if}
     {#if data?.kind === "time" && yres?.zoomed && yres.range && yst?.all}
       {@const cs = contextStrip(hasReference(yctx) ? refExtent(yst.all, yctx) : yst.all, yres.range)}
-      <span class="y-strip" title="where this view sits within the full data range"><i style="bottom:{cs.bottomPct}%;height:{cs.heightPct}%"></i></span>
+      <span class="y-strip" style="bottom:{32 + rugAxisExtra(data.bucket_state?.length ?? 0)}px" title="where this view sits within the full data range"><i style="bottom:{cs.bottomPct}%;height:{cs.heightPct}%"></i></span>
     {/if}
     {#if data?.kind === "time" && originOff}<span class="y-origin" data-y-origin>y ≠ 0</span>{/if}
     {#if selection}
@@ -626,9 +626,7 @@
     {/if}
   </div>
   {#if data?.kind === "time" && data.bucket_state_more}
-    <div class="rug-wrap">
-      {#if data.bucket_state_more}<div class="rug-more">{rugMoreLabel(data.bucket_state_more)}</div>{/if}
-    </div>
+    <div class="rug-more">{rugMoreLabel(data.bucket_state_more)}</div>
   {/if}
   {#if data?.kind === "time" && data.overlays?.flags}
     <div class="legend overlays" role="group" aria-label="Reference layers">

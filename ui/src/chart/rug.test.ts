@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hitRug, MAX_ROWS, ROW_GAP, ROW_H, RUG_GAP, rugAxisExtra, rugCells, rugHeight, rugHint, rugMoreLabel, rugTop, STATE } from "./rug";
+import { facetTop, hitRug, MAX_ROWS, ROW_GAP, ROW_H, RUG_GAP, rugAxisExtra, rugCells, rugHeight, rugHint, rugMoreLabel, rugTop, STATE } from "./rug";
 import { relativeLuminance } from "./colormap";
 import type { BucketStatePayload } from "../lib/api";
 
@@ -84,5 +84,14 @@ describe("rug placement geometry", () => {
   it("starts the rug a gap below the plot floor", () => {
     expect(rugTop(200)).toBe(200 + RUG_GAP);
     expect(RUG_GAP).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("facetTop", () => {
+  it("adds each preceding rug facet's extra height to the fixed stride", () => {
+    const stride = 100 + 14 + 30;
+    expect(facetTop([false, false, false], 2, 100)).toBe(2 * stride + 4);
+    expect(facetTop([true, false, true], 2, 100)).toBe(2 * stride + rugAxisExtra(1) + 4);
+    expect(facetTop([true, true], 0, 100)).toBe(4);
   });
 });

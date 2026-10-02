@@ -196,7 +196,7 @@ ul.gaps { list-style: none; margin: 0; padding: 0; }
 .panel .y-views button.suggest, .panel .y-views button.suggested { border-style: dashed; }
 .panel .y-views button:disabled { opacity: 0.4; cursor: not-allowed; }
 .panel .y-badge { position: absolute; top: 4px; right: 8px; z-index: 2; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--badge); border-left: 3px solid var(--warn); }
-.panel .y-strip { position: absolute; top: 8px; bottom: 32px; right: 0; width: 4px; background: var(--border); }
+.panel .y-strip { position: absolute; top: 8px; bottom: 32px; /* + rug band, set inline */ right: 0; width: 4px; background: var(--border); }
 .panel .y-strip i { position: absolute; left: 0; right: 0; background: var(--warn); }
 .panel .y-origin { position: absolute; left: 4px; bottom: 30px; font-size: 10px; color: var(--warn); }
 .panel .color-key .ramp { display: inline-block; width: 80px; height: 8px; vertical-align: middle; margin-right: 4px; border-radius: 2px; }
@@ -254,7 +254,6 @@ ul.gaps { list-style: none; margin: 0; padding: 0; }
 .catalog-view .chip.origin.claude { border-color: var(--ann-claude); }
 .catalog-view .chip.warn { color: var(--warn); border-color: var(--warn); }
 .catalog-pager { display: flex; gap: 10px; align-items: center; margin: 10px 0; }
-.panel .rug-wrap { position: relative; }
 .panel .rug { display: block; position: absolute; left: 0; z-index: 3; }
 .panel .rug-tip { position: absolute; white-space: pre; font-size: 11px; background: var(--fg); color: var(--bg); padding: 4px 6px; border-radius: 4px; pointer-events: none; z-index: 5; }
 .panel .rug-more { font-size: 11px; color: var(--muted); margin-top: 2px; }

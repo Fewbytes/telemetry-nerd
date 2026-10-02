@@ -18,6 +18,11 @@ export const RUG_GAP = 3;
 /** Extra x-axis space (CSS px) the rug claims between plot floor and tick labels: 0 when nothing is drawn. */
 export const rugAxisExtra = (rows: number): number => (rows === 0 ? 0 : rugHeight(rows) + RUG_GAP);
 
+/** Top (CSS px) of stacked facet i for the brush overlay: each facet is its plot height plus the
+ * label row (14) and count strip (30), plus the rug band when that facet draws a rug. */
+export const facetTop = (hasRug: boolean[], i: number, facetH: number): number =>
+  hasRug.slice(0, i).reduce((top, rug) => top + facetH + 14 + 30 + (rug ? rugAxisExtra(1) : 0), 0) + 4;
+
 /** Top of the rug canvas (CSS px, same frame as the plot-bottom it is given). */
 export const rugTop = (plotBottom: number): number => plotBottom + RUG_GAP;
 
