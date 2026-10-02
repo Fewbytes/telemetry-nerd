@@ -23,8 +23,9 @@
    pass `overrides={"rate": "<alternative metric>"}`.
 2. **Errors without a status label.** The expr hint uses the semconv label
    (`http_response_status_code=~"5.."`). Where the label differs, accept anyway and pass
-   `error_matcher='status_code=~"5.."'` to `show_binding` / `binding_verdict`; or bind a
-   dedicated error counter by `overrides`.
+   `error_matcher='status_code=~"5.."'` to `show_binding` / `binding_verdict`; or, for
+   a dedicated error counter that is not among the `alternatives`, bind by hand with
+   `catalog_bind` (`overrides` only swaps in a listed alternative).
 3. **Latency.** Accept only a histogram (or summary with `_sum` / `_count`) base name. A role
    filled by a precomputed percentile gauge is a poor binding: the verdicts need the distribution.
    Without a histogram, leave the role `null` and let it be a gap.
@@ -48,9 +49,9 @@ entries; an empty or errored role means a wrong metric or label: fix the binding
 
 ## Common errors
 
-- "no confirmed RED binding for 'otel_http'": the key is the binding key (`http.server`), not the
+- "no confirmed RED binding" for a suggestion id: the key is the binding key (`http.server`), not the
   suggestion id. The message lists the bound keys.
-- "panel_group pgN not found": pass the id returned by `show_binding` for this workspace.
+- "panel_group ... not found": pass the id returned by `show_binding` for this workspace.
 - A role `error` in `show_binding`: read its message (a missing label, no data in range) before
   concluding anything about the service.
 - Many members: roles with more than 5 members render as fleets; judge them with `fleet`.

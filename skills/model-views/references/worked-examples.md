@@ -53,15 +53,17 @@ Read and report:
 - `summary.first` is `duration`: a `shift` with onset 10:00Z, interval 09:56-10:02Z. `errors`
   moved next: a `burst` with onset 10:20Z, interval 10:17-10:22Z. The intervals do not overlap,
   so the order is claimed. `rate` is `no_change`.
-- The duration verdict is the share of requests above 0.25 s (the reference's ~p95 bucket edge):
-  1.2% in the reference, 5.4% now. It is not a percentile.
+- The duration verdict is the share of requests above 0.25 s (the bucket edge where the reference
+  share above is nearest 5%; coarse buckets leave it at 1.2%): 1.2% in the reference, 5.4% now.
+  It is not a percentile.
 - `family`: 3 roles judged, 5% family-wise. `reference.label`: "previous windows", 4 cycles.
 - The duration role carries the `overdispersed` caveat and the errors role `noisier_than_reference`
   (its share is noisier now than in the reference, so the larger spread is used): the intervals
   already account for both, so say so rather than quoting the odds ratios as exact.
 
 An answer built from this: "Against the 4 previous windows at 5% family-wise over 3 signals, the
-share of requests slower than 250 ms rose from 1.2% to 5.4% from about 10:00Z (09:56-10:02Z); the
+share of requests slower than 250 ms rose from 1.2% to 5.4% (intervals and n from `level` and
+`evidence`) from about 10:00Z (09:56-10:02Z, approximate); the
 5xx share rose in a burst from about 10:20Z (10:17-10:22Z). The onset intervals do not overlap, so
 the latency change came first; that is timing, not proof of cause. Request rate: no change
 detected." Then `finding_create` with the `evidence` objects as returned.
@@ -93,8 +95,9 @@ W, so W is 1.0 s while requests actually spend 2.4 s in the system:
 
 Read: verdict `L_high`; R 2.40 (2.26-2.54); L 22.9 against lambda x W 9.5; `flagged_windows`
 lists the loaded windows; the hints name queueing before the timer starts, latency on a subset
-and a broader gauge. State the implied unmeasured time as an estimate: L / lambda - W =
-22.9 / 9.55 - 1.0 = 1.4 s per request. Cite the `littles_law_ratio` statistic.
+and a broader gauge. State the implied unmeasured time as a conditional estimate: if the excess is queueing before the
+timer, L / lambda - W = 22.9 / 9.55 - 1.0 = 1.4 s per request (1.3-1.5 s from R's interval); the
+check alone cannot rule out the other causes. Cite the `littles_law_ratio` statistic.
 
 Draw the panel for the user:
 

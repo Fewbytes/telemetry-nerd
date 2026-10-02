@@ -1,6 +1,6 @@
 ---
 name: model-views
-description: This skill should be used when a telemetry question is about a service or resource as a whole rather than one metric, such as "is the service overloaded", "is it healthy", "what changed first", "show me the RED / USE metrics", "do concurrency, throughput and latency agree", "check Little's law", "bind these metrics", or when asked to "run binding_suggest", "accept a binding", "show_binding", "binding_verdict", or "check_littles_law". Covers finding and confirming a USE / RED / Little's law binding, reading the linked panel group, reporting per-signal verdicts honestly (reference, family alpha, ordering limits, evidence), interpreting L versus lambda times W and its assumptions, and turning gaps into suggested instrumentation.
+description: This skill should be used when a telemetry question concerns a service or resource as a whole rather than one metric: "is the service overloaded/healthy/degraded", "what changed first", "why are requests slow", "show RED / USE / golden signals", "is it saturated", "do concurrency, throughput and latency agree", "check Little's law", "bind these metrics", or when running binding_suggest, binding_accept, show_binding, binding_verdict or check_littles_law. Covers choosing and confirming a binding, reading the panel group, reporting verdicts honestly, and Little's law interpretation.
 ---
 
 # Model views: bindings, USE / RED, Little's law
@@ -70,6 +70,8 @@ notes}`, a `{gap, suggest}` card, or an `{error}`. One time range, step and sele
   fleet; follow with `fleet(dataset)` for the spread and outliers.
 - Read the `notes`: label names in expr hints are conventions. A wrong label shows up as an empty
   role or a role `error`, not as a healthy signal.
+- `concurrency` (Little's law binding): the in-flight gauge. The group does not judge Little's law:
+  consistency of the three signals is `check_littles_law`'s job.
 - A gap card names the instrumentation that would fill the role. Say what is missing and what
   it would cost not to know; record it with `gap_create` when it matters.
 - Tell the user where to look (`highlight(object="pgN")`), but the verdict is not in the picture: run
@@ -89,27 +91,32 @@ role `status`, `direction`, `pattern`, `onset`, and `evidence`. Report:
    claim a start time). `shift` = one change point. `burst` / `blip` = an episode that ended.
    `sustained` = still going at the end. `insufficient` and `gap` are not "healthy".
 3. **Ordering only as far as the intervals allow.** `summary.first` is null when onset intervals
-   overlap: write "simultaneous within +-X", not "A caused B". Order is timing of detected change,
-   never causation.
-4. **Latency is a share above a stated edge**, the reference's ~p95 bucket edge (`threshold`),
-   not a percentile and not a mean. Write "share of requests above 250 ms went from 1.2% to
-   5.4%", with n.
+   overlap: write "simultaneous within +-X", not "A caused B". "First" is first among roles that
+   have an onset: a `level`-pattern role cannot be ordered and may have moved earlier. The
+   family alpha controls false flags, not the ordering or the onset intervals (approximate, not
+   a stated 95%). Order is timing of detected change, never causation.
+4. **Latency is a share above a stated edge** (`threshold`: the bucket edge where the reference
+   share above is nearest 5%), not a percentile and not a mean. Write "share of requests above
+   250 ms went from 1.2% to 5.4%" with the intervals and n from `level` / `evidence`. A change
+   entirely below the edge is invisible to it.
 5. **`at_capacity` and `model_check` are not tests.** `at_capacity` (utilization at >= 90% of its
    bound for 3+ steps) qualifies a change; `model_check` (Little's law on the concurrency role)
    is reported, not counted in the family.
 6. **Cite the evidence** objects as they are in `finding_create` (the statistic, its interval, the
    dataset), and carry their uncertainty flags: `input_uncertainty` / `input_uncertainty_unknown`
-   mean the interval is a lower bound; say so (spec 5.3: unknown is citable but flagged).
+   mean the interval is a lower bound; say so (the finding carries "uncertainty unknown").
 7. **Caveats** (`overdispersed`, `heavy_tails`, `noisier_than_reference`) go into the sentence,
    not into a footnote.
 
 Absence of a flag is "no change detected against this reference at this power", not "healthy".
+Choose the range before looking at the verdict: every re-run with another range, reference or
+alpha is another look that the family alpha does not cover; state how many looks were taken.
 Detail, field meanings and wording templates: `references/verdicts.md`.
 
 ## Little's law check
 
-`check_littles_law(binding=<key> | arrival_rate, latency, concurrency, by=[...], start, end,
-window, warmup, latency_unit, arrivals)` tests L (the in-flight gauge, time-averaged) against
+`check_littles_law(source, binding=<key> | arrival_rate, latency, concurrency, by=[...], start,
+end, window, warmup, latency_unit, arrivals)` (defaults: last 6h, `window="auto"` about range/12) tests L (the in-flight gauge, time-averaged) against
 lambda x W (arrival rate times MEAN latency from histogram `_sum` / `_count`).
 
 - Read the pooled ratio R = L / (lambda W) with its 95% interval, the verdict (`consistent`,
@@ -118,7 +125,9 @@ lambda x W (arrival rate times MEAN latency from histogram `_sum` / `_count`).
 - `L_high`: time in the system that the latency timer does not cover: queueing before the timer
   starts, leaked or stuck requests, latency on a subset, a gauge counting something broader.
   `L_low`: concurrency missing instances, a gauge missing bursts, latency on a superset.
-  An `L_high` is often the finding: measured latency understates what the caller waits.
+  `L_high` can mean measured latency understates what the caller waits, but the check cannot tell
+  queueing from the other causes without more evidence. `consistent` means no mismatch detected
+  at this precision, not that the instruments are right: offsetting errors can cancel.
 - Percentile-only latency is refused: a percentile is not a mean and Little's law is about the
   mean. Supply a histogram or summary with `_sum` and `_count`, or record a gap.
 - Units: W is converted to seconds from `latency_unit`, the catalog, or the name suffix; otherwise

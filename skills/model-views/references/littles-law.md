@@ -25,9 +25,12 @@ all windows and groups.
 | `inconsistent_in_windows` | pooled R is fine but some windows are flagged | a transient: read `flagged_windows` |
 | `insufficient` / `no_traffic` | cannot be judged | too few samples; widen the range or window |
 
-An `L_high` where W is the measured service time is the classic finding: the caller waits W plus
-an unmeasured queue. Compute the implied unmeasured time as L / lambda - W and state it as an
-estimate with R's interval, not as a measurement.
+An `L_high` where W is the measured service time can mean the caller waits W plus an unmeasured
+queue. If the excess is queueing before the timer, it is L / lambda - W = W (R - 1): state that
+conditional estimate with R's interval, never as a measurement; the check cannot tell it from the
+other L_high causes (subset latency, broader gauge, leaks, arrivals vs completions) without more
+evidence such as a per-instance run or a queue-depth metric. `consistent` means no mismatch
+detected at this precision: offsetting errors (subset latency plus broader gauge) can cancel.
 
 ## Localise
 
@@ -73,8 +76,8 @@ say that the check cannot be run and record a gap.
 ## Reporting
 
 "Pooled L / (lambda W) = 2.40 (95% interval 2.26-2.54), `L_high`; every 5-minute window flagged.
-Measured W is 1.0 s while L / lambda is 2.4 s, so about 1.4 s per request is not covered by the
-latency timer. Assumed: the counter counts arrivals (flagged: assumed). Hints: queueing before
+Measured W is 1.0 s while L / lambda is 2.4 s: if the excess is queueing before the timer, about
+1.4 s per request (1.3-1.5 s from R's interval) is not covered by the latency timer. Assumed: the counter counts arrivals (flagged: assumed). Hints: queueing before
 the timer starts, latency on a subset, a broader gauge. Next: bind by instance and compare, check
 whether the timer starts after the accept queue." Cite `evidence` (`littles_law_ratio`, `L`,
 `lambda_W`) in `finding_create`, with any `input_uncertainty` flag.

@@ -17,10 +17,11 @@ episode and some quiet time before it.
 | `previous` | the 4 windows just before | no daily rhythm, or a short incident window |
 | `day` | the same window on 7 previous days | diurnal traffic |
 | `week` | the same window on 4 previous weeks | weekly rhythm |
-| `profile` | `day` or `week`, chosen by the cached operating profile | `operating_profile` first; refused without a seasonal profile |
+| `profile` | `day` or `week`, chosen by the cached operating profile | `operating_profile` on each role's expr (from the suggestion `detail` or the group) first; refused without a seasonal profile |
 | `auto` | `profile` if cached, else `previous` | default; state which one was used |
 
-Fewer than 3 usable cycles gives `insufficient`. State `reference.label` and `chosen`. If `previous`
+`tz` sets the calendar for `day` / `week` shifts (local days, 23/25 h across DST). A profile
+without seasonality makes `auto` fall back to `previous`. Fewer than 3 usable cycles gives `insufficient`. State `reference.label` and `chosen`. If `previous`
 was used on a service with a daily cycle, say the comparison may flag the daily rhythm or hide a
 change that matches it.
 
@@ -45,7 +46,10 @@ change that matches it.
 
 `summary.moved` lists changed roles by onset; `summary.first` names one only when its onset
 interval does not overlap the next one. Otherwise `summary.text` says simultaneous within a
-stated margin. A role with pattern `level` has no onset and cannot be ordered.
+stated margin. A role with pattern `level` has no onset and cannot be ordered: "first" means
+first among roles with onsets, so a changed `level` role may have moved earlier. The family alpha
+controls false flags, not ordering or onset claims, and onset intervals are approximate (Bai's
+interval for a shift covering most of the window runs below its nominal 95%).
 
 Wording: "Duration moved first (onset 10:00Z, interval 09:56-10:02Z); errors followed (10:20Z,
 10:17-10:22Z): the intervals do not overlap." Or: "Utilization and saturation moved together
@@ -56,7 +60,9 @@ within +-2 min; no ordering is supported." Order of detection is not cause.
 - **errors**: the error share (errors / requests) on effective sample size (overdispersion and
   autocorrelation reduce n), Wilson / binomial intervals. A burst of 10x on 0.2% is reported as a
   share, not as "5 more errors".
-- **duration**: the share of requests above the reference's ~p95 bucket edge, from the histogram.
+- **duration**: the share of requests above the bucket edge where the reference share above is
+  nearest 5% (the reference's ~p95 edge; 1.2% in the worked example because buckets are coarse),
+  from the histogram.
   A shift of the whole distribution shows as that share rising; a change entirely below the edge
   does not. When latency matters elsewhere, follow with `query_distribution` / `fraction_over` /
   `show(mark="histogram", windows=[...])` for the full distribution.
@@ -67,7 +73,8 @@ within +-2 min; no ordering is supported." Order of detection is not cause.
 ## Template for the answer
 
 "Against <reference label> (<k> windows), at <alpha> family-wise over <m> signals: <role> <direction>
-(<pattern>, onset <interval> | no onset inside the window), <statistic with interval, n>.
+(<pattern>, onset <approximate interval> | no onset inside the window), <statistic with
+interval and n, e.g. 1.2% [CI] of n=... to 5.4% [CI] of n=...>.
 <ordering sentence>. <caveats>. Not tested: <gap / insufficient roles>." Then `finding_create`
 with the evidence objects exactly as returned, and say when a flag such as `input_uncertainty`
 makes the interval a lower bound.
@@ -78,5 +85,5 @@ makes the interval a lower bound.
 - Claim an order from overlapping intervals, or a cause from an order.
 - Quote latency as a percentile or a mean here; quote the share above the stated edge.
 - Treat `at_capacity` or `model_check` as test results.
-- Re-run with different `alpha` or references until something flags: the family budget is per
-  call.
+- Re-run with different `alpha`, references or ranges until something flags: the family budget is
+  per call, and the range is chosen before seeing the verdict.
