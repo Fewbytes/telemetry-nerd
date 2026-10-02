@@ -72,6 +72,28 @@ def test_heavy_tailed_noise_is_detected_and_does_not_flood_alarms():
     assert found.get(planted["transient"]) == "transient"
 
 
+def test_very_heavy_tails_do_not_fake_long_episodes():
+    """lkn.14: under t(3) innovations one huge innovation decays over several steps and held the
+    15-step rolling median of raw z up (5% family-wise); episodes are now scanned on prewhitened
+    deviations, and the Gumbel bars carry their fit noise."""
+    results = [analyse(fleet(900 + s, m=100, df=3)[0]) for s in range(30)]
+    assert sum(any("long_episode" in o.fired for o in f.outliers) for f in results) == 0
+    assert sum(bool(f.outliers) for f in results) <= 2
+    assert all(0.4 < f.thresholds["phi"] < 0.75 for f in results)  # simulated phi = 0.6
+    y, planted = fleet(8, m=100, df=3, plant=True)
+    found = {o.member: o.kind for o in analyse(y).outliers}
+    assert found == {planted["persistent"]: "persistent", planted["transient"]: "transient",
+                     planted["drifting"]: "drifting"}  # fmt: skip
+
+
+def test_gumbel_fit_noise_matches_the_delta_method_scale():
+    from telemetry_nerd.analysis.fleet import gumbel_noise
+
+    # quartile fit, extrapolated to g ~ 11.5 (p ~ 1e-5): variance ~ 2.1 beta^2 at n = 100
+    assert gumbel_noise(100, 11.5) == pytest.approx(2.12, abs=0.05)
+    assert gumbel_noise(400, 11.5) == pytest.approx(gumbel_noise(100, 11.5) / 4)
+
+
 def test_missing_members_reduce_n_and_are_not_imputed():
     y, planted = fleet(4, m=60, plant=True, missing=0.1)
     f = analyse(y)

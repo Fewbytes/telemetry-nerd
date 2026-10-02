@@ -91,19 +91,43 @@ episode). Per member-step threshold: Student t with the pooled sigma's df (0.367
 / min(tau, 13) - 1, tau = the fleet's typical autocorrelation time of deviations), Bonferroni over
 all member-steps tested; for the rolling medians, in units of their own robust scale.
 
+**Episodes are scanned on prewhitened deviations** (lkn.14): the rolling medians run over the
+AR(1) innovations r_t = (z_t - phi z_(t-1)) / sqrt(1 - phi^2), phi = median over the calm members
+of their lag-1 autocorrelation (stated as `episode_scan`). Under heavy-tailed noise one huge
+innovation decays over several steps (phi^j) and can hold a rolling median of raw z up: with t(3)
+innovations that was 3.7% family-wise from the 15-step scale alone, while that scale's own tail
+check (at 0.1% / 0.01%) passed. Innovations do not carry over, so a median of w of them is
+exceeded only when ceil(w / 2 tau_r) roughly independent values are, and its tail index is that
+multiple of a single step's. Power is unchanged where it matters: a sustained shift delta becomes
+(1 - phi) delta against innovation noise sqrt(1 - phi^2) sigma; for the 15-step median at
+phi = 0.6 that is the same signal-to-noise as raw z (the median of 15 iid values is tighter than
+of 15 autocorrelated ones by just as much). At phi = 0.9 the episode scales lose power, but there
+the single-step test finds a sustained shift anyway (calibration: transient detection 99.7%).
+
 **Heavy tails.** Real fleets are often spiky. Check: does the typical member (20% trimmed mean
 over members of the exceedance share, so a few faulty members cannot trip it) exceed t_df's
 two-sided 0.1% or 0.01% points more often than t says (Poisson test, 0.1%)? If so at a scale, that
 scale's threshold also must beat a Gumbel fitted (from quartiles, leave-one-out) to the OTHER
 members' log peaks at p = alpha / 3 / 3 / K: the log of a maximum is Gumbel-like for normal and
-Frechet tails alike, and the fleet's own peaks are the empirical null. A rolling median spanning
-fewer than 3 autocorrelation times inherits the single-step verdict (its values are nearly one
-draw). Caveat `heavy_tailed_noise`. Hill-tail extrapolation was tried first and rejected:
-extrapolating five decades from the top 0.5% was unstable (thresholds 40-200).
+Frechet tails alike, and the fleet's own peaks are the empirical null. A rolling median that needs
+fewer than 5 independent exceedances (ceil(w / 2 tau_r) < 5: the 5-step scale, 3) inherits the
+single-step verdict; the 15-step scale (8) is judged by its own check. Caveat `heavy_tailed_noise`.
+Hill-tail extrapolation was tried first and rejected: extrapolating five decades from the top
+0.5% was unstable (thresholds 40-200).
+
+**The Gumbel bar carries its own fit noise** (lkn.14). Extrapolating from K - 1 peaks to
+p ~ 1e-5 is noisy: by the delta method with the asymptotic covariances of the quartiles, the
+quantile at reduced variate g has variance V(g) beta^2 / n (about 2.1 beta^2 at n = 100,
+g = 11.5: sd ~ 1.5 beta). A bar that is right on average is exceeded MORE often on average
+(the tail exp(-x / beta) is convex: E[p e^(-eps)] = p e^(s^2 / 2), here ~ 3p), so the bar is raised
+by beta V / 2n; the false-alarm rate averaged over the fit's noise is then p. This replaced a
+fixed inflation factor (1.0; 1.15 calibrated just as well but is a knob, this is derived). Under
+t(3) the honest single-step bars are 60-250 robust sigmas: at Bonferroni levels such fleets'
+spikes carry little evidence, and a sustained excursion is found by the 15-step scale.
 
 **Family-wise error.** Under a homogeneous fleet the chance of naming any member is <= ~1% by
-construction (three tests at 1/3 each, Bonferroni within each); 2-3% under heavy-tailed noise
-(the Gumbel fit from K - 1 peaks is noisy). See Calibration.
+construction (three tests at 1/3 each, Bonferroni within each), and about that under heavy-tailed
+noise down to t(3) (1.3% at 300 seeds, 1.6% at 1000). See Calibration.
 
 **Classification and since-when.** Each flagged member has `kind`:
 - `drifting` (change fired, gradual: a linear trend fits its deviation better than one step) or
@@ -170,25 +194,35 @@ the planted member named with the right kind (drifting may be `shifted`).
 | scenario | false alarm (any member) | by test level/change/spike/episode/long | detect persistent/transient/drifting |
 |---|---|---|---|
 | M=10 AR(0.6) normal | 0.3% | 0.3% / 0.0% / 0.0% / 0.0% / 0.0% | - |
-| M=30 AR(0.6) normal | 0.0% | 0.0% / 0.0% / 0.0% / 0.0% / 0.0% | 99.7% / 100.0% / 100.0% |
+| M=30 AR(0.6) normal | 0.3% | 0.0% / 0.0% / 0.0% / 0.3% / 0.0% | 99.7% / 100.0% / 100.0% |
 | M=100 AR(0.6) normal | 0.3% | 0.0% / 0.3% / 0.0% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% |
 | M=300 AR(0.6) normal | 0.0% | 0.0% / 0.0% / 0.0% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% |
 | M=100 white normal | 2.0% | 0.0% / 0.7% / 0.3% / 0.7% / 0.3% | 100.0% / 100.0% / 100.0% |
-| M=100 AR(0.9) normal | 0.7% | 0.3% / 0.3% / 0.0% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% |
-| M=100 AR(0.6) t(4) | 1.3% | 0.0% / 0.3% / 0.0% / 0.0% / 1.0% | 100.0% / 100.0% / 100.0% |
-| M=30 AR(0.6) t(4) | 1.3% | 0.0% / 0.7% / 0.7% / 0.0% / 0.0% | 99.3% / 100.0% / 100.0% |
-| M=100 AR(0.6) 10% missing | 0.0% | 0.0% / 0.0% / 0.0% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% |
+| M=100 AR(0.9) normal | 0.7% | 0.3% / 0.3% / 0.0% / 0.0% / 0.0% | 100.0% / 99.7% / 100.0% |
+| M=100 AR(0.6) t(4) | 1.0% | 0.0% / 0.3% / 0.0% / 0.0% / 0.7% | 100.0% / 100.0% / 100.0% |
+| M=30 AR(0.6) t(4) | 0.7% | 0.0% / 0.7% / 0.0% / 0.0% / 0.0% | 99.3% / 100.0% / 100.0% |
+| M=100 AR(0.6) 10% missing | 0.3% | 0.0% / 0.0% / 0.0% / 0.3% / 0.0% | 100.0% / 100.0% / 100.0% |
 | M=100 no heterogeneity | 1.3% | 1.0% / 0.3% / 0.0% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% |
-| M=100 AR(0.6) t(3) | 5.3% | 0.0% / 0.7% / 1.0% / 1.3% / 3.7% | 100.0% / 100.0% / 100.0% |
+| M=100 AR(0.6) t(3) | 1.3% | 0.0% / 0.7% / 0.7% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% |
+
+Before lkn.14 (raw-z episode scan, Gumbel bar without its fit noise), the heavy-tailed rows were:
+
+| scenario | false alarm (any member) | by test level/change/spike/episode/long |
+|---|---|---|
+| M=100 AR(0.6) t(4) | 1.3% | 0.0% / 0.3% / 0.0% / 0.0% / 1.0% |
+| M=30 AR(0.6) t(4) | 1.3% | 0.0% / 0.7% / 0.7% / 0.0% / 0.0% |
+| M=100 AR(0.6) t(3) | 5.3% | 0.0% / 0.7% / 1.0% / 1.3% / 3.7% |
 
 Reading: at or under the 1% design for normal noise with autocorrelation, missing data, any fleet
-size; 2.0% for white noise (6 of 300: spread across tests, within ~2 binomial SEs of 1% plus
-Bonferroni slack used up by MAD-based df); 1.3% with t(4) noise thanks to the heavy-tail branch;
-**5.3% with t(3) noise** (mostly the 15-step scale, whose own tail check does not fire while its
-far tail is still heavier than t). Very spiky fleets therefore over-report long episodes somewhat
-(follow-up lkn.14). Detection is >= 99% for all three planted kinds in every scenario. Seeded
-tests pin the acceptance case (100 members, 3 planted, exactly those named with their kinds),
-the homogeneous false-alarm bound (<= 2 of 30 fleets at M = 30 and 100) and heavy-tail behaviour.
+size; 2.0% for white noise (6 of 300; 1.2% at 1000 seeds: spread across tests, within binomial
+noise of 1% plus Bonferroni slack used up by MAD-based df); 0.7-1.0% with t(4) noise and 1.3% with
+t(3) noise (1000 seeds: t(3) 1.6%, t(4) 0.7%, M=30 t(4) 0.9%). Prewhitening alone took t(3) from
+5.3% to 2.1% (1000 seeds; the long-episode share from 3.7% to 0.5%); the fit-noise correction of
+the Gumbel bar then halved the spike share (1.0% -> 0.5%). Detection is >= 99% for all three planted
+kinds in every scenario (one transient of 300 missed at phi = 0.9, see Excursion tests). Seeded
+tests pin the acceptance case (100 members, 3 planted, exactly those named with their kinds), the
+homogeneous false-alarm bound (<= 2 of 30 fleets at M = 30 and 100), heavy-tail behaviour, and
+no long-episode alarm in 30 t(3) fleets.
 
 ## Out of scope (follow-ups)
 

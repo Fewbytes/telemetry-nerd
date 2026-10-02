@@ -269,6 +269,10 @@ class FleetOps:
                 s: _r(th.get(f"{s}_tail_threshold", th[f"{s}_threshold"]), 3) for s in EXCURSIONS
             }
             out["excursion_widths_steps"] = dict(EXCURSIONS)
+            if "phi" in th:
+                out["episode_scan"] = (
+                    f"rolling medians of AR(1)-prewhitened deviations (phi = {_r(th['phi'], 2)})"
+                )
         if heavy:
             out["heavy_tailed_noise"] = (
                 f"{', '.join(heavy)}: the fleet's noise exceeds normal-theory tails; those "

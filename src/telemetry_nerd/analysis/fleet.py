@@ -4,7 +4,8 @@ A fleet is a matrix Y (members x steps) on one step grid; NaN = the member did n
 per-step spread is descriptive (the fleet is the population at that step), computed over the
 members that reported. Outliers are judged against the OTHER members (leave-one-out median/MAD):
 level and change (trimmed means of a member's deviations, compared across members) and
-excursions at three durations (spike, 5- and 15-step episodes), Bonferroni over members x tests
+excursions at three durations (spike, 5- and 15-step episodes: rolling medians of AR(1)-
+prewhitened deviations), Bonferroni over members x tests
 (x steps for excursions), family-wise 1%. Nothing is interpolated or imputed.
 Design: docs/superpowers/specs/2026-10-02-fleet-analysis-design.md.
 """
@@ -32,8 +33,10 @@ POOL_HALF = 6  # per-step sigma pooled over +-6 steps
 TAIL_POINTS = (1e-3, 1e-4)  # two-sided tail points of the heavy-tail check
 TRIM = 0.2  # level/change: 20% trimmed means over time (see design: medians are miscalibrated)
 EXCURSIONS = {"spike": 1, "episode": 5, "long_episode": 15}  # rolling-median widths (steps)
-INDEPENDENT_IN_WINDOW = 3  # rolling medians spanning fewer inherit single-step heavy tails
-GUMBEL_INFLATE = 1.0  # multiplies beta g; 1.0 kept the heavy-tail FWER at 2-3% (design table)
+# a rolling median over w prewhitened steps is exceeded only when ceil(w / 2 tau_r) roughly
+# independent values are, so its tail index is that multiple of a single step's: with fewer than
+# MIN_EXCEEDING it inherits the single-step heavy-tail verdict (5 steps: 3; 15 steps: 8)
+MIN_EXCEEDING = 5
 ALPHA = 0.01  # family-wise, over members x tests (x steps)
 N_TESTS = 3
 DF_FACTOR = 0.3675  # MAD -> t df: 1 / (2 * 1.3605), MAD's 37% efficiency (calibrated in tests)
@@ -420,7 +423,18 @@ def analyse(
     w = 2 * POOL_HALF + 1
     df = np.maximum(DF_FACTOR * (cnt[tested] / min(max(tau_hat, 1.0), w) - 1), 1.0)
     bars: dict[str, np.ndarray] = {}
-    scans = {name: zt if w_ == 1 else rolling_median(zt, w_) for name, w_ in EXCURSIONS.items()}
+    # episodes are scanned on AR(1)-prewhitened deviations: under heavy-tailed noise one huge
+    # innovation decays over several steps and can hold a rolling median of raw z up (the
+    # 15-step scale's false alarms under t(3), lkn.14); innovations do not. A sustained shift
+    # delta becomes (1 - phi) delta against innovation noise sd sqrt(1 - phi^2) sigma: for the
+    # 15-step median about the same power as raw z at phi = 0.6.
+    calm = ~flagged_lc
+    phi = fleet_phi(zt[calm]) if calm.any() else 0.0
+    thresholds["phi"] = phi
+    ep_in = prewhiten(zt, phi)
+    tau_ep = typical_tau(ep_in[calm]) if calm.any() else 1.0
+    thresholds["tau_prewhitened"] = tau_ep
+    scans = {name: zt if w_ == 1 else rolling_median(ep_in, w_) for name, w_ in EXCURSIONS.items()}
     n_scales = len(EXCURSIONS)
     spike_heavy = False
     for name, zz in scans.items():
@@ -435,11 +449,11 @@ def analyse(
         tdf = np.vectorize(lambda v, q=p: t_isf(q / 2, float(round(v, 1))), otypes=[float])(df)
         bar = tdf * unit
         thresholds[f"{name}_threshold"] = float(np.median(bar))
-        # a median of w steps spanning < 3 autocorrelation times has the single-step tails
+        # a median needing few independent exceedances keeps the single-step tails
         own = heavy_tailed(zz / unit, ~flagged_lc, float(np.median(df)), tau_hat)
         if name == "spike":
             spike_heavy = own
-        inherits = EXCURSIONS[name] / max(tau_hat, 1.0) < INDEPENDENT_IN_WINDOW
+        inherits = math.ceil(EXCURSIONS[name] / (2 * max(tau_ep, 1.0))) < MIN_EXCEEDING
         if own or (spike_heavy and inherits):
             thresholds[f"{name}_heavy_tails"] = 1.0
             if "heavy_tailed_noise" not in caveats:
@@ -479,6 +493,30 @@ def analyse(
     outliers.sort(key=lambda o: -o.score)
     return Fleet(sc, normalise, sp, loo, tested, untested, outliers, thresholds, caveats,
                  first, last, z, d, band_y)  # fmt: skip
+
+
+def fleet_phi(z: np.ndarray) -> float:
+    """Median over members of the lag-1 autocorrelation of their deviations (median removed)."""
+    out = []
+    for row in z:
+        x = row - np.nanmedian(row) if np.isfinite(row).sum() >= MIN_OBS else None
+        if x is None:
+            continue
+        a, b = x[1:], x[:-1]
+        ok = np.isfinite(a) & np.isfinite(b)
+        if ok.sum() >= MIN_OBS:
+            den = math.sqrt(float(np.sum(a[ok] ** 2)) * float(np.sum(b[ok] ** 2)))
+            if den > 0:
+                out.append(float(np.sum(a[ok] * b[ok])) / den)
+    return float(np.clip(np.median(out), 0.0, 0.95)) if out else 0.0
+
+
+def prewhiten(z: np.ndarray, phi: float) -> np.ndarray:
+    """AR(1) innovations of z in z's marginal units: (z_t - phi z_{t-1}) / sqrt(1 - phi^2);
+    NaN at the first step and after a gap."""
+    r = np.full(z.shape, np.nan)
+    r[:, 1:] = (z[:, 1:] - phi * z[:, :-1]) / math.sqrt(1 - phi * phi)
+    return r
 
 
 def trimmed_mean(x: np.ndarray, trim: float = TRIM) -> np.ndarray:
@@ -535,10 +573,26 @@ def heavy_tailed(z: np.ndarray, pool_rows: np.ndarray, df: float, tau_hat: float
     return False
 
 
+def gumbel_noise(n: int, g: float) -> float:
+    """Sampling variance, in beta^2 units, of the Gumbel quantile at reduced variate g when mu and
+    beta come from the quartiles of n values (delta method, asymptotic order-statistic
+    covariances; standard Gumbel density at the u-quantile is -u ln u)."""
+    a, b = 0.25, 0.75
+    ga, gb = -math.log(-math.log(a)), -math.log(-math.log(b))
+    fa, fb = -a * math.log(a), -b * math.log(b)
+    c = (g - ga) / (gb - ga)  # x_hat = (1 - c) q_a + c q_b
+    v = (1 - c) ** 2 * a * (1 - a) / fa**2 + c * c * b * (1 - b) / fb**2
+    v += 2 * c * (1 - c) * a * (1 - b) / (fa * fb)
+    return v / n
+
+
 def gumbel_bars(peaks: np.ndarray, pool_rows: np.ndarray, p: float) -> np.ndarray:
     """Per member: the peak exceeded with probability p by a Gumbel fitted to the OTHER (pool)
     members' log peaks by their quartiles (beta = IQR / 1.5725, mu = q25 + 0.3266 beta).
-    The log of a maximum is Gumbel-like for normal and for Frechet (heavy) tails alike."""
+    The log of a maximum is Gumbel-like for normal and for Frechet (heavy) tails alike.
+    Extrapolating from n peaks to p ~ 1e-5 is noisy (sd ~ 1.5 beta at n = 100) and a noisy bar
+    is exceeded more often on average (convexity: E[p e^-eps] = p e^(s^2/2)), so the bar is
+    raised by beta s^2 / 2: the false alarm rate averaged over the fit's noise is then p."""
     g = -math.log(-math.log1p(-p))
     lp = np.log(np.maximum(peaks, 1e-12))
     out = np.empty(peaks.size)
@@ -551,7 +605,7 @@ def gumbel_bars(peaks: np.ndarray, pool_rows: np.ndarray, p: float) -> np.ndarra
             continue
         q25, q75 = np.quantile(o, [0.25, 0.75])
         beta = (q75 - q25) / 1.5725
-        out[i] = math.exp(q25 + 0.3266 * beta + GUMBEL_INFLATE * beta * g)
+        out[i] = math.exp(q25 + 0.3266 * beta + beta * (g + gumbel_noise(o.size, g) / 2))
     return out
 
 
