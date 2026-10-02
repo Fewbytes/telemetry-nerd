@@ -107,3 +107,34 @@ test("only isolated outlier samples get a dot; hover finds the nearest outlier",
   expect(nearestOutlier(d, 0, 14, 1)).toBeNull();
   expect(nearestOutlier(d, 1, 10, 1)).toBeNull(); // pod=b has no value at step 1
 });
+
+test("end labels never overlap when outliers end at similar values (cis)", async () => {
+  const { placeEndLabels } = await import("./fleet");
+  const h = 12;
+  // three labels at the right edge within 4 px of each other, one far away, one elsewhere in x
+  const items = [
+    { right: 500, w: 60, y: 100 }, { right: 500, w: 50, y: 103 }, { right: 500, w: 70, y: 98 },
+    { right: 500, w: 60, y: 200 }, { right: 200, w: 60, y: 101 },
+  ];
+  const ys = placeEndLabels(items, h, 0, 300);
+  const col = [0, 1, 2, 3].map((i) => ys[i]).sort((a, b) => a - b);
+  for (let k = 1; k < col.length; k++) expect(col[k] - col[k - 1]).toBeGreaterThanOrEqual(h - 1e-9);
+  expect(ys[2]).toBeLessThan(ys[0]); // order kept: the highest point keeps the highest label
+  expect(ys[0]).toBeLessThan(ys[1]);
+  expect(ys[3]).toBe(200); // nothing near it: untouched
+  expect(ys[4]).toBe(101); // another x: not in the same column
+});
+
+test("end labels stay inside the plot, pushed back up from the bottom edge", async () => {
+  const { placeEndLabels } = await import("./fleet");
+  const ys = placeEndLabels([{ right: 10, w: 5, y: 295 }, { right: 10, w: 5, y: 296 }, { right: 10, w: 5, y: 299 }], 12, 0, 300);
+  expect(Math.max(...ys)).toBeLessThanOrEqual(294);
+  expect(ys[1] - ys[0]).toBeGreaterThanOrEqual(12 - 1e-9);
+  expect(ys[2] - ys[1]).toBeGreaterThanOrEqual(12 - 1e-9);
+});
+
+test("outlier ends skip trailing gaps", async () => {
+  const { outlierEnds } = await import("./fleet");
+  expect(outlierEnds(d)).toEqual([{ j: 2, v: 20 }, { j: 2, v: 1 }]);
+  expect(outlierEnds({ ...d, outliers: [{ ...d.outliers[0], values: [1, null, null] }, { ...d.outliers[0], values: [null, null, null] }] })).toEqual([{ j: 0, v: 1 }, null]);
+});

@@ -141,3 +141,53 @@ export function fleetY(d: FleetData, ctx: YContext | null, chosen: YView | null 
   const usable = d.normalise === "member" ? null : ctx;
   return { ...resolveY(chosen, st, usable, true), stats: st };
 }
+
+/** An end label: anchored at its line's last point; `right` is the label's right edge (it is drawn
+ *  right-aligned, left of the point), `w` its width, `y` the point's y (all px). */
+export interface EndLabel { right: number; w: number; y: number }
+
+/** Vertical label positions (centres) so no two labels whose boxes share x overlap (bead cis):
+ *  labels are grouped by horizontal overlap (transitively); within a group, sorted by y, each is
+ *  pushed down to clear the one above by `h`, then the group is pushed back up from `bottom`, and
+ *  finally clamped to `top`. Order is preserved, so a label never jumps over its neighbour. */
+export function placeEndLabels(items: EndLabel[], h: number, top: number, bottom: number): number[] {
+  const out = items.map((it) => Math.min(Math.max(it.y, top + h / 2), bottom - h / 2));
+  const order = items.map((_, i) => i).sort((a, b) => items[a].right - items[a].w - (items[b].right - items[b].w));
+  // horizontal groups: sweep by left edge, a label joins the group while it overlaps the group's extent
+  const groups: number[][] = [];
+  let reach = -Infinity;
+  for (const i of order) {
+    const l = items[i].right - items[i].w;
+    if (groups.length && l <= reach) {
+      groups[groups.length - 1].push(i);
+      reach = Math.max(reach, items[i].right);
+    } else {
+      groups.push([i]);
+      reach = items[i].right;
+    }
+  }
+  for (const g of groups) {
+    if (g.length < 2) continue;
+    g.sort((a, b) => out[a] - out[b] || a - b);
+    for (let k = 1; k < g.length; k++) out[g[k]] = Math.max(out[g[k]], out[g[k - 1]] + h);
+    const last = g[g.length - 1];
+    if (out[last] > bottom - h / 2) {
+      out[last] = bottom - h / 2;
+      for (let k = g.length - 2; k >= 0; k--) out[g[k]] = Math.min(out[g[k]], out[g[k + 1]] - h);
+    }
+    if (out[g[0]] < top + h / 2) {
+      out[g[0]] = top + h / 2; // more labels than fit: keep the order, let the bottom ones overflow
+      for (let k = 1; k < g.length; k++) out[g[k]] = Math.max(out[g[k]], out[g[k - 1]] + h);
+    }
+  }
+  return out;
+}
+
+/** Where each drawn outlier's line ends: (step index, value), or null when it has no value. */
+export function outlierEnds(d: FleetData): ({ j: number; v: number } | null)[] {
+  return d.outliers.map((o) => {
+    let j = o.values.length - 1;
+    while (j >= 0 && o.values[j] === null) j--;
+    return j < 0 ? null : { j, v: o.values[j] as number };
+  });
+}

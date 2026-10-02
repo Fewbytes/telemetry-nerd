@@ -90,6 +90,12 @@ test("fleet panel: band, 3 planted outliers labelled, heatmap and small multiple
     }
     await expect(el).toHaveAttribute("data-budget-exceeded", "false");
     timings[`${mode}/band`] = await el.getAttribute("data-render-ms");
+    // end labels (cis): one per drawn outlier, no two boxes overlap
+    const boxes = JSON.parse((await el.locator("[data-fleet-labels]").getAttribute("data-fleet-labels")) ?? "[]") as number[][];
+    expect(boxes).toHaveLength(3);
+    for (const [i, a] of boxes.entries())
+      for (const b of boxes.slice(i + 1))
+        expect(a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3], JSON.stringify(boxes)).toBe(false);
     await el.screenshot({ path: `${SHOTS}/fleet-band-${mode}.png` });
 
     // member x time heatmap: all 100 rows, outlier rows labelled, textured gap, no budget breach

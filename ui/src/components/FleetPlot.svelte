@@ -2,8 +2,8 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import {
-    FLEET_HUE, OUTLIER_COLORS, bandFills, coverageGaps, fleetAxisLabel, fleetKey, fleetLegend, nearestOutlier, outlierMarkIdx,
-    outlierText, toFleetUplot,
+    FLEET_HUE, OUTLIER_COLORS, bandFills, coverageGaps, fleetAxisLabel, fleetKey, fleetLegend, nearestOutlier, outlierEnds,
+    outlierMarkIdx, outlierText, placeEndLabels, toFleetUplot, type EndLabel,
   } from "../chart/fleet";
   import { HIDDEN_SERIES, plotAxes } from "../chart/plotKit";
   import { fmtTimeZ } from "../lib/format";
@@ -101,16 +101,34 @@
                   c.beginPath(); c.arc(x, y, 3 * dpr, 0, 2 * Math.PI); c.fill(); c.stroke();
                 }
               });
-              // outlier labels at their last drawn point
-              c.font = `${11 * dpr}px sans-serif`;
-              data.outliers.forEach((o, i) => {
-                let j = o.values.length - 1;
-                while (j >= 0 && o.values[j] === null) j--;
-                if (j < 0) return;
-                c.fillStyle = OUTLIER_COLORS[i % OUTLIER_COLORS.length];
-                const x = p.valToPos(data.ts[j] / 1000, "x", true), y = p.valToPos(o.values[j] as number, "y", true);
-                c.textAlign = "right";
-                c.fillText(o.id, x - 4 * dpr, y - 4 * dpr);
+              // outlier labels at their last drawn point, de-collided (cis): labels sharing x are
+              // spread vertically in order, joined to their point by a short leader when moved, and
+              // haloed in the background colour so lines under them never cut through the text
+              const fs = 11 * dpr, lh = 13 * dpr;
+              c.font = `${fs}px sans-serif`;
+              c.textAlign = "right"; c.textBaseline = "middle"; c.lineJoin = "round";
+              const ends = outlierEnds(data);
+              const items: (EndLabel & { i: number; px: number; py: number })[] = [];
+              ends.forEach((e, i) => {
+                if (!e) return;
+                const px = p.valToPos(data.ts[e.j] / 1000, "x", true), py = p.valToPos(e.v, "y", true);
+                items.push({ i, px, py, right: px - 6 * dpr, w: c.measureText(data.outliers[i].id).width, y: py - 6 * dpr });
+              });
+              const ys = placeEndLabels(items, lh, p.bbox.top, p.bbox.top + p.bbox.height);
+              // placed label boxes (css px), for checking that none overlap
+              host.dataset.fleetLabels = JSON.stringify(items.map((it, k) => [
+                Math.round((it.right - it.w) / dpr), Math.round((ys[k] - lh / 2) / dpr), Math.round(it.w / dpr), Math.round(lh / dpr),
+              ]));
+              items.forEach((it, k) => {
+                const col = OUTLIER_COLORS[it.i % OUTLIER_COLORS.length], y = ys[k];
+                if (Math.abs(y - it.y) > 2 * dpr) {
+                  c.strokeStyle = col; c.lineWidth = 1 * dpr;
+                  c.beginPath(); c.moveTo(it.px - 1 * dpr, it.py); c.lineTo(it.right + 2 * dpr, y); c.stroke();
+                }
+                c.strokeStyle = bg; c.lineWidth = 3 * dpr;
+                c.strokeText(data.outliers[it.i].id, it.right, y);
+                c.fillStyle = col;
+                c.fillText(data.outliers[it.i].id, it.right, y);
               });
               c.restore();
             },
