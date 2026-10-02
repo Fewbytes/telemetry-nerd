@@ -824,3 +824,14 @@ def test_failure_reasons_touch_the_same_buckets_compute_marks_unknown():
     out = run(rows, failed=failed, end=10 * STEP)
     for t, st in zip(out["ts_ms"].to_pylist(), states(out)):
         assert bool(failure_reasons(failed, [t], STEP)) is (st == State.UNKNOWN)
+
+
+def test_failure_reasons_off_grid_span_and_coarse_buckets_are_wider_on_purpose():
+    from telemetry_nerd.model.caveats import failure_reasons
+
+    # a span [a, b] that is not on the grid still reaches the bucket it overlaps ...
+    assert failure_reasons([(STEP + 1, STEP + 2, "x")], [2 * STEP], STEP) == ["x"]
+    assert failure_reasons([(STEP + 1, STEP + 2, "x")], [STEP, 3 * STEP], STEP) == []
+    # ... and a coarse bucket (end 4, covering (0, 4]) is touched by a failure anywhere inside it
+    assert failure_reasons([(2 * STEP, 2 * STEP, "x")], [4 * STEP], 4 * STEP) == ["x"]
+    assert failure_reasons([(5 * STEP, 5 * STEP, "x")], [4 * STEP], 4 * STEP) == []

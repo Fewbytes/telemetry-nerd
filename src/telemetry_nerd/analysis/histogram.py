@@ -22,6 +22,7 @@ from telemetry_nerd.model.distribution import (
 )
 from telemetry_nerd.model.series import SERIES_SCHEMA, labels_json, series_id
 from telemetry_nerd.model.time import format_duration
+from telemetry_nerd.sources.base import SourceError
 
 GROUPING = ("le", "vmrange")
 _LABEL = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
@@ -131,14 +132,23 @@ def from_matrix(source: str, result: list[dict], expr: str = "") -> DistResult:
     rows: list[tuple[int, str, float, float, float]] = []
     forms: set[str] = set()
     pairs: set[tuple[float, float]] = set()
+    named: dict[tuple[str, str | None, str | None], str | None] = {}  # (sid, le, vmrange) -> name
     for item in result:
         try:
             labels = dict(item["metric"])
         except (KeyError, TypeError, ValueError) as e:
             raise ValueError(f"malformed series {item!r} in query result") from e
-        labels.pop("__name__", None)
+        name = labels.pop("__name__", None)
         le, vmrange = labels.pop("le", None), labels.pop("vmrange", None)
         sid = series_id(source, labels)
+        key = (sid, le, vmrange)
+        if key in named and named[key] != name:  # one series and bucket under two metric names
+            raise SourceError(
+                f"series {named[key]!r} and {name!r} differ only by __name__ "
+                f"(shared labels {labels}): they cannot be told apart in one dataset",
+                hint="select one metric name, or aggregate them apart, e.g. sum by (le, ...) (...)",
+            )
+        named[key] = name
         labels_by_sid[sid] = labels
         if "histograms" in item and item.get("values"):
             raise ValueError(

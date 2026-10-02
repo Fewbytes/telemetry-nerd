@@ -155,6 +155,10 @@ def histogram_panel_data(panel, meta, dist, labels, caveats, width_px) -> dict:
         out["expected_columns"] = len(want)
         out["unknown_columns"] = int((g["state"] == int(State.UNKNOWN)).sum())
         out["unknown"] = out["unknown_columns"] > 0
+        # missing: wanted columns neither returned nor unknown. An unknown column may hold data
+        # (a partial response is kept), so this is not expected - columns - unknown_columns
+        absent = g.filter((pl.col("state") != int(State.UNKNOWN)) & (pl.col("observed") == 0))
+        out["missing_columns"] = len(want) - g.height + absent.height
         return out
 
     series = [
@@ -172,10 +176,7 @@ def histogram_panel_data(panel, meta, dist, labels, caveats, width_px) -> dict:
     wins = [w for s in series for w in s["windows"]]
     for code, hit in (
         # an unknown column is not a missing one (it is reported as untrusted)
-        (
-            "missing_data",
-            any(w["expected_columns"] - w["columns"] - w["unknown_columns"] > 0 for w in wins),
-        ),
+        ("missing_data", any(w["missing_columns"] > 0 for w in wins)),
         ("untrusted_data", any(w["unknown"] for w in wins)),
     ):
         if hit and code not in caveats:

@@ -3,6 +3,7 @@ import json
 import math
 from types import SimpleNamespace
 
+import polars as pl
 import pytest
 
 from telemetry_nerd.analysis.histogram import from_matrix, histogram_expr
@@ -384,3 +385,35 @@ async def test_a_previous_window_that_starts_before_the_data_widens_the_dataset(
     wide = svc.datasets.meta(new.dataset_ids[0])
     assert wide.id != ds and wide.start_ms <= m.start_ms - 14 * 60_000
     assert len(src.hist_selectors) == 2  # the original query and the widened one
+
+
+async def test_an_unknown_column_that_holds_data_is_not_subtracted_twice(tmp_path):
+    """A partial response keeps its data but its columns are unknown. Missing = wanted columns
+    neither returned nor unknown: here 2 absent outside the failed chunk, 2 unknown with data."""
+    svc = make_service(tmp_path)
+    out = await svc.query_distribution(
+        "lat_bucket", by=["instance"], start="now-2h", end="now-1h", step="1m"
+    )
+    meta, dist = svc.datasets.get_distribution(out["dataset"])
+    st = meta.step_ms
+    t = lambda k: meta.start_ms + k * st
+    w = {"start_ms": t(0), "end_ms": t(6), "label": "w"}  # columns 1..6
+
+    def payload(drop, failed):
+        cols = pl.from_arrow(dist.columns).filter(~pl.col("ts_ms").is_in([t(k) for k in drop]))
+        d = dataclasses.replace(dist, columns=cols.to_arrow().cast(dist.columns.schema))
+        m = dataclasses.replace(meta, failed_spans=[[t(a), t(b), "boom"] for a, b in failed])
+        panel = SimpleNamespace(
+            spec={"layers": [{"mark": "histogram", "windows": [w]}]}, to_dict=dict
+        )
+        return histogram_panel_data(panel, m, d, series_labels(dist.series), [], 600)
+
+    data = payload(drop=[1, 6], failed=[(3, 4)])
+    for s in data["series"]:
+        [win] = s["windows"]
+        assert (win["columns"], win["unknown_columns"], win["missing_columns"]) == (4, 2, 2)
+    assert "missing_data" in data["caveats"] and "untrusted_data" in data["caveats"]
+    # unknown only (nothing absent): no missing_data, however many unknown columns hold data
+    data = payload(drop=[], failed=[(3, 5)])
+    assert all(s["windows"][0]["missing_columns"] == 0 for s in data["series"])
+    assert "missing_data" not in data["caveats"] and "untrusted_data" in data["caveats"]

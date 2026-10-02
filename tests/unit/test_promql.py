@@ -630,3 +630,21 @@ async def test_fetch_values_series_differing_only_by_name_are_refused_with_a_hin
     with pytest.raises(SourceError, match="differ only by __name__") as exc:
         await PromQLSource("vm", BASE).fetch_values("{__name__=~'up|down'}", RNG, 60_000)
     assert exc.value.hint and "sum by" in exc.value.hint
+
+
+def test_histogram_matrix_series_differing_only_by_name_are_refused():
+    from telemetry_nerd.analysis.histogram import from_matrix
+
+    result = [
+        {"metric": {"__name__": n, "instance": "a", "le": "1"}, "values": [[1700000100, "3"]]}
+        for n in ("lat_a_bucket", "lat_b_bucket")
+    ]
+    with pytest.raises(SourceError, match="differ only by __name__") as exc:
+        from_matrix("vm", result)
+    assert exc.value.hint and "sum by" in exc.value.hint
+    # different le of one name is the normal case
+    ok = [
+        {"metric": {"__name__": "x", "le": le}, "values": [[1700000100, "1"]]}
+        for le in ("1", "+Inf")
+    ]
+    from_matrix("vm", ok)

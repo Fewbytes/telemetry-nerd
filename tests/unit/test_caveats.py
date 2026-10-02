@@ -214,3 +214,5 @@ def test_unknown_caveat_names_at_most_the_series_cap():
     rows += [row(1, f"u{k:03}", State.UNKNOWN, 0) for k in range(n)]
     cs = from_bucket_state(table(rows), {}, STEP)
     assert all(len(c.where.series) <= MAX_WHERE_SERIES for c in cs if c.where.series)
+    [big] = [c for c in cs if c.where.series and len(c.where.series) == MAX_WHERE_SERIES]
+    assert f"Affects {n + n // 2} series" in big.message

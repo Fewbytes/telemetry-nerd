@@ -46,7 +46,10 @@ MAX_WHERE_SERIES = 50  # located caveats name at most this many series
 
 def failure_reasons(failed: Sequence[FailedSpan], ts: Sequence[int], step_ms: int) -> list[str]:
     """Reasons of the failed fetches that touch these buckets (ends `ts`, each covering
-    (t - step, t]): a bucket is in a failed span [a, b] when a <= t < b + step. Sorted, unique;
+    (t - step, t]): a bucket is in a failed span [a, b] when a <= t < b + step. Failed spans are
+    grid-aligned (a, b are bucket ends of the dataset's step), so at that step this is exactly
+    compute's a <= t <= b; for coarser buckets it is deliberately wider (a failed fine bucket
+    anywhere inside the coarse one counts), and an off-grid span reaches the bucket it overlaps. Sorted, unique;
     empty when no failure reaches them (a caveat never cites a failure elsewhere in the window)."""
     ordered = sorted(ts)
     out: set[str] = set()
@@ -227,6 +230,8 @@ def _untrusted(df: pl.DataFrame, step_ms: int, failed: Sequence[FailedSpan]) -> 
             message = UNOBSERVABLE_MESSAGE
             if reasons:
                 message += f" Also failed fetches ({'; '.join(reasons)})."
+        if len(sids) > MAX_WHERE_SERIES and len(sids) != n_series:
+            message += f" Affects {len(sids)} series (the first {MAX_WHERE_SERIES} are named)."
         out.append(
             Caveat(
                 code="untrusted_data",

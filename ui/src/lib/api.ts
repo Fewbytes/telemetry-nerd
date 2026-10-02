@@ -122,7 +122,7 @@ export interface HeatSeries {
 }
 export interface WindowHist {
   label: string; start_ms: number; end_ms: number; n: number; columns: number;
-  expected_columns?: number; unknown?: boolean; unknown_columns?: number;
+  expected_columns?: number; unknown?: boolean; unknown_columns?: number; missing_columns?: number;
   lo: (number | null)[]; hi: (number | null)[]; c: number[];
   /** source buckets, only present when `lo/hi/c` were value-merged into bars */
   source?: { lo: (number | null)[]; hi: (number | null)[]; c: number[] };
