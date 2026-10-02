@@ -45,7 +45,19 @@ function gridTimes({ start, end, step }: Grid): number[] {
   return out;
 }
 
+const EPS_S = 0.001;
+
+/** Bucket ends -> interval edges: value i spans (x_i - step, x_i]; lone buckets stay visible. */
+export function stepify(data: (number | null)[][], stepS: number): (number | null)[][] {
+  const [xs, ...cols] = data;
+  const x2: number[] = [];
+  for (const x of xs as number[]) x2.push(x - stepS + EPS_S, x);
+  return [x2, ...cols.map((c) => c.flatMap((v) => [v, v]))];
+}
+
 export interface ToUplotOpts {
+  /** draw each bucket across its interval (default: true when a grid is given) */
+  stepped?: boolean;
   quantile?: boolean;
   nMin?: number | null;
   /** another series set drawn with these: the raw behind a filter (faint, underneath) or the removed part (dashed, on top) */
@@ -198,5 +210,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
     uSeries.push({ label: `limit ${l.labels ? seriesName(l.labels) : i + 1}`, stroke: LIMIT_COLOR, width: 1.5, dash: [8, 4], spanGaps: false, points: { show: false } });
   });
 
-  return { data: data as uPlot.AlignedData, series: uSeries, bands, legendHidden, points: xs.length * series.length };
+  const stepped = grid !== undefined && opts.stepped !== false;
+  const out = stepped ? stepify(data as (number | null)[][], grid.step / 1000) : data;
+  return { data: out as uPlot.AlignedData, series: uSeries, bands, legendHidden, points: xs.length * series.length };
 }

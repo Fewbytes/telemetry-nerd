@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { seriesName, toUplot } from "./toUplot";
+import { seriesName, stepify, toUplot } from "./toUplot";
 import type { SeriesData } from "../lib/api";
 
 const s = (id: string, labels: Record<string, string>, ts: number[], v: number[]): SeriesData => ({
@@ -17,14 +17,14 @@ describe("toUplot", () => {
 
   it("puts a null at a hole in the data so the line is not bridged", () => {
     const grid = { start: 1000, end: 4000, step: 1000 };
-    const m = toUplot([s("a", { i: "a" }, [1000, 2000, 4000], [1, 2, 4])], grid);
+    const m = toUplot([s("a", { i: "a" }, [1000, 2000, 4000], [1, 2, 4])], grid, { stepped: false });
     expect(m.data[0]).toEqual([1, 2, 3, 4]);
     expect(m.data[1]).toEqual([1, 2, null, 4]);
     expect(m.data[2]).toEqual([0, 1, null, 3]); // min
   });
 
   it("aligns the grid start up to the effective step and keeps off-grid data", () => {
-    const m = toUplot([s("a", { i: "a" }, [2000, 6000], [1, 2])], { start: 1500, end: 5000, step: 2000 });
+    const m = toUplot([s("a", { i: "a" }, [2000, 6000], [1, 2])], { start: 1500, end: 5000, step: 2000 }, { stepped: false });
     expect(m.data[0]).toEqual([2, 4, 6]);
     expect(m.data[1]).toEqual([1, null, 2]);
   });
@@ -101,4 +101,20 @@ describe("toUplot filter context", () => {
     const m = toUplot([base], undefined, { context: { role: "removed", series: [{ ...base, avg: [9, 9, 9] }] } });
     expect(m.series.some((x) => x.dash && String(x.label).includes("removed"))).toBe(true);
   });
+});
+
+describe("stepify", () => {
+  it("draws each bucket across its interval and keeps lone buckets visible", () => {
+    const out = stepify([[60, 120, 180], [1, null, 3]], 60);
+    expect(out[0]).toEqual([0.001, 60, 60.001, 120, 120.001, 180]);
+    expect(out[1]).toEqual([1, 1, null, null, 3, 3]);
+  });
+});
+
+it("steps by default when a grid is given, but counts buckets for the render budget", () => {
+  const grid = { start: 60_000, end: 120_000, step: 60_000 };
+  const m = toUplot([s("a", { i: "a" }, [60_000, 120_000], [1, 2])], grid);
+  expect(m.data[0]).toEqual([0.001, 60, 60.001, 120]);
+  expect(m.data[1]).toEqual([1, 1, 2, 2]);
+  expect(m.points).toBe(2);
 });
