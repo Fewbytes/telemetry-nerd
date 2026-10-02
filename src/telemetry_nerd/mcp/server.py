@@ -14,7 +14,7 @@ from telemetry_nerd.core.code_ops import CodeDisabled
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.jsonsafe import dumps
-from telemetry_nerd.model.time import parse_duration, parse_time
+from telemetry_nerd.model.time import format_duration, iso, parse_duration, parse_time
 from telemetry_nerd.sources.base import SourceError
 from telemetry_nerd.sources.public import PUBLIC_SOURCES
 from telemetry_nerd.sources.spec import SourceSpec
@@ -112,7 +112,8 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   littles_law, RED, USE) go the same way; a binding role with no signal raises a Gap.
   `binding_suggest` proposes bindings (RED per service, USE per instance/device, Little's law
   triples) from names, packs and relations: check the picks and alternatives, then
-  `binding_accept` or `catalog_bind`.
+  `binding_accept` or `catalog_bind`. `show_binding` draws a binding (or a suggestion) as one
+  linked panel group: shared time axis, per-role form, gap cards for missing roles.
 - When you can read the service's repo, `catalog_context` turns its metric registrations,
   dashboards and docs into cited claims (description, type, unit): find the files with rg, read the
   few that matter, send their text. Say where a claim came from when you cite it.
@@ -140,6 +141,43 @@ def _issues(e: ValidationError) -> str:
 
 def _source_error(e: SourceError) -> ToolError:
     return ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e))
+
+
+def group_summary(g, ui_url: str) -> dict:
+    """What Claude needs back from show_binding: panel ids per role, how each is drawn, gaps."""
+    roles: dict[str, dict] = {}
+    for r in g.roles:
+        if r.view == "gap":
+            roles[r.role] = {
+                "gap": r.gap,
+                "suggest": r.suggestion.model_dump() if r.suggestion else None,
+                "why": r.why,
+            }
+            continue
+        d: dict = {"metric": r.metric, "form": r.form, "view": r.view}
+        if r.panel:
+            d["panel"] = r.panel
+        if r.members is not None:
+            d["members"] = r.members
+        if r.error:
+            d["error"] = r.error
+        if r.notes:
+            d["notes"] = r.notes
+        roles[r.role] = d
+    out = {
+        "group": g.id,
+        "url": f"{ui_url}/#/group/{g.id}",
+        "kind": g.kind,
+        "key": g.key,
+        "basis": g.suggestion if g.basis == "suggestion" else f"binding ({g.binding_origin})",
+        "range": {"start": iso(g.start_ms), "end": iso(g.end_ms)},
+        "step": format_duration(g.step_ms),
+        "roles": roles,
+        "gaps": [r.role for r in g.roles if r.view == "gap"],
+    }
+    if g.notes:
+        out["notes"] = g.notes
+    return out
 
 
 def _fail(e: Exception) -> ToolError:
@@ -849,6 +887,48 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             )  # fmt: skip
         except (NotFound, ValueError) as e:
             raise _fail(e) from e
+
+    @mcp.tool()
+    async def show_binding(
+        source: str = "default",
+        kind: str | None = None,
+        key: str | None = None,
+        suggestion: str | None = None,
+        range: str | None = None,
+        start: str = "now-1h",
+        end: str = "now",
+        step: str = "auto",
+        matchers: dict[str, str] | None = None,
+        error_matcher: str | None = None,
+    ) -> str:
+        """Draw a USE / RED / Little's law metric set as ONE panel group: one time range and step,
+        linked crosshair and selection, a header naming the binding. Pass `kind` + `key` of a
+        confirmed binding (catalog_bind / binding_accept), or `suggestion` (a binding_suggest id,
+        e.g. RED:otel_http) to look before confirming. range: a duration back from now ("6h"),
+        else start/end. matchers {label: value} narrow every role (e.g. {"service_name": "cart"}).
+        Each role is drawn in the form its semantics call for: rates of counters; RED errors as
+        errors / requests with a Wilson 95% band (a separate error counter over the requests, or
+        the request metric split by the status matcher of the suggestion's expr hint; when no
+        status label is known pass error_matcher, e.g. 'status_code=~"5.."'); latency from a
+        histogram as its distribution (heatmap / percentile bands, never averaged percentiles);
+        utilization on its natural 0..1 axis; saturation with its bounded_by limit line;
+        concurrency as the gauge. Roles with more than 5 members are drawn as fleets; a missing
+        role is a gap card naming the instrumentation that would fill it. Label names in hints
+        are conventions: check `notes` and role errors. Returns {group, kind, key, range, step,
+        roles {role: {panel, metric, form, view, members, notes} | {gap, suggest} | {error}},
+        gaps}. Little's-law consistency is check_littles_law's job, not this view's."""
+        try:
+            if range is not None:
+                start, end = f"now-{range.strip()}", "now"
+            g = await service.show_binding(
+                source=source, kind=kind, key=key, suggestion=suggestion, start=start, end=end,
+                step=step, matchers=matchers, error_matcher=error_matcher, actor="claude",
+            )  # fmt: skip
+        except SourceError as e:
+            raise _source_error(e) from e
+        except (NotFound, ValueError) as e:
+            raise _fail(e) from e
+        return _dump(group_summary(g, ui_url))
 
     @mcp.tool()
     def catalog_relations(

@@ -318,3 +318,49 @@ class CodeNode(_Strict):
     truncated: bool = False  # stdout/stderr were cut (head + tail kept)
     outputs: list[CodeOutput] = Field(default_factory=list)
     issues: list[CodeIssue] = Field(default_factory=list)
+
+
+class GroupRole(_Strict):
+    """One role of a panel group (bead czt.3): its panel, or the gap where its signal is missing."""
+
+    role: str
+    metric: str | None = None
+    panel: str | None = None
+    #: how the role is drawn: rate | error_ratio | distribution | mean | utilization | saturation |
+    #: concurrency | errors | value | littles (the model check)
+    form: str | None = None
+    #: model: a panel that checks the binding's model (Little's law, czt.2)
+    view: Literal["lines", "fleet", "heatmap", "model", "gap", "error"] = "gap"
+    members: int | None = None  # series behind the panel (fleet when many)
+    notes: list[str] = Field(default_factory=list)
+    #: unfilled role: what to instrument (and the Gap object, for a confirmed binding)
+    suggestion: MetricSuggestion | None = None
+    why: str | None = None
+    gap: str | None = None
+    error: str | None = None
+
+
+class PanelGroup(_Strict):
+    """Panels drawn together for one model binding (USE / RED / Little's law): one time range and
+    step, linked selection; closing the group closes every member panel."""
+
+    id: str
+    kind: str
+    key: str
+    source: str
+    author: str
+    created_at_ms: int
+    start_ms: int
+    end_ms: int
+    step_ms: int
+    #: where the roles came from: "binding" (a confirmed catalog binding) or "suggestion"
+    basis: Literal["binding", "suggestion"]
+    binding_origin: str | None = None
+    suggestion: str | None = None
+    join_on: list[str] = Field(default_factory=list)
+    matchers: dict[str, str] = Field(default_factory=dict)
+    error_matcher: str | None = None
+    roles: list[GroupRole]
+    notes: list[str] = Field(default_factory=list)
+    closed: bool = False
+    reframed_from: str | None = None

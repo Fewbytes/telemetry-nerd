@@ -21,6 +21,7 @@ from telemetry_nerd.workspace.models import (
     Hypothesis,
     HypothesisStatus,
     Message,
+    PanelGroup,
     Thread,
     TimeSpan,
     Verdict,
@@ -247,3 +248,19 @@ class ObjectStore:
 
     def list_code(self) -> list[CodeNode]:
         return self._list("code", CodeNode)
+
+    # panel groups (bead czt.3) -----------------------------------------
+    def create_group(self, **fields) -> PanelGroup:
+        g = PanelGroup(id=self._new_id("pg"), created_at_ms=self._clock(), **fields)
+        self._insert("panel_group", g, None)
+        return g
+
+    def get_group(self, obj_id: str) -> PanelGroup:
+        return self._get("panel_group", PanelGroup, obj_id)
+
+    def set_group(self, g: PanelGroup) -> PanelGroup:
+        self._update(g)
+        return g
+
+    def list_groups(self) -> list[PanelGroup]:
+        return self._list("panel_group", PanelGroup)

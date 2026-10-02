@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { getContext } from "svelte";
+  import { GROUP_GUTTER_PX } from "../lib/groupLink.svelte";
   import { setupCanvas } from "../chart/canvas";
   import { colormap, type ColormapName } from "../chart/colormap";
   import { cellSpan, hitTest, layoutHeatmap, STRIP_PX, timeAt, timeColumns, type HeatLayout } from "../chart/heatmap";
@@ -19,7 +21,8 @@
     onBrush: (b: { x0: number; x1: number; left: number; width: number }) => void;
   } = $props();
 
-  const AXIS_LEFT = 64;
+  // a panel group (czt.3) widens the gutter so every role's x axis starts at the same pixel
+  const AXIS_LEFT = getContext("panelGroup") ? GROUP_GUTTER_PX : 64;
   const AXIS_BOTTOM = 16;
   let canvas = $state<HTMLCanvasElement | null>(null);
   let tip = $state<{ x: number; y: number; text: string } | null>(null);

@@ -174,3 +174,14 @@ describe("provenanceParts", () => {
     expect(provenanceParts({ source: "default", producer: null, parents: [] })).toBeNull();
   });
 });
+
+describe("binding views (czt.3)", () => {
+  const producer = { kind: "binding" as const, op: "error_ratio", description: "errors / requests per step, Wilson interval" };
+  it("describes an error share with its Wilson band and its inputs", () => {
+    const u = { method: "Wilson score on counts = mean rate x step", level: 0.95, kind: "confidence" };
+    expect(describeShown({ representation: "bucket_agg", producer, uncertainty: u }, "1m"))
+      .toBe("Share of requests that failed per 1m bucket (errors ÷ requests, line); band: declared 95% confidence interval (Wilson score on counts = mean rate x step).");
+    expect(provenanceText({ source: "vm", producer, parents: ["d1", "d2"] })).toBe("vm: errors / requests per step, Wilson interval from d1, d2");
+    expect(provenanceParts({ source: "vm", producer, parents: [] })).toBeNull();
+  });
+});

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { getContext } from "svelte";
+  import { GROUP_GUTTER_PX } from "../lib/groupLink.svelte";
   import { setupCanvas } from "../chart/canvas";
   import { colormap } from "../chart/colormap";
   import { minSamples, timeColumns, valueAxis } from "../chart/heatmap";
@@ -18,7 +20,8 @@
   // per-theme series colours: the light theme needs darker variants for 3:1 contrast
   const palette = $derived(seriesPalette(theme.effective));
 
-  const AXIS_LEFT = 64;
+  // a panel group (czt.3) widens the gutter so every role's x axis starts at the same pixel
+  const AXIS_LEFT = getContext("panelGroup") ? GROUP_GUTTER_PX : 64;
   const AXIS_BOTTOM = 16;
   let canvas = $state<HTMLCanvasElement | null>(null);
   let tip = $state<{ x: number; y: number; text: string } | null>(null);

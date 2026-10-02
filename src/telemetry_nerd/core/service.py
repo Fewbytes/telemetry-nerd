@@ -55,6 +55,7 @@ from telemetry_nerd.charts.spec import (
     AssertedBounds,
     AutoForm,
     ChartSpec,
+    GroupRef,
     Layer,
     Marginal,
     Reference,
@@ -77,6 +78,7 @@ from telemetry_nerd.charts.ycontext import (
 )
 from telemetry_nerd.charts.yview import value_stats
 from telemetry_nerd.core import fleet_payloads
+from telemetry_nerd.core.binding_ops import BindingViews
 from telemetry_nerd.core.card_payload import (
     MAX_METRICS,
     gap_pct,
@@ -141,6 +143,7 @@ from telemetry_nerd.model.time import (
 from telemetry_nerd.sources.base import LimitExceeded, Source, SourceError, SourceUnavailable
 from telemetry_nerd.sources.registry import SourceRegistry
 from telemetry_nerd.sources.spec import RESERVED_NAMES, SourceSpec
+from telemetry_nerd.workspace.models import PanelGroup
 from telemetry_nerd.workspace.store import Panel, WorkspaceStore
 
 _NICE_STEPS = [
@@ -242,8 +245,10 @@ class TelemetryService:
     #: tier-2 run directories (<data_dir>/runs); None when tier-2 is not wired
     runs_root: Path | None = None
     code: CodeOps = field(init=False)
+    bindings: BindingViews = field(init=False)
 
     def __post_init__(self) -> None:
+        self.bindings = BindingViews(self)
         self.signal = SignalOps(self.datasets, self.ws.catalog_facts)
         self.diagnostics = SeriesDiagnostics(
             self.signal, lambda *a: self.profiles.seasonal_excluding(*a), self.query
@@ -872,6 +877,23 @@ class TelemetryService:
                     )
                     return self.show(rate, question, actor, auto=form, **kw)
         return self.show(dataset_id, question, actor, raw_ok=raw, **kw)
+
+    async def show_binding(self, **kw) -> PanelGroup:
+        """A bound USE / RED / Little's law metric set as one linked panel group (bead czt.3)."""
+        return await self.bindings.show(**kw)
+
+    async def reframe_group(
+        self, group_id: str, start_ms: int, end_ms: int, actor: Actor = "user"
+    ) -> PanelGroup:
+        """The same panel group over another window (a selection): a NEW group, marked as
+        reframed from this one, which stays as it was."""
+        g = self.ws.group_get(group_id)
+        return await self.bindings.show(
+            source=g.source, kind=g.kind, key=g.key,
+            suggestion=g.suggestion if g.basis == "suggestion" else None,
+            start=str(start_ms), end=str(end_ms), matchers=g.matchers,
+            error_matcher=g.error_matcher, actor=actor, reframed_from=g.id,
+        )  # fmt: skip
 
     async def reframe(self, panel_id: str, index: int, actor: Actor = "user") -> ShowResult:
         """Accept a proposed reframing (bead 2as.15): a NEW panel over the same window and step,
@@ -1545,6 +1567,8 @@ class TelemetryService:
         raw_ok: bool = False,
         bounds_lo: float | None = None,
         bounds_hi: float | None = None,
+        bounds_by: str | None = None,
+        group: GroupRef | None = None,
     ) -> ShowResult:
         meta = self.datasets.meta(dataset_id)
         refuse_estimate(self.datasets, meta)
@@ -1563,9 +1587,12 @@ class TelemetryService:
             lookup=lambda metric: self.ws.catalog_facts(meta.source, metric),
         )
         spec.auto = auto
+        spec.group = group
         if bounds_lo is not None or bounds_hi is not None:
             # the caller vouches for natural bounds, like an asserted unit (bead f2z)
-            spec.y.asserted_bounds = AssertedBounds(lo=bounds_lo, hi=bounds_hi, by=actor)
+            spec.y.asserted_bounds = AssertedBounds(
+                lo=bounds_lo, hi=bounds_hi, by=bounds_by or actor
+            )
         panel_datasets = [dataset_id]
         if mark in SPECTRAL_MARKS:
             self.signal.check(dataset_id, mark)

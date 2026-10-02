@@ -41,11 +41,44 @@
   import { colorMaxOf } from "./chart/heatmap";
   import { DEFAULT_QUANTILES, QUANTILE_CHOICES, MAX_QUANTILES, overlay, qLabel, toggleQuantile } from "./chart/percentiles";
   import DistributionPlot from "./components/DistributionPlot.svelte";
+  import { GROUP_GUTTER_PX, GROUP_LABEL_PX, type GroupLink } from "./lib/groupLink.svelte";
+  import { msAt, xAt } from "./lib/groups";
 
   let { panel, annotations = [], threads = [] }: {
     panel: Panel; annotations?: Annotation[]; threads?: Thread[];
   } = $props();
 
+  // one role of a panel group (bead czt.3): shared x domain, linked crosshair and selection
+  const link = getContext<GroupLink | undefined>("panelGroup");
+  // the plot area (CSS px, relative to the plot container) of whichever renderer is showing
+  let area = $state<{ left: number; top: number; width: number; height: number } | null>(null);
+  let facetsH = $state(0);
+  const areaOf = (u: uPlot): void => {
+    if (!link || !plotEl) return;
+    const dpr = window.devicePixelRatio || 1;
+    const host = plotEl.getBoundingClientRect(), root = u.root.getBoundingClientRect();
+    const next = {
+      left: root.left - host.left + u.bbox.left / dpr, top: root.top - host.top + u.bbox.top / dpr,
+      width: u.bbox.width / dpr, height: u.bbox.height / dpr,
+    };
+    if (!area || Object.entries(next).some(([k, v]) => Math.abs(v - area![k as keyof typeof next]) > 0.5)) area = next;
+  };
+  $effect(() => {
+    // heatmap / percentile facets share the AXIS_LEFT gutter of their canvases
+    if (link && data?.kind === "heatmap" && fetchWidth) area = { left: GROUP_GUTTER_PX, top: 0, width: fetchWidth - GROUP_GUTTER_PX, height: facetsH };
+  });
+  $effect(() => {
+    // the fleet's member x time view has its own rows: no crosshair there
+    if (link && data?.kind === "fleet" && fleetView !== "band") area = null;
+  });
+  const onLinkedMove = (e: MouseEvent) => {
+    if (!link || !area) return;
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const y = e.clientY - r.top;
+    link.hover(y >= area.top && y <= area.top + area.height ? msAt(e.clientX - r.left, link.domain, area.left, area.width) : null);
+  };
+  const linkedX = (ms: number): number | null =>
+    link && area ? xAt(Math.min(Math.max(ms, link.domain[0]), link.domain[1]), link.domain, area.left, area.width) : null;
   // opens the read-only code view of the node that produced this panel's data (provided by App)
   const openCode = getContext<((id: string) => void) | undefined>("openCode");
   const panelAnns = $derived(
@@ -68,6 +101,12 @@
     selection = null;
     plot?.setSelect({ left: 0, top: 0, width: 0, height: 0 });
   };
+  $effect(() => {
+    // the brush is shown on every panel of the group (and offers the group over that window)
+    if (!link) return;
+    if (selection) link.select(selection.x0 * 1000, selection.x1 * 1000, panel.id);
+    else untrack(() => link.clear(panel.id));
+  });
 
   let plotEl = $state<HTMLDivElement | null>(null);
   let data = $state.raw<PanelData | null>(null);
@@ -358,9 +397,11 @@
             width, height: 260, series: model.series, bands: model.bands,
             tzDate: (ts: number) => uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"),
             scales: {
-              x: { time: true },
+              x: link ? { time: true, range: (): [number, number] => [link.domain[0] / 1000, link.domain[1] / 1000] } : { time: true },
               y: yr?.range ? { distr: yr.log ? 3 : 1, log: 10, range: () => yr.range! } : {},
             },
+            // grouped: a fixed y gutter and no side padding, so every role's x axis lines up
+            ...(link ? { padding: [10, 0, 0, 0] as uPlot.Padding } : {}),
             // axis/grid colors from CSS tokens so they follow the theme
             axes: [
               // a rug sits between the plot floor and the tick labels: grow the axis, push the labels
@@ -376,12 +417,13 @@
                   }
                 : {
                     label: unit ?? "value (unit unknown)", stroke, grid: { stroke: grid }, ticks: { stroke: grid },
-                    size: axisGutterSize(),
+                    // grouped: label + ticks fill exactly the shared gutter (label space counts too)
+                    ...(link ? { size: GROUP_GUTTER_PX - GROUP_LABEL_PX, labelSize: GROUP_LABEL_PX, labelGap: 0 } : { size: axisGutterSize() }),
                     values: (_u: uPlot, ts: (number | null)[]) => ts.map((t) => (t == null ? "" : fmtSI(t, unit))),
                   },
             ],
             // brush = x-only selection; we open a menu instead of zooming
-            cursor: { drag: bandMode ? { setScale: false, x: false, y: true } : { setScale: false, x: true, y: false } },
+            cursor: { drag: bandMode ? { setScale: false, x: false, y: true } : { setScale: false, x: true, y: false }, ...(link ? { x: false } : {}) },
             hooks: {
               ready: [
                 (u: uPlot) => {
@@ -392,6 +434,7 @@
               draw: [
                 onDraw,
                 (u: uPlot) => {
+                  areaOf(u);
                   const ops = drawOps(
                     anns,
                     { min: u.scales.x.min ?? 0, max: u.scales.x.max ?? 0 },
@@ -514,7 +557,22 @@
     <button class="close" type="button" aria-label="Close panel" onclick={close}>×</button>
   </header>
   {#if error}<div class="error">{error}</div>{/if}
-  <div bind:this={plotEl} class="plot" style="position: relative">
+  <!-- svelte-ignore a11y_no_static_element_interactions (pointer tracking for the linked crosshair; the plot itself is the interactive element) -->
+  <div bind:this={plotEl} class="plot" style="position: relative"
+    onmousemove={link ? onLinkedMove : undefined} onmouseleave={link ? () => link.hover(null) : undefined}>
+    {#if link && area}
+      {@const hx = link.hoverMs != null ? xAt(link.hoverMs, link.domain, area.left, area.width) : null}
+      {#if hx != null}
+        <div class="xhair" data-xhair style="left:{hx}px;top:{area.top}px;height:{area.height}px"></div>
+      {/if}
+      {#if link.brush && link.brush.from !== panel.id}
+        {@const a = linkedX(link.brush.x0Ms)}
+        {@const b = linkedX(link.brush.x1Ms)}
+        {#if a != null && b != null && b > a}
+          <div class="xbrush" data-linked-brush style="left:{a}px;width:{b - a}px;top:{area.top}px;height:{area.height}px"></div>
+        {/if}
+      {/if}
+    {/if}
     {#if data?.kind === "time" && (data.bucket_state?.length ?? 0) > 0}
       <canvas class="rug" bind:this={rugEl} data-rug aria-label="Coverage rug: where data is missing"
         onmousemove={onRugMove} onmouseleave={onRugLeave}></canvas>
@@ -527,6 +585,7 @@
     {/if}
     {#if data && data.kind === "heatmap"}
       {@const hm = data}
+      <div class="facets" bind:clientHeight={facetsH}>
       {#if heatView === "percentiles"}
         {#if overlay(hm.series.length, heatQs.length)}
           <PercentilePlot
@@ -559,6 +618,7 @@
         <CountStrip data={hm} series={[s]} width={fetchWidth} />
       {/each}
       {/if}
+      </div>
       <div class="legend heat-controls">
         view:
         <button type="button" class:on={heatView === "heatmap"} onclick={() => (heatView = "heatmap")}>heatmap</button>
@@ -626,7 +686,8 @@
       {/each}
     {/if}
     {#if data && data.kind === "fleet"}
-      <FleetPlot data={data} width={fetchWidth} range={yres?.range ?? null} unit={panel.spec.y.unit ?? null} bind:view={fleetView} onRendered={(ms, pts, h) => onFacetRendered(0, 1, ms, pts, h ?? 260, true)} />
+      <FleetPlot data={data} width={fetchWidth} range={yres?.range ?? null} unit={panel.spec.y.unit ?? null} bind:view={fleetView} onRendered={(ms, pts, h) => onFacetRendered(0, 1, ms, pts, h ?? 260, true)}
+        xRange={link ? [link.domain[0] / 1000, link.domain[1] / 1000] : null} gutter={link ? GROUP_GUTTER_PX : null} onPlot={link ? areaOf : undefined} />
     {/if}
     {#if data && data.kind === "spectrogram"}
       {@const sg = data}

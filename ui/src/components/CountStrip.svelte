@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { getContext } from "svelte";
+  import { GROUP_GUTTER_PX } from "../lib/groupLink.svelte";
   import { setupCanvas } from "../chart/canvas";
   import { timeColumns } from "../chart/heatmap";
   import type { HeatmapPanelData, HeatSeries } from "../lib/api";
@@ -7,7 +9,8 @@
   // every column equal visual weight, so this shows how much traffic each one rests on.
   let { data, series, width }: { data: HeatmapPanelData; series: HeatSeries[]; width: number } = $props();
 
-  const AXIS_LEFT = 64;
+  // a panel group (czt.3) widens the gutter so every role's x axis starts at the same pixel
+  const AXIS_LEFT = getContext("panelGroup") ? GROUP_GUTTER_PX : 64;
   const HEIGHT = 26;
   let canvas = $state<HTMLCanvasElement | null>(null);
   const plotW = $derived(Math.max(10, width - AXIS_LEFT));

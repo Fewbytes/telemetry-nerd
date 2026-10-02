@@ -17,6 +17,8 @@ export interface ChartSpec {
   signal?: { filter: string; kind: string; reason: string; offered: string[]; default: string; selected?: string | null } | null;
   references?: Record<string, { mode: string; label: string; start_ms: number; end_ms: number; shift_ms: number; series: string; dist?: string | null }>;
   marginal?: { reference: "previous" | "week" | "profile"; author?: string; reason?: string | null } | null;
+  /** the panel is one role of a panel group (bead czt.3) */
+  group?: { id: string; role: string } | null;
 }
 /** What the catalog says about the y axis (bead 2as.10). */
 /** A line drawn from catalog context (2as.15): a hard limit, a threshold or a reference series. */
@@ -54,7 +56,7 @@ export interface SeriesData {
   lo?: (number | null)[]; hi?: (number | null)[];
 }
 /** A tier-2 code output's producer (spec §5.2): the code node and its output name. */
-export interface Producer { kind: "code"; node: string; output: string; description?: string }
+export interface Producer { kind: "code" | "binding"; node?: string; output?: string; op?: string; description?: string }
 /** Declared uncertainty: an interval (lo/hi per row) of `level` by `method`, or exact. */
 export interface Uncertainty { method?: string; level?: number | null; kind?: string; exact?: boolean }
 export interface DatasetMeta {
@@ -245,6 +247,22 @@ export interface Snapshot {
   panels: Panel[]; annotations: Annotation[]; hypotheses: Hypothesis[];
   findings: Finding[]; gaps: Gap[]; threads: Thread[]; last_seq: number;
   code?: CodeBrief[];
+  groups?: PanelGroup[];
+}
+/** One role of a panel group: its panel, or the gap where its signal is missing (bead czt.3). */
+export interface GroupRole {
+  role: string; metric: string | null; panel: string | null; form: string | null;
+  view: "lines" | "fleet" | "heatmap" | "model" | "gap" | "error"; members: number | null; notes: string[];
+  suggestion: { name: string; type: string; labels: string[] } | null; why: string | null;
+  gap: string | null; error: string | null;
+}
+/** A USE / RED / Little's law binding drawn as one linked group of panels. */
+export interface PanelGroup {
+  id: string; kind: string; key: string; source: string; author: string; created_at_ms: number;
+  start_ms: number; end_ms: number; step_ms: number; basis: "binding" | "suggestion";
+  binding_origin: string | null; suggestion: string | null; join_on: string[];
+  matchers: Record<string, string>; error_matcher: string | null; roles: GroupRole[];
+  notes: string[]; closed: boolean; reframed_from: string | null;
 }
 
 export class ApiError extends Error {
@@ -279,6 +297,10 @@ export const postJSON = <T>(path: string, body: unknown = {}) =>
 
 export const fetchWorkspace = () => fetch("/api/workspace").then((r) => json<Snapshot>(r));
 export const closePanel = (id: string) => postJSON<unknown>(`/api/panels/${id}/close`);
+export const closeGroup = (id: string) => postJSON<PanelGroup>(`/api/groups/${id}/close`);
+/** The same group over a selected window: a new group, this one stays. */
+export const reframeGroup = (id: string, start_ms: number, end_ms: number) =>
+  postJSON<PanelGroup>(`/api/groups/${id}/reframe`, { start_ms, end_ms });
 
 export const fetchCode = (id: string) => fetch(`/api/code/${encodeURIComponent(id)}`).then((r) => json<CodeNode>(r));
 /** Run a node's code again on the same inputs: answers with the NEW node once it has finished. */

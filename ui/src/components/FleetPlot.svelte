@@ -10,12 +10,16 @@
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { FleetPanelData } from "../lib/api";
   import FleetHeat from "./FleetHeat.svelte";
+  import { GROUP_LABEL_PX } from "../lib/groupLink.svelte";
   import FleetSmallMultiples from "./FleetSmallMultiples.svelte";
 
   type View = "band" | "heat" | "multiples";
-  let { data, width, height = 260, range = null, unit = null, view = $bindable("band"), onRendered }: {
+  let { data, width, height = 260, range = null, unit = null, view = $bindable("band"), onRendered, xRange = null, gutter = null, onPlot }: {
     data: FleetPanelData; width: number; height?: number; range?: [number, number] | null; unit?: string | null; view?: View;
     onRendered: (ms: number, points: number, heightPx?: number) => void;
+    /** a panel group's shared x domain (seconds) and y gutter, so the role lines up with the others */
+    xRange?: [number, number] | null; gutter?: number | null;
+    onPlot?: (u: uPlot) => void;
   } = $props();
 
   // band + lines (default), member x time heatmap, or small multiples of the top outliers
@@ -53,9 +57,13 @@
       {
         width, height, series,
         bands: m.bands.map((b, i) => ({ ...b, fill: fills[i] })),
-        axes: plotAxes(stroke, grid, { label: data.normalise === "member" ? "× own median" : unit ?? undefined }),
+        axes: plotAxes(stroke, grid, { label: data.normalise === "member" ? "× own median" : unit ?? undefined, ...(gutter ? { size: gutter - GROUP_LABEL_PX, labelSize: GROUP_LABEL_PX, labelGap: 0 } : {}) }),
         legend: { show: false },
-        ...(range ? { scales: { y: { range: (): [number, number] => range } } } : {}),
+        scales: {
+          ...(range ? { y: { range: (): [number, number] => range } } : {}),
+          ...(xRange ? { x: { time: true, range: (): [number, number] => xRange } } : {}),
+        },
+        ...(gutter ? { padding: [10, 0, 0, 0] as uPlot.Padding } : {}),
         cursor: { drag: { x: false, y: false } },
         hooks: {
           setCursor: [
@@ -73,6 +81,7 @@
             },
           ],
           draw: [
+            (p: uPlot) => { onPlot?.(p); },
             (p: uPlot) => {
               const c = p.ctx, dpr = window.devicePixelRatio || 1;
               c.save();

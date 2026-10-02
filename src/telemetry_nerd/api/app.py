@@ -761,6 +761,25 @@ def create_app(
         return ws.close_panel(request.path_params["id"], "user").to_dict()
 
     @_api
+    async def group_close(request: Request) -> object:
+        """Close a panel group and all of its panels (bead czt.3)."""
+        await _body(request)
+        return ws.close_group(request.path_params["id"], "user").model_dump()
+
+    @_api
+    async def group_reframe(request: Request) -> object:
+        """The same panel group over the selected window: a new group; this one stays."""
+        body = await _body(request)
+        a, b = body.get("start_ms"), body.get("end_ms")
+        if not all(isinstance(x, int) and not isinstance(x, bool) for x in (a, b)) or a >= b:
+            raise _BadRequest(
+                "start_ms and end_ms must be integers, start before end",
+                "send the selection window in epoch ms",
+            )
+        g = await service.reframe_group(request.path_params["id"], a, b, "user")
+        return g.model_dump()
+
+    @_api
     async def focus(request: Request) -> object:
         body = await _body(request)
         ws.set_focus(_validated(TimeSpan, body), "user")
@@ -805,6 +824,8 @@ def create_app(
         Route("/api/threads", thread_create, methods=["POST"]),
         Route("/api/threads/{id}/messages", thread_message, methods=["POST"]),
         Route("/api/panels/{id}/close", panel_close, methods=["POST"]),
+        Route("/api/groups/{id}/close", group_close, methods=["POST"]),
+        Route("/api/groups/{id}/reframe", group_reframe, methods=["POST"]),
         Route("/api/focus", focus, methods=["POST"]),
         Route("/api/highlights", highlight_create, methods=["POST"]),
         Route("/api/highlights/{id}/clear", highlight_clear, methods=["POST"]),

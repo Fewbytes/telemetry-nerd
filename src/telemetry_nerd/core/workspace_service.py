@@ -93,6 +93,7 @@ from telemetry_nerd.workspace.models import (
     HypothesisStatus,
     Message,
     MetricSuggestion,
+    PanelGroup,
     PanelRef,
     Scope,
     StatisticRef,
@@ -377,6 +378,32 @@ class WorkspaceService:
         p = self.workspace.close_panel(panel_id)
         self.log.append(actor, "panel.closed", p.id, {})
         return p
+
+    # panel groups (bead czt.3) -----------------------------------------
+    def group_create(self, actor: Actor, **fields) -> PanelGroup:
+        g = self.objects.create_group(author=actor, **fields)
+        self.log.append(
+            actor,
+            "panel_group.created",
+            g.id,
+            {"kind": g.kind, "key": g.key, "panels": [r.panel for r in g.roles if r.panel]},
+        )
+        return g
+
+    def group_get(self, group_id: str) -> PanelGroup:
+        return self.objects.get_group(group_id)
+
+    @atomic
+    def close_group(self, group_id: str, actor: Actor) -> PanelGroup:
+        """Close a panel group and every panel in it (one action for the whole model view)."""
+        g = self.objects.get_group(group_id)
+        for r in g.roles:
+            if r.panel and not self.workspace.get_panel(r.panel).closed:
+                self.workspace.close_panel(r.panel)
+                self.log.append(actor, "panel.closed", r.panel, {"group": g.id})
+        g = self.objects.set_group(g.model_copy(update={"closed": True}))
+        self.log.append(actor, "panel_group.closed", g.id, {})
+        return g
 
     @atomic
     def set_focus(self, span: TimeSpan, actor: Actor) -> None:
@@ -1316,6 +1343,14 @@ class WorkspaceService:
         win = resolve(c for c in claims if c.field == "bounds")
         return (win.value, win.origin) if win else None
 
+    def catalog_bounded_by(self, source: str, metric: str) -> list[str]:
+        """Metrics the catalog says bound `metric` (winning, unretracted `bounded_by` edges)."""
+        return [
+            r.object
+            for r in self.relations.relations("catalog", source, metric=metric, kind="bounded_by")
+            if r.subject == metric
+        ]
+
     def catalog_context_specs(self, source: str, metric: str) -> list[ContextSpec]:
         """Context the catalog holds for a metric's chart (bead 2as.15): hard limits, thresholds
         (metric-valued relations and constant `thresholds` claims) and reference series, each with
@@ -1470,6 +1505,7 @@ class WorkspaceService:
             "hypotheses": [h.model_dump() for h in self.objects.list_hypotheses()],
             "findings": [f.model_dump() for f in self.objects.list_findings()],
             "gaps": [g.model_dump() for g in self.objects.list_gaps()],
+            "groups": [g.model_dump() for g in self.objects.list_groups() if not g.closed],
             "code": [code_brief(c) for c in self.objects.list_code()],
             "threads": self._threads_with_seqs(),
             "last_seq": self.log.last_seq,
@@ -1705,6 +1741,7 @@ class WorkspaceService:
                     if (sv := p.spec.get("signal")) and sv.get("selected")
                     else {}
                 ),
+                **({"group": f"{gr['id']}:{gr['role']}"} if (gr := p.spec.get("group")) else {}),
                 **(
                     {"marginal": ref["label"]}
                     if (mg := p.spec.get("marginal"))

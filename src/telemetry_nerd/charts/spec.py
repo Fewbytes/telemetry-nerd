@@ -203,6 +203,13 @@ class AutoForm(BaseModel):
     reason: str
 
 
+class GroupRef(BaseModel):
+    """The panel is one role of a panel group (bead czt.3): shown, closed and reframed together."""
+
+    id: str
+    role: str
+
+
 class ChartSpec(BaseModel):
     layers: list[Layer] = Field(min_length=1)
     y: YAxis = Field(default_factory=YAxis)
@@ -211,6 +218,7 @@ class ChartSpec(BaseModel):
     signal: SignalViews | None = None  # filtered/raw data views (4ok.9)
     overlays: Overlays = Field(default_factory=Overlays)
     auto: AutoForm | None = None
+    group: GroupRef | None = None
 
 
 class ValidationIssue(BaseModel):

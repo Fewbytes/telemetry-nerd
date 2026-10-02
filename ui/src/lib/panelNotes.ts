@@ -202,15 +202,16 @@ export function intervalLegend(d: Pick<DatasetMeta, "uncertainty">): string | nu
 /** Where the panel's data came from: the source, or the code node and its inputs (spec §5.2). */
 export function provenanceText(d: Pick<DatasetMeta, "source" | "producer" | "parents">): string {
   const p = d.producer;
-  if (!p || p.kind !== "code") return d.source;
   const from = d.parents?.length ? ` from ${d.parents.join(", ")}` : "";
+  if (p?.kind === "binding") return `${d.source}: ${p.description ?? "derived"}${from}`;
+  if (!p || p.kind !== "code") return d.source;
   return `produced by code node ${p.node} (output ${p.output})${from}`;
 }
 
 /** provenanceText split around the code node id so the UI can make it a button; null for a source. */
 export function provenanceParts(d: Pick<DatasetMeta, "source" | "producer" | "parents">): [string, string, string] | null {
   const p = d.producer;
-  if (!p || p.kind !== "code") return null;
+  if (!p || p.kind !== "code" || !p.node) return null;
   const text = provenanceText(d);
   const at = text.indexOf(p.node);
   return [text.slice(0, at), p.node, text.slice(at + p.node.length)];
@@ -246,6 +247,10 @@ export function describeShown(
   }
   if (kind === "histogram") {
     return `Share of observations per value bucket, summed over each selected window (whole ${step} steps); bars are the source buckets (${d.scheme?.description ?? "unknown scheme"}).`;
+  }
+  if (d.producer?.kind === "binding" && d.producer.op === "error_ratio" && kind === "time" && !mark) {
+    const band = intervalLegend(d);
+    return `Share of requests that failed per ${step} bucket (errors ÷ requests, line)` + (band ? `; band: ${band}.` : ".");
   }
   const code = d.producer?.kind === "code" ? d.producer : null;
   if (code && kind === "time" && !mark) {

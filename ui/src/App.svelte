@@ -7,6 +7,8 @@
     if (v === "light" || v === "dark" || v === "system") theme.set(v);
   };
   import PanelView from "./Panel.svelte";
+  import PanelGroupView from "./components/PanelGroup.svelte";
+  import { layoutItems } from "./lib/groups";
   import Sidebar from "./components/Sidebar.svelte";
   import ConnectionPill from "./components/ConnectionPill.svelte";
   import CatalogView from "./components/CatalogView.svelte";
@@ -55,12 +57,14 @@
 
   const panels = $derived((ws.snapshot?.panels ?? []).filter((p) => !p.closed));
   const threads = $derived(ws.snapshot?.threads ?? []); // anchored ones render inside Panel
+  // panels of one binding view (bead czt.3) render together as a group
+  const items = $derived(layoutItems(panels, ws.snapshot?.groups ?? []));
 
   $effect(() => {
     const scrollToHash = () => {
-      const match = location.hash.match(/^#\/panel\/(\w+)$/);
+      const match = location.hash.match(/^#\/(panel|group)\/(\w+)$/);
       if (match && panels.length > 0) {
-        document.getElementById(`panel-${match[1]}`)?.scrollIntoView();
+        document.getElementById(`${match[1]}-${match[2]}`)?.scrollIntoView();
       }
     };
     scrollToHash();
@@ -99,8 +103,12 @@
       {#if panels.length === 0}
         <p class="empty">No panels yet. Ask Claude a question about your metrics.</p>
       {/if}
-      {#each panels as panel (panel.id)}
-        <PanelView {panel} annotations={ws.snapshot?.annotations ?? []} {threads} />
+      {#each items as item (item.kind === "group" ? item.group.id : item.panel.id)}
+        {#if item.kind === "group"}
+          <PanelGroupView group={item.group} members={item.members} annotations={ws.snapshot?.annotations ?? []} {threads} />
+        {:else}
+          <PanelView panel={item.panel} annotations={ws.snapshot?.annotations ?? []} {threads} />
+        {/if}
       {/each}
     </div>
     <Sidebar snapshot={ws.snapshot} onopencode={openCode} />
