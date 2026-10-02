@@ -46,11 +46,10 @@ CANNOT_TELL = [
     "a / ignoring(x) b",
     "a / b offset 1m",
     "topk(5, a / b)",
+    "sum(a > 1)",
+    "abs(a / on(x) b)",
+    "sum(a / b offset 1m)",
     "a / b and c",
-    "sum(a / b)",
-    "abs(a / b)",
-    "clamp_max(a / b, 1)",
-    "-(a / b)",
     'label_replace(a / b, "x", "$1", "y", "(.*)")',
     "up == 0",
     "a / (b > 1)",
@@ -135,3 +134,54 @@ def test_oversized_fold_cannot_be_told():
     long = [f"{n}_{'x' * (MAX_COUNT_QUERY_LEN // 8)}" for n in "abcd"]
     assert observed_count_query(" + ".join(long), "1m") is None
     assert observed_count_query(" + ".join(long[:2]), "1m") is not None
+
+
+_AB = _min2("count_over_time(a[1m])", "count_over_time(b[1m])")
+
+
+@pytest.mark.parametrize(
+    ("expr", "want"),
+    [
+        ("sum(a / b)", f"sum ({_AB})"),
+        ("avg(a / b)", f"sum ({_AB})"),
+        ("abs(a / b)", _AB),
+        ("clamp_max(a / b, 1)", _AB),
+        ("clamp_min(a / b, 0)", _AB),
+        ("round(a / b)", _AB),
+        ("-(a / b)", _AB),
+        ("max by (instance) (a / b)", f"sum by (instance) ({_AB})"),
+        ("sum without (x) (a / b)", f"sum without (x) ({_AB})"),
+        ("max(a / b) by (job)", f"sum by (job) ({_AB})"),
+        (
+            "sum by (job) (rate(a[5m]) / rate(b[5m]))",
+            f"sum by (job) ({_AB})",
+        ),
+        (
+            "avg(MemAvailable / MemTotal)",
+            f"sum ({_min2('count_over_time(MemAvailable[1m])', 'count_over_time(MemTotal[1m])')})",
+        ),
+        (
+            "abs(sum(a) / sum(b))",
+            _min2("sum (count_over_time(a[1m]))", "sum (count_over_time(b[1m]))"),
+        ),
+        ("sum(abs(a / b)) / c", _min2(f"sum ({_AB})", "count_over_time(c[1m])")),
+    ],
+)
+def test_wrapped_binary_op_is_observed(expr, want):
+    assert observed_count_query(expr, "1m") == want
+    assert counts_are_observed(expr)
+
+
+def test_wrapped_fold_counts_toward_the_operand_cap():
+    five = " + ".join("abcde")
+    four = " + ".join("abcd")
+    assert observed_count_query(f"sum({four})", "1m") is not None
+    assert observed_count_query(f"sum({five})", "1m") is None
+    assert observed_count_query(f"abs({five})", "1m") is None
+    assert observed_count_query(f"sum({four}) / e", "1m") is None
+
+
+def test_wrapped_fold_over_length_cap_cannot_be_told():
+    long = [f"{n}_{'x' * (MAX_COUNT_QUERY_LEN // 8)}" for n in "abcd"]
+    assert observed_count_query(f"sum({' + '.join(long)})", "1m") is None
+    assert observed_count_query(f"sum({' + '.join(long[:2])})", "1m") is not None

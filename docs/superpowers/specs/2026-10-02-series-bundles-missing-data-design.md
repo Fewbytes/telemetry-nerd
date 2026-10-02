@@ -232,6 +232,11 @@ fills (`subquery_fills_gaps`, verified on Prometheus and VictoriaMetrics), so it
   `((x) <= (y)) or ((y) and (x))`; any underivable operand makes the whole expression cannot-tell.
   Because the min takes the smaller count, a `partial` bucket on the denser operand is hidden:
   only gaps on the sparser side (or full gaps) show.
+  *Wrapped binary arithmetic* (`telemetry-nerd-kw4`): the fold passes through label-preserving
+  functions and unary signs (`abs(a/b)`, `clamp_max(a/b, 1)`, `-(a/b)`), and an aggregation sums
+  the fold of its operand (`avg(a/b)` -> `sum (<fold>)`, `max by (instance) (a/b)` ->
+  `sum by (instance) (<fold>)`, `sum by (job) (rate(a[5m]) / rate(b[5m]))`). The caps apply to
+  the whole expression: distinct leaf operands across all folds, and the final query length.
   A value in a bucket with no observed sample is filled and dropped
   (bucket `empty`); samples without a value (e.g. `rate` with one sample) are dropped too, never
   counted `partial`. Cost: `fetch` runs the same number of queries, but the count query is no
@@ -240,8 +245,7 @@ fills (`subquery_fills_gaps`, verified on Prometheus and VictoriaMetrics), so it
   count query and keeps only values of buckets that observed samples (masks lookback fill on
   summary/gauge series, VM previous-sample values, windows longer than the step).
 - *Cannot tell otherwise* (filters/comparisons, `bool`, set operators, vector matching,
-  `offset`/`@`, topk, label_replace, nested subqueries, binary ops wrapped in a function or
-  aggregation such as `sum(a/b)`, `abs(a/b)`, `clamp_max(a/b, 1)`, `-(a/b)`, more than
+  `offset`/`@`, topk, label_replace, nested subqueries, more than
   `MAX_FOLD_OPERANDS` (4) distinct operands or a count query over `MAX_COUNT_QUERY_LEN` (4096)
   characters, unknown functions): the adapter keeps the
   subquery count (it still weights the bucket mean), and `counts_are_observed(expr)` is False:

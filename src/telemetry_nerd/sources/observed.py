@@ -17,10 +17,14 @@ It is derived only where that is exact:
 * top-level arithmetic between two or more such operands (`a / b`): observed = the smaller
   operand count per series and bucket (see `observed_count_query`), capped in size.
 
+* those wrappers (functions, unary minus, aggregations) around such an arithmetic expression
+  (`avg(a / b)`, `abs(a / b)`, `sum by (job) (rate(a[5m]) / rate(b[5m]))`): the fold is passed
+  through label-preserving functions and summed by aggregations.
+
 Anything else (comparisons/filters, set operators, vector matching, offset/@, topk,
-label_replace, binary ops wrapped in a function or aggregation, more than `MAX_FOLD_OPERANDS`
-distinct operands or a query longer than `MAX_COUNT_QUERY_LEN`, unknown functions) returns None: the source cannot tell how many samples are
-behind a value, and consumers must say so (`counts_are_observed`).
+label_replace, more than `MAX_FOLD_OPERANDS` distinct operands or a query longer than
+`MAX_COUNT_QUERY_LEN`, unknown functions) returns None: the source cannot tell how many samples
+are behind a value, and consumers must say so (`counts_are_observed`).
 """
 
 from __future__ import annotations
@@ -157,31 +161,61 @@ def _operands(masked: str) -> list[tuple[int, int]] | None:
     return spans
 
 
-def _lift(text: str, masked: str) -> tuple[str, list[str]] | None:
-    """(selector, wrappers outermost first) or None if the count cannot be derived exactly."""
+# a leaf is a count query and the number of distinct selector operands folded inside it
+_Leaf = tuple[str, int]
+
+
+def _fold(leaves: list[_Leaf]) -> _Leaf | None:
+    """Fold leaf count queries with the per-series min (min(x, x) = x, so repeats are dropped);
+    None if the distinct operands or the query exceed the caps."""
+    distinct = list(dict.fromkeys(leaves))
+    if sum(n for _, n in distinct) > MAX_FOLD_OPERANDS:
+        return None
+    query = distinct[0][0]
+    for part, _ in distinct[1:]:
+        query = _min2(query, part)
+    return (query, sum(n for _, n in distinct)) if len(query) <= MAX_COUNT_QUERY_LEN else None
+
+
+def _wrap(wrapper: str, inner: list[str] | None) -> list[_Leaf] | None:
+    """The fold of `inner` leaves under an aggregation `wrapper` (a sum of the members' samples)."""
+    folded = None if inner is None else _fold(inner)
+    return None if folded is None else [(f"{wrapper} ({folded[0]})", folded[1])]
+
+
+def _leaves(text: str, masked: str, window: str) -> list[_Leaf] | None:
+    """Count queries of the leaf operands of an expression; None if any cannot be derived.
+    Top-level arithmetic flattens (min is associative); label-preserving functions and unary
+    signs pass their operand through; an aggregation folds its operand and wraps it in `sum`."""
     text, masked = _peel(text, masked)
     spans = _operands(masked)
     if spans is None:
         return None
     if len(spans) > 1:
         vectors = [(a, b) for a, b in spans if not _LITERAL.match(masked[a:b])]
-        if len(vectors) != 1:
+        if not vectors:
             return None
-        a, b = vectors[0]
-        return _lift(text[a:b], masked[a:b])
+        found: list[_Leaf] = []
+        for a, b in vectors:
+            part = _leaves(text[a:b], masked[a:b], window)
+            if part is None:
+                return None
+            found += part
+        return found
     if (sign := re.match(r"^\s*[+-]", masked)) is not None:
-        return _lift(text[sign.end() :], masked[sign.end() :])
+        return _leaves(text[sign.end() :], masked[sign.end() :], window)
     if (call := _CALL.match(masked)) is not None:
-        return _lift_call(text, masked, call)
+        return _call_leaves(text, masked, call, window)
     sel = _SELECTOR.match(masked)
     if sel is None or not (sel.group("name") or sel.group("matchers")):
         return None
     if (sel.group("name") or "").lower() in _KEYWORDS:
         return None
-    return text[sel.start("sel") : sel.end("sel")].strip(), []
+    selector = text[sel.start("sel") : sel.end("sel")].strip()
+    return [(f"count_over_time({selector}[{window}])", 1)]
 
 
-def _lift_call(text: str, masked: str, call: re.Match) -> tuple[str, list[str]] | None:
+def _call_leaves(text: str, masked: str, call: re.Match, window: str) -> list[_Leaf] | None:
     func = call.group("f").lower()
     open_idx = call.end() - 1
     close_idx = _close(masked, open_idx)
@@ -197,65 +231,28 @@ def _lift_call(text: str, masked: str, call: re.Match) -> tuple[str, list[str]] 
             kind, labels = trailing.group("kind"), trailing.group("labels")
         if len(args) != 1:
             return None
-        inner = _lift(args[0], masked_args[0])
-        if inner is None:
-            return None
         wrapper = "sum"
         if kind:
             names = ", ".join(x.strip() for x in labels.split(",") if x.strip())
             wrapper = f"sum {kind.lower()} ({names})"
-        return inner[0], [wrapper, *inner[1]]
+        return _wrap(wrapper, _leaves(args[0], masked_args[0], window))
     if kind or rest.strip():
         return None
     vectors = [i for i, a in enumerate(masked_args) if not _LITERAL.match(a)]
     if len(vectors) != 1:
         return None
+    inner = _leaves(args[vectors[0]], masked_args[vectors[0]], window)
     if func == "histogram_quantile":
         if len(args) != 2 or vectors != [1]:
             return None
-        inner = _lift(args[1], masked_args[1])
-        return None if inner is None else (inner[0], ["sum without (le, vmrange)", *inner[1]])
-    if func in _PRESERVING:
-        return _lift(args[vectors[0]], masked_args[vectors[0]])
-    return None
-
-
-def _operand_counts(text: str, masked: str, window: str) -> list[str] | None:
-    """Count queries of the leaf operands of (nested) top-level arithmetic; None if any operand
-    cannot be derived. min is associative, so nested binary ops flatten into one operand list."""
-    text, masked = _peel(text, masked)
-    spans = _operands(masked)
-    if spans is not None and len(spans) > 1:
-        vectors = [(a, b) for a, b in spans if not _LITERAL.match(masked[a:b])]
-        if len(vectors) >= 1:
-            found: list[str] = []
-            for a, b in vectors:
-                part = _operand_counts(text[a:b], masked[a:b], window)
-                if part is None:
-                    return None
-                found += part
-            return found
-    lifted = _lift(text, masked)
-    if lifted is None:
-        return None
-    selector, wrappers = lifted
-    query = f"count_over_time({selector}[{window}])"
-    for wrapper in reversed(wrappers):
-        query = f"{wrapper} ({query})"
-    return [query]
+        return _wrap("sum without (le, vmrange)", inner)
+    return inner if func in _PRESERVING else None
 
 
 def _count_query(text: str, masked: str, window: str) -> str | None:
-    parts = _operand_counts(text, masked, window)
-    if parts is None:
-        return None
-    distinct = list(dict.fromkeys(parts))  # min(x, x) = x
-    if len(distinct) > MAX_FOLD_OPERANDS:
-        return None
-    query = distinct[0]
-    for part in distinct[1:]:
-        query = _min2(query, part)
-    return query if len(query) <= MAX_COUNT_QUERY_LEN else None
+    leaves = _leaves(text, masked, window)
+    folded = None if leaves is None else _fold(leaves)
+    return None if folded is None else folded[0]
 
 
 def _min2(x: str, y: str) -> str:
