@@ -187,6 +187,7 @@ async def test_panel_data_reports_missing_buckets(tmp_path):
     [c] = [c for c in data["located"] if c["code"] == "missing_data"]
     assert len(c["where"]["spans"]) == 1
     assert "missing_data" in data["caveats"] and "gaps" not in data["caveats"]
+    assert data["bucket_state_more"] == 0
 
 
 async def test_clean_panel_has_no_bucket_state(tmp_path):
@@ -194,6 +195,7 @@ async def test_clean_panel_has_no_bucket_state(tmp_path):
     ds = (await svc.query("up", start="now-2h", end="now-1h", step="1m"))["dataset"]
     data = svc.panel_data(svc.show(ds, "Clean?").panel.id, width_px=2000)
     assert data["bucket_state"] == [] and data["located"] == []
+    assert data["bucket_state_more"] == 0
 
 
 class JitterSource(FakeSource):

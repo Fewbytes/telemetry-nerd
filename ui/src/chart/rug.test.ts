@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hitRug, MAX_ROWS, ROW_GAP, ROW_H, rugCells, rugHeight, rugHint, STATE } from "./rug";
+import { hitRug, MAX_ROWS, ROW_GAP, ROW_H, rugCells, rugHeight, rugHint, rugMoreLabel, STATE } from "./rug";
 import { relativeLuminance } from "./colormap";
 import type { BucketStatePayload } from "../lib/api";
 
@@ -48,5 +48,14 @@ describe("rug grey", () => {
   it("--muted passes 3:1 in both themes", () => {
     expect(ratio("#666666", "#ffffff")).toBeGreaterThanOrEqual(3);
     expect(ratio("#9aa0a6", "#16181d")).toBeGreaterThanOrEqual(3);
+  });
+});
+
+describe("rugMoreLabel", () => {
+  it("says nothing when no series were left out", () => {
+    expect(rugMoreLabel(0)).toBe("");
+  });
+  it("counts the omitted series and points to the footer", () => {
+    expect(rugMoreLabel(3)).toBe("+3 more series with missing data (see footer)");
   });
 });

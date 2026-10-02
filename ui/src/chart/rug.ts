@@ -83,3 +83,7 @@ export function rugHint(cell: RugCell, s: BucketStatePayload, stepMs: number, na
   if (cell.state === STATE.EMPTY && seen !== undefined) lines.push(`last seen in bucket ending ${fmtRange(seen - stepMs, seen)}`);
   return lines.join("\n");
 }
+
+/** Label under the rug when the server left out series that also have missing data. */
+export const rugMoreLabel = (more: number): string =>
+  more > 0 ? `+${more} more series with missing data (see footer)` : "";

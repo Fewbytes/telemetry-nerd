@@ -69,10 +69,10 @@ from telemetry_nerd.core.panel_payloads import (
     limit_payload,
     marginal_payload,
     normal_payload,
+    rug_payload,
     series_labels,
     series_payload,
     signal_payload,
-    state_payload,
 )
 from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.profiles import ProfileService
@@ -1196,13 +1196,14 @@ class TelemetryService:
         states = bundle.companions.get("bucket_state")
         located = list(bundle.caveats)
         state_rows: list[dict] = []
+        state_more = 0
         if states is not None:
             if effective_step != meta.step_ms:
                 states = coarsen(states, effective_step)
             names = {sid: series_name(lb) for sid, lb in labels.items()}
             failed = [tuple(f) for f in meta.failed_spans]
             located += from_bucket_state(states, names, effective_step, failed)
-            state_rows = state_payload(states)
+            state_rows, state_more = rug_payload(states)
         if meta.failed_spans and not any(c.code == "untrusted_data" for c in located):
             # failed fetches are known from the dataset even when no series carries the state
             ts = [
@@ -1242,6 +1243,7 @@ class TelemetryService:
             "effective_step_ms": effective_step,
             "series": series,
             "bucket_state": state_rows,
+            "bucket_state_more": state_more,
             "located": [c.model_dump() for c in located],
             "caveats": caveats,
         }

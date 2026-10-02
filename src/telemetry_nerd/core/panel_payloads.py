@@ -37,9 +37,19 @@ from telemetry_nerd.model.distribution import DIST_N_MIN, QUANTILE_CHOICES
 from telemetry_nerd.model.time import TimeRange, format_duration, iso
 from telemetry_nerd.workspace.store import Panel
 
+# worst first: what a reader most needs to see when the rug has room for only a few series
+_WORST_FIRST = (State.UNKNOWN, State.EMPTY, State.PARTIAL, State.ABSENT)
+RUG_SERIES_CAP = 5
+
+
+def _worst_rank(states: list[int]) -> int:
+    present = set(states)
+    return next((i for i, s in enumerate(_WORST_FIRST) if int(s) in present), len(_WORST_FIRST))
+
 
 def state_payload(states) -> list[dict]:
-    """bucket_state for series with any non-OK bucket (an all-ok panel draws no rug)."""
+    """bucket_state for series with any non-OK bucket (an all-ok panel draws no rug),
+    ordered by the worst state present, then id."""
     df = pl.from_arrow(states)
     if df.is_empty():
         return []
@@ -55,7 +65,13 @@ def state_payload(states) -> list[dict]:
             "observed": g["observed"].to_list(), "expected": g["expected"].to_list(),
             "flags": g["flags"].to_list(),
         })  # fmt: skip
-    return sorted(out, key=lambda s: s["id"])
+    return sorted(out, key=lambda s: (_worst_rank(s["state"]), s["id"]))
+
+
+def rug_payload(states) -> tuple[list[dict], int]:
+    """The series the time rug draws (capped, worst first) and how many more were left out."""
+    rows = state_payload(states)
+    return rows[:RUG_SERIES_CAP], max(0, len(rows) - RUG_SERIES_CAP)
 
 
 def column_states(meta, dist):

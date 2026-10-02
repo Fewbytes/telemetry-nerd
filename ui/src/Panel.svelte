@@ -7,7 +7,7 @@
     type Annotation, type Panel, type PanelData, type Thread, type Where, type YView,
   } from "./lib/api";
   import { PALETTE, rgba, seriesName, toUplot } from "./chart/toUplot";
-  import { drawRug, hitRug, rugCells, rugHeight, rugHint, type RugCell } from "./chart/rug";
+  import { drawRug, hitRug, rugCells, rugHeight, rugHint, rugMoreLabel, type RugCell } from "./chart/rug";
   import { describeShown, panelNotes } from "./lib/panelNotes";
   import { windowBadge } from "./lib/coverage";
   import { focusRects, notesAt } from "./chart/focus";
@@ -615,6 +615,7 @@
       <canvas class="rug" bind:this={rugEl} data-rug aria-label="Coverage rug: where data is missing"
         onmousemove={onRugMove} onmouseleave={onRugLeave}></canvas>
       {#if rugTip}<div class="rug-tip" style="left:{rugTip.x}px;top:{rugTip.y}px">{rugTip.text}</div>{/if}
+      {#if data.bucket_state_more}<div class="rug-more">{rugMoreLabel(data.bucket_state_more)}</div>{/if}
     </div>
   {/if}
   {#if data?.kind === "time" && data.overlays?.flags}

@@ -113,7 +113,7 @@ export interface OverlaysPayload {
   limit: { available: boolean; reason?: string; label?: string; metric?: string; hi?: number; series?: SeriesData[] };
   ghost: { available: boolean; loaded: boolean; label?: string; series?: GhostSeries[] };
 }
-export interface TimePanelData extends PanelDataBase { kind: "time"; bucket_state?: BucketStatePayload[]; overlays?: OverlaysPayload; effective_step_ms: number; series: SeriesData[]; marginal?: MarginalData | null; index?: IndexPayload | null; raw?: SeriesData[]; removed?: SeriesData[]; filter?: FilterInfo }
+export interface TimePanelData extends PanelDataBase { kind: "time"; bucket_state?: BucketStatePayload[]; bucket_state_more?: number; overlays?: OverlaysPayload; effective_step_ms: number; series: SeriesData[]; marginal?: MarginalData | null; index?: IndexPayload | null; raw?: SeriesData[]; removed?: SeriesData[]; filter?: FilterInfo }
 export interface HeatmapPanelData extends PanelDataBase {
   kind: "heatmap"; mark: "heatmap" | "percentiles"; effective_step_ms: number; value_merge: number; facet_height_px: number; series: HeatSeries[];
 }

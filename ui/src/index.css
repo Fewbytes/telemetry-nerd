@@ -257,3 +257,4 @@ ul.gaps { list-style: none; margin: 0; padding: 0; }
 .panel .rug-wrap { position: relative; }
 .panel .rug { display: block; }
 .panel .rug-tip { position: absolute; white-space: pre; font-size: 11px; background: var(--fg); color: var(--bg); padding: 4px 6px; border-radius: 4px; pointer-events: none; z-index: 5; }
+.panel .rug-more { font-size: 11px; color: var(--muted); margin-top: 2px; }
