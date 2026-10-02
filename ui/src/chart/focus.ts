@@ -8,8 +8,15 @@ export function focusRects(where: Where | null | undefined, toX: (ms: number) =>
   });
 }
 
-export function notesAt(notes: Note[], seriesId: string, ms: number): string[] {
-  return notes
-    .filter((n) => n.where?.spans?.some(([a, b]) => ms > a && ms <= b) && (!n.where.series || n.where.series.includes(seriesId)))
-    .map((n) => n.key);
+/** A note can drive a focus band only when it says where: with no spans there is nothing to show. */
+export const hasFocus = (n: Note): boolean => (n.where?.spans?.length ?? 0) > 0;
+
+function notesCovering(notes: Note[], seriesId: string, ms: number): Note[] {
+  return notes.filter((n) => n.where?.spans?.some(([a, b]) => ms > a && ms <= b) && (!n.where.series || n.where.series.includes(seriesId)));
 }
+
+export const notesAt = (notes: Note[], seriesId: string, ms: number): string[] => notesCovering(notes, seriesId, ms).map((n) => n.key);
+
+/** Why a bucket could not be fetched or judged: the messages of the located untrusted_data caveats covering it. */
+export const unknownReasons = (notes: Note[], seriesId: string, ms: number): string[] =>
+  notesCovering(notes, seriesId, ms).filter((n) => n.key.startsWith("untrusted_data:")).map((n) => n.text);

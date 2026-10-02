@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { axisGutterSize } from "./plotKit";
+import { axisGutterSize, placeTip } from "./plotKit";
 
 // Minimal uPlot-like stub: just enough for axisGutterSize's `self.ctx.measureText` call.
 // Width is modelled as 7 device px per character, like a typical 12px sans-serif digit.
@@ -13,6 +13,15 @@ function fakeSelf(dpr: number) {
     },
   } as unknown as Parameters<ReturnType<typeof axisGutterSize>>[0];
 }
+
+describe("placeTip", () => {
+  it("sits below-right of a pointer in the top-left quadrant", () => {
+    expect(placeTip(10, 10, 400, 200, "t")).toEqual({ x: 22, y: 22, text: "t", flip: false, flipY: false });
+  });
+  it("flips left on the right half and above on the bottom half, so it grows toward free space", () => {
+    expect(placeTip(390, 190, 400, 200, "t")).toMatchObject({ x: 378, y: 178, flip: true, flipY: true });
+  });
+});
 
 describe("axisGutterSize", () => {
   afterEach(() => vi.unstubAllGlobals());

@@ -11,9 +11,10 @@
   import { describeShown, intervalLegend, panelNotes, provenanceParts, provenanceText } from "./lib/panelNotes";
   import { getContext } from "svelte";
   import { windowBadge } from "./lib/coverage";
-  import { focusRects, notesAt } from "./chart/focus";
+  import { focusRects, hasFocus, notesAt, unknownReasons } from "./chart/focus";
+  import ChartTip from "./components/ChartTip.svelte";
   import { fmtSI, fmtStep } from "./lib/format";
-  import { axisGutterSize } from "./chart/plotKit";
+  import { axisGutterSize, placeTip, type HoverTip } from "./chart/plotKit";
   import { setupCanvas } from "./chart/canvas";
   import { drawnFor, VIEW_LABELS, type DataViewName } from "./chart/dataview";
   import SpectrumPlot from "./components/SpectrumPlot.svelte";
@@ -121,7 +122,13 @@
     const id = ++requestId;
     fetchWidth = width;
     fetchPanelData(panel.id, width)
-      .then((d) => { if (id === requestId) data = d; })
+      .then((d) => {
+        if (id !== requestId) return;
+        // a reload can drop or move the note that drove the band: no mouseleave/blur will clear it
+        focus = null;
+        activeNotes = [];
+        data = d;
+      })
       .catch((e) => { if (id === requestId) error = String(e); });
   };
 
@@ -214,7 +221,7 @@
   let rugEl = $state<HTMLCanvasElement | null>(null);
   let rugCellsNow: RugCell[] = [];
   let rugBounds: [number, number] = [0, 0];
-  let rugTip = $state<{ x: number; y: number; text: string } | null>(null);
+  let rugTip = $state<HoverTip | null>(null);
   // footer note under the pointer/focus -> band on the plot; rug cell under the pointer -> active notes
   let focus = $state<Where | null>(null);
   let activeNotes = $state<string[]>([]);
@@ -233,7 +240,10 @@
     const s = data.bucket_state[c.row];
     activeNotes = notesAt(notes, s.id, c.ts);
     const sd = data.series.find((x) => x.id === s.id);
-    rugTip = { x: e.offsetX + 8, y: (rugEl?.offsetTop ?? 0) + e.offsetY + 12, text: rugHint(c, s, data.effective_step_ms, sd?.labels ? seriesName(sd.labels) : s.id, data.dataset.representation !== "quantile") };
+    const box = plotEl?.getBoundingClientRect();
+    if (!box) return;
+    const text = rugHint(c, s, data.effective_step_ms, sd?.labels ? seriesName(sd.labels) : s.id, data.dataset.representation !== "quantile", unknownReasons(notes, s.id, c.ts));
+    rugTip = placeTip(e.clientX - box.left, e.clientY - box.top, box.width, box.height, text);
   }
   let margBusy = $state(false);
   const indexedOn = $derived((chosen?.mode as string | undefined) === "indexed");
@@ -576,7 +586,7 @@
     {#if data?.kind === "time" && (data.bucket_state?.length ?? 0) > 0}
       <canvas class="rug" bind:this={rugEl} data-rug aria-label="Coverage rug: where data is missing"
         onmousemove={onRugMove} onmouseleave={onRugLeave}></canvas>
-      {#if rugTip}<div class="rug-tip" style="left:{rugTip.x}px;top:{rugTip.y}px">{rugTip.text}</div>{/if}
+      {#if rugTip}<ChartTip tip={rugTip} class="rug-tip" />{/if}
     {/if}
     {#if marg}
       <canvas class="marginal" bind:this={margEl} data-marginal data-marginal-basis={marg.basis}
@@ -590,7 +600,7 @@
         {#if overlay(hm.series.length, heatQs.length)}
           <PercentilePlot
             data={hm} series={hm.series} qs={heatQs} width={fetchWidth} height={hm.facet_height_px}
-            unit={hm.panel.spec.y.unit}
+            unit={hm.panel.spec.y.unit} focusWhere={focus}
             onRendered={(ms, cells) => onFacetRendered(0, 1, ms, cells, hm.facet_height_px)}
             onBrush={(b) => (selection = { ...b, top: 4 })}
           />
@@ -599,7 +609,7 @@
           {#each hm.series as s, i (s.id)}
             <PercentilePlot
               data={hm} series={[s]} qs={heatQs} width={fetchWidth} height={hm.facet_height_px}
-              unit={hm.panel.spec.y.unit}
+              unit={hm.panel.spec.y.unit} focusWhere={focus}
               onRendered={(ms, cells) => onFacetRendered(i, hm.series.length, ms, cells, hm.facet_height_px)}
               onBrush={(b) => (selection = { ...b, top: facetTop(hm.series.map(() => false), i, hm.facet_height_px) })}
             />
@@ -611,7 +621,8 @@
         <HeatmapPlot
           data={hm} series={s} width={fetchWidth} height={hm.facet_height_px}
           unit={hm.panel.spec.y.unit}
-          color={heatColor} cmapName={heatCmap} overlayQ={heatQ} focusWhere={focus}
+          color={heatColor} cmapName={heatCmap} overlayQ={heatQ} focusWhere={focus} {notes}
+          onRugNotes={(keys) => (activeNotes = keys)}
           onRendered={(ms, cells) => onFacetRendered(i, hm.series.length, ms, cells, hm.facet_height_px)}
           onBrush={(b) => (selection = { ...b, top: facetTop(hm.series.map((f) => !!f.state), i, hm.facet_height_px) })}
         />
@@ -836,9 +847,9 @@
           <!-- svelte-ignore a11y_no_noninteractive_tabindex (focus mirrors hover so keyboard users get the same graph highlight) -->
           <li
             class="note {note.kind}" class:active={activeNotes.includes(note.key)} data-note={note.key}
-            tabindex="0"
-            onmouseenter={() => setFocus(note.where ?? null)} onmouseleave={() => setFocus(null)}
-            onfocus={() => setFocus(note.where ?? null)} onblur={() => setFocus(null)}
+            tabindex={hasFocus(note) ? 0 : undefined}
+            onmouseenter={() => setFocus(hasFocus(note) ? note.where ?? null : null)} onmouseleave={() => setFocus(null)}
+            onfocus={() => setFocus(hasFocus(note) ? note.where ?? null : null)} onblur={() => setFocus(null)}
           >
             <span class="tag">{note.kind === "caveat" ? "Caveat" : "Note"}</span>
             {note.text}

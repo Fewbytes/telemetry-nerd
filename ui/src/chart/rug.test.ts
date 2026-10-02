@@ -29,6 +29,13 @@ describe("rug", () => {
     expect(hitRug(cells, 10, 500)).toBeNull();
   });
 
+  it("an UNKNOWN cell carries the reason it could not be fetched (spec 7.4); other states do not", () => {
+    const u = st("a", [STATE.UNKNOWN, STATE.EMPTY], [0, 0]);
+    const [c0, c1] = rugCells([u], 60_000, toX);
+    expect(rugHint(c0, u, 60_000, "a", true, ["Failed fetches (timeout)."])).toContain("reason: Failed fetches (timeout).");
+    expect(rugHint(c1, u, 60_000, "a", true, ["Failed fetches (timeout)."])).not.toContain("reason:");
+  });
+
   it("explains a cell in words", () => {
     const s = st("a", [STATE.EMPTY], [0]);
     const [cell] = rugCells([s], 60_000, toX);

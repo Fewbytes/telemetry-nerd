@@ -74,17 +74,24 @@ function gridTimes({ start, end, step }: Grid): number[] {
 
 const EPS_S = 0.001;
 
-/** Bucket ends -> interval edges: value i spans (x_i - step, x_i]; lone buckets stay visible. */
+/** Bucket ends -> interval edges: value i spans (x_i - step, x_i]; lone buckets stay visible.
+ * The left edge is the true interval start unless that is not strictly after the previous x
+ * (adjacent buckets), where it is nudged by 1ms. A bucket with no room for a left edge (x within
+ * 1ms of its predecessor) is a single point, never a zero-width plateau. */
 export function stepify(data: (number | null)[][], stepS: number): (number | null)[][] {
   const [xs, ...cols] = data;
   const x2: number[] = [];
+  const twin: boolean[] = []; // the bucket gets a left-edge point as well as its end
   let prev = -Infinity;
   for (const x of xs as number[]) {
-    // an off-grid x within one step of its predecessor must not start before it ends
-    x2.push(Math.max(x - stepS + EPS_S, prev + EPS_S), x);
+    const left = Math.max(x - stepS, prev + EPS_S);
+    const room = left < x - EPS_S / 2;
+    if (room) x2.push(left);
+    x2.push(x);
+    twin.push(room);
     prev = x;
   }
-  return [x2, ...cols.map((c) => c.flatMap((v) => [v, v]))];
+  return [x2, ...cols.map((c) => c.flatMap((v, i) => (twin[i] ? [v, v] : [v])))];
 }
 
 export interface ToUplotOpts {

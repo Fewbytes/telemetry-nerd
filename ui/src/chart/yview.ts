@@ -6,7 +6,7 @@ import { provenance } from "./overlays";
 
 export interface Extent { lo: number; hi: number }
 export interface YStats {
-  all: Extent | null; meaningful: Extent | null; quantile: boolean; lowN: number; values: number[];
+  all: Extent | null; meaningful: Extent | null; quantile: boolean; fadedCount: number; values: number[];
   points?: number[]; // one value per drawn point (the mean), for counting points
 }
 export interface YResolved {
@@ -28,17 +28,17 @@ const ext = (vs: number[]): Extent | null =>
 
 export function yStats(series: SeriesData[], o: { quantile: boolean; nMin: number | null }): YStats {
   const values: number[] = [], good: number[] = [], points: number[] = [];
-  let lowN = 0;
+  let fadedCount = 0;
   for (const s of series)
     s.avg.forEach((v, i) => {
       if (ok(v)) points.push(v);
       if (o.quantile) {
         if (!ok(v)) return;
         values.push(v);
-        if (o.nMin === null || (s.count[i] ?? 0) >= o.nMin) good.push(v); else lowN++;
+        if (o.nMin === null || (s.count[i] ?? 0) >= o.nMin) good.push(v); else fadedCount++;
       } else for (const x of [v, s.min[i], s.max[i]]) if (ok(x)) values.push(x);
     });
-  return { all: ext(values), meaningful: o.quantile ? ext(good) : null, quantile: o.quantile, lowN, values, points };
+  return { all: ext(values), meaningful: o.quantile ? ext(good) : null, quantile: o.quantile, fadedCount, values, points };
 }
 
 const hasReference = (c: YContext | null | undefined): boolean => !!c && (!!c.profile || !!c.limit);
@@ -161,9 +161,9 @@ export function offeredViews(st: YStats, ctx: YContext | null = null): Offer[] {
   if (ctx?.typical)
     out.push({ mode: "typical", label: "typical range", enabled: !!st.all, suggest: false,
       title: `the metric's observed range: ${ctx.typical.basis}` });
-  if (st.quantile && st.lowN > 0)
+  if (st.quantile && st.fadedCount > 0)
     out.push({ mode: "meaningful", label: "meaningful only", enabled: !!st.meaningful, suggest: false,
-      title: `range over buckets with n ≥ n_min only; ${st.lowN} faded bucket(s) may fall outside` });
+      title: `range over buckets with n ≥ n_min only; ${st.fadedCount} faded bucket(s) may fall outside` });
   out.push({ mode: "log", label: "log", enabled: pos, suggest: pos && d > 2,
     title: pos ? `data spans ${d.toFixed(1)} decades` : "log needs every value > 0" });
   const idxTitle = "each series as a ratio to a common baseline; log axis, 1 centred (instead of a second y axis)";

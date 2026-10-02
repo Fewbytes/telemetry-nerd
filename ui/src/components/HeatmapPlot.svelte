@@ -8,15 +8,20 @@
   import { drawRug, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, type RugCell } from "../chart/rug";
   import { rgba, seriesName } from "../chart/toUplot";
   import { fmtRange } from "../lib/format";
-  import { focusRects } from "../chart/focus";
+  import { focusRects, notesAt, unknownReasons } from "../chart/focus";
+  import type { Note } from "../lib/panelNotes";
+  import { placeTip, type HoverTip } from "../chart/plotKit";
+  import ChartTip from "./ChartTip.svelte";
   import type { HeatmapPanelData, HeatSeries, Where } from "../lib/api";
 
-  let { data, series, width, height, unit, color = "count", cmapName = "viridis", overlayQ = null, focusWhere = null, onRendered, onBrush }: {
+  let { data, series, width, height, unit, color = "count", cmapName = "viridis", overlayQ = null, focusWhere = null, notes = [], onRugNotes, onRendered, onBrush }: {
     data: HeatmapPanelData; series: HeatSeries; width: number; height: number; unit: string | null;
     color?: "count" | "density";
     cmapName?: ColormapName;
     overlayQ?: number | null; // outline the bucket holding this quantile, where n is enough
     focusWhere?: Where | null; // footer note under the pointer: tint the spans it covers
+    notes?: Note[]; // the panel's footer notes: the rug hint quotes why a column is unknown
+    onRugNotes?: (keys: string[]) => void; // notes active under the rug pointer, lit in the footer
     onRendered: (ms: number, cells: number) => void;
     onBrush: (b: { x0: number; x1: number; left: number; width: number }) => void;
   } = $props();
@@ -46,9 +51,14 @@
     ctx.restore();
   }
 
+  function dotted(ctx: CanvasRenderingContext2D, x: number, w: number, h: number) {
+    ctx.save(); ctx.setLineDash([1, 3]); ctx.beginPath();
+    ctx.moveTo(x, h / 2); ctx.lineTo(x + w, h / 2); ctx.stroke(); ctx.restore();
+  }
+
   let rugEl = $state<HTMLCanvasElement | null>(null);
   let rugCellsNow: RugCell[] = [];
-  let rugTip = $state<{ x: number; y: number; text: string } | null>(null);
+  let rugTip = $state<HoverTip | null>(null);
   $effect(() => {
     const el = rugEl;
     const st = series.state;
@@ -70,9 +80,13 @@
   function onRugMove(e: MouseEvent) {
     const st = series.state;
     const c = st ? hitRug(rugCellsNow, e.offsetX, e.offsetY) : null;
-    if (!c || !st) { rugTip = null; return; }
-    rugTip = { x: e.offsetX + AXIS_LEFT + 8, y: (rugEl?.offsetTop ?? 0) + e.offsetY + 12, text: rugHint(c, st, data.effective_step_ms, seriesName(series.labels), false) };
+    const box = rugEl?.parentElement?.getBoundingClientRect();
+    if (!c || !st || !box) { onRugLeave(); return; }
+    onRugNotes?.(notesAt(notes, st.id, c.ts));
+    const text = rugHint(c, st, data.effective_step_ms, seriesName(series.labels), false, unknownReasons(notes, st.id, c.ts));
+    rugTip = placeTip(e.clientX - box.left, e.clientY - box.top, box.width, box.height, text);
   }
+  function onRugLeave() { rugTip = null; onRugNotes?.([]); }
 
   $effect(() => {
     const el = canvas;
@@ -89,9 +103,10 @@
     layout = l;
     ctx.save(); ctx.translate(AXIS_LEFT, 0);
     ctx.strokeStyle = v("--muted"); ctx.lineWidth = 1; // texture carries meaning: >= 3:1
-    for (const m of l.missing) m.kind === "unknown" ? hatch(ctx, m.x, m.w, plotH) : dots(ctx, m.x, m.w, plotH); // never "zero"
+    // never "zero": hatch = unknown, dots = empty, a thin dotted line = absent (series not born yet)
+    for (const m of l.missing) m.kind === "unknown" ? hatch(ctx, m.x, m.w, plotH) : m.kind === "absent" ? dotted(ctx, m.x, m.w, plotH) : dots(ctx, m.x, m.w, plotH);
     for (const r of l.rects) {
-      ctx.globalAlpha = r.lowN ? 0.45 : 1;
+      ctx.globalAlpha = r.faded ? 0.45 : 1;
       ctx.fillStyle = cmap(r.t);
       ctx.fillRect(r.x, r.y, Math.max(r.w, 1), Math.max(r.h, 1));
     }
@@ -117,7 +132,7 @@
       ctx.restore();
     }
     ctx.fillStyle = v("--warn");
-    for (const m of l.lowN) ctx.fillRect(m.x, plotH - 3, m.w, 3);
+    for (const m of l.lowCount) ctx.fillRect(m.x, plotH - 3, m.w, 3);
     // value axis
     ctx.fillStyle = v("--muted"); ctx.font = "10px sans-serif"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
     for (const t of valueTicks(l.axis)) {
@@ -179,8 +194,8 @@
   ></canvas>
   {#if series.state}
     <canvas class="rug" bind:this={rugEl} data-rug aria-label="Coverage rug: where data is missing"
-      style="left: {AXIS_LEFT}px" onmousemove={onRugMove} onmouseleave={() => (rugTip = null)}></canvas>
-    {#if rugTip}<div class="rug-tip" style="left: {rugTip.x}px; top: {rugTip.y}px">{rugTip.text}</div>{/if}
+      style="left: {AXIS_LEFT}px" onmousemove={onRugMove} onmouseleave={onRugLeave}></canvas>
+    {#if rugTip}<ChartTip tip={rugTip} class="rug-tip" />{/if}
   {/if}
   {#if tip}<div class="tip" style="left: {tip.x}px; top: {tip.y}px">{tip.text}</div>{/if}
 </div>
@@ -189,6 +204,5 @@
   .facet { position: relative; }
   .facet-label { font-size: 11px; color: var(--muted); }
   .rug { display: block; position: absolute; }
-  .rug-tip { position: absolute; white-space: pre; font-size: 11px; background: var(--fg); color: var(--bg); padding: 4px 6px; border-radius: 4px; pointer-events: none; z-index: 5; }
   .tip { position: absolute; pointer-events: none; background: var(--bg); border: 1px solid var(--border); padding: 2px 6px; font-size: 11px; white-space: nowrap; z-index: 5; }
 </style>

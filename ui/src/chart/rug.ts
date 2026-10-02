@@ -93,14 +93,16 @@ export const FLAG_SOURCE_FILLED = 8;
 export const FLAG_POST_GAP = 16;
 
 /** `samples`: the state counts scrape samples (expected = the series' own rate in this bucket);
- * otherwise it only records presence (quantiles, heatmap columns) and has no sample count. */
-export function rugHint(cell: RugCell, s: BucketStatePayload, stepMs: number, name: string, samples: boolean): string {
+ * otherwise it only records presence (quantiles, heatmap columns) and has no sample count.
+ * `reasons`: why an UNKNOWN cell is unknown (spec 7.4), from the located caveats covering it. */
+export function rugHint(cell: RugCell, s: BucketStatePayload, stepMs: number, name: string, samples: boolean, reasons: string[] = []): string {
   const obs = s.observed[cell.i], exp = s.expected[cell.i];
   const lines = [`${name}`, `${fmtRange(cell.ts - stepMs, cell.ts)} · ${WORDS[cell.state] ?? cell.state}`];
   if (samples && exp > 0 && cell.state !== STATE.ABSENT && cell.state !== STATE.UNKNOWN) {
     const every = Math.max(1000, Math.round(stepMs / exp / 1000) * 1000);
     lines.push(`${obs} of ${Math.round(exp)} expected samples (series reports every ${fmtStep(every)})`);
   }
+  if (cell.state === STATE.UNKNOWN) for (const r of reasons) lines.push(`reason: ${r}`);
   const flags = s.flags[cell.i] ?? 0;
   if (flags & FLAG_INTERVAL_CHANGE) lines.push("sample rate changed here (this series reports at a different rate than in the rest of the window)");
   if (flags & FLAG_SOURCE_FILLED) lines.push("coverage cannot be observed for this expression");

@@ -151,9 +151,16 @@ describe("stepify", () => {
     expect(x.every((v, i) => i === 0 || v > x[i - 1])).toBe(true);
     expect(x[2]).toBeCloseTo(60.001);
   });
+  it("a bucket 1ms after its predecessor is one point, not a zero-width plateau", () => {
+    const out = stepify([[60, 60.001, 120], [1, 2, 3]], 60);
+    const x = out[0] as number[];
+    expect(x.every((v, i) => i === 0 || v > x[i - 1])).toBe(true);
+    expect(out[1]).toEqual([1, 1, 2, 3, 3]);
+    expect(x).toHaveLength(5);
+  });
   it("draws each bucket across its interval and keeps lone buckets visible", () => {
     const out = stepify([[60, 120, 180], [1, null, 3]], 60);
-    expect(out[0]).toEqual([0.001, 60, 60.001, 120, 120.001, 180]);
+    expect(out[0]).toEqual([0, 60, 60.001, 120, 120.001, 180]); // first left edge is the true start
     expect(out[1]).toEqual([1, 1, null, null, 3, 3]);
   });
 });
@@ -161,7 +168,7 @@ describe("stepify", () => {
 it("steps by default when a grid is given, but counts buckets for the render budget", () => {
   const grid = { start: 60_000, end: 120_000, step: 60_000 };
   const m = toUplot([s("a", { i: "a" }, [60_000, 120_000], [1, 2])], grid);
-  expect(m.data[0]).toEqual([0.001, 60, 60.001, 120]);
+  expect(m.data[0]).toEqual([0, 60, 60.001, 120]);
   expect(m.data[1]).toEqual([1, 1, 2, 2]);
   expect(m.points).toBe(2);
 });

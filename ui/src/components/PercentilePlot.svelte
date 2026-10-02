@@ -9,11 +9,13 @@
   import { seriesName, seriesPalette } from "../chart/toUplot";
   import { theme } from "../lib/theme.svelte";
   import { fmtRange } from "../lib/format";
-  import type { HeatmapPanelData, HeatSeries } from "../lib/api";
+  import { focusRects } from "../chart/focus";
+  import type { HeatmapPanelData, HeatSeries, Where } from "../lib/api";
 
   // One facet per series, or all series overlaid when a single quantile is shown (<= 5 series).
-  let { data, series, qs, width, height, unit, onRendered, onBrush }: {
+  let { data, series, qs, width, height, unit, focusWhere = null, onRendered, onBrush }: {
     data: HeatmapPanelData; series: HeatSeries[]; qs: number[]; width: number; height: number; unit: string | null;
+    focusWhere?: Where | null; // footer note under the pointer: tint the spans it covers
     onRendered: (ms: number, rects: number) => void;
     onBrush: (b: { x0: number; x1: number; left: number; width: number }) => void;
   } = $props();
@@ -85,6 +87,11 @@
         ctx.globalAlpha = 1;
       });
     });
+    if (focusWhere) {
+      ctx.save(); ctx.fillStyle = v("--warn"); ctx.globalAlpha = 0.15;
+      for (const f of focusRects(focusWhere, (ms) => { const c = cols.col(ms); return c.x + c.w; }, 0, plotW)) ctx.fillRect(f.x, 0, f.w, plotH);
+      ctx.restore();
+    }
     // axes
     ctx.fillStyle = v("--muted"); ctx.font = "10px sans-serif"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
     for (const t of valueTicks(axis)) ctx.fillText(fmtValue(t, unit), -4, plotH - axis.pos(t));

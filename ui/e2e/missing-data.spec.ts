@@ -19,6 +19,15 @@ test("a series with a hole shows a coverage rug and a located caveat", async ({ 
   const box = await el.locator("[data-rug]").boundingBox();
   if (!box) throw new Error("rug not laid out");
   await page.mouse.move(box.x + box.width / 2 - 40, box.y + 4);
-  // the hint text is checked loosely: the hole sits at 1/3 of the 6h range
-  await expect(el.locator(".rug-tip")).toBeVisible();
+  // the hint names the series, a bucket range and a state word (which bucket is under the pointer is
+  // layout-dependent, so the state is not pinned), and stays inside the panel's plot area
+  const tip = el.locator(".rug-tip");
+  await expect(tip).toBeVisible();
+  await expect(tip).toContainText(/instance="[de]"/);
+  await expect(tip).toContainText(/\d{2}:\d{2}–\d{2}:\d{2} · (ok|fewer samples than expected|no samples|series not seen yet)/);
+  const plot = await el.locator(".plot").boundingBox();
+  const tb = await tip.boundingBox();
+  if (!plot || !tb) throw new Error("tip or plot not laid out");
+  expect(tb.x).toBeGreaterThanOrEqual(plot.x - 1);
+  expect(tb.x + tb.width).toBeLessThanOrEqual(plot.x + plot.width + 1);
 });
