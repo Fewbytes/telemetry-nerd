@@ -36,8 +36,8 @@ test("a series with a hole shows a coverage rug and a located caveat", async ({ 
   if (!rug) throw new Error("rug not laid out");
   await page.mouse.move(rug.x + rug.width - 2, rug.y + 4);
   const edge = await tip.boundingBox();
-  if (edge) {
-    expect(edge.x + edge.width).toBeLessThanOrEqual(plot.x + plot.width + 1);
-    expect(edge.y + edge.height).toBeLessThanOrEqual(plot.y + plot.height + 1);
-  }
+  expect(edge).not.toBeNull();
+  if (!edge) return;
+  expect(edge.x + edge.width).toBeLessThanOrEqual(plot.x + plot.width + 1);
+  expect(edge.y + edge.height).toBeLessThanOrEqual(plot.y + plot.height + 1);
 });
