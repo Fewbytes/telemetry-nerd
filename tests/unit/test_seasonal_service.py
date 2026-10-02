@@ -141,3 +141,46 @@ def test_show_suggests_seasonal_compare_when_the_profile_is_seasonal(tmp_path):
     svc._profile_periods = lambda source, expr: ["hour_of_week"]
     assert "time of week" in svc.seasonal_suggestion(d)
     assert svc.seasonal_suggestion(d, mark="spc") is None
+
+
+class LocalDailySource(SeasonalSource):
+    """A daily load that follows Berlin wall-clock time (no weekly pattern)."""
+
+    async def fetch(self, expr, rng, step_ms):
+        from datetime import UTC, datetime
+        from zoneinfo import ZoneInfo
+
+        zone = ZoneInfo("Europe/Berlin")
+        self.calls += 1
+        ts = np.arange(rng.start_ms, rng.end_ms + 1, step_ms)
+        off = np.array([datetime.fromtimestamp(t / 1000, UTC).astimezone(zone).utcoffset().total_seconds() * 1000 for t in ts])  # fmt: skip
+        hour = ((ts + off) % DAY) / H
+        noise = np.random.default_rng(rng.start_ms // step_ms).normal(0, 0.03, ts.size)
+        y = 100 * (1 + 3.0 * np.exp(-(((hour - 10) / 1.5) ** 2))) * np.exp(noise)
+        sid = series_id(self.name, {"job": "api"})
+        n = ts.size
+        buckets = pa.table(
+            {"ts_ms": ts, "series_id": [sid] * n, "avg": y, "min": y, "max": y, "count": [4] * n},
+            schema=BUCKET_SCHEMA,
+        )
+        series = pa.table({"series_id": [sid], "labels": [labels_json({"job": "api"})]}, schema=SERIES_SCHEMA)  # fmt: skip
+        return FetchResult(buckets, series)
+
+
+def test_window_across_a_dst_change_is_matched_by_wall_clock(tmp_path):
+    # Sun 2026-03-29 00:00-12:00 UTC: Berlin springs forward at 01:00 UTC; the 10:00 local
+    # peak is at 08:00 UTC today but 09:00 UTC on the previous days
+    from datetime import UTC, datetime
+
+    start = int(datetime(2026, 3, 29, tzinfo=UTC).timestamp() * 1000)
+    svc = make_service(tmp_path, source=LocalDailySource())
+    d = window(svc, start, hours=12)
+    out = asyncio.run(svc.compare_seasonal(d, cycles=["1d"], tz="Europe/Berlin"))
+    (s,) = out["series"]
+    assert "dst_wall_clock" in out["caveats"] and "dst_within_window" not in out["caveats"]
+    assert s["verdict"] == "usual", s["reasons"]
+    assert s["reference"]["dst_shifted"] == list(range(1, 8))
+    data = svc.panel_data(svc.show(d, "q?", mark="seasonal").panel.id, 800)
+    (ps,) = data["series"]
+    ratio = np.array([v for v in ps["ratio"]["value"] if v is not None])
+    assert np.max(np.abs(np.log(ratio))) < 0.2  # an hour off would put the peak at x2.5

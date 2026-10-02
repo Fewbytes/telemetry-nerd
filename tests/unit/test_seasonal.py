@@ -7,9 +7,12 @@ import pytest
 
 from telemetry_nerd.analysis.seasonal import (
     Cycle,
+    atypical_levels,
     choose,
     compare,
+    crosses_dst,
     cycle_shifts,
+    point_shifts,
     t_quantile,
 )
 
@@ -174,3 +177,60 @@ def test_band_covers_nominal_share_of_normal_cycles_and_false_alarms_are_rare():
     print(f"held-out coverage {coverage:.3f} (nominal 0.90), false alarms {alarms}/{seeds}")
     assert 0.86 <= coverage <= 0.95
     assert alarms <= 3  # design: 3 detectors x 1%
+
+
+# --- lkn.8: several atypical cycles, wall-clock alignment across DST ---------------------
+def test_forward_search_false_exclusion_rate_is_nominal():
+    rng = np.random.default_rng(8)
+    for k in (4, 5, 6, 7):
+        hits = sum(bool(atypical_levels(rng.normal(size=k))) for _ in range(4000))
+        assert 0.003 <= hits / 4000 <= 0.02, (k, hits)
+
+
+def test_forward_search_is_not_masked_by_a_second_atypical_cycle():
+    lev = np.array([0.01, -0.02, 0.0, 0.015, -0.01, -0.6, -0.62])
+    assert atypical_levels(lev) == [5, 6]
+    assert atypical_levels(np.array([0.01, -0.02, 0.0, 0.015, -0.6])) == [4]
+    assert atypical_levels(np.array([0.0, 0.0, 0.0, 0.0, 0.0])) == []
+
+
+def test_saturday_and_sunday_among_daily_references_are_both_excluded():
+    wed = MON + 2 * DAY + 9 * H  # previous 7 days: Tue, Mon, Sun, Sat, Fri, Thu, Wed
+    rng = np.random.default_rng(21)
+    grid = wed + np.arange(96) * 5 * M
+    cyc = [
+        Cycle("1d", j, sh, wed - sh, load(grid - sh, rng, np.exp(rng.normal(0, 0.02))))
+        for j, sh in enumerate(cycle_shifts(wed, "1d", 7, "UTC", 96 * 5 * M, 5 * M), 1)
+    ]
+    now = load(grid, rng, 1.0)
+    c = compare(now, cyc, 5 * M)
+    assert sorted((cy.j, why) for cy, why in c.excluded) == [(3, "atypical"), (4, "atypical")]
+    assert c.verdict == "usual", c.reasons
+
+
+def test_point_shifts_follow_the_wall_clock_across_a_change_inside_the_window():
+    # Sun 2026-03-29 00:00-12:00 UTC: Berlin springs forward at 01:00 UTC (02:00 -> 03:00)
+    start = ms(2026, 3, 29, 0)
+    s = point_shifts(start, 144, 5 * M, "1d", 2, "Europe/Berlin")
+    before, after = s[:, :12], s[:, 13:]
+    assert np.all(before[0] == DAY) and np.all(after[0] == DAY - H)
+    assert np.all(before[1] == 2 * DAY) and np.all(after[1] == 2 * DAY - H)
+    assert crosses_dst(s)
+    assert not crosses_dst(point_shifts(start, 144, 5 * M, "1d", 2, "UTC"))
+
+
+def test_point_shifts_leave_a_local_hour_that_did_not_exist_uncompared():
+    # Mon 2026-03-30 02:00-03:00 CEST: on Sunday that local hour did not exist
+    start = ms(2026, 3, 30, 0)  # 02:00 CEST
+    s = point_shifts(start, 24, 5 * M, "1d", 2, "Europe/Berlin")
+    assert np.all(np.isnan(s[0, :12])) and np.all(s[0, 12:] == DAY)
+    assert np.all(s[1] == 2 * DAY - H)
+
+
+def test_point_shifts_compare_a_repeated_autumn_hour_with_the_same_reference_hour():
+    # Sun 2026-10-25: Berlin falls back at 01:00 UTC (03:00 CEST -> 02:00 CET)
+    start = ms(2026, 10, 25, 0)  # 02:00 CEST
+    s = point_shifts(start, 36, 5 * M, "1d", 1, "Europe/Berlin")
+    target = start + np.arange(36) * 5 * M - s[0]
+    assert np.array_equal(target[:12], target[12:24])  # 02:xx twice -> Saturday's 02:xx once
+    assert np.all(s[0, :12] == DAY) and np.all(s[0, 12:] == DAY + H)

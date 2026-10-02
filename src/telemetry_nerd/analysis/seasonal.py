@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from itertools import pairwise
+from itertools import combinations, pairwise
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import numpy as np
@@ -29,10 +29,13 @@ BAND = (0.05, 0.95)  # drawn: central 90% prediction band
 ALPHA = 0.01  # per detector, per window
 BLOCK_MIN = 100  # residuals per phase block
 MAX_BLOCKS = 24
-#: variance of the median of n iid N(0, 1) samples (simulated, 2e6 reps); pi / 2n beyond
 #: effective df per pooled residual for the extremes threshold; calibrated by seeded simulation
 #: (k = 3..6, white and AR(0.7) noise): false-alarm rate <= nominal 1%
 DF_SHARE = 0.2
+#: forward search (lkn.8): two-sided level of each step's nearest-outsider test, by k; seeded
+#: simulation (1e6 sets of k iid normal levels): P(any normal cycle excluded) = ALPHA
+FORWARD_P = {4: 0.00248, 5: 0.00182, 6: 0.00095, 7: 0.000937, 8: 0.000865}
+#: variance of the median of n iid N(0, 1) samples (simulated, 2e6 reps); pi / 2n beyond
 _MEDIAN_VAR = {1: 1.0, 2: 0.5, 3: 0.4487, 4: 0.2982, 5: 0.2868, 6: 0.2147, 7: 0.2104, 8: 0.1682}
 
 
@@ -91,11 +94,56 @@ def cycle_shifts(
     return out
 
 
-def dst_within(start_ms: int, end_ms: int, tz: str) -> bool:
+def _wall_to_utc(wall: datetime, zone: ZoneInfo) -> int | None:
+    """UTC ms of a local wall-clock time; None when it did not exist (spring forward). A time
+    that occurred twice (autumn) takes its first occurrence."""
+    aware = wall.replace(tzinfo=zone, fold=0)
+    u = int(aware.timestamp() * 1000)
+    back = datetime.fromtimestamp(u / 1000, UTC).astimezone(zone).replace(tzinfo=None)
+    return u if back == wall else None
+
+
+def point_shifts(start_ms: int, n: int, step_ms: int, scheme: str, k: int, tz: str) -> np.ndarray:
+    """UTC shift of every point of every previous cycle, shape (k, n), NaN where the same local
+    wall-clock time did not exist that day (lkn.8).
+
+    Each point is matched by local wall clock: point i at UTC t_i is compared with the instant
+    whose local time is local(t_i) - j days. Across a DST change inside the window (or inside a
+    previous cycle) the shift changes by the offset difference, so every point keeps its local
+    hour, not only the first. UTC and `previous` shifts are constant."""
+    span = n * step_ms
+    first = cycle_shifts(start_ms, scheme, k, tz, span, step_ms)  # validates, refuses
+    out = np.tile(np.asarray(first, float)[:, None], (1, n))
+    if scheme == "previous" or tz == "UTC":
+        return out
     zone = ZoneInfo(tz)
-    a = datetime.fromtimestamp(start_ms / 1000, UTC).astimezone(zone).utcoffset()
-    b = datetime.fromtimestamp(end_ms / 1000, UTC).astimezone(zone).utcoffset()
-    return a != b
+    days = PERIOD_DAYS[scheme]
+    walls = [
+        datetime.fromtimestamp((start_ms + i * step_ms) / 1000, UTC).astimezone(zone).replace(tzinfo=None)
+        for i in range(n)
+    ]  # fmt: skip
+    for j in range(1, k + 1):
+        back = timedelta(days=days * j)
+        for i, wall in enumerate(walls):
+            u = _wall_to_utc(wall - back, zone)
+            if u is None:
+                out[j - 1, i] = np.nan
+                continue
+            sh = start_ms + i * step_ms - u
+            if sh % step_ms:
+                raise ValueError(
+                    f"cycle -{j}x{scheme} in {tz} is {sh / 3_600_000:g}h back at one point, not a "
+                    "whole number of steps (hint: re-query at a step dividing 1h)"
+                )
+            out[j - 1, i] = sh
+    return out
+
+
+def crosses_dst(shifts: np.ndarray) -> bool:
+    """Some cycle's points do not share one shift (a DST change inside now or that cycle)."""
+    return bool(np.any(np.isnan(shifts))) or any(
+        np.unique(row[~np.isnan(row)]).size > 1 for row in shifts
+    )
 
 
 # comparison -----------------------------------------------------------------------------
@@ -106,6 +154,7 @@ class Cycle:
     shift_ms: int
     start_ms: int
     values: np.ndarray  # on now's grid, NaN where missing
+    shifts_ms: np.ndarray | None = None  # per point (wall-clock alignment); None = shift_ms
 
 
 @dataclass(frozen=True)
@@ -233,33 +282,46 @@ def _block_stats(R: np.ndarray, blocks: list[slice], f: float):
     return q_lo, q_hi, med, sig
 
 
+def atypical_levels(lev: np.ndarray, floor: float = 0.0) -> list[int]:
+    """Indices of atypical cycles among levels `lev` (lkn.8): forward search from a clean subset.
+
+    Start from the k-2 cycles whose levels vary least (k-1 for k <= 5: two atypical among five
+    are out of reach of a 1% test anyway, and the extra step would cost a single outlier power),
+    so up to two atypical cycles (Saturday and Sunday among daily references) cannot inflate the
+    spread they are judged by. Then repeatedly test the outsider nearest the subset's mean against a Student-t
+    prediction interval of the subset (sigma never below `floor`) and add it while it fits; at the
+    first misfit every remaining cycle is atypical. The per-step level is calibrated by seeded
+    simulation so that a set of normal cycles loses one with probability ALPHA (FORWARD_P)."""
+    k = len(lev)
+    if k <= MIN_CYCLES:
+        return []
+    h = k - 1 if k <= 5 else k - 2
+    start = min(combinations(range(k), h), key=lambda s: (float(np.var(lev[list(s)], ddof=1)), s))
+    alive = list(start)
+    p = FORWARD_P.get(k, FORWARD_P[max(FORWARD_P)])
+    while len(alive) < k:
+        m = len(alive)
+        sub = lev[alive]
+        mu = float(np.mean(sub))
+        half = max(float(np.std(sub, ddof=1)), floor) * math.sqrt(1 + 1 / m)
+        rest = [j for j in range(k) if j not in alive]
+        u = [(abs(float(lev[j]) - mu) / half if half > 0 else 0.0, j) for j in rest]
+        best, j = min(u)
+        if best > t_quantile(1 - p / 2, m - 1):
+            break
+        alive.append(j)
+    return sorted(set(range(k)) - set(alive))
+
+
 def _atypical(X: np.ndarray, R: np.ndarray) -> list[int]:
-    """Indices of cycles whose level (mean deviation from the median of all cycles) lies outside
-    the (1 - ALPHA/k) Student-t prediction interval of the other cycles' levels; worst first,
-    while more than MIN_CYCLES remain. sigma never below the SE of a cycle mean from point noise
-    (identical cycles must not make every wobble atypical). False exclusion rate ~ALPHA."""
-    k = X.shape[0]
+    """Cycles whose level (mean deviation from the median of all cycles) is atypical; sigma never
+    below the SE of a cycle mean from point noise (identical cycles must not make every wobble
+    atypical)."""
     c = _nanmedian_min(X, MIN_CYCLES)
     lev = np.array([float(np.nanmean(x - c)) for x in X])
     n_obs = max(1, int(np.sum(~np.isnan(X[0] - c))))
     s_pt = MAD_SCALE * float(np.nanmedian(np.abs(R - np.nanmedian(R))))
-    floor = s_pt * math.sqrt(_tau(R) / n_obs)
-    alive = list(range(k))
-    drop: list[int] = []
-    while len(alive) > MIN_CYCLES:
-        stats = []
-        for j in alive:
-            others = lev[[i for i in alive if i != j]]
-            sd = max(float(np.std(others, ddof=1)), floor)
-            half = t_quantile(1 - ALPHA / (2 * len(alive)), len(others) - 1)
-            half *= sd * math.sqrt(1 + 1 / len(others))
-            stats.append((abs(lev[j] - float(np.mean(others))) / half if half > 0 else 0.0, j))
-        worst, j = max(stats)
-        if worst <= 1:
-            break
-        drop.append(j)
-        alive.remove(j)
-    return drop
+    return atypical_levels(lev, s_pt * math.sqrt(_tau(R) / n_obs))
 
 
 def _block_n(R: np.ndarray, blocks: list[slice]) -> list[int]:

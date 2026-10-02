@@ -30,12 +30,16 @@ The dataset is the current window W = [start, end] at step s (N points). Candida
 A scheme is offered only when the span fits in its period (cycles must not overlap now). Each cycle
 is fetched as its own dataset (same expr, step, source; cached) and put on now's grid.
 
-**Alignment / DST.** With `tz` (IANA name; default `UTC`), cycle j starts at the UTC instant of
-`local(start) - j days`; across a DST change the shift is 23 h or 25 h, so "same local hour
-yesterday" stays the same local hour. The window keeps its elapsed length (points are
-`start_j + i s`); a window that itself contains a DST change gets caveat `dst_within_window`.
-Every shift must be a multiple of the step (else refused with a hint). Cycles whose shift differs
-from the nominal are listed (`dst_shifted`). UTC alignment is stated as such: human-driven load
+**Alignment / DST.** With `tz` (IANA name; default `UTC`), every point is matched by local wall
+clock (lkn.8): point i at UTC t_i is compared with the instant whose local time is
+`local(t_i) - j days`. Across a DST change the shift is 23 h or 25 h, so "same local hour
+yesterday" stays the same local hour, and this holds point by point when the window itself (or a
+previous cycle) crosses a change. A local time that did not exist on the cycle's day (spring
+forward) leaves that point uncompared; a local hour that occurs twice in the window (autumn) is
+compared twice with the same reference hour; either case sets caveat `dst_wall_clock` (it replaces
+lkn.2's `dst_within_window`, which flagged windows aligned at their start only). Every shift must
+be a multiple of the step (else refused with a hint). Cycles with any point not exactly j nominal
+periods back are listed (`dst_shifted`). UTC alignment is stated as such: human-driven load
 follows local time (see 2as.24).
 
 **Choice.** Each available scheme is scored by leave-one-cycle-out mean absolute error: each cycle
@@ -49,9 +53,15 @@ and the answer says so. A cached operating profile's seasonal model (2as.7) is r
 
 - `missing`: a cycle with data at < 50% of the grid.
 - `user`: cycles overlapping `exclude` (local dates, e.g. holidays).
-- `atypical`: a cycle whose level (mean deviation from the median of all cycles) lies
-  outside the (1 - 1%/k) Student-t prediction interval of the other cycles' levels (sigma never
-  below the SE of a cycle mean from point noise), worst first, while > 3 remain; a holiday or
+- `atypical`: cycles whose level (mean deviation from the median of all cycles) does not fit the
+  others, by forward search from a clean subset (lkn.8): start from the k-2 cycles whose levels
+  vary least (k-1 for k <= 5), then repeatedly test the outsider nearest the subset mean against
+  the subset's Student-t prediction interval (sigma never below the SE of a cycle mean from point
+  noise) and add it while it fits; at the first misfit every remaining cycle is atypical. The
+  per-step level is calibrated by seeded simulation (1e6 null sets per k) so that a set of normal
+  cycles loses one with probability 1% (`FORWARD_P`). A clean start means a second atypical cycle
+  (Saturday next to Sunday among daily references) cannot inflate the spread it is judged by; the
+  lkn.2 rule (each cycle against all others, Bonferroni) never excluded both. A holiday or
   incident in the reference must not widen the band or bias the centre. The scheme's choice
   score is computed before this exclusion (weekends among daily references count against `1d`).
 Every exclusion is listed with its reason and caveat `cycles_excluded`.
@@ -107,18 +117,34 @@ interval, band exceedance share).
 
 ## Calibration (seeded simulation, 1000 seeds per row)
 
-Weekly load (weekday business-hours peak, low weekends), multiplicative noise (white or AR(0.7)
-within the window), optional per-cycle level jitter (sd 5%), 96-point windows, 1w scheme:
+`uv run python scripts/calibrate_seasonal.py`. Weekly load (weekday business-hours peak, low
+weekends), multiplicative noise (white or AR(0.7) within the window), optional per-cycle level
+jitter (sd 5%), 96-point windows, 1w scheme (lkn.8 numbers; lkn.2's rule gave the same within
+0.6 points, atypical exclusion of a normal cycle at k=6 with jitter 0.8% then, 0.2% now):
 
 | k | noise | jitter | band coverage (90%) | level 90% PI coverage | false alarms: level / extremes / outside / any |
 |---|---|---|---|---|---|
-| 3 | white | 0 | 0.903 | 0.909 | 1.3% / 0.3% / 1.4% / 3.0% |
-| 3 | AR(0.7) | 5% | 0.895 | 0.901 | 1.0% / 0.0% / 0.8% / 1.8% |
-| 4 | white | 0 | 0.900 | 0.905 | 1.2% / 0.6% / 1.4% / 3.2% |
-| 4 | white | 5% | 0.897 | 0.891 | 1.7% / 0.6% / 1.4% / 3.7% |
-| 4 | AR(0.7) | 5% | 0.896 | 0.887 | 1.1% / 0.0% / 0.2% / 1.3% |
-| 6 | white | 5% | 0.901 | 0.883 | 1.4% / 0.2% / 0.7% / 2.3% |
-| 6 | AR(0.7) | 0 | 0.900 | 0.903 | 0.9% / 0.0% / 0.0% / 0.9% |
+| 3 | white | 0 | 0.902 | 0.907 | 1.4% / 0.1% / 1.4% / 2.9% |
+| 3 | AR(0.7) | 5% | 0.890 | 0.912 | 0.8% / 0.0% / 0.5% / 1.3% |
+| 4 | white | 0 | 0.902 | 0.916 | 0.9% / 0.1% / 1.2% / 2.2% |
+| 4 | white | 5% | 0.891 | 0.888 | 1.7% / 0.1% / 0.6% / 2.4% |
+| 4 | AR(0.7) | 5% | 0.883 | 0.887 | 1.0% / 0.0% / 0.3% / 1.3% |
+| 6 | white | 5% | 0.895 | 0.895 | 1.1% / 0.5% / 0.7% / 2.3% |
+| 6 | AR(0.7) | 0 | 0.898 | 0.894 | 1.0% / 0.0% / 0.0% / 1.0% |
+
+Atypical cycles (lkn.8), weekday 09-17 window; "all atypical" = every planted atypical cycle
+excluded, never a normal one in any row:
+
+| scenario | lkn.2 rule | forward search |
+|---|---|---|
+| 1d k=7, Sat+Sun in refs, jitter 5% (weekend level -0.44 = 9 sd) | 0.0% | 27% |
+| 1d k=7, Sat+Sun in refs, jitter 2% | 0.0% | 90% |
+| 1w k=5, one holiday week x0.6, jitter 5% | 52% | 48% |
+
+Power is bounded by k: the spread of k-2 levels is a t with k-3 df. On iid normal levels with
+two planted at -delta sd, k=7 excludes both 58% / 94% of the time at delta 10 / 15 (k=8: 81% /
+100%); with one planted at 10 sd, 86% (lkn.2 rule 92%). k <= 5 tests only the single most
+outlying cycle (as lkn.2 did): two atypical among five are out of reach at 1%.
 
 Choices that calibration forced (each was wrong first):
 - Detectors 2/3 judge each window relative to its own median level: per-point tests on the raw
@@ -127,6 +153,8 @@ Choices that calibration forced (each was wrong first):
   LOO cycle means are correlated and gave the wrong scale.
 - Atypical cycles: a Hampel rule with k = 4..7 excluded a normal cycle > 10% of the time (MAD of
   a handful of values), which shrank the band; replaced by the t prediction interval (~1%).
+  That rule was masked by a second atypical cycle; the forward search (lkn.8) is calibrated per
+  k instead of Bonferroni (its start is the least-varying subset, whose spread is biased low).
 - Extremes: sigma is a MAD from a block pool; Student t with df = 0.2 x pool / tau (MAD is 37%
   efficient and LOO residuals sharing a phase are dependent), calibrated: <= 0.6% at nominal 1%.
 
@@ -137,7 +165,8 @@ Choices that calibration forced (each was wrong first):
 - Band coverage: over 40 seeds, held-out normal cycles fall inside the 90% band at the nominal rate
   (bounds asserted in tests; numbers above).
 - False alarms: normal cycles flagged `unusual` at a rate consistent with the 3 x 1% design.
-- Alignment: shifts across the EU spring / autumn DST changes are 23 h / 25 h with `tz`, 24 h in UTC.
+- Alignment: shifts across the EU spring / autumn DST changes are 23 h / 25 h with `tz`, 24 h in UTC;
+  a window across the change is matched point by point (the local 10:00 peak stays aligned).
 - Insufficient history, missing cycles, user and atypical exclusions, percentile refusal.
 
 ## Out of scope (follow-ups)

@@ -26,8 +26,8 @@ from telemetry_nerd.analysis.seasonal import (
     Cycle,
     choose,
     compare,
-    cycle_shifts,
-    dst_within,
+    crosses_dst,
+    point_shifts,
     scale_of,
 )
 from telemetry_nerd.core.signal_ops import SERIES_BUDGET, SignalOps, human_period
@@ -57,6 +57,14 @@ def _arr(a: np.ndarray | None) -> list[float | None]:
     if a is None:
         return []
     return [None if not math.isfinite(float(v)) else float(f"{float(v):.5g}") for v in a]
+
+
+def _moved(c: Cycle, nominal: int) -> bool:
+    """Some point of the cycle is not exactly j nominal periods back (DST: 23h/25h days)."""
+    if c.shifts_ms is None:
+        return c.shift_ms != nominal
+    s = c.shifts_ms[~np.isnan(c.shifts_ms)]
+    return bool(np.any(s != nominal))
 
 
 def seasonal_hint(dataset_id: str, periods: list[tuple[float, float, float]]) -> str | None:
@@ -128,30 +136,37 @@ class SeasonalOps:
             if not _DATE.match(d.strip()):
                 raise ValueError(f"exclude takes local dates like 2026-12-25, got {d!r}")
             days.append(d.strip())
-        span = meta.end_ms - meta.start_ms + meta.step_ms
+        n = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
+        grid = meta.start_ms + np.arange(n, dtype=np.int64) * meta.step_ms
         refs: dict[str, list[dict]] = {}
         unavailable: dict[str, str] = {}
         for scheme in [s for s in SCHEMES if s in cycles]:
             try:
-                shifts = cycle_shifts(
-                    meta.start_ms, scheme, DEFAULT_K[scheme], tz, span, meta.step_ms
-                )
+                shifts = point_shifts(meta.start_ms, n, meta.step_ms, scheme, DEFAULT_K[scheme], tz)
             except ValueError as e:
                 if "timezone" in str(e):
                     raise
                 unavailable[scheme] = str(e)
                 continue
             refs[scheme] = []
-            for j, sh in enumerate(shifts, 1):
+            for j, row in enumerate(shifts, 1):
+                ok = ~np.isnan(row)
+                if not ok.any():
+                    continue
+                at = grid[ok] - row[ok].astype(np.int64)
+                a, b = int(at.min()), int(at.max())
                 out = await self._query(
                     meta.expr,
-                    start=str(meta.start_ms - sh),
-                    end=str(meta.end_ms - sh),
+                    start=str(a),
+                    end=str(b),
                     step=format_duration(meta.step_ms),
                     source=meta.source,
                     actor=actor,
                 )
-                refs[scheme].append({"j": j, "shift_ms": sh, "dataset": out["dataset"]})
+                refs[scheme].append(
+                    {"j": j, "shift_ms": int(row[ok][0]), "start_ms": a, "end_ms": b,
+                     "dataset": out["dataset"]}
+                )  # fmt: skip
         if not refs:
             raise ValueError("no cycle applies: " + "; ".join(unavailable.values()))
         cfg = {"tz": tz, "exclude": days, "refs": refs, "unavailable": unavailable}
@@ -168,18 +183,26 @@ class SeasonalOps:
         return cfg
 
     # analysis -------------------------------------------------------------------------
-    def _values(self, dataset_id: str, start_ms: int, n: int, step: int, shift: int) -> dict:
+    def _values(self, dataset_id: str, targets: np.ndarray, step: int) -> dict:
+        """Per series: the value at each target time (bucket end), NaN where missing or where
+        the target is NaN (a local time that did not exist that day)."""
         _, result = self._datasets.get(dataset_id)
         df = pl.from_arrow(result.buckets)
         assert isinstance(df, pl.DataFrame)
         df = df.with_columns(pl.col("avg").fill_nan(None)).drop_nulls("avg")
+        ok = ~np.isnan(targets)
         out: dict[str, np.ndarray] = {}
+        if not ok.any():
+            return out
+        t0 = int(np.nanmin(targets))
+        want = np.where(ok, (np.nan_to_num(targets) - t0) // step, -1).astype(np.int64)
+        size = int(want.max()) + 1
         for (sid,), g in df.group_by("series_id", maintain_order=True):
-            idx = (g["ts_ms"].to_numpy() + shift - start_ms) // step
-            ok = (idx >= 0) & (idx < n)
-            arr = np.full(n, np.nan)
-            arr[idx[ok]] = g["avg"].to_numpy()[ok]
-            out[str(sid)] = arr
+            idx = (g["ts_ms"].to_numpy() - t0) // step
+            keep = (idx >= 0) & (idx < size)
+            lut = np.full(size, np.nan)
+            lut[idx[keep]] = g["avg"].to_numpy()[keep]
+            out[str(sid)] = np.where(ok, lut[np.clip(want, 0, size - 1)], np.nan)
         return out
 
     def _excluded_js(self, cfg: dict, scheme: str, meta) -> set[int]:
@@ -189,12 +212,29 @@ class SeasonalOps:
         days = {date.fromisoformat(d) for d in cfg["exclude"]}
         out = set()
         for ref in cfg["refs"][scheme]:
-            a = datetime.fromtimestamp((meta.start_ms - meta.step_ms - ref["shift_ms"]) / 1000, UTC)
-            b = datetime.fromtimestamp((meta.end_ms - ref["shift_ms"]) / 1000, UTC)
+            a0 = ref.get("start_ms", meta.start_ms - ref["shift_ms"])
+            b0 = ref.get("end_ms", meta.end_ms - ref["shift_ms"])
+            a = datetime.fromtimestamp((a0 - meta.step_ms) / 1000, UTC)
+            b = datetime.fromtimestamp(b0 / 1000, UTC)
             d0, d1 = a.astimezone(zone).date(), b.astimezone(zone).date()
             span = {d0 + timedelta(days=i) for i in range((d1 - d0).days + 1)}
             if span & days:
                 out.add(ref["j"])
+        return out
+
+    @staticmethod
+    def _shifts(meta, cfg: dict) -> dict[str, np.ndarray]:
+        """Per scheme, (k, n) per-point shifts: local wall-clock alignment (recomputed from tz,
+        so the stored configuration stays small)."""
+        n = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
+        out = {}
+        for scheme, refs in cfg["refs"].items():
+            k = max((r["j"] for r in refs), default=0)
+            out[scheme] = (
+                point_shifts(meta.start_ms, n, meta.step_ms, scheme, k, cfg["tz"])
+                if k
+                else np.zeros((0, n))
+            )
         return out
 
     def run(self, dataset_id: str, cfg: dict) -> tuple:
@@ -205,11 +245,14 @@ class SeasonalOps:
         meta, result = self._datasets.get(dataset_id)
         step, n = meta.step_ms, (meta.end_ms - meta.start_ms) // meta.step_ms + 1
         # buckets carry their END time: the grid is the bucket end times of the window
-        now = self._values(dataset_id, meta.start_ms, n, step, 0)
+        grid = meta.start_ms + np.arange(n, dtype=np.int64) * step
+        now = self._values(dataset_id, grid.astype(float), step)
         labels = {r["series_id"]: json.loads(r["labels"]) for r in result.series.to_pylist()}
+        shifts = self._shifts(meta, cfg)
         per_scheme = {
             scheme: {
-                ref["j"]: (ref, self._values(ref["dataset"], meta.start_ms, n, step, ref["shift_ms"]))
+                ref["j"]: (ref, shifts[scheme][ref["j"] - 1],
+                           self._values(ref["dataset"], grid - shifts[scheme][ref["j"] - 1], step))
                 for ref in refs
             }
             for scheme, refs in cfg["refs"].items()
@@ -219,9 +262,9 @@ class SeasonalOps:
         for sid, y in now.items():
             schemes = {
                 s: [
-                    Cycle(s, j, ref["shift_ms"], meta.start_ms - ref["shift_ms"],
-                          vals.get(sid, np.full(n, np.nan)))
-                    for j, (ref, vals) in sorted(cyc.items())
+                    Cycle(s, j, ref["shift_ms"], ref.get("start_ms", meta.start_ms - ref["shift_ms"]),
+                          vals.get(sid, np.full(n, np.nan)), sh)
+                    for j, (ref, sh, vals) in sorted(cyc.items())
                 ]
                 for s, cyc in per_scheme.items()
             }  # fmt: skip
@@ -253,8 +296,8 @@ class SeasonalOps:
         meta, res = self.run(dataset_id, cfg)
         span = meta.end_ms - meta.start_ms + meta.step_ms
         caveats: list[str] = []
-        if cfg["tz"] != "UTC" and dst_within(meta.start_ms, meta.end_ms, cfg["tz"]):
-            caveats.append("dst_within_window")
+        if cfg["tz"] != "UTC" and any(crosses_dst(x) for x in self._shifts(meta, cfg).values()):
+            caveats.append("dst_wall_clock")
         series = []
         for labels, _, c, scores in res.values():
             series.append(self._series(dataset_id, meta, cfg, labels, c, scores, span))
@@ -300,7 +343,7 @@ class SeasonalOps:
             },
         }
         period_ms = {"1d": DAY_S * 1000, "1w": WEEK_S * 1000}.get(c.scheme)
-        if period_ms and (moved := [x.j for x in c.kept if x.shift_ms != x.j * period_ms]):
+        if period_ms and (moved := [x.j for x in c.kept if _moved(x, x.j * period_ms)]):
             out["reference"]["dst_shifted"] = moved  # cycles 23h/25h-per-day back, not 24h
         if c.level is None:
             return out
