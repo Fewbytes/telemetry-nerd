@@ -49,7 +49,6 @@ CREATE TABLE IF NOT EXISTS catalog_metrics (
     is_family INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (source, metric)
 );
-CREATE INDEX IF NOT EXISTS catalog_metrics_family ON catalog_metrics (source, family);
 CREATE TABLE IF NOT EXISTS catalog_families (
     source TEXT NOT NULL,
     template TEXT NOT NULL,
@@ -190,4 +189,7 @@ def open_workspace_db(path: str | Path) -> sqlite3.Connection:
     for column, ddl in _METRIC_COLUMNS.items():
         if column not in have:
             con.execute(ddl)
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS catalog_metrics_family ON catalog_metrics (source, family)"
+    )
     return con
