@@ -63,7 +63,7 @@
     const st = series.state;
     const c = st ? hitRug(rugCellsNow, e.offsetX, e.offsetY) : null;
     if (!c || !st) { rugTip = null; return; }
-    rugTip = { x: e.offsetX + AXIS_LEFT + 8, y: e.offsetY + 12, text: rugHint(c, st, data.effective_step_ms, seriesName(series.labels), data.dataset.resolution_ms) };
+    rugTip = { x: e.offsetX + AXIS_LEFT + 8, y: (rugEl?.offsetTop ?? 0) + e.offsetY + 12, text: rugHint(c, st, data.effective_step_ms, seriesName(series.labels), data.dataset.resolution_ms) };
   }
 
   $effect(() => {
@@ -80,7 +80,7 @@
     });
     layout = l;
     ctx.save(); ctx.translate(AXIS_LEFT, 0);
-    ctx.strokeStyle = v("--grid"); ctx.lineWidth = 1;
+    ctx.strokeStyle = v("--muted"); ctx.lineWidth = 1; // texture carries meaning: >= 3:1
     for (const m of l.missing) m.kind === "unknown" ? hatch(ctx, m.x, m.w, plotH) : dots(ctx, m.x, m.w, plotH); // never "zero"
     for (const r of l.rects) {
       ctx.globalAlpha = r.lowN ? 0.45 : 1;
@@ -166,7 +166,7 @@
   {#if series.state}
     <canvas class="rug" bind:this={rugEl} data-rug aria-label="Coverage rug: where data is missing"
       style="margin-left: {AXIS_LEFT}px" onmousemove={onRugMove} onmouseleave={() => (rugTip = null)}></canvas>
-    {#if rugTip}<div class="rug-tip" style="left: {rugTip.x}px; top: {height + rugTip.y}px">{rugTip.text}</div>{/if}
+    {#if rugTip}<div class="rug-tip" style="left: {rugTip.x}px; top: {rugTip.y}px">{rugTip.text}</div>{/if}
   {/if}
   {#if tip}<div class="tip" style="left: {tip.x}px; top: {tip.y}px">{tip.text}</div>{/if}
 </div>
