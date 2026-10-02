@@ -1,5 +1,5 @@
 // ui/src/chart/overlays.ts — reference layers on time panels (bead 2as.11). Pure.
-import type { GhostSeries, BandSeries, LineData, OverlayFlags, OverlaysPayload, SeriesData } from "../lib/api";
+import type { GhostSeries, BandSeries, LineData, OverlayFlags, OverlaysPayload } from "../lib/api";
 
 export interface Chip {
   key: keyof OverlayFlags;
