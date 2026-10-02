@@ -21,3 +21,8 @@ def test_instructions_put_tier1_first_and_inputs_up_front_for_run_code():
     text = " ".join(INSTRUCTIONS.split())
     assert "run_code" in text and "tier-1 tools first" in text
     assert "inputs" in text and "uncertainty" in text
+
+
+def test_instructions_point_to_the_tier2_skill_and_code_get():
+    text = " ".join(INSTRUCTIONS.split())
+    assert "tier2-code" in text and "code_get" in text
