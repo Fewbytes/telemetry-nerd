@@ -70,6 +70,11 @@ def histogram_text(
     )
 
 
+GAPPY_HOLE_PERIOD_MS = 3 * 3_600_000
+GAPPY_HOLE_OFFSET_MS = 3_600_000
+GAPPY_HOLE_MS = 15 * 60_000
+
+
 def demo_text(start_ms: int, end_ms: int, interval_ms: int = 15_000, seed: int = 7) -> str:
     """Latency gauge (hourly sine + noise) for instances a,b,c; c spikes to 1.5
     for 5 minutes starting at 2/3 of the range. Request counter per instance."""
@@ -99,13 +104,15 @@ def demo_text(start_ms: int, end_ms: int, interval_ms: int = 15_000, seed: int =
         parts.append(
             histogram_text("tn_demo_request_duration_seconds", {"instance": instance}, scrapes)
         )
-    hole_start = start_ms + (end_ms - start_ms) // 3
-    hole_start -= hole_start % interval_ms
-    hole_end = hole_start + 15 * 60_000
+    # d's 15-minute hole is anchored to wall-clock time (one per 3h block): seeds overlap in the
+    # persistent dev VM, and a hole placed relative to each seed's range is filled by the next.
+    hole = range(GAPPY_HOLE_OFFSET_MS, GAPPY_HOLE_OFFSET_MS + GAPPY_HOLE_MS)
     born = start_ms + (end_ms - start_ms) // 2
     born -= born % interval_ms
     gappy_d = [
-        (ts, 0.05) for ts in range(start_ms, end_ms, interval_ms) if not hole_start <= ts < hole_end
+        (ts, 0.05)
+        for ts in range(start_ms, end_ms, interval_ms)
+        if ts % GAPPY_HOLE_PERIOD_MS not in hole
     ]
     gappy_e = [(ts, 0.07) for ts in range(born, end_ms, interval_ms)]
     parts.append(exposition("tn_demo_gappy_seconds", {"instance": "d"}, gappy_d))
