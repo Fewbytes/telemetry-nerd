@@ -289,8 +289,9 @@
     const colors = readAnnotationColors(el);
     const { stroke, grid } = plotColors(el, mode);
     const dpr = window.devicePixelRatio || 1;
+    const drawnNow = untrack(() => drawn);
     const model = toUplot(
-      untrack(() => drawn),
+      drawnNow,
       { start: d.dataset.start_ms, end: d.dataset.end_ms, step: d.effective_step_ms },
       {
         quantile: d.dataset.representation === "quantile",
@@ -358,15 +359,22 @@
                   if (rugEl && d.bucket_state?.length) {
                     const bs = d.bucket_state;
                     const left = u.bbox.left / dpr;
-                    const rctx = setupCanvas(rugEl, width, rugHeight(bs.length));
+                    const rctx = setupCanvas(rugEl, u.width, rugHeight(bs.length));
                     if (rctx) {
-                      const order = new Map(d.series.map((s, k) => [s.id, k]));
+                      // same array toUplot coloured by, so tints match the lines
+                      const order = new Map(drawnNow.map((s, k) => [s.id, k]));
                       const grey = getComputedStyle(el).getPropertyValue("--muted").trim();
                       rugCellsNow = rugCells(bs, d.effective_step_ms, (ms) => left + u.valToPos(ms / 1000, "x"));
+                      rctx.save();
+                      rctx.beginPath(); rctx.rect(left, 0, u.bbox.width / dpr, rugHeight(bs.length)); rctx.clip();
                       drawRug(rctx, rugCellsNow, {
-                        tint: (row) => rgba(PALETTE[(order.get(bs[row].id) ?? row) % PALETTE.length], 0.2),
+                        tint: (row) => {
+                          const k = order.get(bs[row].id);
+                          return k === undefined ? grey : rgba(PALETTE[k % PALETTE.length], 0.2);
+                        },
                         grey, line: grey,
                       });
+                      rctx.restore();
                     }
                   }
                   drawAnnotations(u, ops, colors, dpr);

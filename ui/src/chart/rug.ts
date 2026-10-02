@@ -43,6 +43,7 @@ export function drawRug(ctx: CanvasRenderingContext2D, cells: RugCell[], style: 
       ctx.fillStyle = style.tint(c.row);
       ctx.fillRect(c.x, y, c.w, ROW_H);
       if (c.state === STATE.PARTIAL) {
+        // floor keeps small shortfalls visibly different from ok
         ctx.globalAlpha = Math.max(0.25, c.missing);
         ctx.fillStyle = style.grey;
         ctx.fillRect(c.x, y, c.w, ROW_H);

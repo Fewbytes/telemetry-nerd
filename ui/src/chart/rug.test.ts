@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { hitRug, MAX_ROWS, ROW_GAP, ROW_H, rugCells, rugHeight, rugHint, STATE } from "./rug";
+import { relativeLuminance } from "./colormap";
 import type { BucketStatePayload } from "../lib/api";
 
 const st = (id: string, state: number[], observed: number[]): BucketStatePayload => ({
@@ -35,5 +36,17 @@ describe("rug", () => {
     expect(text).toContain("no samples");
     expect(text).toContain("0 of 4 expected");
     expect(text).toContain('{instance="a"}');
+  });
+});
+
+describe("rug grey", () => {
+  const ratio = (a: string, b: string) => {
+    const [hi, lo] = [relativeLuminance(a), relativeLuminance(b)].sort((x, y) => y - x);
+    return (hi + 0.05) / (lo + 0.05);
+  };
+  // --muted / --bg values from ui/src/index.css
+  it("--muted passes 3:1 in both themes", () => {
+    expect(ratio("#666666", "#ffffff")).toBeGreaterThanOrEqual(3);
+    expect(ratio("#9aa0a6", "#16181d")).toBeGreaterThanOrEqual(3);
   });
 });
