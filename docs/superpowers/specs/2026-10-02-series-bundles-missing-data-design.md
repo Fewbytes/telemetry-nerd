@@ -157,8 +157,10 @@ Dataset level: failed spans with error text (never cached; retried on next read)
 
 ### 5.3 Coarsen across time
 
-Sum `observed`, `expected`; OR flags; state = worst inside, except `absent` only if the whole
-coarse bucket is absent. Order (worst first): `unknown` > `empty` > `partial` > `ok`.
+Sum `observed`, `expected`; OR flags. State is re-classified from the summed observed/expected (same
+rule as §5.1), except: `unknown` if any sub-bucket is `unknown`, and `absent` only if every sub-bucket
+is absent (absent sub-buckets add nothing to the sums). This keeps coarsening associative and
+consistent with §5.2.
 
 ### 5.4 Fetch failures
 

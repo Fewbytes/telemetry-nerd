@@ -3,7 +3,7 @@ be trusted (spec 2026-10-02 §5). Computed on read from bucket counts; never sto
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from enum import IntEnum, IntFlag
 from typing import Literal
 
@@ -113,3 +113,90 @@ def compute(
         .select(STATE_SCHEMA.names)
     )
     return out.to_arrow().cast(STATE_SCHEMA)
+
+
+GROUP_SCHEMA = pa.schema(
+    [
+        ("ts_ms", pa.int64()),
+        ("group", pa.string()),
+        ("alive", pa.int32()),
+        ("reporting", pa.int32()),
+        ("observed", pa.float64()),
+        ("expected", pa.float64()),
+        ("state", pa.uint8()),
+        ("flags", pa.uint16()),
+        ("silent", pa.list_(pa.string())),
+    ]
+)
+
+_ALIVE = pl.col("state") != int(State.ABSENT)
+
+
+def _classify(any_alive: pl.Expr, any_unknown: pl.Expr, partial: pl.Expr) -> pl.Expr:
+    return (
+        pl.when(~any_alive)
+        .then(int(State.ABSENT))
+        .when(any_unknown)
+        .then(int(State.UNKNOWN))
+        .when(pl.col("observed") == 0)
+        .then(int(State.EMPTY))
+        .when(partial | short(pl.col("observed"), pl.col("expected")))
+        .then(int(State.PARTIAL))
+        .otherwise(int(State.OK))
+        .cast(pl.UInt8)
+    )
+
+
+def coarsen(states: pa.Table, new_step_ms: int) -> pa.Table:
+    """Merge buckets into coarser ones ending at multiples of new_step_ms (as resample.rebucket)."""
+    if states.num_rows == 0:
+        return states
+    k = new_step_ms
+    out = (
+        pl.from_arrow(states)
+        .with_columns(((pl.col("ts_ms") + k - 1) // k * k).alias("ts_ms"))
+        .group_by(["series_id", "ts_ms"])
+        .agg(
+            pl.col("observed").filter(_ALIVE).sum().alias("observed"),
+            pl.col("expected").filter(_ALIVE).sum().alias("expected"),
+            _ALIVE.any().alias("_alive"),
+            (pl.col("state") == int(State.UNKNOWN)).any().alias("_unknown"),
+            pl.col("flags").bitwise_or().alias("flags"),
+        )
+        .with_columns(_classify(pl.col("_alive"), pl.col("_unknown"), pl.lit(False)).alias("state"))
+        .sort("series_id", "ts_ms")
+        .select(STATE_SCHEMA.names)
+    )
+    return out.to_arrow().cast(STATE_SCHEMA)
+
+
+def merge(states: pa.Table, group_of: Mapping[str, str]) -> pa.Table:
+    """Combine member series per bucket (spec §5.2). Absent members are not in the denominator."""
+    if states.num_rows == 0:
+        return GROUP_SCHEMA.empty_table()
+    reporting = pl.col("state").is_in([int(State.OK), int(State.PARTIAL)])
+    out = (
+        pl.from_arrow(states)
+        .with_columns(
+            pl.col("series_id").replace_strict(dict(group_of), default=None).alias("group")
+        )
+        .drop_nulls("group")
+        .group_by(["group", "ts_ms"])
+        .agg(
+            _ALIVE.sum().cast(pl.Int32).alias("alive"),
+            reporting.sum().cast(pl.Int32).alias("reporting"),
+            pl.col("observed").filter(_ALIVE).sum().alias("observed"),
+            pl.col("expected").filter(_ALIVE).sum().alias("expected"),
+            (pl.col("state") == int(State.UNKNOWN)).any().alias("_unknown"),
+            pl.col("flags").bitwise_or().alias("flags"),
+            pl.col("series_id").filter(pl.col("state") == int(State.EMPTY)).sort().alias("silent"),
+        )
+        .with_columns(
+            _classify(
+                pl.col("alive") > 0, pl.col("_unknown"), pl.col("reporting") < pl.col("alive")
+            ).alias("state")
+        )
+        .sort("group", "ts_ms")
+        .select(GROUP_SCHEMA.names)
+    )
+    return out.to_arrow().cast(GROUP_SCHEMA)
