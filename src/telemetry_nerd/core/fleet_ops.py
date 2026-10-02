@@ -188,7 +188,7 @@ class FleetOps:
         alive_sum = float(np.sum(sp.alive))
         missing = 1 - float(np.sum(sp.n)) / alive_sum if alive_sum else 0.0
         if missing > 0.05:
-            caveats.append("missing_data")
+            caveats.append("members_missing")
         churn: dict = {"appeared": appeared[:MAX_LISTED], "stopped_reporting": stopped[:MAX_LISTED]}
         if len(appeared) > MAX_LISTED or len(stopped) > MAX_LISTED:
             churn["counts"] = {"appeared": len(appeared), "stopped_reporting": len(stopped)}

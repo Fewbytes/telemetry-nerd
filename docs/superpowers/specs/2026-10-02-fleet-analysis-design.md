@@ -137,7 +137,8 @@ follow-up.
   tell a series that ended (pod replaced) from one that went silent (the sick one), so both are
   listed next to the outliers, never silently dropped (spec §5.2: silent members join the outlier
   set). Appeared ~ stopped suggests replacement (stated).
-- `missing_share` and min n per step; caveat `missing_data` when > 5%, `members_skipped` when some
+- `missing_share` and min n per step; caveat `members_missing` when > 5% (not `missing_data`: that code is the located
+  bucket_state caveat), `members_skipped` when some
   members have too little data to be tested (listed by count).
 - Source-aggregated expressions (`sum(...)`) are one series: refused (< 5 members).
 

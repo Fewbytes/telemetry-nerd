@@ -97,7 +97,7 @@ def test_churn_gaps_and_honest_n_per_step(tmp_path):
     assert "cannot tell" in churn["note"]
     cov = out["coverage"]
     assert cov["n_per_step"]["max"] <= 40 and cov["n_per_step"]["min"] < 36
-    assert 0.08 < cov["missing_share"] < 0.15 and "missing_data" in out["caveats"]
+    assert 0.08 < cov["missing_share"] < 0.15 and "members_missing" in out["caveats"]
 
 
 @pytest.mark.parametrize(
