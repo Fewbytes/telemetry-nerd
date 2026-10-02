@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 
 import duckdb
+import pyarrow as pa
 
 from telemetry_nerd.datasets.db import fetch_arrow, upsert_series
 from telemetry_nerd.model.distribution import COLUMN_SCHEMA, DIST_SCHEMA, BucketScheme, DistResult
@@ -37,9 +38,47 @@ class DatasetMeta:
     # source semantics that shape how values read, recorded at query time (the dataset is a
     # snapshot; the source may be reconfigured): {"post_gap_increase_spike": True}
     semantics_flags: dict = field(default_factory=dict)
+    # Tier-2 code outputs (spec §5.2). Lineage: the producing code node and the input datasets.
+    producer: dict | None = None  # {"kind": "code", "node", "output", "description"}
+    parents: list[str] = field(default_factory=list)
+    unit: str | None = None  # declared by the producer; None = look it up in the catalog
+    # declared uncertainty: {"method", "level"} with lo/hi per row, or {"exact": True};
+    # None = undeclared (a code output then carries the no_uncertainty caveat)
+    uncertainty: dict | None = None
+    fit: dict | None = None  # representation "estimate": {model, method, params, ...}
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class Lineage:
+    """Provenance and declared semantics of a derived dataset (tier-2 code outputs)."""
+
+    producer: dict
+    parents: tuple[str, ...] = ()
+    unit: str | None = None
+    uncertainty: dict | None = None
+    fit: dict | None = None
+    caveats: tuple[str, ...] = ()
+
+    def fields(self) -> dict:
+        return {
+            "producer": dict(self.producer),
+            "parents": list(self.parents),
+            "unit": self.unit,
+            "uncertainty": dict(self.uncertainty) if self.uncertainty else None,
+            "fit": self.fit,
+        }
+
+
+def _union(*groups) -> list[str]:
+    return list(dict.fromkeys(c for g in groups for c in g))
+
+
+INTERVAL_SCHEMA = pa.schema(
+    [("ts_ms", pa.int64()), ("series_id", pa.string()), ("lo", pa.float64()), ("hi", pa.float64())]
+)
 
 
 class DatasetStore:
@@ -68,6 +107,7 @@ class DatasetStore:
         histogram: dict | None = None,
         derived: dict | None = None,
         semantics_flags: dict | None = None,
+        lineage: Lineage | None = None,
     ) -> DatasetMeta:
         meta = DatasetMeta(
             id=self._new_id("d"),
@@ -86,7 +126,14 @@ class DatasetStore:
             derived=derived,
             failed_spans=[list(f) for f in result.failed],
             semantics_flags=dict(semantics_flags or {}),
+            source_caveats=list(lineage.caveats) if lineage else [],
+            **(lineage.fields() if lineage else {}),
         )
+        names = result.buckets.column_names
+        has_interval = "lo" in names and "hi" in names
+        if has_interval != bool(meta.uncertainty and not meta.uncertainty.get("exact")):
+            raise ValueError("lo/hi columns go with a declared interval uncertainty, and only then")
+        cols = "ts_ms, series_id, avg, min, max, count" + (", lo, hi" if has_interval else "")
         con = self._con
         con.begin()
         try:
@@ -94,8 +141,8 @@ class DatasetStore:
             con.register("_tn_ds", result.buckets)
             try:
                 con.execute(
-                    """INSERT INTO dataset_rows
-                       SELECT $id, ts_ms, series_id, avg, min, max, count FROM _tn_ds""",
+                    f"""INSERT INTO dataset_rows (dataset_id, {cols})
+                        SELECT $id, {cols} FROM _tn_ds""",
                     {"id": meta.id},
                 )
             finally:
@@ -155,6 +202,19 @@ class DatasetStore:
         )
         return meta, FetchResult(buckets, series)
 
+    def interval(self, dataset_id: str) -> pa.Table | None:
+        """Per-row declared [lo, hi] (INTERVAL_SCHEMA), or None when no interval is declared."""
+        meta = self.meta(dataset_id)
+        if not meta.uncertainty or meta.uncertainty.get("exact"):
+            return None
+        return fetch_arrow(
+            self._con,
+            """SELECT ts_ms, series_id, lo, hi FROM dataset_rows
+               WHERE dataset_id = $id ORDER BY series_id, ts_ms""",
+            {"id": dataset_id},
+            INTERVAL_SCHEMA,
+        )
+
     def put_distribution(
         self,
         *,
@@ -163,9 +223,12 @@ class DatasetStore:
         step_ms: int,
         resolution_ms: int,
         dist: DistResult,
-        histogram: dict,
+        histogram: dict | None,
         n_min: int,
+        lineage: Lineage | None = None,
     ) -> DatasetMeta:
+        if lineage and lineage.uncertainty and not lineage.uncertainty.get("exact"):
+            raise ValueError("a distribution has no lo/hi columns: only exact or undeclared")
         meta = DatasetMeta(
             id=self._new_id("d"),
             source=source,
@@ -179,7 +242,8 @@ class DatasetStore:
             n_min=n_min,
             scheme=dist.scheme.to_dict(),
             histogram=histogram,
-            source_caveats=list(dist.caveats),
+            source_caveats=_union(dist.caveats, lineage.caveats if lineage else ()),
+            **(lineage.fields() if lineage else {}),
         )
         con = self._con
         con.begin()
