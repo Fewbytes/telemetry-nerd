@@ -556,3 +556,14 @@ metric = "node_filesystem_free_bytes"
 replace_with = "node_filesystem_avail_bytes"
 title = "show space available to users instead"
 reason = "free includes blocks reserved for root; avail is what non-root writers can actually use before they see ENOSPC."
+
+# --- Go runtime of node_exporter itself ---------------------------------------------------------
+# A Prometheus summary (live: Wikimedia Thanos and Grafana Play metadata, type "summary"): its
+# quantile series are computed in the process over a sliding window, so they can be neither averaged
+# over time nor merged across instances (bead 2as.31); _sum and _count are the mergeable part.
+[[metric]]
+name = "go_gc_duration_seconds"
+type = "summary"
+unit = "s"
+statistic = "percentile"
+description = "Go garbage-collection stop-the-world pause: quantile series (quantile label) of recent cycles. Quantiles cannot be averaged or merged; use rate(_sum)/rate(_count) for a mean."

@@ -37,6 +37,7 @@ from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.analysis.samples import pool, scan_series
 from telemetry_nerd.catalog.family_query import SLOT, FamilyQueryRefused
 from telemetry_nerd.catalog.family_query import rewrite as rewrite_families
+from telemetry_nerd.catalog.mergeability import NONMERGEABLE_CAVEAT
 from telemetry_nerd.catalog.profiles import ProfileStore
 from telemetry_nerd.charts.context_lines import (
     ContextSpec,
@@ -336,7 +337,7 @@ class TelemetryService:
                 hint="recompute from the merged histogram/raw data, or pass "
                 "allow_nonmergeable=true to chart it anyway with a caveat",
             )
-        nonmergeable_caveats = sorted({v.caveat for v in violations if v.caveat})
+        nonmergeable_caveats = sorted({v.caveat for v in violations if v.caveat})  # override only
         representation, q, n_min = "bucket_agg", None, None
         histogram = None
         if info.quantile is None:
@@ -380,9 +381,12 @@ class TelemetryService:
             semantics_flags=_semantics_flags(src),
         )
         summary = self._time_summary(meta, result, now)
-        for caveat in nonmergeable_caveats:
-            if caveat not in summary["caveats"]:
-                summary["caveats"].append(caveat)
+        if nonmergeable_caveats:  # a short code for the vocabulary; the argument is the payload
+            summary["caveats"].append(NONMERGEABLE_CAVEAT)
+            summary["nonmergeable"] = {
+                "uses": [f"{v.op}({v.metric})" for v in violations],
+                "explanation": nonmergeable_caveats[0],
+            }
         self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
         return {"dataset": meta.id, "summary": summary}
 

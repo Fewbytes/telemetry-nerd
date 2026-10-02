@@ -1,6 +1,6 @@
 import pytest
 
-from telemetry_nerd.catalog.mergeability import HARTMANN_CAVEAT
+from telemetry_nerd.catalog.mergeability import HARTMANN_CAVEAT, NONMERGEABLE_CAVEAT
 from telemetry_nerd.catalog.models import Claim
 from telemetry_nerd.sources.base import SourceError, SourceUnavailable
 from tests.unit.fakes import NOW, FakeSource, make_service
@@ -98,17 +98,66 @@ async def test_override_charts_it_anyway_with_hartmann_caveat(tmp_path):
     out = await svc.query(
         "avg(app_latency_p99)", "now-2h", "now-1h", step="1m", allow_nonmergeable=True
     )
-    assert HARTMANN_CAVEAT in out["summary"]["caveats"]
+    assert out["summary"]["caveats"].count(NONMERGEABLE_CAVEAT) == 1  # a short code ...
+    assert HARTMANN_CAVEAT not in out["summary"]["caveats"]
+    assert out["summary"]["nonmergeable"] == {  # ... and the explanation as its payload
+        "uses": ["avg(app_latency_p99)"],
+        "explanation": HARTMANN_CAVEAT,
+    }
 
 
 async def test_unflagged_metric_aggregates_without_any_caveat(tmp_path):
     svc = make_service(tmp_path, FakeSource())
     out = await svc.query("avg(some_gauge)", "now-2h", "now-1h", step="1m")
-    assert HARTMANN_CAVEAT not in out["summary"]["caveats"]
+    assert NONMERGEABLE_CAVEAT not in out["summary"]["caveats"]
+    assert "nonmergeable" not in out["summary"]
 
 
 async def test_plain_unwrapped_percentile_gauge_is_not_refused(tmp_path):
     svc = make_service(tmp_path, FakeSource())
     svc.ws.catalog.put_claim("default", "app_latency_p99", _statistic_claim("percentile"))
     out = await svc.query("app_latency_p99", "now-2h", "now-1h", step="1m")
-    assert HARTMANN_CAVEAT not in out["summary"]["caveats"]
+    assert NONMERGEABLE_CAVEAT not in out["summary"]["caveats"]
+
+
+# whole-dataset operations (2as.31): the same refusal, from the catalog, on a plain gauge
+@pytest.mark.parametrize("op", ["fleet", "compare_seasonal", "analyze", "spectrum", "filter"])
+async def test_time_and_series_operations_refuse_a_catalog_flagged_percentile_gauge(tmp_path, op):
+    svc = make_service(tmp_path, FakeSource())
+    svc.ws.catalog.put_claim("default", "app_latency_p99", _statistic_claim("percentile"))
+    ds = (await svc.query("app_latency_p99", "now-2h", "now-1h", step="1m"))["dataset"]
+    with pytest.raises(ValueError, match="already-computed percentile") as e:
+        svc.signal.check(ds, op)
+    assert "app_latency_p99" in str(e.value) and "fraction_over" in str(e.value)
+
+
+async def test_fleet_and_seasonal_reach_the_same_refusal(tmp_path):
+    svc = make_service(tmp_path, FakeSource())
+    svc.ws.catalog.put_claim("default", "app_latency_p99", _statistic_claim("percentile"))
+    ds = (await svc.query("app_latency_p99", "now-2h", "now-1h", step="1m"))["dataset"]
+    with pytest.raises(ValueError, match="already-computed percentile"):
+        svc.fleets.check(ds)
+    with pytest.raises(ValueError, match="already-computed percentile"):
+        svc.seasonal.check(ds)
+
+
+async def test_an_unflagged_gauge_passes_the_same_checks(tmp_path):
+    svc = make_service(tmp_path, FakeSource())
+    ds = (await svc.query("some_gauge", "now-2h", "now-1h", step="1m"))["dataset"]
+    svc.signal.check(ds, "fleet")  # no raise
+
+
+async def test_a_pack_claim_makes_a_known_summary_non_aggregatable(tmp_path):
+    from telemetry_nerd.model.discovery import Discovery, MetricInfo
+
+    d = Discovery(
+        (MetricInfo("go_gc_duration_seconds", "summary"), MetricInfo("go_threads", "gauge")),
+        (), {}, None, 1.0, (), False,
+    )  # fmt: skip
+    svc = make_service(tmp_path, FakeSource(name="default", discovery=d))
+    await svc.learn("default")
+    e = svc.ws.catalog_entry("default", "go_gc_duration_seconds")
+    assert e.fields["statistic"].value == "percentile" and e.fields["statistic"].origin == "pack"
+    with pytest.raises(SourceError, match="go_gc_duration_seconds"):
+        await svc.query("avg(go_gc_duration_seconds)", "now-2h", "now-1h", step="1m")
+    await svc.query("avg(go_threads)", "now-2h", "now-1h", step="1m")  # not flagged

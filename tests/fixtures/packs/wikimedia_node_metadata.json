@@ -1,4 +1,11 @@
 {
+"go_gc_duration_seconds": [
+{
+"help": "A summary of the pause duration of garbage collection cycles.",
+"type": "summary",
+"unit": ""
+}
+],
 "node_boot_time_seconds": [
 {
 "help": "Node boot time, in unixtime.",

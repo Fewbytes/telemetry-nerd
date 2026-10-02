@@ -3,7 +3,22 @@
 from __future__ import annotations
 
 
-def time_op_problem(op: str, representation: str, counters: list[str]) -> str | None:
+def time_op_problem(
+    op: str,
+    representation: str,
+    counters: list[str],
+    percentiles: list[str] | None = None,
+) -> str | None:
+    """Why `op` cannot run on this dataset, or None. `percentiles` are catalogued metrics whose
+    statistic claim says they are already-computed percentiles (a summary's quantile series, an
+    exported p99 gauge): the same refusal as for a percentile series, from the catalog (2as.31)."""
+    if percentiles:
+        return (
+            f"{op} refused on {', '.join(percentiles)}: the catalog says it is an already-computed "
+            "percentile, and this would aggregate it over time or across series "
+            "(hint: apply it to the request rate, to histogram_sum/histogram_count rates, or to "
+            "threshold counts from query_distribution + fraction_over)"
+        )
     if representation == "quantile":
         return (
             f"{op} refused on a percentile series: it would aggregate percentiles over time "

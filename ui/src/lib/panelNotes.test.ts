@@ -124,3 +124,12 @@ describe("auto-charted panels (2as.14)", () => {
     expect(panelNotes([], { yScaledToData: false, nMin: null, auto: null })).toEqual([]);
   });
 });
+
+describe("nonmergeable_aggregation (2as.31)", () => {
+  it("has a short code with the worked example, not the code itself", () => {
+    const t = caveatText("nonmergeable_aggregation");
+    expect(t).toMatch(/already-computed percentile/);
+    expect(t).toMatch(/60\.3 ms.*35\.8 ms.*68\.5%/);
+    expect(t).not.toBe("nonmergeable_aggregation");
+  });
+});

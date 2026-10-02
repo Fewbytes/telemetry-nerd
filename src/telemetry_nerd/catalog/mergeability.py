@@ -46,6 +46,9 @@ WEIGHTED_OP: dict[str, str] = {
 #: already-computed statistic
 NON_MERGEABLE = frozenset({"median", "percentile", "truncated_mean", "mad", "iqr"})
 
+#: the caveat code on a dataset that was charted over an aggregated percentile on request
+NONMERGEABLE_CAVEAT = "nonmergeable_aggregation"
+
 #: the canonical caveat text (spec §5 [H], Hartmann SREcon19 EMEA): averaging already-computed
 #: percentiles is badly wrong in practice. Exact numbers are a regression fixture — don't
 #: round them differently in two places.

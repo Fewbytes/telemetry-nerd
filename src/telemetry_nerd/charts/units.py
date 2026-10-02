@@ -13,7 +13,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from telemetry_nerd.catalog.mergeability import check_aggregation
+from telemetry_nerd.catalog.mergeability import check_aggregation, non_aggregatable
 from telemetry_nerd.catalog.rules import Facts, facts_from_name
 
 _IDENT = re.compile(r"[a-zA-Z_:][a-zA-Z0-9_:]*")
@@ -232,6 +232,15 @@ def metric_names(expr: str) -> set[str]:
     return {
         t for t in _TOKEN.findall(_STRING.sub(" ", expr)) if t not in "()" and t not in _KEYWORDS
     }
+
+
+def nonaggregatable_metrics(
+    expr: str, lookup: Callable[[str], Facts] = facts_from_name
+) -> list[str]:
+    """Metrics in `expr` whose catalog statistic claim says they must never be aggregated across
+    time or series (percentile, median, MAD, ...): what a whole-dataset operation (fleet,
+    seasonal, spc, spectrum, filter) would combine. Sorted, no duplicates."""
+    return sorted({m for m in metric_names(expr) if non_aggregatable(lookup(m).statistic)})
 
 
 #: functions/operators that actually combine values across time or series (spec §5 [H]/[SfE]);

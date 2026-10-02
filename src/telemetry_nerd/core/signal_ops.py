@@ -25,7 +25,7 @@ from telemetry_nerd.analysis.spectrum import (
 from telemetry_nerd.analysis.timeops import time_op_problem
 from telemetry_nerd.catalog.rules import Facts
 from telemetry_nerd.charts.dataview import offered_views
-from telemetry_nerd.charts.units import raw_counters
+from telemetry_nerd.charts.units import nonaggregatable_metrics, raw_counters
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
 from telemetry_nerd.model.series import FetchResult
 from telemetry_nerd.model.time import TimeRange, format_duration
@@ -68,7 +68,8 @@ class SignalOps:
     def check(self, dataset_id: str, op: str) -> DatasetMeta:
         meta = self._datasets.meta(dataset_id)
         counters = raw_counters(meta.expr, lambda m: self._facts(meta.source, m))
-        problem = time_op_problem(op, meta.representation, counters)
+        flagged = nonaggregatable_metrics(meta.expr, lambda m: self._facts(meta.source, m))
+        problem = time_op_problem(op, meta.representation, counters, flagged)
         if problem:
             raise ValueError(problem)
         return meta

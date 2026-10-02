@@ -67,6 +67,8 @@ const CAVEATS: Record<string, Describe> = {
   short_baseline: () => "The SPC baseline is short (n_eff < 100): its limits are rough; the darker strips show how rough, and p-values allow for it.",
   near_random_walk: () => "The series is close to a random walk (lag-1 φ > 0.9): the residual chart is slow to see sustained shifts.",
   seasonal_not_in_baseline: () => "A cycle in the series is longer than half the SPC baseline and no operating profile models it: the centre line ignores it.",
+  nonmergeable_aggregation: () =>
+    "An already-computed percentile was averaged, summed or merged over time or series on request: this is badly wrong in practice (24 hourly p90s averaged to 60.3 ms; the true p90 of the merged 811k requests was 35.8 ms, a 68.5% error). Recompute it from the merged histogram or raw data.",
   overflow: () => "Some observations are above the largest bucket edge; their values are unknown (top strip).",
 };
 

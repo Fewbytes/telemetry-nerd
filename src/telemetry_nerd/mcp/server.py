@@ -161,9 +161,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         statistics (a summary's own `quantile=` series, an exported `..._p99` gauge, median,
         MAD, IQR, truncated mean — see the mergeability table): aggregating those with
         avg/sum/min/max/*_over_time or a multi-series merge is refused the same way.
-        `allow_nonmergeable=true` charts it anyway and adds a caveat explaining why the result
-        is misleading (averaging pre-computed p90s across 24 hours overstated it by 68.5% in
-        the canonical example — recompute from the merged histogram/raw data instead).
+        `allow_nonmergeable=true` charts it anyway: the summary gets the caveat
+        `nonmergeable_aggregation` and `summary.nonmergeable` {uses, explanation} (averaging
+        pre-computed p90s across 24 hours overstated it by 68.5% in the canonical example —
+        recompute from the merged histogram/raw data instead). Such a dataset still cannot go
+        through fleet, compare_seasonal, analyze, spectrum or filter: those refuse a percentile.
         $__rate_interval expands to max(4 x scrape interval, step + scrape interval).
         Returns {dataset, summary}. The summary is compact; raw series stay on the server.
         """
