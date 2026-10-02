@@ -19,6 +19,7 @@ import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from functools import cache
 from typing import Any
 
 from telemetry_nerd.catalog.models import CatalogEntry, native_family
@@ -777,14 +778,11 @@ def _scopes() -> tuple[Scope, ...]:
 
 
 SCOPES = _scopes()
-_COMPILED: dict[tuple[str, str, int], re.Pattern[str]] = {}
 
 
-def _re(scope: str, sig: str, i: int, pat: str) -> re.Pattern[str]:
-    k = (scope, sig, i)
-    if k not in _COMPILED:
-        _COMPILED[k] = re.compile(pat)
-    return _COMPILED[k]
+@cache
+def _re(pattern: str) -> re.Pattern[str]:
+    return re.compile(pattern)
 
 
 @dataclass
@@ -862,8 +860,8 @@ def _signal_candidates(
 ) -> dict[str, list[dict[str, Any]]]:
     """prefix ('' for fixed scopes) -> candidates, best first, one per metric."""
     by_prefix: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
-    for i, rule in enumerate(scope.signals.get(signal, ())):
-        pat = _re(scope.id, signal, i, rule.pattern)
+    for rule in scope.signals.get(signal, ()):
+        pat = _re(rule.pattern)
         for name in sorted(metas):
             if scope.generic and (name in exclude or "_client_" in name):
                 continue
@@ -1058,7 +1056,7 @@ def _assemble(
         }
         if detail[role]["ambiguous"]:
             ambiguous.append(role)
-    filled = [d for d in detail.values()]
+    filled = list(detail.values())
     if len(filled) < MIN_FILLED or (sc.generic and len({c["metric"] for c in filled}) < 2):
         return None  # generic names alone must show two different metrics
     entity = prefix or sc.key
@@ -1085,6 +1083,12 @@ def _assemble(
         b = existing[(kind, key)].winner
         out["already_bound"] = {"origin": b.origin, "roles": b.roles}
     return out
+
+
+def role_candidates(suggestion: Mapping[str, Any], role: str) -> list[dict[str, Any]]:
+    """A suggestion's pick for `role` and its alternatives, best first ([] when unfilled)."""
+    d = suggestion["detail"].get(role)
+    return [] if d is None else [d, *d.get("alternatives", [])]
 
 
 def find_suggestion(result: Mapping[str, Any], suggestion_id: str) -> dict[str, Any]:

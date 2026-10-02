@@ -13,7 +13,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from telemetry_nerd.catalog.binding_suggest import find_suggestion
+from telemetry_nerd.catalog.binding_suggest import find_suggestion, role_candidates
 from telemetry_nerd.catalog.relations import BINDING_ROLES, SUGGESTIONS
 from telemetry_nerd.charts.spec import LINE_SERIES_BUDGET, GroupRef
 from telemetry_nerd.charts.yview import value_stats
@@ -148,13 +148,11 @@ class BindingOps:
         except ValueError:
             return {}, frozenset()
 
-        def cands(s: dict, role: str) -> list[dict]:
-            d = s["detail"].get(role)
-            return [] if d is None else [d, *d.get("alternatives", [])]
-
         def overlap(s: dict) -> int:
             return sum(
-                1 for r, m in roles.items() if m and any(c["metric"] == m for c in cands(s, r))
+                1
+                for r, m in roles.items()
+                if m and any(c["metric"] == m for c in role_candidates(s, r))
             )
 
         hints: dict[str, Hint] = {}
@@ -163,7 +161,7 @@ class BindingOps:
             for role, metric in roles.items():
                 if metric is None or role in hints:
                     continue
-                for c in cands(s, role):
+                for c in role_candidates(s, role):
                     if c["metric"] == metric:
                         hints[role] = Hint(c["form"], c.get("expr"))
                         if c.get("histogram") == "native":

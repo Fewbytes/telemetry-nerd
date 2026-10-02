@@ -11,7 +11,11 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from telemetry_nerd.analysis.samples import CharacteristicRange, SampleStats
-from telemetry_nerd.catalog.binding_suggest import find_suggestion, suggest_bindings
+from telemetry_nerd.catalog.binding_suggest import (
+    find_suggestion,
+    role_candidates,
+    suggest_bindings,
+)
 from telemetry_nerd.catalog.browse import Browse
 from telemetry_nerd.catalog.browse import browse as browse_catalog
 from telemetry_nerd.catalog.context import MAX_BYTES, MAX_FILES
@@ -950,12 +954,7 @@ class WorkspaceService:
         for role, metric in (overrides or {}).items():
             if role not in roles:
                 raise ValueError(f"{s['kind']} has no role {role!r}; roles: {sorted(roles)}")
-            offered = (
-                [s["detail"][role]["metric"]]
-                + [a["metric"] for a in s["detail"][role]["alternatives"]]
-                if role in s["detail"]
-                else []
-            )
+            offered = [c["metric"] for c in role_candidates(s, role)]
             if metric is not None and metric not in offered:
                 raise ValueError(
                     f"{metric!r} is not a candidate for {role}; offered: {offered}. "
