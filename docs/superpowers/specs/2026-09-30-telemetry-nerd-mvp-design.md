@@ -342,6 +342,21 @@ thread cannot be reliably timed out.
     each way; Jupyter's own channels can't serve mid-run requests because a busy kernel only
     processes replies after the run). Streaming is the upgrade path if mid-run fetches
     (`tn.query`) are needed: it slots in behind the same `tn.dataset`/`tn.put` calls.
+  - **Format (settled 2026-10-02, b98.1/.2; `exchange/fmt.py`):** `run.json` (manifest:
+    code node, declared inputs; written last), `inputs/<handle>[.<table>].arrow` + `.meta.json`,
+    `outputs/<name>[.<table>].arrow` + `.meta.json`, `ingested.json`. Tables: `rows`,
+    `series` (labels), `columns` (distribution n). Every file is temp + fsync + rename; an
+    output's meta is written last and commits it. Ingest takes only committed outputs of a
+    run that succeeded; temp/orphan/size-mismatched files are reported, never ingested.
+    Output meta: `like` (inherit step/range/unit/scheme from an input), `representation`
+    (`bucket_agg`/`sample`/`distribution`; `estimate` only via `put_fit`), `labels` (series
+    label columns), `unit`, `caveats`, `parents`, and `uncertainty {method, level, kind}` with
+    `lo`/`hi` columns or `exact` (integral values only); unknown keys or columns are refused,
+    not dropped. Outputs inherit their parents' caveats. Derived series id =
+    hash(`code:<node>`, labels). Lineage: parents = all declared inputs unless the code
+    narrows them explicitly (reads are not tracked: an input can shape a result without
+    being read through `tn`). Fits are `estimate` datasets whose params have the evidence
+    statistic shape (`interval` or `exact`); diagnostics are mandatory.
 - **`tn` API (MVP):** `tn.dataset(handle)` → polars DataFrame (pyarrow on request),
   `tn.inputs` (declared handles), `tn.put(result, meta)`, `tn.put_fit(...)`. No `tn.query` or
   `tn.chart` in the MVP: Claude queries via MCP and passes handles in; outputs are shown with
