@@ -24,6 +24,16 @@ def default_ui_dir() -> Path:
     return _BUNDLED_UI if (_BUNDLED_UI / "index.html").exists() else _REPO_UI
 
 
+def _env_num(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw == "":
+        return default
+    try:
+        return float(raw)
+    except ValueError as e:
+        raise ValueError(f"{name} must be a number, got {raw!r}") from e
+
+
 @dataclass
 class Settings:
     data_dir: Path = Path(".tn-data")
@@ -34,6 +44,10 @@ class Settings:
     port: int = 7070
     ui_dir: Path | None = field(default_factory=default_ui_dir)
     allowed_hosts: list[str] = field(default_factory=lambda: list(DEFAULT_ALLOWED_HOSTS))
+    #: tier-2 kernels (spec §5.2): idle shutdown, default per-run timeout, RLIMIT_AS (Linux)
+    kernel_idle_timeout_s: float = 30 * 60
+    kernel_run_timeout_s: float = 120.0
+    kernel_memory_limit_mb: int = 4096
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -44,6 +58,11 @@ class Settings:
         s.host = os.environ.get("TN_HOST", s.host)
         if extra := os.environ.get("TN_ALLOWED_HOSTS"):
             s.allowed_hosts += [h.strip() for h in extra.split(",") if h.strip()]
+        s.kernel_idle_timeout_s = _env_num("TN_KERNEL_IDLE_TIMEOUT_S", s.kernel_idle_timeout_s)
+        s.kernel_run_timeout_s = _env_num("TN_KERNEL_RUN_TIMEOUT_S", s.kernel_run_timeout_s)
+        s.kernel_memory_limit_mb = int(
+            _env_num("TN_KERNEL_MEMORY_LIMIT_MB", s.kernel_memory_limit_mb)
+        )
         raw_port = os.environ.get("TN_PORT")
         if raw_port is not None:
             try:

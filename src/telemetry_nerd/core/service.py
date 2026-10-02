@@ -103,6 +103,7 @@ from telemetry_nerd.core.summary import summarize, summarize_distribution
 from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
+from telemetry_nerd.kernels.manager import KernelManager
 from telemetry_nerd.model.bucket_state import STATE_SCHEMA, coarsen, grid
 from telemetry_nerd.model.caveats import (
     Caveat,
@@ -213,6 +214,8 @@ class TelemetryService:
     _scrape_cache: dict = field(default_factory=dict, init=False, repr=False)
     #: compute a T1 operating profile in the background when a time-series panel is shown
     auto_profile: bool = False
+    #: tier-2 kernels (spec §5.2); None when tier-2 is not wired (tests, tools)
+    kernels: KernelManager | None = None
 
     def __post_init__(self) -> None:
         self.signal = SignalOps(self.datasets, self.ws.catalog_facts)

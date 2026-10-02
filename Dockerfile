@@ -22,13 +22,17 @@ RUN uv build --wheel --out-dir /dist \
  && uv venv /opt/venv \
  && VIRTUAL_ENV=/opt/venv uv pip install /dist/*.whl
 # Slim the venv (~-90 MB): strip debug symbols from native extensions and drop pyarrow's
-# C++/Cython development files and tests, which nothing imports at runtime.
+# C++/Cython development files and tests, which nothing imports at runtime. Tier-2 kernels
+# (ipykernel) never use the debugger (debugpy) or tab completion (jedi/parso), and both are
+# optional imports there: dropping them saves ~43 MB.
 RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends binutils \
  && sp=$(/opt/venv/bin/python -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])') \
  && rm -rf "$sp/pyarrow/include" "$sp/pyarrow/tests" \
  && find "$sp/pyarrow" -type f \( -name '*.pyx' -o -name '*.pxd' -o -name '*.pxi' -o -name '*.h' -o -name '*.cc' \) -delete \
+ && rm -rf "$sp/debugpy" "$sp/jedi" "$sp/parso" \
  && find /opt/venv -type f \( -name '*.so' -o -name '*.so.[0-9]*' \) -exec strip --strip-unneeded {} + \
- && /opt/venv/bin/python -c 'import duckdb, numpy, polars, pyarrow, telemetry_nerd.cli'
+ && /opt/venv/bin/python -c 'import duckdb, numpy, polars, pyarrow, telemetry_nerd.cli' \
+ && /opt/venv/bin/python -c 'import ipykernel.ipkernel, jupyter_client, zmq; from ipykernel.debugger import _is_debugpy_available as d; assert not d'
 
 FROM python:3.14-slim-trixie
 RUN useradd --system --create-home --uid 10001 tn \

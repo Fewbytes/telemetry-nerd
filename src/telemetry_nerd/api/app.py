@@ -804,7 +804,6 @@ def create_app(
     ]
     if ui_dir is not None and (ui_dir / "index.html").exists():
         routes.append(Mount("/", app=StaticFiles(directory=ui_dir, html=True)))
-    lifespan: Callable[[Starlette], contextlib.AbstractAsyncContextManager[None]] | None = None
     if mcp is not None:
         mcp_app = mcp.streamable_http_app(
             streamable_http_path="/mcp",
@@ -812,12 +811,15 @@ def create_app(
         )
         routes[:0] = list(mcp_app.routes)  # before the static catch-all mount
 
-        @contextlib.asynccontextmanager
-        async def _lifespan(app: Starlette):
-            async with mcp.session_manager.run():
+    @contextlib.asynccontextmanager
+    async def lifespan(app: Starlette):
+        try:
+            async with mcp.session_manager.run() if mcp is not None else contextlib.nullcontext():
                 yield
-
-        lifespan = _lifespan
+        finally:
+            # Inside uvicorn's shutdown, before it re-raises SIGTERM/SIGINT: kill tier-2 kernels.
+            if service.kernels is not None:
+                await service.kernels.aclose()
 
     return Starlette(
         routes=routes,

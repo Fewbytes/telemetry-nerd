@@ -8,6 +8,8 @@ dependencies = [
     "anyio>=4.15.1",
     "duckdb>=1.5.6",
     "httpx>=0.28.1",
+    "ipykernel>=7.4.0",
+    "jupyter-client>=8.10.0",
     "mcp>=2.2.0",
     "numpy>=2.5.3",
     "polars>=1.44.2",
@@ -37,7 +39,10 @@ path = "hatch_build.py"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-markers = ["integration: requires Docker or the public internet"]
+markers = [
+    "integration: requires Docker or the public internet",
+    "slow: starts real subprocesses (seconds); deselect with -m 'not slow'",
+]
 addopts = "-m 'not integration'"
 
 [tool.ruff]
