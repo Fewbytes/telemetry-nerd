@@ -8,8 +8,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-RefMode = Literal["previous", "week"]
-REF_MODES: tuple[str, ...] = ("previous", "week")
+RefMode = Literal["previous", "week", "profile"]
+REF_MODES: tuple[str, ...] = ("previous", "week", "profile")
 WEEK_MS = 7 * 86_400_000
 
 
@@ -41,9 +41,9 @@ def reference_window(start_ms: int, end_ms: int, step_ms: int, mode: str) -> Ref
         shift, label = WEEK_MS, "same window last week"
     elif mode == "profile":
         raise ValueError(
-            "a marginal against the operating profile is not available yet "
-            "(bead 2as.22); use previous or week for now"
+            "the operating profile is not a shifted window: it is read from the profile service "
+            "(ensure_reference), not from reference_window"
         )
     else:
-        raise ValueError(f"unknown reference {mode!r}: use previous or week")
+        raise ValueError(f"unknown reference {mode!r}: use previous, week or profile")
     return RefWindow(mode, start_ms - shift, end_ms - shift, shift, label)

@@ -28,6 +28,7 @@ from telemetry_nerd.analysis.marginal import (
     step_values,
 )
 from telemetry_nerd.analysis.profile import band_at
+from telemetry_nerd.analysis.profile_reference import hourly_means
 from telemetry_nerd.analysis.quantiles import column_quantiles
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.charts.indexed import shifted, window_baselines
@@ -245,6 +246,8 @@ def marginal_payload(datasets, spec: ChartSpec, meta) -> dict | None:
         }
     _, cur = datasets.get(meta.id)
     rmeta, rres = datasets.get(ref.series)
+    if ref.mode == "profile":
+        return _profile_marginal(cur, rres, meta, ref, head)
     cv, cx, k = step_values(cur.buckets, meta.representation, meta.n_min)
     rv, rx, _ = step_values(rres.buckets, rmeta.representation, rmeta.n_min)
     edges = sample_bins(cv, rv)
@@ -267,6 +270,36 @@ def marginal_payload(datasets, spec: ChartSpec, meta) -> dict | None:
         "n_min": SAMPLE_N_MIN,
         "windows": wins,
         "excluded": [cx, rx],
+        **head,
+    }
+
+
+def _profile_marginal(cur, rres, meta, ref, head: dict) -> dict:
+    """Marginal against the operating profile: the window's hourly means vs the profile's hourly
+    values for the same series and seasonal buckets (bead 2as.22). Hours, not scrape samples."""
+    now_df, dropped = hourly_means(cur.buckets, meta.step_ms)
+    series = now_df["series_id"].unique()
+    cv = now_df["avg"].to_list()
+    rv, _, _ = step_values(rres.buckets, "bucket_agg", None)
+    edges = sample_bins(cv, rv)
+    lo, hi = [a for a, _ in edges], [b for _, b in edges]
+    what = "hourly means of scrape samples (whole hours only)" + (
+        f"; {len(series)} series pooled" if len(series) > 1 else ""
+    )
+    if dropped:
+        what += f"; {dropped} buckets in partial hours left out"
+    wins = [
+        {"label": label, "start_ms": s, "end_ms": e, "n": float(len(v)), "columns": len(v),
+         "lo": lo, "hi": hi, "c": histogram_of(v, edges)}
+        for label, s, e, v in (("now (hourly)", meta.start_ms, meta.end_ms, cv),
+                               (ref.label, ref.start_ms, ref.end_ms, rv))
+    ]  # fmt: skip
+    return {
+        "basis": "samples",
+        "what": what,
+        "n_min": SAMPLE_N_MIN,
+        "windows": wins,
+        "excluded": [dropped, 0],
         **head,
     }
 

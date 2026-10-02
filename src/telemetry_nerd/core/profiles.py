@@ -15,6 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import polars as pl
+import pyarrow as pa
 
 from telemetry_nerd.analysis.exprkind import (
     RATE_INTERVAL,
@@ -284,6 +285,30 @@ class ProfileService:
         p.stale = self.clock() - p.computed_at_ms >= self.ttl_ms
         return p
 
+    def hourly(self, p: OperatingProfile) -> tuple[pl.DataFrame, dict[str, dict], pa.Table] | None:
+        """The profile's hourly history from the series cache (never fetches): finite values only,
+        {series_id: labels}, and the series table. None when the history is not cached."""
+        psrc = self.sources.get(p.profiled_from)
+        if psrc is None:
+            return None
+        qexpr = p.expr if is_selector(p.expr) else f"values|{p.expr}"
+        got = self.cache.peek(psrc.identity, qexpr, TimeRange(p.start_ms, p.end_ms), p.step_ms)
+        df = pl.from_arrow(got.buckets)
+        assert isinstance(df, pl.DataFrame)
+        if df.height == 0:
+            return None
+        df = df.filter(pl.col("count") > 0).with_columns(pl.col("avg").fill_nan(None))
+        df = df.drop_nulls("avg")
+        labels = {
+            sid: json.loads(lab)
+            for sid, lab in zip(
+                got.series.column("series_id").to_pylist(),
+                got.series.column("labels").to_pylist(),
+                strict=True,
+            )
+        }
+        return df, labels, got.series
+
     def seasonal_excluding(
         self, source: str, expr: str, start_ms: int, end_ms: int
     ) -> SeasonalShapes | None:
@@ -296,29 +321,14 @@ class ProfileService:
         key = (p.id, p.computed_at_ms, start_ms // HOUR_MS, end_ms // HOUR_MS)
         if key in self._shapes:
             return self._shapes[key]
-        psrc = self.sources.get(p.profiled_from)
-        if psrc is None:
+        hourly = self.hourly(p)
+        if hourly is None:
             return None
-        qexpr = p.expr if is_selector(p.expr) else f"values|{p.expr}"
-        got = self.cache.peek(psrc.identity, qexpr, TimeRange(p.start_ms, p.end_ms), p.step_ms)
-        df = pl.from_arrow(got.buckets)
-        assert isinstance(df, pl.DataFrame)
-        if df.height == 0:
-            return None
-        df = df.filter(pl.col("count") > 0).with_columns(pl.col("avg").fill_nan(None))
-        df = df.drop_nulls("avg")
+        df, labels, _ = hourly
         # bucket ts = END of its hour: the hour (ts - step, ts] overlaps (start, end]
         keep = (pl.col("ts_ms") <= start_ms) | (pl.col("ts_ms") - p.step_ms >= end_ms)
         excluded = df.filter(~keep)["ts_ms"].n_unique()
         df = df.filter(keep)
-        labels = {
-            sid: json.loads(lab)
-            for sid, lab in zip(
-                got.series.column("series_id").to_pylist(),
-                got.series.column("labels").to_pylist(),
-                strict=True,
-            )
-        }
         wanted = {s.series_id for s in p.series if s.seasonal and s.seasonal.period != "none"}
         out = []
         for (sid,), g in df.sort("ts_ms").group_by("series_id", maintain_order=True):

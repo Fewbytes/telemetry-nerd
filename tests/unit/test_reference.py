@@ -34,8 +34,8 @@ def test_week_refused_when_it_would_overlap_or_misalign():
         reference_window(START, END, 11 * M, "week")
 
 
-def test_profile_waits_for_the_catalog_and_bad_input_is_refused():
-    with pytest.raises(ValueError, match="2as.22"):
+def test_profile_is_not_a_shifted_window_and_bad_input_is_refused():
+    with pytest.raises(ValueError, match="profile service"):
         reference_window(START, END, M, "profile")
     with pytest.raises(ValueError, match="unknown reference"):
         reference_window(START, END, M, "yesterday")

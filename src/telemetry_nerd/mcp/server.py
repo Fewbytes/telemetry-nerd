@@ -34,7 +34,8 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
 - When one outlier or a faded low-n bucket squashes a panel's y range, `suggest_y_view` (e.g.
   mode=meaningful) with a one-line reason; do not re-query to hide data.
 - To ask "is now different from before?" about a time panel, `show_marginal(panel,
-  reference=previous|week)`; cite n for both windows and whether it is requests or per-step samples.
+  reference=previous|week)`; against the metric's learned normal, `reference=profile` (hourly
+  means vs the operating profile's same seasonal hours; plain series only); cite n for both windows and whether it is requests or per-step samples.
 - Periodicity (cron, GC, retries, scrape artefacts, diurnal): `spectrum(dataset)`. Report only
   `significant` peaks with their interval, cite `evidence`; say which periods cannot be seen
   (shorter than `limits.shortest` = 2 x step, longer than range/2). red_noise: long periods look
@@ -938,7 +939,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     ) -> str:
         """Show a marginal histogram beside a time-series panel: the current window's value
         distribution vs a reference window, on the panel's own y scale. reference: previous
-        (window of equal length just before) or week (same window 7 days earlier).
+        (window of equal length just before), week (same window 7 days earlier) or profile (the
+        metric's operating profile: its hourly values in the same hours of the day/week the
+        window covers; both sides are HOURLY means; plain series with a step of at most 1h,
+        never percentiles or histograms).
         Histogram-backed panels compare OBSERVATIONS (requests); plain series compare
         per-step values (scrape samples, NOT requests): say which when you cite it, with n.
         reason: one line shown to the user. off=true hides it. Returns {basis, what, n, datasets}:

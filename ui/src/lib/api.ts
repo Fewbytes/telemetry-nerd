@@ -15,7 +15,7 @@ export interface ChartSpec {
   auto?: { transform: "rate" | "reframe"; source_dataset: string; reason: string } | null;
   signal?: { filter: string; kind: string; reason: string; offered: string[]; default: string; selected?: string | null } | null;
   references?: Record<string, { mode: string; label: string; start_ms: number; end_ms: number; shift_ms: number; series: string; dist?: string | null }>;
-  marginal?: { reference: "previous" | "week"; author?: string; reason?: string | null } | null;
+  marginal?: { reference: "previous" | "week" | "profile"; author?: string; reason?: string | null } | null;
 }
 /** What the catalog says about the y axis (bead 2as.10). */
 /** A line drawn from catalog context (2as.15): a hard limit, a threshold or a reference series. */
@@ -282,7 +282,7 @@ export function subscribe(
 export const selectYView = (id: string, body: { mode?: string; lo?: number; hi?: number; suggestion?: string; baseline?: string }) =>
   postJSON<Panel>(`/api/panels/${id}/y-view`, body);
 
-export const setMarginal = (id: string, reference: "previous" | "week" | null) =>
+export const setMarginal = (id: string, reference: "previous" | "week" | "profile" | null) =>
   postJSON<Panel>(`/api/panels/${id}/marginal`, { reference });
 
 export const selectDataView = (id: string, view: string) => postJSON<Panel>(`/api/panels/${id}/data-view`, { view });

@@ -618,7 +618,7 @@ def create_app(
         body = await request.json() if await request.body() else {}
         ref = body.get("reference")
         if ref is not None and not isinstance(ref, str):
-            return _error(400, "reference must be previous, week or null")
+            return _error(400, "reference must be previous, week, profile or null")
         try:
             await service.set_marginal(request.path_params["id"], ref, "user")
         except NotFound as e:

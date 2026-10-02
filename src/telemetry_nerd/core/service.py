@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import time
 from collections.abc import Callable, Sequence
@@ -10,6 +11,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import polars as pl
+import pyarrow as pa
+import pyarrow.compute as pc
 
 from telemetry_nerd.analysis.distlod import (
     FACET_HEIGHT_SINGLE,
@@ -26,6 +29,7 @@ from telemetry_nerd.analysis.exprkind import (
 )
 from telemetry_nerd.analysis.filters import FilterSpec
 from telemetry_nerd.analysis.fraction import fraction_over, wilson
+from telemetry_nerd.analysis.profile_reference import describe, hourly_means, matched_hours
 from telemetry_nerd.analysis.quantile import attach_counts
 from telemetry_nerd.analysis.reference import reference_window
 from telemetry_nerd.analysis.resample import lod
@@ -106,6 +110,7 @@ from telemetry_nerd.model.caveats import (
 )
 from telemetry_nerd.model.companions import dataset_bundle
 from telemetry_nerd.model.distribution import DIST_N_MIN
+from telemetry_nerd.model.series import BUCKET_SCHEMA, FetchResult
 from telemetry_nerd.model.time import (
     TimeRange,
     format_duration,
@@ -919,6 +924,8 @@ class TelemetryService:
         if (ref := spec.references.get(mode)) is not None:
             return ref
         meta = self.datasets.meta(p.dataset_ids[0])
+        if mode == "profile":
+            return await self._profile_reference(meta, actor)
         rw = reference_window(meta.start_ms, meta.end_ms, meta.step_ms, mode)
         common = {"source": meta.source, "actor": actor}
         series = (
@@ -963,6 +970,82 @@ class TelemetryService:
             series=series,
             dist=dist,
             dist_current=dist_cur,
+        )
+
+    async def _profile_reference(self, meta: DatasetMeta, actor: Actor) -> Reference:
+        """The panel's normal: the operating profile's hourly values for the same series, in the
+        same seasonal buckets the window covers (bead 2as.22). Refuses what it cannot compare
+        like with like (percentiles, histograms, steps coarser than an hour)."""
+        if meta.representation != "bucket_agg" or meta.histogram or meta.derived:
+            raise ValueError(
+                "a marginal against the profile compares hourly means of plain series; this panel "
+                "shows percentiles, observations or a derived series: use reference=previous or week"
+            )
+        _, cur = self.datasets.get(meta.id)
+        now_df, _ = hourly_means(cur.buckets, meta.step_ms)  # also refuses a coarse step
+        profile = await self.profiles.ensure(meta.source, meta.expr)
+        hourly = self.profiles.hourly(profile)
+        if hourly is None:
+            raise ValueError(
+                "the profile's hourly history is no longer cached: refresh the profile"
+            )
+        ref_df, labels, series_tbl = hourly
+        mine = {
+            tuple(sorted((k, v) for k, v in json.loads(s).items() if k != "__name__"))
+            for s in cur.series.column("labels").to_pylist()
+        }
+        keep = {
+            sid
+            for sid, lab in labels.items()
+            if tuple(sorted((k, v) for k, v in lab.items() if k != "__name__")) in mine
+        }
+        if not keep:
+            raise ValueError("the profile covers other series than this panel shows")
+        by_sid = {s.series_id: s for s in profile.series}
+        now_hours = now_df["hour_ms"].unique().to_numpy()
+        pieces, periods = [], set()
+        for sid in sorted(keep):
+            g = ref_df.filter(pl.col("series_id") == sid)
+            seas = by_sid[sid].seasonal if sid in by_sid else None
+            period = seas.period if seas else "none"
+            periods.add(period)
+            hours = g["ts_ms"].to_numpy() - profile.step_ms
+            mask = matched_hours(now_hours, hours, period, profile.tz)  # type: ignore[arg-type]
+            pieces.append(g.filter(pl.Series(mask)))
+        rows = pl.concat(pieces).sort("series_id", "ts_ms")
+        if rows.height == 0:
+            raise ValueError("the profile has no hours matching this window's time of day/week")
+        shown = "none" if periods == {"none"} else next(iter(periods - {"none"}))
+        window = format_duration(profile.rate_window_ms) if profile.rate_window_ms else None
+        label = describe(shown, profile.window_ms / 86_400_000, profile.tz, window)  # type: ignore[arg-type]
+        result = FetchResult(
+            rows.select("ts_ms", "series_id", "avg", "min", "max", "count")
+            .to_arrow()
+            .cast(BUCKET_SCHEMA),
+            series_tbl.filter(pc.is_in(series_tbl["series_id"], pa.array(sorted(keep)))),
+        )
+        ds = self.datasets.put(
+            source=meta.source,
+            expr=profile.expr,
+            rng=TimeRange(profile.start_ms, profile.end_ms),
+            step_ms=profile.step_ms,
+            resolution_ms=profile.step_ms,
+            result=result,
+            derived={"op": "profile_reference", "from": profile.id, "label": label},
+        )
+        self.log.append(
+            actor,
+            "dataset.created",
+            ds.id,
+            {"expr": profile.expr, "derived": {"op": "profile_reference", "from": profile.id}},
+        )
+        return Reference(
+            mode="profile",
+            label=label,
+            start_ms=profile.start_ms,
+            end_ms=profile.end_ms,
+            shift_ms=0,
+            series=ds.id,
         )
 
     async def set_marginal(

@@ -131,7 +131,7 @@ class YAxis(BaseModel):
 
 
 class Reference(BaseModel):
-    mode: Literal["previous", "week"]
+    mode: Literal["previous", "week", "profile"]
     label: str
     start_ms: int
     end_ms: int
@@ -142,7 +142,7 @@ class Reference(BaseModel):
 
 
 class Marginal(BaseModel):
-    reference: Literal["previous", "week"]
+    reference: Literal["previous", "week", "profile"]
     author: Literal["claude", "user"] = "user"
     reason: str | None = Field(default=None, max_length=160)
 

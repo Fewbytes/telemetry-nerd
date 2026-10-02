@@ -203,7 +203,7 @@
     if (lastKey !== null && k !== lastKey && fetchWidth) untrack(() => load(fetchWidth));
     lastKey = k;
   });
-  const toggleMarginal = (ref: "previous" | "week" | null) => {
+  const toggleMarginal = (ref: "previous" | "week" | "profile" | null) => {
     margBusy = true;
     setMarginal(panel.id, ref).catch((e) => (error = String(e))).finally(() => (margBusy = false));
   };
@@ -699,10 +699,10 @@
     <div class="legend y-views" role="group" aria-label="Marginal histogram">
       marginal:
       <button type="button" class:on={!panel.spec.marginal} onclick={() => toggleMarginal(null)}>off</button>
-      {#each [["previous", "vs previous window"], ["week", "vs last week"]] as [r, label] (r)}
+      {#each [["previous", "vs previous window"], ["week", "vs last week"], ["profile", "vs normal profile"]] as [r, label] (r)}
         <button type="button" disabled={indexedOn || margBusy} title={indexedOn ? "the marginal shows values; it is off in the indexed view" : ""}
           class:on={panel.spec.marginal?.reference === r} data-marginal-ref={r}
-          onclick={() => toggleMarginal(r as "previous" | "week")}>{label}</button>
+          onclick={() => toggleMarginal(r as "previous" | "week" | "profile")}>{label}</button>
       {/each}
       {#if panel.spec.marginal?.author === "claude"}<span class="hint">Claude: {panel.spec.marginal.reason}</span>{/if}
       {#if margBusy}<span class="hint">fetching reference…</span>{/if}

@@ -279,7 +279,8 @@ def test_marginal_route(client):
     r = client.post(f"/api/panels/{pid}/marginal", json={"reference": "previous"})
     assert r.status_code == 200 and r.json()["spec"]["marginal"]["reference"] == "previous"
     assert (
-        client.post(f"/api/panels/{pid}/marginal", json={"reference": "profile"}).status_code == 400
+        client.post(f"/api/panels/{pid}/marginal", json={"reference": "yesterday"}).status_code
+        == 400
     )
     assert (
         client.post(f"/api/panels/{pid}/marginal", json={"reference": None}).json()["spec"][
