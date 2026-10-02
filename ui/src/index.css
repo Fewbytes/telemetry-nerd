@@ -38,6 +38,7 @@ a.obj-id:hover { text-decoration: underline; }
 .panel ul.notes { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
 .panel .note { font-size: 12px; padding: 4px 8px; border-left: 3px solid var(--off); background: var(--badge); border-radius: 0 4px 4px 0; }
 .panel .note.caveat { border-left-color: var(--warn); }
+.panel .note.active { outline: 1px solid var(--warn); }
 .panel .note .tag { font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; margin-right: 6px; color: var(--warn); }
 .panel .note.info .tag { color: var(--off); }
 .error { color: var(--error); }

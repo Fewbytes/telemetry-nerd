@@ -6,13 +6,15 @@
   import { drawRug, hitRug, rugCells, rugHeight, rugHint, type RugCell } from "../chart/rug";
   import { rgba, seriesName } from "../chart/toUplot";
   import { fmtRange } from "../lib/format";
-  import type { HeatmapPanelData, HeatSeries } from "../lib/api";
+  import { focusRects } from "../chart/focus";
+  import type { HeatmapPanelData, HeatSeries, Where } from "../lib/api";
 
-  let { data, series, width, height, unit, color = "count", cmapName = "viridis", overlayQ = null, onRendered, onBrush }: {
+  let { data, series, width, height, unit, color = "count", cmapName = "viridis", overlayQ = null, focusWhere = null, onRendered, onBrush }: {
     data: HeatmapPanelData; series: HeatSeries; width: number; height: number; unit: string | null;
     color?: "count" | "density";
     cmapName?: ColormapName;
     overlayQ?: number | null; // outline the bucket holding this quantile, where n is enough
+    focusWhere?: Where | null; // footer note under the pointer: tint the spans it covers
     onRendered: (ms: number, cells: number) => void;
     onBrush: (b: { x0: number; x1: number; left: number; width: number }) => void;
   } = $props();
@@ -101,6 +103,12 @@
         ctx.lineWidth = 1; ctx.strokeStyle = "#fff";
         ctx.strokeRect(x + 1.5, y + 1.5, Math.max(w - 3, 1), Math.max(h - 3, 1));
       });
+    }
+    if (focusWhere) {
+      const { col } = timeColumns(data.dataset.start_ms, data.dataset.end_ms, data.effective_step_ms, plotW);
+      ctx.save(); ctx.fillStyle = v("--warn"); ctx.globalAlpha = 0.15;
+      for (const f of focusRects(focusWhere, (ms) => { const c = col(ms); return c.x + c.w; }, 0, plotW)) ctx.fillRect(f.x, 0, f.w, plotH);
+      ctx.restore();
     }
     ctx.fillStyle = v("--warn");
     for (const m of l.lowN) ctx.fillRect(m.x, plotH - 3, m.w, 3);

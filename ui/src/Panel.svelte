@@ -4,12 +4,13 @@
   import "uplot/dist/uPlot.min.css";
   import {
     closePanel, fetchPanelData, refreshYContext, reportRender, selectYView, setMarginal, selectDataView, setOverlays,
-    type Annotation, type Panel, type PanelData, type Thread, type YView,
+    type Annotation, type Panel, type PanelData, type Thread, type Where, type YView,
   } from "./lib/api";
   import { PALETTE, rgba, seriesName, toUplot } from "./chart/toUplot";
   import { drawRug, hitRug, rugCells, rugHeight, rugHint, type RugCell } from "./chart/rug";
   import { describeShown, panelNotes } from "./lib/panelNotes";
   import { windowBadge } from "./lib/coverage";
+  import { focusRects, notesAt } from "./chart/focus";
   import { fmtStep } from "./lib/format";
   import { setupCanvas } from "./chart/canvas";
   import { drawnFor, VIEW_LABELS, type DataViewName } from "./chart/dataview";
@@ -168,11 +169,23 @@
   let rugCellsNow: RugCell[] = [];
   let rugBounds: [number, number] = [0, 0];
   let rugTip = $state<{ x: number; y: number; text: string } | null>(null);
+  // footer note under the pointer/focus -> band on the plot; rug cell under the pointer -> active notes
+  let focus = $state<Where | null>(null);
+  let activeNotes = $state<string[]>([]);
+  function setFocus(w: Where | null) {
+    focus = w;
+    plot?.redraw(false);
+  }
+  function onRugLeave() {
+    rugTip = null;
+    activeNotes = [];
+  }
   function onRugMove(e: MouseEvent) {
     if (data?.kind !== "time" || !data.bucket_state) return;
     const c = e.offsetX < rugBounds[0] || e.offsetX > rugBounds[1] ? null : hitRug(rugCellsNow, e.offsetX, e.offsetY);
-    if (!c) { rugTip = null; return; }
+    if (!c) { onRugLeave(); return; }
     const s = data.bucket_state[c.row];
+    activeNotes = notesAt(notes, s.id, c.ts);
     const sd = data.series.find((x) => x.id === s.id);
     rugTip = { x: e.offsetX + 8, y: e.offsetY + 12, text: rugHint(c, s, data.effective_step_ms, sd?.labels ? seriesName(sd.labels) : s.id, data.dataset.resolution_ms) };
   }
@@ -382,6 +395,13 @@
                       rctx.restore();
                     }
                   }
+                  const fw = untrack(() => focus);
+                  if (fw) {
+                    const c = u.ctx, l = u.bbox.left, r = l + u.bbox.width;
+                    c.save(); c.fillStyle = getComputedStyle(el).getPropertyValue("--warn").trim(); c.globalAlpha = 0.15;
+                    for (const f of focusRects(fw, (ms) => u.valToPos(ms / 1000, "x", true), l, r)) c.fillRect(f.x, u.bbox.top, f.w, u.bbox.height);
+                    c.restore();
+                  }
                   drawAnnotations(u, ops, colors, dpr);
                 },
               ],
@@ -485,7 +505,7 @@
         <HeatmapPlot
           data={hm} series={s} width={fetchWidth} height={hm.facet_height_px}
           unit={hm.panel.spec.y.unit}
-          color={heatColor} cmapName={heatCmap} overlayQ={heatQ}
+          color={heatColor} cmapName={heatCmap} overlayQ={heatQ} focusWhere={focus}
           onRendered={(ms, cells) => onFacetRendered(i, hm.series.length, ms, cells, hm.facet_height_px)}
           onBrush={(b) => (selection = { ...b, top: i * (hm.facet_height_px + 14 + 30) + 4 })}
         />
@@ -593,7 +613,7 @@
   {#if data?.kind === "time" && (data.bucket_state?.length ?? 0) > 0}
     <div class="rug-wrap">
       <canvas class="rug" bind:this={rugEl} data-rug aria-label="Coverage rug: where data is missing"
-        onmousemove={onRugMove} onmouseleave={() => (rugTip = null)}></canvas>
+        onmousemove={onRugMove} onmouseleave={onRugLeave}></canvas>
       {#if rugTip}<div class="rug-tip" style="left:{rugTip.x}px;top:{rugTip.y}px">{rugTip.text}</div>{/if}
     </div>
   {/if}
@@ -668,7 +688,13 @@
     {#if notes.length > 0}
       <ul class="notes" aria-label="Notes and warnings">
         {#each notes as note (note.key)}
-          <li class="note {note.kind}" data-note={note.key}>
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex (focus mirrors hover so keyboard users get the same graph highlight) -->
+          <li
+            class="note {note.kind}" class:active={activeNotes.includes(note.key)} data-note={note.key}
+            tabindex="0"
+            onmouseenter={() => setFocus(note.where ?? null)} onmouseleave={() => setFocus(null)}
+            onfocus={() => setFocus(note.where ?? null)} onblur={() => setFocus(null)}
+          >
             <span class="tag">{note.kind === "caveat" ? "Caveat" : "Note"}</span>
             {note.text}
           </li>
