@@ -3,7 +3,7 @@
 Three layers use this module:
 
 * **Dataset status.** A dataset carries at most one uncertainty-status caveat
-  (`exchange.fmt.UNCERTAINTY_STATUS`): `no_uncertainty` (unknown), `input_uncertainty_unknown`
+  (`exchange.fmt.UNCERTAINTY_STATUS`; a fit may also carry a per-parameter `no_uncertainty`): `no_uncertainty` (unknown), `input_uncertainty_unknown`
   (own interval, an input's unknown: a lower bound) or `uncertainty_not_propagated` (own
   interval, inputs' intervals not folded in: a lower bound). Tier-2 ingest assigns it
   (`exchange.fmt.output_uncertainty_status`); `dataset_status` reads it, and walks parents for
@@ -16,6 +16,12 @@ Three layers use this module:
 
       out = {"caveats": [...], "series": [{..., "evidence": wire.statistic(...)}]}
       return mark_statistics(out, self.datasets, [lam_id, w_id, l_id])
+
+  Pass the datasets whose error the op did *not* fold into its interval: an op that
+  propagates an input's declared interval (maximalist: the wider of propagated and its own)
+  leaves that input out. A statistic for which no interval can be derived is still evidence:
+  `wire.statistic(..., interval=None, ...)` emits it with `uncertainty_unknown: true`.
+  `iter_statistics(out)` yields every evidence statistic in a result.
 
 * **Findings.** `evidence_flags` derives, per cited evidence item, the flags a finding stores
   and shows (`uncertainty_unknown`, `input_uncertainty_unknown`, `uncertainty_not_propagated`).
@@ -119,17 +125,17 @@ def input_status(datasets: DatasetStore, dataset_ids: Iterable[str]) -> str | No
     return out
 
 
-def _statistics(obj: Any) -> Iterable[dict]:
+def iter_statistics(obj: Any) -> Iterable[dict]:
     """Every evidence statistic dict inside an op result."""
     if isinstance(obj, dict):
         if obj.get("kind") == "statistic" and "dataset" in obj and "value" in obj:
             yield obj
             return
         for v in obj.values():
-            yield from _statistics(v)
+            yield from iter_statistics(v)
     elif isinstance(obj, list):
         for v in obj:
-            yield from _statistics(v)
+            yield from iter_statistics(v)
 
 
 def mark_statistics(out: dict, datasets: DatasetStore, dataset_ids: Sequence[str]) -> dict:
@@ -140,7 +146,7 @@ def mark_statistics(out: dict, datasets: DatasetStore, dataset_ids: Sequence[str
     status = input_status(datasets, dataset_ids)
     if status is None:
         return out
-    for st in _statistics(out):
+    for st in iter_statistics(out):
         params = st.setdefault("params", {})
         if params.get(PARAM_KEY) != INPUT_UNKNOWN:  # unknown wins over not_propagated
             params[PARAM_KEY] = status

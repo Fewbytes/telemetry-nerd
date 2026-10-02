@@ -92,6 +92,10 @@ Rules that keep results honest:
   (`no_uncertainty`, or itself a lower bound) cannot be propagated: the output is tagged
   `input_uncertainty_unknown` whatever it declares. Narrow lineage with `parents=[...]` when an
   input did not shape the values. The result's `uncertainty_status` shows the tag.
+- Tier-1 ops (`analyze`, `spectrum`, `fleet`, `fraction_over`) over a code output still give
+  evidence with their own interval; over an input of unknown uncertainty (or with intervals
+  the op does not propagate) the statistic carries `params.input_uncertainty` and the finding
+  is flagged as a lower bound. Pass such statistics on as is.
 - Name the method in words (`"moving-block bootstrap, block=12"`): the interval is only as good
   as that sentence. Put assumptions the reader must know in `caveats` (bucket midpoints,
   fractional counts, a stationary window). An interval does not cover bias from a modelling

@@ -112,6 +112,7 @@ from telemetry_nerd.core.seasonal_ops import SeasonalOps, seasonal_hint
 from telemetry_nerd.core.series_diagnostics import SeriesDiagnostics, resolve_baseline
 from telemetry_nerd.core.signal_ops import SignalOps
 from telemetry_nerd.core.summary import summarize, summarize_distribution
+from telemetry_nerd.core.uncertainty import mark_statistics
 from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore, Lineage, is_code_expr
@@ -325,7 +326,8 @@ class TelemetryService:
         normalise: str = "none",
     ) -> dict:
         """Many series of one metric as a group: spread, outlying members, churn (lkn.3)."""
-        return self.fleets.summary(dataset_id, by, scale, normalise)
+        out = self.fleets.summary(dataset_id, by, scale, normalise)
+        return mark_statistics(out, self.datasets, [dataset_id])
 
     def seasonal_suggestion(self, dataset_id: str, mark: str = "auto") -> str | None:
         """Hint for `show`: the cached operating profile has a daily/weekly seasonal model."""
@@ -632,7 +634,9 @@ class TelemetryService:
             if not r.exact and r.bucket is not None:
                 res["inside_bucket"] = [_edge_text(r.bucket[0]), _edge_text(r.bucket[1])]
             out.append(res)
-        return {"dataset": dataset_id, "x": x, "series": out}
+        return mark_statistics(
+            {"dataset": dataset_id, "x": x, "series": out}, self.datasets, [dataset_id]
+        )
 
     async def scan_metrics(
         self,
@@ -1364,7 +1368,7 @@ class TelemetryService:
         ]
         if hint := seasonal_hint(dataset_id, found):
             out["suggest"] = hint
-        return out
+        return mark_statistics(out, self.datasets, [dataset_id])
 
     def analyze(
         self,
@@ -1380,7 +1384,7 @@ class TelemetryService:
             parse_time(baseline_end, now) if baseline_end else None,
         )
         self.diagnostics.remember(dataset_id, None)
-        return self._analyze_hint(dataset_id, out)
+        return mark_statistics(self._analyze_hint(dataset_id, out), self.datasets, [dataset_id])
 
     async def analyze_reference(
         self,

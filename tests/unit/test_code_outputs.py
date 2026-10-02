@@ -211,6 +211,9 @@ async def test_fleet_over_a_code_output(svc, src, run):
     calls = src.calls
     out = svc.fleet(ds)
     assert [o["member"] for o in out["outliers"]] == ["pod=p7"]
+    # spec §5.3: evidence over values of unknown uncertainty is marked, not withheld
+    assert "input_uncertainty_unknown" in out["caveats"]
+    assert all(e["params"]["input_uncertainty"] == "unknown" for e in _evidence(out))
     svc.show(ds, "pods", mark="fleet")
     assert src.calls == calls
 
@@ -311,3 +314,78 @@ async def test_panel_evidence_flags_every_dataset_of_the_panel(svc, run):
     assert svc.ws.objects.get_finding(f.id).evidence_flags == f.evidence_flags  # stored
     (row,) = [x for x in svc.ws.brief()["findings"] if x["id"] == f.id]
     assert row["uncertainty"] == ["uncertainty_unknown"]
+
+
+# --- tier-1 statistics over code outputs (spec §5.3, 4jk) ----------------------------------
+
+
+def _evidence(out: dict) -> list[dict]:
+    from telemetry_nerd.core.uncertainty import iter_statistics
+
+    return list(iter_statistics(out))
+
+
+async def test_tier1_statistics_over_unknown_inputs_are_evidence_flagged(svc, run):
+    d = await _input(svc)
+
+    def body():
+        tn.put(_wave(), step_ms=STEP, name="bare")
+        tn.put(_wave(with_interval=True), step_ms=STEP, name="ci",
+               uncertainty={"method": "bootstrap", "level": 0.95})  # fmt: skip
+
+    out = run("c7", [d], body)
+    # the op derives its own interval over values of unknown uncertainty: marked, not refused
+    spec = svc.spectrum(out["bare"])
+    (ev, *_) = _evidence(spec)
+    assert ev["interval"] and ev["params"]["input_uncertainty"] == "unknown"
+    assert "input_uncertainty_unknown" in spec["caveats"]
+    f = svc.ws.finding_create(
+        FindingIn(claim="20 min cycle", scope=_scope(), evidence=[StatisticRef(**ev)]), "claude"
+    )
+    assert [e.flag for e in f.evidence_flags] == ["input_uncertainty_unknown"]
+    assert "lower bound" in f.evidence_flags[0].message
+    # over values with a declared interval the op does not propagate: a lower bound too
+    spec = svc.spectrum(out["ci"])
+    (ev, *_) = _evidence(spec)
+    assert ev["params"]["input_uncertainty"] == "not_propagated"
+    assert "uncertainty_not_propagated" in spec["caveats"]
+    f = svc.ws.finding_create(
+        FindingIn(claim="20 min cycle", scope=_scope(), evidence=[StatisticRef(**ev)]), "claude"
+    )
+    assert [e.flag for e in f.evidence_flags] == ["uncertainty_not_propagated"]
+    # a filter of the interval output: the interval does not survive, so unknown
+    filtered = svc.filter(out["ci"], "lowpass", "10m", "smooth")["dataset"]
+    fm = svc.datasets.meta(filtered)
+    assert [c for c in fm.source_caveats if c in fmt.UNCERTAINTY_STATUS] == ["no_uncertainty"]
+    assert all(
+        e["params"]["input_uncertainty"] == "unknown" for e in _evidence(svc.spectrum(filtered))
+    )
+
+
+async def test_tier1_statistics_over_source_data_are_not_marked(svc):
+    from telemetry_nerd.core.uncertainty import input_status, mark_statistics
+    from telemetry_nerd.core.wire import statistic
+
+    d = await _input(svc)
+    assert input_status(svc.datasets, [d]) is None
+    out = {"series": [{"evidence": statistic(d, "mean", 1.0, [0.9, 1.1], "m", {})}]}
+    assert mark_statistics(out, svc.datasets, [d]) == {
+        "series": [{"evidence": statistic(d, "mean", 1.0, [0.9, 1.1], "m", {})}]
+    }
+
+
+async def test_fraction_over_a_code_distribution_without_uncertainty_is_marked(svc, run):
+    dist = (await svc.query_distribution("lat_bucket", start="now-1h", step="5m"))["dataset"]
+
+    def body():
+        tn.put(tn.dataset(dist), like=dist, columns=tn.dataset(dist, "columns"), name="raw")
+        tn.put(tn.dataset(dist), like=dist, columns=tn.dataset(dist, "columns"), exact=True,
+               name="counts")  # fmt: skip
+
+    out = run("c8", [dist], body)
+    fo = svc.fraction_over(out["raw"], 1.0)
+    assert fo["series"][0]["evidence"]["params"]["input_uncertainty"] == "unknown"
+    assert fo["caveats"] == ["input_uncertainty_unknown"]
+    exact = svc.fraction_over(out["counts"], 1.0)  # exact counts: nothing to flag
+    assert "input_uncertainty" not in exact["series"][0]["evidence"]["params"]
+    assert "caveats" not in exact

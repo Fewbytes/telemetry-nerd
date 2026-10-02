@@ -97,6 +97,9 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   interval, exact, or `uncertainty_unknown: true` when none can be derived. Unknown is citable
   but never silent: the finding carries `uncertainty unknown` (say so when you report it).
   Derive an interval first where you can (bootstrap, effective n, bucket bounds, Wilson).
+  A tier-1 op over data of unknown uncertainty (a code output) still gives evidence with its
+  own interval, marked `params.input_uncertainty` + caveat `input_uncertainty_unknown`: that
+  interval is a lower bound; pass the statistic as is and say so.
 - Summaries carry `coverage` per series (share of expected samples, longest gap) and `unknown_spans`; missing data is evidence too — scope claims around it.
 - `gap_create` records a signal you wish existed. `annotate` marks events/regions/thresholds.
 - When you tell the user to look at an object ("see p5"), also call `highlight(object, note?)`

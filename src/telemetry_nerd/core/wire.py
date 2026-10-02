@@ -32,9 +32,19 @@ def add_caveats(caveats: list[str], more: Iterable[str]) -> None:
 
 
 def statistic(
-    dataset: str, name: str, value: float | None, interval: list, method: str, params: dict
+    dataset: str, name: str, value: float | None, interval: list | None, method: str, params: dict
 ) -> dict:
-    """An `evidence` statistic for finding_create (value and interval already rounded)."""
+    """An `evidence` statistic for finding_create (value and interval already rounded).
+
+    No interval (None, or a bound that is not finite) is unknown uncertainty, not zero: the
+    statistic is still evidence, stated `uncertainty_unknown: true` (spec §5.3). Derive one
+    where possible first (bootstrap, effective n, bucket bounds, propagation)."""
+    if interval is None or any(v is None for v in interval):
+        return {
+            "kind": "statistic", "dataset": dataset, "name": name, "value": value,
+            "interval": None, "exact": False, "uncertainty_unknown": True, "method": method,
+            "params": params,
+        }  # fmt: skip
     return {
         "kind": "statistic", "dataset": dataset, "name": name, "value": value,
         "interval": interval, "exact": False, "method": method, "params": params,
