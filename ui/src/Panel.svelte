@@ -212,12 +212,15 @@
     setMarginal(panel.id, ref).catch((e) => (error = String(e))).finally(() => (margBusy = false));
   };
 
+  let fleetView = $state<"band" | "heat" | "multiples">("band");
+  // the heat view's y axis is members, not values: no y-view chips, badge, context strip or y notes there
+  const yIsValues = $derived(!(data?.kind === "fleet" && fleetView === "heat"));
   const notes = $derived(
     data
       ? panelNotes(data.caveats, {
-          yScaledToData: panel.spec.y.range_mode === "data",
+          yScaledToData: panel.spec.y.range_mode === "data" && yIsValues,
           located: data.located,
-          yContext: yctx,
+          yContext: yIsValues ? yctx : null,
           auto: panel.spec.auto ?? null,
           unit: panel.spec.y.unit,
           nMin: data.dataset.n_min ?? null,
@@ -230,7 +233,7 @@
             ? { what: marg.what, ref: marg.reference.label, n: marg.windows.map((w) => w.n), nMin: marg.n_min, author: marg.author, reason: marg.reason }
             : null,
           yView:
-            chosen || yres?.refused
+            yIsValues && (chosen || yres?.refused)
               ? { label: chosen?.label ?? "", reason: chosen?.reason ?? null, author: chosen?.author ?? "user", refused: yres?.refused ?? null }
               : null,
         })
@@ -611,7 +614,7 @@
       {/each}
     {/if}
     {#if data && data.kind === "fleet"}
-      <FleetPlot data={data} width={fetchWidth} range={yres?.range ?? null} unit={panel.spec.y.unit ?? null} onRendered={(ms, pts, h) => onFacetRendered(0, 1, ms, pts, h ?? 260, true)} />
+      <FleetPlot data={data} width={fetchWidth} range={yres?.range ?? null} unit={panel.spec.y.unit ?? null} bind:view={fleetView} onRendered={(ms, pts, h) => onFacetRendered(0, 1, ms, pts, h ?? 260, true)} />
     {/if}
     {#if data && data.kind === "spectrogram"}
       {@const sg = data}
@@ -633,10 +636,10 @@
         />
       {/each}
     {/if}
-    {#if (data?.kind === "time" || data?.kind === "fleet") && yres && yres.effective && (yres.zoomed || yres.log || yres.effective.mode === "semantic" || (yres.reference && chosen?.mode === "reference"))}
+    {#if (data?.kind === "time" || data?.kind === "fleet") && yIsValues && yres && yres.effective && (yres.zoomed || yres.log || yres.effective.mode === "semantic" || (yres.reference && chosen?.mode === "reference"))}
       <span class="y-badge" data-y-badge>{badgeText(yres.effective, yres, panel.spec.y.unit, data.kind === "time" ? data.index?.label : undefined, yctx)}</span>
     {/if}
-    {#if (data?.kind === "time" || data?.kind === "fleet") && yres?.zoomed && yres.range && yst?.all}
+    {#if (data?.kind === "time" || data?.kind === "fleet") && yIsValues && yres?.zoomed && yres.range && yst?.all}
       {@const cs = contextStrip(stripExtent(yst.all, yctx), yres.range)}
       <span class="y-strip" style="bottom:{32 + (data.kind === "time" ? rugAxisExtra(data.bucket_state?.length ?? 0) : 0)}px" title="where this view sits within the full data range"><i style="bottom:{cs.bottomPct}%;height:{cs.heightPct}%"></i></span>
     {/if}
@@ -691,7 +694,7 @@
       {/each}
     </div>
   {/if}
-  {#if (data?.kind === "time" || data?.kind === "fleet") && yst}
+  {#if (data?.kind === "time" || data?.kind === "fleet") && yIsValues && yst}
     <div class="legend y-views" role="group" aria-label="Y-axis view">
       y:
       {#each offeredViews(yst, yctx).filter((o) => data?.kind === "time" || !["indexed", "meaningful", "log"].includes(o.mode)) as o (o.mode + (o.baseline ?? ""))}
@@ -744,7 +747,7 @@
   {#if data}
     {@const parts = provenanceParts(data.dataset)}
     <div class="shown">
-      <p class="what">{describeShown(data.dataset, fmtStep(data.effective_step_ms), data.kind, "mark" in data ? (data.kind === "heatmap" ? heatView === "percentiles" ? "percentiles" : "" : data.mark) : "")}</p>
+      <p class="what">{describeShown(data.dataset, fmtStep(data.effective_step_ms), data.kind, "mark" in data ? (data.kind === "heatmap" ? heatView === "percentiles" ? "percentiles" : "" : data.mark) : "", fleetView)}</p>
       <p class="where">
         <span data-provenance>{#if parts}{@const [pre, node, post] = parts}{pre}<button type="button" class="ref-chip obj-id" data-code-link={node} title="View the code of {node}" onclick={() => openCode?.(node)}>{node}</button>{post}{:else}{provenanceText(data.dataset)}{/if}</span> · {fmtTime(data.dataset.start_ms)} – {fmtTime(data.dataset.end_ms)} · step
         {fmtStep(data.effective_step_ms)}

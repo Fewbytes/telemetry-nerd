@@ -99,9 +99,10 @@ test("median line clears 3:1 against the theme background", () => {
   expect(ratio(FLEET_HUE.dark.line, "#16181d")).toBeGreaterThanOrEqual(3);
 });
 
-test("outlier markers only outside the 10-90 envelope; hover finds the nearest outlier", () => {
-  expect(outlierMarkIdx(d, 0)).toEqual([0, 1, 2]); // 18, 19 above q90; step 2 has no envelope so the point is kept
-  expect(outlierMarkIdx({ ...d, band: { ...d.band, q10: [0, 0, 0], q90: [30, 30, 30] } }, 0)).toEqual([]);
+test("only isolated outlier samples get a dot; hover finds the nearest outlier", () => {
+  expect(outlierMarkIdx(d, 0)).toEqual([]); // a continuous run is a line
+  expect(outlierMarkIdx(d, 1)).toEqual([0, 2]); // 10, gap, 1: both isolated
+  expect(outlierMarkIdx({ ...d, outliers: [{ ...d.outliers[0], values: [1, null, 2, 3] }] }, 0)).toEqual([0]);
   expect(nearestOutlier(d, 0, 17.5, 1)?.id).toBe("pod=a");
   expect(nearestOutlier(d, 0, 14, 1)).toBeNull();
   expect(nearestOutlier(d, 1, 10, 1)).toBeNull(); // pod=b has no value at step 1

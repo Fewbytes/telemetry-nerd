@@ -103,16 +103,13 @@ export function fleetAxisLabel(d: FleetData, unit: string | null): string {
   return `${u} · spread across ${d.members} members (bands: 25–75, 10–90, min–max)`;
 }
 
-/** Steps where an outlier lies outside the 10-90 envelope: where its marker is drawn. */
+/** Steps where an outlier sample is isolated (null on both sides): a line cannot show it, so it gets a dot.
+ *  Every other sample is part of the drawn line; markers appear only on hover. */
 export function outlierMarkIdx(d: FleetData, k: number): number[] {
   const o = d.outliers[k];
   if (!o) return [];
-  const out: number[] = [];
-  o.values.forEach((v, i) => {
-    const lo = d.band.q10[i], hi = d.band.q90[i];
-    if (v !== null && (lo === null || hi === null || v < lo || v > hi)) out.push(i);
-  });
-  return out;
+  const v = o.values;
+  return v.flatMap((x, i) => (x !== null && (i === 0 || v[i - 1] === null) && (i === v.length - 1 || v[i + 1] === null) ? [i] : []));
 }
 
 /** The outlier whose marker is nearest `yVal` at step `idx` (within `tol` in y units), for the hover label. */

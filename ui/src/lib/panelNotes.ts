@@ -223,9 +223,12 @@ export function describeShown(
   step: string,
   kind = "time",
   mark = "",
+  fleetView = "band",
 ): string {
   if (kind === "spectrum") return "Periodogram (Lomb-Scargle): the share of variance a sinusoid of each period explains, with the 1% false-alarm level; peaks carry intervals.";
   if (kind === "spc") return "Control chart: the series against a centre line and 3σ band computed from the baseline only (shaded, or an earlier window named below); flagged points break SPC rules.";
+  if (kind === "fleet" && fleetView === "heat") return "Member × time: one row per member, one column per step; colour is the member's deviation from the fleet median in robust σ (orange above, purple below, capped), dots where a live member was silent.";
+  if (kind === "fleet" && fleetView === "multiples") return "Small multiples: one panel per outlying member on the same y range, its line against the fleet's shaded spread (min–max, 10–90%, 25–75%) and median.";
   if (kind === "fleet") return "Fleet: every member of the group, shaded by how many members lie there (min–max, 10–90%, 25–75% at each step, over the members that reported), the median, and only the outlying members drawn as lines.";
   if (kind === "seasonal") return "Seasonal comparison: now against the same window in previous cycles (faint), their median (dashed) and a 90% band from the spread across those cycles; dots are points too extreme for any previous cycle.";
   if (kind === "spectrogram") return "Spectrogram: how the periodicity changes over time, one window per column; the window sets the period resolution.";

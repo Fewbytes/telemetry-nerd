@@ -12,18 +12,18 @@
   import FleetHeat from "./FleetHeat.svelte";
   import FleetSmallMultiples from "./FleetSmallMultiples.svelte";
 
-  let { data, width, height = 260, range = null, unit = null, onRendered }: {
-    data: FleetPanelData; width: number; height?: number; range?: [number, number] | null; unit?: string | null;
+  type View = "band" | "heat" | "multiples";
+  let { data, width, height = 260, range = null, unit = null, view = $bindable("band"), onRendered }: {
+    data: FleetPanelData; width: number; height?: number; range?: [number, number] | null; unit?: string | null; view?: View;
     onRendered: (ms: number, points: number, heightPx?: number) => void;
   } = $props();
 
   // band + lines (default), member x time heatmap, or small multiples of the top outliers
-  type View = "band" | "heat" | "multiples";
-  let view = $state<View>("band");
   const views: [View, string][] = [["band", "band + outliers"], ["heat", "member × time"], ["multiples", "small multiples"]];
 
   let el = $state<HTMLDivElement | null>(null);
-  let tip = $state<{ x: number; y: number; text: string } | null>(null);
+  let tip = $state<{ x: number; y: number; px: number; py: number; text: string } | null>(null);
+  let tipColor = $state("");
   const key = $derived(fleetKey(theme.effective === "dark"));
   const axisLabel = $derived(fleetAxisLabel(data, unit));
 
@@ -67,7 +67,9 @@
               const o = nearestOutlier(data, idx, yv, span * 0.04);
               if (!o) { tip = null; return; }
               const v = o.values[idx] as number;
-              tip = { x: left + 12, y: top + 12, text: `${o.id} · ${fmtTimeZ(data.ts[idx])} · ${Number(v.toPrecision(4))}` };
+              const ox = p.bbox.left / (window.devicePixelRatio || 1), oy = p.bbox.top / (window.devicePixelRatio || 1);
+              tipColor = OUTLIER_COLORS[data.outliers.indexOf(o) % OUTLIER_COLORS.length];
+              tip = { x: ox + left + 12, y: oy + top + 12, px: ox + left, py: oy + p.valToPos(v, "y"), text: `${o.id} · ${fmtTimeZ(data.ts[idx])} · ${Number(v.toPrecision(4))}` };
             },
           ],
           draw: [
@@ -129,7 +131,7 @@
         <li><span class="sw {k.id}" style:background={k.swatch}></span>{k.label}</li>
       {/each}
     </ul>
-    <div class="wrap"><div bind:this={el}></div>{#if tip}<div class="tip" style:left="{tip.x + 50}px" style:top="{tip.y}px">{tip.text}</div>{/if}</div>
+    <div class="wrap"><div bind:this={el}></div>{#if tip}<i class="hov" style:left="{tip.px}px" style:top="{tip.py}px" style:background={tipColor}></i><div class="tip" style:left="{tip.x}px" style:top="{tip.y}px">{tip.text}</div>{/if}</div>
   {/if}
   {#if view === "heat"}
     <FleetHeat {data} {width} {onRendered} />
@@ -157,6 +159,7 @@
   .sw.median { height: 2px; border: 0; }
   .sw.outlier { width: 8px; height: 8px; border-radius: 50%; border: 0; }
   .wrap { position: relative; }
+  .hov { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; border: 1.5px solid var(--bg, #fff); pointer-events: none; z-index: 1; }
   .tip { position: absolute; pointer-events: none; background: var(--bg, #fff); color: var(--fg, #222); border: 1px solid var(--muted, #888);
     font-size: 0.75em; padding: 2px 6px; white-space: nowrap; z-index: 2; }
   .outliers { font-size: 0.8em; margin: 2px 0 6px 0; padding: 0; list-style: none; }

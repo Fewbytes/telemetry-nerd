@@ -3,7 +3,7 @@ import { mkdirSync } from "node:fs";
 
 // 100-member synthetic fleet, 3 planted outliers (persistent, transient, drifting), written under a
 // unique metric name so the shared dev VictoriaMetrics keeps its other data untouched.
-const METRIC = "tn_e2e_lkn_fleet_cpu";
+const METRIC = `tn_e2e_lkn_fleet_cpu_${Date.now()}`; // fresh per run: stale samples at shifted timestamps would add outliers
 const VM = "http://127.0.0.1:8428";
 const SHOTS = "e2e-shots";
 const PLANTED = { persistent: 7, transient: 23, drifting: 61 };
@@ -80,6 +80,7 @@ test("fleet panel: band, 3 planted outliers labelled, heatmap and small multiple
     await expect(page.locator("html")).toHaveAttribute("data-theme", mode);
     // band view: each outlier's colour (line and label) is drawn on the plot canvas
     await fleet.locator("[data-fleet-view-btn=band]").click();
+    await expect(el.locator(".y-views")).toHaveCount(1);
     const plot = el.locator(".u-over");
     await expect(plot).toBeVisible();
     await expect(el.locator("[data-fleet-encoding]")).toContainText("spread across 100 members (bands: 25–75, 10–90, min–max)");
@@ -103,6 +104,9 @@ test("fleet panel: band, 3 planted outliers labelled, heatmap and small multiple
     await page.mouse.move(box.x + 150 + 40, box.y + 6); // top row: a higher outlier
     await expect(heat.locator(".tip")).toContainText("z ");
     await expect(heat.locator("[data-fleet-heat-bar]")).toContainText("deviation from fleet median (σ)");
+    await expect(el.locator(".what")).toContainText("one row per member");
+    await expect(el.locator(".y-views")).toHaveCount(0);
+    await expect(el.getByText("scaled to the data")).toHaveCount(0);
     await el.screenshot({ path: `${SHOTS}/fleet-heat-${mode}.png` });
 
     // small multiples of the three outliers: one panel each, identical y
@@ -116,4 +120,34 @@ test("fleet panel: band, 3 planted outliers labelled, heatmap and small multiple
   }
   console.log("fleet render ms", JSON.stringify(timings));
   for (const v of Object.values(timings)) expect(Number(v)).toBeLessThan(100);
+});
+
+test("fleet panel with 6 members: band view screenshot", async ({ page, request }) => {
+  mkdirSync(SHOTS, { recursive: true });
+  const metric = "tn_e2e_2ju_fleet6";
+  const r = rng(7);
+  const T = 240, step = 60_000, end = Math.floor((Date.now() - 6 * 60_000) / step) * step, start = end - (T - 1) * step;
+  const lines: string[] = [];
+  for (let m = 0; m < 6; m++)
+    for (let t = 0; t < T; t++) {
+      const v = 40 + 15 * Math.sin((2 * Math.PI * t) / T) + gauss(r) * 3 + (m === 2 && t > 150 ? 30 : 0);
+      lines.push(`${metric}{core="${m}",job="cpu"} ${v.toFixed(3)} ${start + t * step}`);
+    }
+  expect((await request.post(`${VM}/api/v1/import/prometheus`, { data: lines.join("\n") + "\n" })).ok()).toBeTruthy();
+  await request.get(`${VM}/internal/force_flush`);
+  const q = await request.post("/api/query", { data: { expr: metric, start: "now-250m", end: "now-5m", step: "1m" } });
+  const { dataset } = await q.json();
+  const s = await request.post("/api/show", { data: { dataset, question: "Which core is off?", mark: "fleet" } });
+  expect(s.ok(), await s.text()).toBeTruthy();
+  const { panel } = await s.json();
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await page.goto("/");
+  const el = page.locator(`[data-panel-id="${panel.id}"]`);
+  await expect(el.locator("[data-fleet-encoding]")).toContainText("spread across 6 members");
+  for (const mode of ["light", "dark"] as const) {
+    await page.getByLabel("Theme").selectOption(mode);
+    await expect(page.locator("html")).toHaveAttribute("data-theme", mode);
+    await expect(el.locator(".u-over")).toBeVisible();
+    await el.screenshot({ path: `${SHOTS}/fleet6-band-${mode}.png` });
+  }
 });
