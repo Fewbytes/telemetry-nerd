@@ -2,6 +2,7 @@
 name = "telemetry-nerd"
 version = "0.0.1"
 description = "Evidence-first telemetry analysis workspace for Claude"
+license = "Apache-2.0"
 requires-python = ">=3.12"
 dependencies = [
     "anyio>=4.15.1",
