@@ -47,6 +47,8 @@ CANNOT_TELL = [
     "a / b offset 1m",
     "topk(5, a / b)",
     "sum(a > 1)",
+    "sum_over_time((a / b)[5m:])",
+    "quantile(0.9, a / b)",
     "abs(a / on(x) b)",
     "sum(a / b offset 1m)",
     "a / b and c",
@@ -151,6 +153,7 @@ _AB = _min2("count_over_time(a[1m])", "count_over_time(b[1m])")
         ("-(a / b)", _AB),
         ("max by (instance) (a / b)", f"sum by (instance) ({_AB})"),
         ("sum without (x) (a / b)", f"sum without (x) ({_AB})"),
+        ("histogram_quantile(0.9, a / b)", f"sum without (le, vmrange) ({_AB})"),
         ("max(a / b) by (job)", f"sum by (job) ({_AB})"),
         (
             "sum by (job) (rate(a[5m]) / rate(b[5m]))",

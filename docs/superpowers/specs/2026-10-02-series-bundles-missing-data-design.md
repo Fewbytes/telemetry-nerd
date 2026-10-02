@@ -236,7 +236,10 @@ fills (`subquery_fills_gaps`, verified on Prometheus and VictoriaMetrics), so it
   functions and unary signs (`abs(a/b)`, `clamp_max(a/b, 1)`, `-(a/b)`), and an aggregation sums
   the fold of its operand (`avg(a/b)` -> `sum (<fold>)`, `max by (instance) (a/b)` ->
   `sum by (instance) (<fold>)`, `sum by (job) (rate(a[5m]) / rate(b[5m]))`). The caps apply to
-  the whole expression: distinct leaf operands across all folds, and the final query length.
+  the whole expression: distinct leaf operands are summed across folds after per-fold dedupe (a
+  leaf inside and outside an aggregation counts twice: a safe over-count), and the final query
+  length. `histogram_quantile(q, a/b)` is likewise observed, as
+  `sum without (le, vmrange) (<fold>)`.
   A value in a bucket with no observed sample is filled and dropped
   (bucket `empty`); samples without a value (e.g. `rate` with one sample) are dropped too, never
   counted `partial`. Cost: `fetch` runs the same number of queries, but the count query is no

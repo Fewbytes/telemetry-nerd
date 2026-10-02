@@ -15,8 +15,7 @@ It is derived only where that is exact:
 * aggregations sum/avg/min/max/count/group/stddev/stdvar with by/without (observed = the
   members' samples), and `histogram_quantile(q, ...)` as an aggregation `without (le, vmrange)`;
 * top-level arithmetic between two or more such operands (`a / b`): observed = the smaller
-  operand count per series and bucket (see `observed_count_query`), capped in size.
-
+  operand count per series and bucket (see `observed_count_query`), capped in size;
 * those wrappers (functions, unary minus, aggregations) around such an arithmetic expression
   (`avg(a / b)`, `abs(a / b)`, `sum by (job) (rate(a[5m]) / rate(b[5m]))`): the fold is passed
   through label-preserving functions and summed by aggregations.
@@ -177,7 +176,7 @@ def _fold(leaves: list[_Leaf]) -> _Leaf | None:
     return (query, sum(n for _, n in distinct)) if len(query) <= MAX_COUNT_QUERY_LEN else None
 
 
-def _wrap(wrapper: str, inner: list[str] | None) -> list[_Leaf] | None:
+def _wrap(wrapper: str, inner: list[_Leaf] | None) -> list[_Leaf] | None:
     """The fold of `inner` leaves under an aggregation `wrapper` (a sum of the members' samples)."""
     folded = None if inner is None else _fold(inner)
     return None if folded is None else [(f"{wrapper} ({folded[0]})", folded[1])]
@@ -241,12 +240,13 @@ def _call_leaves(text: str, masked: str, call: re.Match, window: str) -> list[_L
     vectors = [i for i, a in enumerate(masked_args) if not _LITERAL.match(a)]
     if len(vectors) != 1:
         return None
-    inner = _leaves(args[vectors[0]], masked_args[vectors[0]], window)
     if func == "histogram_quantile":
         if len(args) != 2 or vectors != [1]:
             return None
-        return _wrap("sum without (le, vmrange)", inner)
-    return inner if func in _PRESERVING else None
+        return _wrap("sum without (le, vmrange)", _leaves(args[1], masked_args[1], window))
+    if func in _PRESERVING:
+        return _leaves(args[vectors[0]], masked_args[vectors[0]], window)
+    return None
 
 
 def _count_query(text: str, masked: str, window: str) -> str | None:
