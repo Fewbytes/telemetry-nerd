@@ -23,7 +23,7 @@ import math
 import os
 import re
 import tempfile
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -171,10 +171,11 @@ def _uncertainty(meta: Mapping, representation: str) -> tuple[dict | None, bool]
             "a distribution has no lo/hi columns: declare exact=True for exact counts, or leave "
             f"uncertainty out (the output is then tagged {NO_UNCERTAINTY})"
         )
-    if not isinstance(u, Mapping) or set(u) - {"method", "level", "kind"}:
+    if not isinstance(u, Mapping) or set(u) - {"method", "level", "kind", "propagation"}:
         raise ExchangeError(
             "meta.uncertainty must be {'method': str, 'level': float in (0, 1), "
-            f"'kind': one of {', '.join(INTERVAL_KINDS)}}}; got {u!r}"
+            f"'kind': one of {', '.join(INTERVAL_KINDS)}, 'propagation': str (optional)}}; "
+            f"got {u!r}"
         )
     method, level, kind = u.get("method"), u.get("level"), u.get("kind", "confidence")
     if not isinstance(method, str) or not method.strip():
@@ -183,7 +184,65 @@ def _uncertainty(meta: Mapping, representation: str) -> tuple[dict | None, bool]
         raise ExchangeError(f"meta.uncertainty.level must be in (0, 1), e.g. 0.95; got {level!r}")
     if kind not in INTERVAL_KINDS:
         raise ExchangeError(f"meta.uncertainty.kind must be one of {INTERVAL_KINDS}, got {kind!r}")
-    return {"method": method.strip(), "level": level, "kind": kind}, False
+    out = {"method": method.strip(), "level": level, "kind": kind}
+    if (prop := _propagation(u.get("propagation"), "meta.uncertainty.propagation")) is not None:
+        out["propagation"] = prop
+    return out, False
+
+
+def _propagation(v: Any, what: str) -> str | None:
+    """How the inputs' intervals were folded into this output's (spec §5.3), or None."""
+    if v is None:
+        return None
+    if not isinstance(v, str) or not v.strip():
+        raise ExchangeError(
+            f"{what} names how the inputs' intervals were carried into lo/hi, e.g. 'delta "
+            f"method', 'interval arithmetic', 'Monte Carlo over input intervals'; got {v!r}"
+        )
+    return v.strip()
+
+
+# --- uncertainty status (spec §5.3) ---------------------------------------------------------
+
+UNKNOWN, INTERVAL, CLEAN = "unknown", "interval", "clean"
+
+
+def input_uncertainty(meta: Mapping) -> str:
+    """How an input's uncertainty enters an output computed from it: UNKNOWN (it carries an
+    uncertainty status: unknown or only a lower bound), INTERVAL (declared intervals, which must
+    be propagated), or CLEAN (a source measurement, exact, or nothing to propagate). `meta` is
+    an exported input meta (`caveats`) or a DatasetMeta.to_dict() (`source_caveats`)."""
+    caveats = meta.get("caveats", meta.get("source_caveats")) or []
+    if any(c in UNCERTAINTY_STATUS for c in caveats):
+        return UNKNOWN
+    if meta.get("representation") == ESTIMATE:
+        params = (meta.get("fit") or {}).get("params") or {}
+        return INTERVAL if any(p.get("interval") is not None for p in params.values()) else CLEAN
+    u = meta.get("uncertainty") or {}
+    return INTERVAL if u and not u.get("exact") else CLEAN
+
+
+def output_uncertainty_status(
+    parents: Iterable[Mapping], *, declared: bool, exact: bool = False, propagation: str | None
+) -> str | None:
+    """The uncertainty status of an output (one of UNCERTAINTY_STATUS) or None when clean.
+
+    Maximalist (spec §5.3): an output's error is at least what its inputs' errors imply. The
+    daemon cannot see what code did to its inputs, so propagation is declared (`propagation`):
+    - nothing declared (no interval, not exact): NO_UNCERTAINTY;
+    - an input of unknown uncertainty: INPUT_UNCERTAINTY_UNKNOWN (unknown cannot be propagated,
+      so a declared interval is a lower bound, whatever `propagation` says);
+    - inputs with intervals and no `propagation`: UNCERTAINTY_NOT_PROPAGATED (a lower bound;
+      an `exact` output asserts no error at all and is not flagged for that);
+    - else clean."""
+    if not declared:
+        return NO_UNCERTAINTY
+    kinds = {input_uncertainty(p) for p in parents}
+    if UNKNOWN in kinds:
+        return INPUT_UNCERTAINTY_UNKNOWN
+    if INTERVAL in kinds and not exact and not propagation:
+        return UNCERTAINTY_NOT_PROPAGATED
+    return None
 
 
 def normalize_output_meta(
@@ -333,6 +392,7 @@ def normalize_fit(fit: Mapping) -> dict:
     """A fit (representation `estimate`): params shaped like evidence statistics
     ({value, interval: [lo, hi]} or {value, exact: true}); assumption diagnostics mandatory."""
     model, method = fit.get("model"), fit.get("method")
+    propagation = _propagation(fit.get("propagation"), "put_fit: propagation")
     if not isinstance(model, str) or not model.strip():
         raise ExchangeError("put_fit: model is required, e.g. 'linear' or 'usl'")
     if not isinstance(method, str) or not method.strip():
@@ -391,6 +451,7 @@ def normalize_fit(fit: Mapping) -> dict:
         "goodness": _json_safe(dict(goodness), "goodness"),
         "diagnostics": _json_safe(dict(diagnostics), "diagnostics"),
         "params_without_uncertainty": missing,
+        **({"propagation": propagation} if propagation else {}),
     }
 
 

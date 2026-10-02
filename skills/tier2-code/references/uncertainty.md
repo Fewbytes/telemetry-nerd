@@ -125,6 +125,54 @@ tn.put(
 print(f"mean {mean:.3f} +-{half:.3f}, r={r:.2f}, n_eff={n_eff:.0f}")
 ```
 
+## Propagating input intervals
+
+An input that already has `lo`/`hi` (an earlier code output) or parameter intervals (a fit)
+has error the output must carry: the output's interval is never narrower than what the
+inputs imply. Declare how with `uncertainty["propagation"]` (`tn.put_fit(propagation=...)`
+for a fit); without it the output is tagged `uncertainty_not_propagated`.
+
+| Transform | Propagation |
+|---|---|
+| Monotone in each input (sum, difference of independent inputs, scaling, log) | interval arithmetic on the endpoints: `"interval arithmetic"` (worst case, never too narrow) |
+| Smooth f(x) of one input | delta method: half-width x \|f'(x)\| at the estimate: `"delta method"` |
+| Anything else (ratios of correlated inputs, thresholds, fits) | Monte Carlo: draw inputs inside their intervals, recompute, take the quantiles: `"Monte Carlo over input intervals"` |
+| Several error sources on the same quantity, no model of how they combine | the widest: half-width = max(own, inputs'): `"max of input half-widths"` |
+
+Combine with the output's own sampling interval by keeping the wider of the two, per row.
+An input tagged `no_uncertainty` (or itself `input_uncertainty_unknown` /
+`uncertainty_not_propagated`) has no interval to propagate: derive one for it first if you can
+(bootstrap it in this run), else the output is `input_uncertainty_unknown`.
+
+```python
+# Monte Carlo over input intervals: y = a / b per row, a and b with declared 95% intervals
+import numpy as np
+import polars as pl
+import telemetry_nerd.tn as tn
+
+rng = np.random.default_rng(0)
+a, b = tn.dataset("d7"), tn.dataset("d8")  # same ts_ms/series_id grid
+j = a.join(b, on=["ts_ms", "series_id"], suffix="_b")
+sd = lambda lo, hi: (hi - lo) / (2 * 1.96)  # normal approximation of a 95% interval
+draws = rng.normal(
+    j["avg"].to_numpy(), sd(j["lo"], j["hi"]).to_numpy(), (2000, j.height)
+) / rng.normal(j["avg_b"].to_numpy(), sd(j["lo_b"], j["hi_b"]).to_numpy(), (2000, j.height))
+lo, hi = np.quantile(draws, [0.025, 0.975], axis=0)
+out = j.select("ts_ms", "series_id", avg=j["avg"] / j["avg_b"]).with_columns(
+    lo=pl.Series(lo), hi=pl.Series(hi)
+)
+tn.put(
+    out,
+    like="d7",
+    unit="1",
+    uncertainty={
+        "method": "input intervals, normal approx.",
+        "level": 0.95,
+        "propagation": "Monte Carlo over input intervals",
+    },
+)
+```
+
 ## Which interval is wrong when
 
 | Situation | Wrong choice | Right choice |

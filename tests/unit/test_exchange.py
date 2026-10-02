@@ -388,6 +388,9 @@ def test_fit_with_prediction(store, rx, kernel):
     assert "no fit parameter" in evidence_problem(fmeta, {**slope, "name": "bogus"})
     assert prediction.name == "fit1_prediction" and prediction.parents == (fit.dataset_id, d)
     assert store.meta(prediction.dataset_id).uncertainty["kind"] == "prediction"
+    # the band and the fit are one computation: no propagation to declare; but the intercept's
+    # error is unknown, so the band is a lower bound (spec §5.3)
+    assert prediction.uncertainty == "input_uncertainty_unknown"
 
 
 def test_fit_needs_diagnostics(store, kernel):
@@ -475,3 +478,101 @@ def test_store_refuses_interval_mismatch(store):
             result=FetchResult(BUCKET_SCHEMA.empty_table(), SERIES_SCHEMA.empty_table()),
             lineage=Lineage(producer={"kind": "code"}, uncertainty={"method": "m"}),
         )  # fmt: skip
+
+
+# --- uncertainty status: maximalist propagation (spec §5.3, dl7) ----------------------------
+
+CI = {"method": "moving-block bootstrap, block=2", "level": 0.95}
+
+
+def _ci(df: pl.DataFrame) -> pl.DataFrame:
+    df = df.filter(pl.col("avg").is_not_null())
+    return df.with_columns(lo=pl.col("avg") * 0.9, hi=pl.col("avg") * 1.1)
+
+
+def _child(rx, kernel, node: str, parent: str, **put) -> tuple[str, ...]:
+    """Run `node` over `parent`, put one output (put kwargs), return its caveats."""
+    kernel(node, [parent])
+    df = tn.dataset(parent).drop(["lo", "hi"], strict=False)
+    if put.get("exact"):  # e.g. a count per bucket: integral
+        df = df.with_columns(pl.col("avg").round())
+    tn.put(_ci(df) if "uncertainty" in put else df.filter(pl.col("avg").is_not_null()),
+           like=parent, **put)  # fmt: skip
+    (ing,) = rx.ingest_run(node, succeeded=True).datasets
+    return ing.dataset_id, ing.caveats
+
+
+def test_status_is_recomputed_not_inherited(store, rx, kernel):
+    d = put_ts(store)
+    bare, cav = _child(rx, kernel, "n1", d)
+    assert cav == ("partial", "no_uncertainty")
+    # dl7's case: a bootstrap CI over a point-estimate output is not 'no_uncertainty' (the
+    # parent's tag describes the parent), but its interval excludes the parent's unknown error
+    boot, cav = _child(rx, kernel, "n2", bare, uncertainty=CI)
+    assert cav == ("partial", "input_uncertainty_unknown")
+    # a declared propagation cannot clear an unknown input: unknown cannot be propagated
+    _, cav = _child(rx, kernel, "n3", bare, uncertainty={**CI, "propagation": "delta method"})
+    assert "input_uncertainty_unknown" in cav
+    # nor can exactness hide it
+    _, cav = _child(rx, kernel, "n4", bare, exact=True)
+    assert cav == ("partial", "input_uncertainty_unknown")
+    # a lower-bound input is not clean either: its child is input_uncertainty_unknown
+    _, cav = _child(rx, kernel, "n5", boot, uncertainty=CI)
+    assert cav == ("partial", "input_uncertainty_unknown")
+    # nothing declared: just unknown, never stacked with a parent's status
+    _, cav = _child(rx, kernel, "n6", boot)
+    assert cav == ("partial", "no_uncertainty")
+
+
+def test_interval_inputs_must_be_propagated(store, rx, kernel):
+    d = put_ts(store)
+    ci, cav = _child(rx, kernel, "n1", d, uncertainty=CI)
+    assert "uncertainty_not_propagated" not in cav  # source data: nothing to propagate
+    _, cav = _child(rx, kernel, "n2", ci, uncertainty=CI)
+    assert cav == ("partial", "uncertainty_not_propagated")  # a narrower interval: lower bound
+    prop = {**CI, "propagation": "Monte Carlo over input intervals"}
+    out, cav = _child(rx, kernel, "n3", ci, uncertainty=prop)
+    assert cav == ("partial",)
+    assert store.meta(out).uncertainty["propagation"] == "Monte Carlo over input intervals"
+    _, cav = _child(rx, kernel, "n4", ci, exact=True)  # exact asserts no error at all
+    assert cav == ("partial",)
+
+
+def test_unused_unknown_input_can_be_dropped_from_lineage(store, rx, kernel):
+    d = put_ts(store)
+    bare, _ = _child(rx, kernel, "n1", d)
+    kernel("n2", [d, bare])
+    tn.put(_ci(tn.dataset(d)), like=d, uncertainty=CI, parents=[d])
+    (ing,) = rx.ingest_run("n2", succeeded=True).datasets
+    assert ing.uncertainty is None
+
+
+def test_propagation_must_name_a_method(store, kernel):
+    d = put_ts(store)
+    kernel("n1", [d])
+    with pytest.raises(tn.TnError, match="propagation names how"):
+        tn.put(_ci(tn.dataset(d)), like=d, uncertainty={**CI, "propagation": " "})
+
+
+def test_fit_status_over_inputs(store, rx, kernel):
+    d = put_ts(store)
+    ci, _ = _child(rx, kernel, "n1", d, uncertainty=CI)
+    slope = {"slope": {"value": 2.0, "interval": [1.5, 2.5]}}
+
+    def fit(node, **kw):
+        kernel(node, [ci])
+        tn.put_fit("linear", kw.pop("params", slope), method="OLS", diagnostics={"dw": 2}, **kw)
+        (ing,) = rx.ingest_run(node, succeeded=True).datasets
+        return ing.caveats
+
+    assert fit("n2") == ("partial", "uncertainty_not_propagated")
+    # a prediction of a clean fit is clean (the fit's intervals are not an input to propagate)
+    kernel("n5", [d])
+    pred = pl.DataFrame({"ts_ms": [STEP], "avg": [1.0], "lo": [0.5], "hi": [1.5]})
+    tn.put_fit("linear", slope, method="OLS", diagnostics={"dw": 2}, prediction=pred,
+               prediction_meta={"like": d, "uncertainty": {**CI, "kind": "prediction"}})  # fmt: skip
+    assert [i.uncertainty for i in rx.ingest_run("n5", succeeded=True).datasets] == [None, None]
+    assert fit("n3", propagation="weighted least squares on input intervals") == ("partial",)
+    # a parameter without an interval is no_uncertainty on its own, beside the inputs' status
+    cav = fit("n4", params={**slope, "icept": 0.3})
+    assert set(cav) == {"partial", "no_uncertainty", "uncertainty_not_propagated"}

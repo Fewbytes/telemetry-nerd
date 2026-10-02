@@ -453,7 +453,12 @@ any parent unknown (any status above other than clean) → `input_uncertainty_un
 declared interval and no `propagation` → `uncertainty_not_propagated`; else clean.
 Source (queried) datasets carry no declared interval and count as measured values; an
 `exact` output asserts no error at all, so only an unknown parent flags it. A parent the
-code did not use can be dropped from lineage with `meta.parents`.
+code did not use can be dropped from lineage with `meta.parents`. A fit's prediction is not
+"propagated from" its fit (band and parameter intervals are one computation); only a fit that
+is not clean (e.g. a parameter without an interval) flags its prediction. A fit may carry
+`no_uncertainty` (some parameter has no interval: per parameter) beside its input status.
+A tier-1 `filter` of a code output drops the declared interval: the result is
+`no_uncertainty` (propagation through linear filters is a follow-up).
 
 **Tier-1 statistics** (`core.uncertainty`). An op's `evidence` statistic carries the op's own
 derived interval. When the dataset it was computed over is not clean (or an ancestor is

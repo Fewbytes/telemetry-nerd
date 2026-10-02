@@ -153,7 +153,11 @@ def put(data: Any, meta: Mapping | None = None, *, columns: Any = None, **kw: An
     column from an input, else one series), caveats, parents (inputs it depends on; default
     all declared), and the evidence rule: uncertainty={"method", "level", "kind"} with lo/hi
     columns, or exact=True for exact counts. Without either the output is tagged no_uncertainty:
-    uncertainty unknown (not zero), citable but flagged in any finding. `columns`: a distribution's (ts_ms, n) table."""
+    uncertainty unknown (not zero), citable but flagged in any finding. Inputs with intervals
+    must be propagated (maximalist, spec §5.3): say how in uncertainty["propagation"] ("delta
+    method", "interval arithmetic", "Monte Carlo over input intervals"), else the output is
+    tagged uncertainty_not_propagated; an input of unknown uncertainty tags it
+    input_uncertainty_unknown (its interval is a lower bound). `columns`: a distribution's (ts_ms, n) table."""
     tr = _transport()
     m = {**(meta or {}), **kw}
     m["name"] = _claim(tr, m.get("name"))
@@ -178,6 +182,7 @@ def put_fit(
     caveats: list[str] | None = None,
     start_ms: int | None = None,
     end_ms: int | None = None,
+    propagation: str | None = None,
 ) -> str:
     """Store a fit as an `estimate` dataset; returns its output name.
 
@@ -186,12 +191,14 @@ def put_fit(
     tagged no_uncertainty, and cited with uncertainty_unknown=true (flagged). diagnostics (assumption checks) are mandatory. prediction: an
     optional time series (put() rules; give lo/hi + prediction_meta["uncertainty"] for bands)
     stored as output "<name>_prediction" with the fit as a parent. The fit's time range is
-    its parents' unless start_ms/end_ms are given."""
+    its parents' unless start_ms/end_ms are given. propagation: how the inputs' own intervals
+    were carried into the parameter intervals (e.g. "weighted least squares on input
+    intervals"); without it, inputs with intervals make the fit `uncertainty_not_propagated`."""
     tr = _transport()
     name = _claim(tr, name, "fit")
     fit = fmt.normalize_fit(
         {"model": model, "params": params, "method": method, "diagnostics": diagnostics,
-         "goodness": goodness, "level": level}
+         "goodness": goodness, "level": level, "propagation": propagation}
     )  # fmt: skip
     fit_meta = fmt.normalize_fit_meta(
         {"parents": parents, "caveats": caveats, "start_ms": start_ms, "end_ms": end_ms},

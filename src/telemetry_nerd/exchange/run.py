@@ -228,12 +228,25 @@ class RunExchange:
         uncertainty = {"exact": True} if meta["exact"] else meta["uncertainty"]
         if meta["description"]:
             producer["description"] = meta["description"]
+        parent_metas = [ctx.input_meta(p) for p in meta["parents"]]
+        if meta.get("prediction_of"):
+            # the fit's band and its parameters' intervals are one computation (no propagation
+            # to declare); only a fit whose own uncertainty is not clean flags its prediction
+            fit_meta = self.store.meta(parents[0]).to_dict()
+            if fmt.input_uncertainty(fit_meta) == fmt.UNKNOWN:
+                parent_metas.append(fit_meta)
+        status = fmt.output_uncertainty_status(
+            parent_metas,
+            declared=uncertainty is not None,
+            exact=meta["exact"],
+            propagation=(uncertainty or {}).get("propagation"),
+        )
         lineage = Lineage(
             producer=producer,
             parents=tuple(parents),
             unit=meta["unit"],
             uncertainty=uncertainty,
-            caveats=ctx.caveats(meta["parents"], meta["caveats"], uncertainty is None),
+            caveats=ctx.caveats(meta["parents"], meta["caveats"], status),
         )
         rng = _range(meta, tables["rows"])
         source = ctx.source(meta["parents"], meta["like"])
@@ -293,6 +306,18 @@ class RunExchange:
             rng = TimeRange(min(m["start_ms"] for m in pm), max(m["end_ms"] for m in pm))
         else:
             raise ExchangeError("a fit without inputs needs start_ms/end_ms (its fit range)")
+        params = fit["params"].values()
+        # per parameter: one without an interval is no_uncertainty on its own; the inputs'
+        # status applies to the parameters that have one
+        status = fmt.output_uncertainty_status(
+            [ctx.input_meta(p) for p in parents],
+            declared=any(p["interval"] is not None or p["exact"] for p in params),
+            exact=all(p["exact"] for p in params),
+            propagation=fit.get("propagation"),
+        )
+        own = list(meta["caveats"])
+        if fit["params_without_uncertainty"] and status != fmt.NO_UNCERTAINTY:
+            own.append(fmt.NO_UNCERTAINTY)
         stored = self.store.put(
             source=ctx.source(parents),
             expr=f"code:{ctx.node}/{name}",
@@ -306,9 +331,7 @@ class RunExchange:
                 parents=tuple(parents),
                 uncertainty=None,
                 fit=fit,
-                caveats=ctx.caveats(
-                    parents, meta["caveats"], bool(fit["params_without_uncertainty"])
-                ),
+                caveats=ctx.caveats(parents, own, status),
             ),
         )
         return Ingested(
@@ -423,13 +446,20 @@ class _Ctx:
         return self._metas[handle]
 
     def parent_caveats(self, parents: list[str]) -> list[str]:
-        return [c for p in parents for c in self.input_meta(p).get("caveats", [])]
+        """The parents' caveats an output inherits: all but their uncertainty status, which
+        describes the parent, not the output (spec §5.3: recomputed per output)."""
+        return [
+            c
+            for p in parents
+            for c in self.input_meta(p).get("caveats", [])
+            if c not in fmt.UNCERTAINTY_STATUS
+        ]
 
-    def caveats(self, parents: list[str], own: list[str], no_uncertainty: bool) -> tuple[str, ...]:
-        """An output's caveats: its parents', its own, and no_uncertainty when it applies."""
+    def caveats(self, parents: list[str], own: list[str], status: str | None) -> tuple[str, ...]:
+        """An output's caveats: its parents' (inherited), its own, and its uncertainty status."""
         out = self.parent_caveats(parents) + own
-        if no_uncertainty:
-            out.append(fmt.NO_UNCERTAINTY)
+        if status:
+            out.append(status)
         return tuple(dict.fromkeys(out))
 
     def source(self, parents: list[str], like: str | None = None) -> str:

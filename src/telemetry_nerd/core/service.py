@@ -115,7 +115,7 @@ from telemetry_nerd.core.summary import summarize, summarize_distribution
 from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore, Lineage, is_code_expr
-from telemetry_nerd.exchange.fmt import NO_UNCERTAINTY
+from telemetry_nerd.exchange.fmt import NO_UNCERTAINTY, UNCERTAINTY_STATUS
 from telemetry_nerd.kernels.manager import KernelManager
 from telemetry_nerd.model.bucket_state import STATE_SCHEMA, coarsen, grid
 from telemetry_nerd.model.caveats import (
@@ -1432,10 +1432,10 @@ class TelemetryService:
         lineage = None
         if meta.code_node:
             # still the code's output (fixed data, its unit), now filtered: a declared interval
-            # or exactness does not survive a filter, so it is no longer evidence
-            caveats = [*meta.source_caveats]
-            if NO_UNCERTAINTY not in caveats:
-                caveats.append(NO_UNCERTAINTY)
+            # or exactness does not survive a filter, so its uncertainty is unknown (spec §5.3:
+            # citable, flagged); the parent's own status is replaced, not stacked
+            caveats = [c for c in meta.source_caveats if c not in UNCERTAINTY_STATUS]
+            caveats.append(NO_UNCERTAINTY)
             lineage = Lineage(
                 producer=dict(meta.producer or {}), parents=(meta.id,), unit=meta.unit,
                 caveats=tuple(caveats),

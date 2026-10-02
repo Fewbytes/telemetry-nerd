@@ -1174,6 +1174,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             tn.put(out, like="d3", uncertainty={"method": "bootstrap", "level": 0.95})
               # out has lo/hi columns; or exact=True for exact counts. Without either the
               # output is tagged no_uncertainty: citable, flagged 'uncertainty unknown'.
+              # Inputs with lo/hi: carry their error in and add "propagation": "<how>" to
+              # uncertainty, else the output is uncertainty_not_propagated (a lower bound).
             tn.put_fit("linear", {"slope": {"value": b, "interval": [lo, hi]}},
                        method="OLS", diagnostics={...})
         Each run is a code node (c1, c2, ...) with lineage to its inputs and outputs.
