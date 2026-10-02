@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Panel, PanelGroup } from "./api";
-import { basisText, groupDomain, layoutItems, msAt, orderedRoles, roleTitle, xAt } from "./groups";
+import { basisText, groupDomain, layoutItems, msAt, orderedRoles, roleTitle, verdictBadge, xAt } from "./groups";
 
 const panel = (id: string, t: number, group?: { id: string; role: string }): Panel => ({
   id, question: `q ${id}`, status: "open", dataset_ids: ["d1"], created_at_ms: t, answered_by: null, closed: false,
@@ -67,5 +67,20 @@ describe("labels", () => {
     expect(roleTitle("check")).toBe("L vs λ·W");
     expect(basisText({ basis: "binding", binding_origin: "claude", suggestion: null })).toBe("confirmed binding (claude)");
     expect(basisText({ basis: "suggestion", binding_origin: null, suggestion: "USE:node_cpu" })).toContain("not confirmed");
+  });
+});
+
+describe("verdictBadge", () => {
+  it("reads a changed role as direction, pattern and onset; others plainly", () => {
+    const changed = verdictBadge({
+      status: "changed", direction: "higher", pattern: "burst", at_capacity: false, text: "errors higher (burst) from 12:40Z",
+      onset: { at: "2026-10-02T12:40:00+00:00", interval: ["2026-10-02T12:37:00+00:00", "2026-10-02T12:41:00+00:00"], basis: "cusum" },
+    });
+    expect(changed).toEqual({ label: "↑ burst from 12:40Z", tone: "moved", title: "errors higher (burst) from 12:40Z" });
+    const cap = verdictBadge({ status: "changed", direction: "higher", pattern: "level", at_capacity: true, text: null, onset: { at: null, before: "x", basis: "before_window" } });
+    expect(cap?.label).toBe("↑ level · at capacity before the window");
+    expect(verdictBadge({ status: "no_change", direction: null, pattern: null, at_capacity: false, text: "rate: no change" })?.tone).toBe("steady");
+    expect(verdictBadge({ status: "insufficient", direction: null, pattern: null, at_capacity: false, text: null })).toEqual({ label: "insufficient", tone: "unknown", title: "insufficient" });
+    expect(verdictBadge(undefined)).toBeNull();
   });
 });

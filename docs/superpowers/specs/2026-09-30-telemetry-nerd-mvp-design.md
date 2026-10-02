@@ -465,9 +465,9 @@ derived interval. When the dataset it was computed over is not clean (or an ance
 not), the op marks the statistic `params.input_uncertainty = "unknown"` and adds the
 `input_uncertainty_unknown` caveat; over a dataset with a declared interval the op did not
 propagate, `params.input_uncertainty = "not_propagated"`. `core.uncertainty.mark_statistics`
-does this for any op result (`analyze`, `spectrum`, `fleet`, `fraction_over` today); new ops
-(e.g. `check_littles_law`) call it with the input datasets whose error they did not
-propagate. A statistic for which no interval can be derived is emitted by
+does this for any op result (`analyze`, `spectrum`, `fleet`, `fraction_over`,
+`check_littles_law`, `binding_verdict`); new ops call it with the input datasets whose error
+they did not propagate. A statistic for which no interval can be derived is emitted by
 `core.wire.statistic(interval=None)` with `uncertainty_unknown: true`: still evidence, flagged.
 
 **Findings.** `finding_create` stores `evidence_flags: [{evidence: <index>, flag, message}]`,

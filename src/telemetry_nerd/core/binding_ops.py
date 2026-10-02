@@ -168,6 +168,22 @@ class BindingViews:
             is_native = self.svc.littles._native(source, metric)  # czt.2: family, then _sum/_count
         return MetricInfo(metric, mtype, is_native, bounded)
 
+    def plans(
+        self, source: str, b: Resolved, mt: Mapping[str, str], error_matcher: str | None
+    ) -> tuple[dict[str, MetricInfo], dict[str, RolePlan]]:
+        """Each filled role's metric facts and drawing plan (shared with binding_verdict)."""
+        names = self.svc.ws.catalog.names(source, limit=100_000)
+        infos = {r: self._info(source, m, b.native) for r, m in b.roles.items() if m}
+        rate_role = {"RED": "rate", "littles_law": "arrival_rate"}.get(b.kind)
+        plans: dict[str, RolePlan] = {}
+        for role, info in infos.items():
+            plans[role] = plan_role(
+                b.kind, role, info, key=b.key, join_on=b.join_on, matchers=mt,
+                hint=b.hints.get(role), rate_metric=infos.get(rate_role) if rate_role else None,
+                error_matcher=error_matcher, names=names,
+            )  # fmt: skip
+        return infos, plans
+
     # the view -----------------------------------------------------------------------------------
     async def show(
         self,
@@ -191,16 +207,7 @@ class BindingViews:
         if rng.end_ms <= rng.start_ms:
             raise ValueError("the range must end after it starts")
         mt = dict(matchers or {})
-        names = svc.ws.catalog.names(source, limit=100_000)
-        infos = {r: self._info(source, m, b.native) for r, m in b.roles.items() if m}
-        rate_role = {"RED": "rate", "littles_law": "arrival_rate"}.get(b.kind)
-        plans: dict[str, RolePlan] = {}
-        for role, info in infos.items():
-            plans[role] = plan_role(
-                b.kind, role, info, key=b.key, join_on=b.join_on, matchers=mt,
-                hint=b.hints.get(role), rate_metric=infos.get(rate_role) if rate_role else None,
-                error_matcher=error_matcher, names=names,
-            )  # fmt: skip
+        infos, plans = self.plans(source, b, mt, error_matcher)
         step_ms = self._step(rng, step, src.resolution_ms, plans.values())
         group = svc.ws.group_create(
             actor, kind=b.kind, key=b.key, source=source, start_ms=rng.start_ms,

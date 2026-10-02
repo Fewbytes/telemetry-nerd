@@ -1,0 +1,397 @@
+"""Binding verdicts (bead czt.4): per-signal health against reference windows, with evidence."""
+
+import json
+import math
+from statistics import NormalDist
+
+import numpy as np
+import pyarrow as pa
+import pytest
+from mcp import Client
+
+from telemetry_nerd.analysis.histogram import from_matrix, histogram_expr
+from telemetry_nerd.analysis.seasonal_dist import Hist
+from telemetry_nerd.analysis.spc import cusum_arl
+from telemetry_nerd.analysis.verdicts import (
+    CUSUM_K,
+    Onset,
+    cusum_h,
+    episodes,
+    family,
+    judge_counts,
+    judge_roles,
+    judge_values,
+    near_bound,
+    order_onsets,
+    share_threshold,
+)
+from telemetry_nerd.mcp.server import build_mcp
+from telemetry_nerd.model.discovery import Discovery
+from telemetry_nerd.model.discovery import MetricInfo as DiscoveredMetric
+from telemetry_nerd.model.series import (
+    BUCKET_SCHEMA,
+    SERIES_SCHEMA,
+    FetchResult,
+    labels_json,
+    series_id,
+)
+
+from .fakes import NOW, FakeSource, make_service
+from .verdict_sim import STEP_MS, Scenario, cycles, red_inputs, ts, use_inputs
+
+T = ts()
+MIN = 60_000
+
+
+def _min(ms):  # minutes since now's window start
+    return (ms - (T[0] - STEP_MS)) / STEP_MS
+
+
+# --- the statistics (pure) ------------------------------------------------------------------------
+def test_family_splits_alpha_over_roles_and_detectors():
+    f = family(0.05, 3)
+    assert (f.per_role, f.per_detector) == (pytest.approx(0.05 / 3), pytest.approx(0.05 / 6))
+
+
+def test_cusum_h_meets_the_episode_budget():
+    h = cusum_h(60, 0.01)
+    assert 60 / cusum_arl(CUSUM_K, h) <= -math.log1p(-0.01) * 1.01
+    assert cusum_h(60, 0.001) > h and cusum_h(600, 0.01) > h  # stricter / longer -> higher
+
+
+def test_an_episode_ends_at_its_peak_or_stays_open():
+    z = np.zeros(60)
+    z[20:28] = 4.0
+    (e,) = episodes(z, 5.0)
+    assert (e.side, e.start, e.signal, e.end) == (1, 20, 21, 27)
+    z2 = np.zeros(60)
+    z2[50:] = 4.0
+    (e2,) = episodes(z2, 5.0)
+    assert e2.start == 50 and e2.end is None
+
+
+def test_onsets_are_ordered_only_when_their_intervals_do_not_overlap():
+    a = Onset(10 * MIN, 7 * MIN, 11 * MIN, "cusum")
+    b = Onset(20 * MIN, 17 * MIN, 21 * MIN, "cusum")
+    c = Onset(12 * MIN, 9 * MIN, 13 * MIN, "cusum")
+    o = order_onsets({"errors": b, "duration": a})
+    assert o.first == "duration" and o.clusters == [["duration"], ["errors"]]
+    o2 = order_onsets({"errors": c, "duration": a})
+    assert o2.first is None and o2.clusters == [["duration", "errors"]]
+    before = Onset(None, None, 0, "before_window")
+    assert order_onsets({"rate": before, "errors": b}).first == "rate"
+
+
+def test_near_bound_counts_runs_exactly():
+    y = np.array([0.5, 0.95, 0.96, 0.97, 0.5, 0.95, 0.5])
+    nb = near_bound(y, 1.0)
+    assert nb.steps == 4 and nb.runs == [(1, 3)]
+
+
+def test_latency_threshold_is_the_reference_p95_edge():
+    lo, hi = np.array([0, 0.1, 0.25, 0.5]), np.array([0.1, 0.25, 0.5, math.inf])
+    refs = [Hist(j, 0, 1, lo, hi, np.array([700.0, 250, 40, 10])) for j in (1, 2, 3)]
+    x, enough = share_threshold(refs, np.array([0.1, 0.25, 0.5]))
+    assert x == 0.25 and enough  # 5% above 0.25 (50 per window)
+
+
+def test_no_events_anywhere_is_no_change_exactly():
+    zero = (np.zeros(60), np.full(60, 3000.0))
+    j = judge_counts(zero, [zero] * 4, T, STEP_MS, alpha_level=0.01, alpha_episode=0.01)
+    assert j.status == "no_change" and j.now_value == 0.0
+
+
+def test_fewer_than_three_reference_windows_is_insufficient():
+    cs = cycles(1)
+    j = judge_values(cs[0].rate, [c.rate for c in cs[1:3]], T, STEP_MS, alpha_level=0.01,
+                     alpha_episode=0.01)  # fmt: skip
+    assert j.status == "insufficient" and "reference windows" in j.reasons[0]
+
+
+@pytest.mark.parametrize(("kind", "inputs"), [("RED", red_inputs), ("USE", use_inputs)])
+def test_quiet_bindings_raise_no_flag_at_the_family_alpha(kind, inputs):
+    n = 150
+    flagged = sum(
+        any(r.judgement.status == "changed" for r in judge_roles(inputs(cycles(s)), T, STEP_MS)[0].values())
+        for s in range(n)
+    )  # fmt: skip
+    # family-wise 5%; calibrated 1-1.5% (scripts/calibrate_verdicts.py): binomial 99% upper bound
+    assert flagged / n <= 0.05 + 2.6 * math.sqrt(0.05 * 0.95 / n)
+
+
+def test_an_error_burst_is_flagged_on_errors_as_a_burst_with_its_onset():
+    for s in range(12):
+        res, _, order = judge_roles(
+            red_inputs(cycles(s, Scenario(error_burst=(30, 37)))), T, STEP_MS
+        )
+        j = res["errors"].judgement
+        assert j.status == "changed" and j.direction == "higher"
+        assert j.pattern in ("burst", "sustained"), j.pattern
+        assert _min(j.onset.lo_ms) <= 30 <= _min(j.onset.hi_ms)
+        assert res["rate"].judgement.status != "changed" or s in ()
+        assert order.order[0] == "errors" or res["duration"].judgement.status == "changed"
+
+
+def test_latency_first_then_errors_is_ordered():
+    right = covered = 0
+    for s in range(12):
+        sc = Scenario(latency_shift=20, error_burst=(40, 47))
+        res, _, order = judge_roles(red_inputs(cycles(s, sc)), T, STEP_MS)
+        d, e = res["duration"].judgement, res["errors"].judgement
+        assert d.status == e.status == "changed" and d.direction == "higher"
+        covered += _min(d.onset.lo_ms) <= 20 <= _min(d.onset.hi_ms)  # ~95% intervals
+        assert order.first in ("duration", None)  # never errors first
+        right += order.first == "duration"
+    assert right >= 11 and covered >= 10
+
+
+def test_a_saturation_episode_flags_utilization_and_saturation_near_the_bound():
+    for s in range(8):
+        res, _, order = judge_roles(
+            use_inputs(cycles(s, Scenario(saturation=(20, 40)))), T, STEP_MS
+        )
+        u, q = res["utilization"], res["saturation"]
+        assert u.judgement.status == q.judgement.status == "changed"
+        assert u.judgement.direction == q.judgement.direction == "higher"
+        assert u.near[""].runs and u.near[""].runs[0][0] == 20
+        # onsets 2 min apart, intervals overlap: not ordered
+        assert order.first in (None, "utilization")
+
+
+# --- through the service -------------------------------------------------------------------------
+METRICS = (
+    ("http_server_requests_total", "counter"),
+    ("http_server_request_duration_seconds", "histogram"),
+    ("http_server_active_requests", "gauge"),
+    ("node_cpu_seconds_total", "counter"),
+    ("node_pressure_cpu_waiting_seconds_total", "counter"),
+)
+LES = [0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, math.inf]
+W0 = NOW - 3_600_000  # now's window: the last hour
+_N = NormalDist()
+
+
+def _at(minute: float) -> int:
+    return int(W0 + minute * MIN)
+
+
+class ScenarioSource(FakeSource):
+    """Seeded values keyed by (minute, member): any window is reproducible. Per-hour level
+    jitter, per-minute noise; scenario changes at absolute times inside now's window."""
+
+    def __init__(self, seed=0, error_burst=None, latency_shift=None, saturation=None, members=2):
+        ms = tuple(DiscoveredMetric(n, t, None, None) for n, t in METRICS)
+        hist = {n: "classic" for n, t in METRICS if t == "histogram"}
+        super().__init__(
+            name="default", n_series=members,
+            discovery=Discovery(ms, ("service_name", "instance"), hist, None, 1.0, (), False),
+        )  # fmt: skip
+        self.seed, self.members = seed, members
+        self.burst, self.shift, self.sat = error_burst, latency_shift, saturation
+        self.exprs: list[str] = []
+
+    def _rng(self, t: int, m: int, salt: int, hourly=False):
+        return np.random.default_rng([self.seed, t // (3_600_000 if hourly else MIN), m, salt])
+
+    def _in(self, span, t):
+        return span is not None and _at(span[0]) < t <= _at(span[1])
+
+    def _req(self, t, m):
+        lam = 50 * math.exp(self._rng(t, m, 1, True).normal(0, 0.05))
+        return float(
+            self._rng(t, m, 2).poisson(lam * 60 * math.exp(self._rng(t, m, 3).normal(0, 0.03)))
+        )
+
+    def _value(self, expr, t, m):
+        if "5.." in expr:
+            p = 0.002 * math.exp(
+                self._rng(t, m, 4, True).normal(0, 0.1) + self._rng(t, m, 5).normal(0, 0.2)
+            )
+            if self._in(self.burst, t):
+                p *= 10
+            return float(self._rng(t, m, 6).binomial(int(self._req(t, m)), min(p, 1))) / 60
+        if "requests_total" in expr:
+            return self._req(t, m) / 60
+        if "idle" in expr:
+            if self._in(self.sat, t):
+                return 0.97 + self._rng(t, m, 7).normal(0, 0.01)
+            return (
+                0.4 + self._rng(t, m, 8, True).normal(0, 0.03) + self._rng(t, m, 9).normal(0, 0.03)
+            )
+        if "pressure" in expr:
+            q = 0.05 * math.exp(
+                self._rng(t, m, 10, True).normal(0, 0.1) + self._rng(t, m, 11).normal(0, 0.15)
+            )
+            return q * (5 if self._in(self.sat, t) else 1)
+        if "active_requests" in expr:
+            return 7 + self._rng(t, m, 12).normal(0, 0.5)
+        return 1.0
+
+    async def fetch(self, expr, rng, step_ms):
+        self.calls += 1
+        self.exprs.append(expr)
+        label = "instance" if "node_" in expr else "service_name"
+        tss = list(range(rng.start_ms, rng.end_ms + 1, step_ms))
+        labels = [{label: f"s{k}"} for k in range(self.members)]
+        sids = [series_id(self.name, lb) for lb in labels]
+        rows = [(t, sids[m], self._value(expr, t, m)) for m in range(self.members) for t in tss]
+        buckets = pa.table(
+            {"ts_ms": [r[0] for r in rows], "series_id": [r[1] for r in rows],
+             "avg": [r[2] for r in rows], "min": [r[2] for r in rows], "max": [r[2] for r in rows],
+             "count": [4] * len(rows)},
+            schema=BUCKET_SCHEMA,
+        )  # fmt: skip
+        series = pa.table(
+            {"series_id": sids, "labels": [labels_json(lb) for lb in labels]}, schema=SERIES_SCHEMA
+        )
+        return FetchResult(buckets, series)
+
+    async def fetch_histogram(self, selector, by, rng, step_ms):
+        self.calls += 1
+        self.hist_selectors.append(selector)
+        tss = range(rng.start_ms, rng.end_ms + 1, step_ms)
+        groups = list(range(self.members)) if by else [None]
+        result = []
+        for g in groups:
+            ms = range(self.members) if g is None else [g]
+            per_t = {}
+            for t in tss:
+                cum = np.zeros(len(LES))
+                for m in ms:
+                    med = 0.08 * math.exp(
+                        self._rng(t, m, 13, True).normal(0, 0.03)
+                        + self._rng(t, m, 14).normal(0, 0.04)
+                    )
+                    if self.shift is not None and t > _at(self.shift):
+                        med *= 1.6
+                    cdf = [
+                        _N.cdf(math.log(le / med) / 0.5) if math.isfinite(le) else 1.0 for le in LES
+                    ]
+                    probs = np.diff(np.r_[0.0, cdf])
+                    cum += np.cumsum(self._rng(t, m, 15).multinomial(int(self._req(t, m)), probs))
+                per_t[t] = cum
+            lab = {} if g is None else {"service_name": f"s{g}"}
+            for i, le in enumerate(LES):
+                result.append({
+                    "metric": {**lab, "le": "+Inf" if not math.isfinite(le) else f"{le:g}"},
+                    "values": [[t / 1000, str(per_t[t][i])] for t in tss],
+                })  # fmt: skip
+        return from_matrix(self.name, result, expr=histogram_expr(selector, by, step_ms))
+
+
+async def _svc(tmp_path, **kw):
+    svc = make_service(tmp_path, ScenarioSource(**kw))
+    await svc.learn("default")
+    return svc
+
+
+RANGE = {"start": "now-1h", "end": "now", "step": "1m"}
+
+
+async def test_red_verdict_orders_a_latency_shift_before_an_error_burst(tmp_path):
+    svc = await _svc(tmp_path, seed=3, latency_shift=20, error_burst=(40, 47))
+    out = await svc.binding_verdict(
+        source="default", suggestion="RED:otel_http", reference="previous", **RANGE
+    )
+    roles = out["roles"]
+    assert roles["duration"]["status"] == roles["errors"]["status"] == "changed"
+    assert roles["rate"]["status"] == "no_change"
+    assert roles["duration"]["direction"] == "higher" and roles["errors"]["pattern"] == "burst"
+    assert out["summary"]["first"] == "duration"
+    assert out["summary"]["moved"][:2] == ["duration", "errors"]
+    assert out["summary"]["text"].startswith("First duration higher")
+    assert out["reference"]["scheme"] == "previous" and len(out["reference"]["windows"]) == 4
+    assert out["family"]["roles_judged"] == 3 and out["family"]["per_detector"] == pytest.approx(
+        0.05 / 6, rel=1e-3
+    )
+    # latency: a threshold from the reference histograms, never a percentile
+    th = roles["duration"]["threshold"]
+    assert th["x"] == 0.25 and th["now_share"] > th["reference_share"]
+    src = svc.sources.get("default")
+    assert src.hist_selectors and not any("quantile" in e for e in src.exprs)
+    # evidence: statistics citing the role datasets, unflagged over clean source data
+    ev = {e["name"]: e for e in roles["errors"]["evidence"]}
+    assert {"errors_odds_ratio_vs_reference", "errors_share_now", "errors_onset_ms"} <= set(ev)
+    assert ev["errors_odds_ratio_vs_reference"]["dataset"] == roles["errors"]["dataset"]
+    on = ev["errors_onset_ms"]
+    assert on["interval"][0] <= _at(40) <= on["interval"][1]
+    assert all(
+        "input_uncertainty" not in e["params"]
+        for r in roles.values()
+        for e in r.get("evidence", [])
+    )
+    assert "input_uncertainty_unknown" not in out["caveats"]
+
+
+async def test_quiet_red_verdict_flags_nothing(tmp_path):
+    svc = await _svc(tmp_path, seed=5)
+    out = await svc.binding_verdict(
+        source="default", suggestion="RED:otel_http", reference="previous", **RANGE
+    )
+    assert {r["status"] for r in out["roles"].values()} == {"no_change"}
+    assert out["summary"]["moved"] == [] and out["summary"]["text"].startswith("No golden signal")
+
+
+async def test_use_saturation_episode_is_at_capacity_and_annotates_the_group(tmp_path):
+    svc = await _svc(tmp_path, seed=7, saturation=(20, 40))
+    svc.ws.binding_accept("default", "USE:node_cpu", basis="test", overrides={"errors": None})
+    g = await svc.show_binding(source="default", kind="USE", key="node:cpu", **RANGE)
+    out = await svc.binding_verdict(group=g.id, reference="previous")
+    roles = out["roles"]
+    u, s = roles["utilization"], roles["saturation"]
+    assert u["status"] == s["status"] == "changed" and u.get("at_capacity")
+    assert u["near_bound"]["bound"] == 1.0 and u["near_bound"]["runs"]
+    assert u["members"]["judged"] == 2 and len(u["members"]["changed"]) == 2
+    assert roles["errors"]["status"] == "gap"
+    assert out["group"] == g.id
+    g2 = svc.ws.group_get(g.id)
+    rv = {r.role: r.verdict for r in g2.roles}
+    assert rv["utilization"]["status"] == "changed" and rv["utilization"]["at_capacity"]
+    assert rv["errors"] is None  # the gap card stays a gap
+    assert g2.verdict["moved"] and g2.verdict["reference"] == "previous windows"
+    snap = svc.ws.snapshot()
+    assert snap["groups"][0]["verdict"]["text"] == out["summary"]["text"]
+
+
+async def test_reference_profile_needs_a_seasonal_profile_and_day_takes_seven_days(tmp_path):
+    svc = await _svc(tmp_path, seed=1)
+    with pytest.raises(ValueError, match="operating_profile"):
+        await svc.binding_verdict(
+            source="default", suggestion="RED:otel_http", reference="profile", **RANGE
+        )
+    out = await svc.binding_verdict(
+        source="default", suggestion="RED:otel_http", reference="day", **RANGE
+    )
+    assert out["reference"]["scheme"] == "1d" and len(out["reference"]["windows"]) == 7
+    from telemetry_nerd.model.time import iso
+
+    assert out["reference"]["windows"][0][1] == iso(NOW - 86_400_000)  # a day before now's end
+    with pytest.raises(ValueError, match="reference"):
+        await svc.binding_verdict(
+            source="default", suggestion="RED:otel_http", reference="nope", **RANGE
+        )
+
+
+async def test_littles_law_binding_carries_the_model_check_on_concurrency(tmp_path):
+    svc = await _svc(tmp_path, seed=2)
+    out = await svc.binding_verdict(
+        source="default", suggestion="littles_law:otel_http", reference="previous", **RANGE
+    )
+    c = out["roles"]["concurrency"]
+    assert "model_check" in c
+    mc = c["model_check"]
+    assert "error" in mc or (mc["verdict"] and "not a test in this family" in mc["note"])
+    assert set(out["roles"]) == {"arrival_rate", "latency", "concurrency"}
+
+
+async def test_mcp_binding_verdict(tmp_path):
+    svc = await _svc(tmp_path, seed=3, error_burst=(30, 40))
+    mcp = build_mcp(svc, "http://ui")
+    async with Client(mcp) as c:
+        res = await c.call_tool(
+            "binding_verdict",
+            {"suggestion": "RED:otel_http", "range": "1h", "step": "1m", "reference": "previous"},
+        )
+    out = json.loads(res.content[0].text)
+    assert out["roles"]["errors"]["status"] == "changed"
+    assert out["summary"]["moved"][0] == "errors"

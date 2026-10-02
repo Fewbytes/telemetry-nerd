@@ -338,6 +338,8 @@ class GroupRole(_Strict):
     why: str | None = None
     gap: str | None = None
     error: str | None = None
+    #: binding_verdict (czt.4): {status, direction, pattern, onset_ms, onset_interval, text}
+    verdict: dict | None = None
 
 
 class PanelGroup(_Strict):
@@ -364,3 +366,5 @@ class PanelGroup(_Strict):
     notes: list[str] = Field(default_factory=list)
     closed: bool = False
     reframed_from: str | None = None
+    #: binding_verdict (czt.4): {text, first, reference, alpha, at_ms}
+    verdict: dict | None = None

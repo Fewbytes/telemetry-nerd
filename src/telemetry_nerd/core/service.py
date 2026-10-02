@@ -115,6 +115,7 @@ from telemetry_nerd.core.series_diagnostics import SeriesDiagnostics, resolve_ba
 from telemetry_nerd.core.signal_ops import SignalOps
 from telemetry_nerd.core.summary import summarize, summarize_distribution
 from telemetry_nerd.core.uncertainty import mark_statistics
+from telemetry_nerd.core.verdict_ops import VerdictOps
 from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore, Lineage, is_code_expr
@@ -246,9 +247,11 @@ class TelemetryService:
     runs_root: Path | None = None
     code: CodeOps = field(init=False)
     bindings: BindingViews = field(init=False)
+    verdicts: VerdictOps = field(init=False)
 
     def __post_init__(self) -> None:
         self.bindings = BindingViews(self)
+        self.verdicts = VerdictOps(self)
         self.signal = SignalOps(self.datasets, self.ws.catalog_facts)
         self.diagnostics = SeriesDiagnostics(
             self.signal, lambda *a: self.profiles.seasonal_excluding(*a), self.query
@@ -881,6 +884,10 @@ class TelemetryService:
     async def show_binding(self, **kw) -> PanelGroup:
         """A bound USE / RED / Little's law metric set as one linked panel group (bead czt.3)."""
         return await self.bindings.show(**kw)
+
+    async def binding_verdict(self, actor: Actor = "claude", **kw) -> dict:
+        """Per-signal verdicts for a binding or panel group against reference windows (czt.4)."""
+        return await self.verdicts.verdict(actor=actor, **kw)
 
     async def reframe_group(
         self, group_id: str, start_ms: int, end_ms: int, actor: Actor = "user"

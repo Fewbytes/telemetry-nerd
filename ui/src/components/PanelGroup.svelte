@@ -4,7 +4,7 @@
   import { setContext } from "svelte";
   import PanelView from "../Panel.svelte";
   import { closeGroup, reframeGroup, type Annotation, type Panel, type PanelGroup, type Thread } from "../lib/api";
-  import { basisText, FORM_LABELS, groupDomain, KIND_LABELS, orderedRoles, roleTitle } from "../lib/groups";
+  import { basisText, FORM_LABELS, groupDomain, KIND_LABELS, orderedRoles, roleTitle, verdictBadge } from "../lib/groups";
   import { GroupLink } from "../lib/groupLink.svelte";
   import { fmtStep } from "../lib/format";
 
@@ -57,6 +57,12 @@
     {#if Object.keys(group.matchers).length} · {Object.entries(group.matchers).map(([k, v]) => `${k}="${v}"`).join(", ")}{/if}
     {#if group.reframed_from} · reframed from {group.reframed_from}{/if}
   </p>
+  {#if group.verdict}
+    <p class="group-verdict" data-group-verdict data-first-mover={group.verdict.first ?? ""}>
+      {group.verdict.text}
+      <span class="verdict-basis">vs {group.verdict.reference} · family-wise α {group.verdict.alpha}</span>
+    </p>
+  {/if}
   {#if error}<div class="error">{error}</div>{/if}
   {#each roles as role (role)}
     {@const r = byRole.get(role)}
@@ -67,6 +73,10 @@
         {#if r?.metric}<code>{r.metric}</code>{/if}
         {#if r?.form}<span class="form">{FORM_LABELS[r.form] ?? r.form}</span>{/if}
         {#if r?.members}<span class="members">{r.members} member{r.members === 1 ? "" : "s"}{r.view === "fleet" ? " · fleet" : ""}</span>{/if}
+        {#if verdictBadge(r?.verdict)}
+          {@const b = verdictBadge(r?.verdict)!}
+          <span class="verdict {b.tone}" data-role-verdict={r?.verdict?.status} title={b.title}>{b.label}</span>
+        {/if}
       </div>
       {#if r?.notes?.length}
         <ul class="role-notes">{#each r.notes as n (n)}<li>{n}</li>{/each}</ul>
@@ -118,4 +128,9 @@
   .pending-card, .closed-card { color: var(--muted); background: transparent; }
   .gap-ref { margin-top: 4px; font-size: 12px; color: var(--muted); }
   .error { color: var(--error); font-size: 12px; }
+  .group-verdict { margin: 0 0 8px; font-size: 13px; color: var(--fg); }
+  .verdict-basis { font-size: 12px; color: var(--muted); }
+  .verdict-basis::before { content: "· "; }
+  .verdict { font-size: 12px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--border); color: var(--muted); }
+  .verdict.moved { border-color: var(--ann-claude); color: var(--fg); font-weight: 600; }
 </style>

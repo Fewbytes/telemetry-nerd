@@ -114,6 +114,10 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   triples) from names, packs and relations: check the picks and alternatives, then
   `binding_accept` or `catalog_bind`. `show_binding` draws a binding (or a suggestion) as one
   linked panel group: shared time axis, per-role form, gap cards for missing roles.
+  "Is it healthy / what moved first?" is `binding_verdict(group=<pg id> | kind+key |
+  suggestion)`: per role changed / no_change against stated reference windows, its pattern and
+  onset interval, and which signal moved first (only when onset intervals do not overlap);
+  one family-wise alpha over the roles. Report the reference and the alpha; cite `evidence`.
 - When you can read the service's repo, `catalog_context` turns its metric registrations,
   dashboards and docs into cited claims (description, type, unit): find the files with rg, read the
   few that matter, send their text. Say where a claim came from when you cite it.
@@ -929,6 +933,53 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         except (NotFound, ValueError) as e:
             raise _fail(e) from e
         return _dump(group_summary(g, ui_url))
+
+    @mcp.tool()
+    async def binding_verdict(
+        source: str = "default",
+        kind: str | None = None,
+        key: str | None = None,
+        group: str | None = None,
+        suggestion: str | None = None,
+        range: str | None = None,
+        start: str = "now-1h",
+        end: str = "now",
+        step: str = "auto",
+        reference: str = "auto",
+        tz: str = "UTC",
+        matchers: dict[str, str] | None = None,
+        error_matcher: str | None = None,
+        alpha: float = 0.05,
+    ) -> str:
+        """Per-signal verdicts for a USE / RED / Little's law binding: did each role move
+        against reference windows, how, when, and which golden signal moved first. Pass a panel
+        group id (`group`, from show_binding: its window, step and matchers are used and its
+        roles get verdict badges), or kind + key of a confirmed binding, or a binding_suggest
+        `suggestion`. reference: previous (4 preceding windows) | day (7 previous days) | week
+        (4 previous weeks) | profile (the cached operating profile's seasonality picks day or
+        week) | auto (profile if cached, else previous). Per role: errors = the error share on
+        effective n (Wilson / binomial); latency = the share of requests above the reference's
+        ~p95 bucket edge (from histograms; never averaged percentiles); rates, concurrency,
+        utilization, saturation = the per-step value; utilization near its bound is reported as
+        at_capacity. Two detectors per role (window level vs the reference spread; CUSUM
+        episodes for onsets), Bonferroni over roles at family-wise `alpha`. Returns {reference,
+        family, roles {role: {status changed|no_change|insufficient|gap|error, direction,
+        pattern level|shift|blip|burst|sustained, onset {at, interval}, level, episodes,
+        evidence, ...}}, summary {moved, first, order, text}}. Ordering is claimed only when
+        onset intervals do not overlap ("simultaneous" otherwise)."""
+        try:
+            if range is not None:
+                start, end = f"now-{range.strip()}", "now"
+            out = await service.binding_verdict(
+                source=source, kind=kind, key=key, group=group, suggestion=suggestion,
+                start=start, end=end, step=step, reference=reference, tz=tz, matchers=matchers,
+                error_matcher=error_matcher, alpha=alpha, actor="claude",
+            )  # fmt: skip
+        except SourceError as e:
+            raise _source_error(e) from e
+        except (NotFound, ValueError) as e:
+            raise _fail(e) from e
+        return _dump(out)
 
     @mcp.tool()
     def catalog_relations(

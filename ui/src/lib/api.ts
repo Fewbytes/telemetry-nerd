@@ -255,6 +255,17 @@ export interface GroupRole {
   view: "lines" | "fleet" | "heatmap" | "model" | "gap" | "error"; members: number | null; notes: string[];
   suggestion: { name: string; type: string; labels: string[] } | null; why: string | null;
   gap: string | null; error: string | null;
+  /** binding_verdict (bead czt.4): this role against its reference windows */
+  verdict?: RoleVerdict | null;
+}
+export interface RoleVerdict {
+  status: "changed" | "no_change" | "insufficient" | "error" | string;
+  direction: "higher" | "lower" | null; pattern: string | null; text: string | null; at_capacity: boolean;
+  onset?: { at: string | null; interval?: [string | null, string]; before?: string; basis: string };
+}
+/** binding_verdict's summary: which golden signal moved first, against what, at what alpha. */
+export interface GroupVerdict {
+  text: string; first: string | null; moved: string[]; reference: string; alpha: number; at_ms: number;
 }
 /** A USE / RED / Little's law binding drawn as one linked group of panels. */
 export interface PanelGroup {
@@ -263,6 +274,7 @@ export interface PanelGroup {
   binding_origin: string | null; suggestion: string | null; join_on: string[];
   matchers: Record<string, string>; error_matcher: string | null; roles: GroupRole[];
   notes: string[]; closed: boolean; reframed_from: string | null;
+  verdict?: GroupVerdict | null;
 }
 
 export class ApiError extends Error {

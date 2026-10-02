@@ -1,6 +1,6 @@
 // Panel groups (bead czt.3): a USE / RED / Little's law binding drawn as one linked set of panels.
 // Pure helpers: which panels belong to which group, in what order, and how the roles read.
-import type { Panel, PanelGroup } from "./api";
+import type { Panel, PanelGroup, RoleVerdict } from "./api";
 
 /** Role order per binding kind (the catalog's BINDING_ROLES). */
 export const ROLE_ORDER: Record<string, string[]> = {
@@ -97,4 +97,18 @@ export function basisText(g: Pick<PanelGroup, "basis" | "binding_origin" | "sugg
   return g.basis === "binding"
     ? `confirmed binding${g.binding_origin ? ` (${g.binding_origin})` : ""}`
     : `suggestion ${g.suggestion ?? ""}, not confirmed`;
+}
+
+/** A role's verdict badge (bead czt.4): what moved, how, from when; title = the full sentence. */
+export function verdictBadge(v: RoleVerdict | null | undefined): { label: string; tone: "moved" | "steady" | "unknown"; title: string } | null {
+  if (!v) return null;
+  const title = v.text ?? v.status;
+  if (v.status === "changed") {
+    const arrow = v.direction === "higher" ? "↑" : v.direction === "lower" ? "↓" : "";
+    const when = v.onset?.at ? ` from ${v.onset.at.slice(11, 16)}Z` : v.onset?.before ? " before the window" : "";
+    const cap = v.at_capacity ? " · at capacity" : "";
+    return { label: `${arrow} ${v.pattern ?? "changed"}${cap}${when}`.trim(), tone: "moved", title };
+  }
+  if (v.status === "no_change") return { label: "no change", tone: "steady", title };
+  return { label: v.status.replace(/_/g, " "), tone: "unknown", title };
 }
