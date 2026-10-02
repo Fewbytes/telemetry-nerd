@@ -45,7 +45,30 @@ port), but the Host/Origin allowlist (DNS-rebinding and cross-site WebSocket pro
 loopback (`-p 127.0.0.1:7070:7070`) and browse `http://127.0.0.1:7070`. To reach it by another
 name set `TN_ALLOWED_HOSTS=name`, and only then put it behind something that authenticates.
 
-### Claude Code plugin against a container
+## Claude Code plugin
 
-The plugin's bridge starts a local daemon by default; to use the container instead run
+The plugin (`.claude-plugin/`, `.mcp.json`, `hooks/hooks.json`) starts everything through one
+launcher, `scripts/tn-launch`, which picks the first install it finds:
+
+1. `TN_USE_SOURCE=1` and a source checkout at the plugin root: `uv run --directory <root>`.
+2. `telemetry-nerd` on `PATH` (`uv tool install ...`).
+3. A source checkout at the plugin root (needs `uv`): `uv run --directory <root>`.
+4. Otherwise it fails loudly (exit 127, stderr: how to install). The `ensure` hook reports the
+   same message as session context and never blocks the session.
+
+So for a marketplace install, `uv tool install` first, then `/plugin marketplace add
+Fewbytes/telemetry-nerd` and `/plugin install telemetry-nerd@telemetry-nerd`.
+
+### Plugin against a container daemon
+
+The bridge is a small stdio process that still needs the `telemetry-nerd` CLI (install 2 above);
+the daemon it talks to can be the container. Set `TN_DAEMON_URL` in the environment Claude Code
+starts with:
+
+```bash
+export TN_DAEMON_URL=http://127.0.0.1:7070   # container published with -p 127.0.0.1:7070:7070
+```
+
+With it set, the bridge and hooks use that daemon and never autostart a local one; if it is not
+healthy the bridge exits with an actionable error. Equivalent manual form:
 `telemetry-nerd bridge --daemon-url http://127.0.0.1:7070`.

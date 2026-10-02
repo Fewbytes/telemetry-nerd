@@ -13,7 +13,10 @@ starts `serve` on a free port and fetches the UI index plus an API route.
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import select
+import signal
 import socket
 import subprocess
 import sys
@@ -40,6 +43,78 @@ def check_wheel(wheel: Path) -> None:
     bad = {r.split()[0].split(";")[0].split(">")[0].split("=")[0] for r in requires} & DEV_ONLY
     assert not bad, f"dev-only deps leak into runtime requirements: {bad}"
     print(f"wheel ok: {wheel.name} ({len(assets)} UI assets)")
+
+
+def free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def mcp_handshake(env: dict[str, str], label: str) -> int:
+    """Run the plugin launcher's `bridge` (as .mcp.json does) and do initialize + tools/list.
+
+    Returns the tool count. Proves the launcher resolves the installed CLI and the bridge
+    speaks MCP over stdio."""
+    proc = subprocess.Popen(
+        ["sh", str(ROOT / "scripts" / "tn-launch"), "bridge"],
+        env={**env, "CLAUDE_PLUGIN_ROOT": str(ROOT)},
+        cwd=env["TN_DATA_DIR"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    assert proc.stdin and proc.stdout
+
+    def send(msg: dict) -> None:
+        proc.stdin.write(json.dumps(msg) + "\n")
+        proc.stdin.flush()
+
+    def recv(want_id: int, timeout: float = 60) -> dict:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([proc.stdout], [], [], 1.0)
+            if ready:
+                line = proc.stdout.readline()
+                if not line:
+                    break
+                msg = json.loads(line)
+                if msg.get("id") == want_id:
+                    return msg
+        raise SystemExit(f"{label}: no reply to id {want_id}; stderr: {_drain(proc)}")
+
+    try:
+        send(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "verify-install", "version": "0"},
+                },
+            }
+        )
+        recv(1)
+        send({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        send({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+        tools = recv(2)["result"]["tools"]
+    finally:
+        proc.terminate()
+        proc.wait(10)
+    assert tools, f"{label}: tools/list was empty"
+    print(f"launcher handshake ok ({label}): {len(tools)} tools")
+    return len(tools)
+
+
+def _drain(proc: subprocess.Popen) -> str:
+    proc.terminate()
+    try:
+        return (proc.communicate(timeout=10)[1] or "")[-800:]
+    except subprocess.TimeoutExpired:
+        return "<timeout>"
 
 
 def main() -> None:
@@ -69,9 +144,26 @@ def main() -> None:
         )
         exe = tmp_p / "bin" / "telemetry-nerd"
         subprocess.run([str(exe), "--help"], check=True, env=env, stdout=subprocess.DEVNULL)
-        with socket.socket() as s:
-            s.bind(("127.0.0.1", 0))
-            port = s.getsockname()[1]
+        # Plugin mode "uv tool": launcher finds telemetry-nerd on PATH and the bridge autostarts
+        # a daemon from the installed tool (own port + data dir, killed afterwards).
+        auto_port = free_port()
+        auto_env = {
+            **env,
+            "PATH": f"{tmp_p / 'bin'}{os.pathsep}{os.environ['PATH']}",
+            "TN_PORT": str(auto_port),
+            "TN_DATA_DIR": str(tmp_p / "auto-data"),
+        }
+        (tmp_p / "auto-data").mkdir()
+        try:
+            mcp_handshake(auto_env, "uv tool install + autostart")
+        finally:
+            state = tmp_p / "auto-data" / "daemon.json"
+            if state.exists():
+                try:
+                    os.kill(json.loads(state.read_text())["pid"], signal.SIGTERM)
+                except (OSError, ValueError, KeyError):
+                    pass
+        port = free_port()
         proc = subprocess.Popen(
             [str(exe), "serve", "--port", str(port)], env=env, stderr=subprocess.PIPE, text=True
         )
@@ -90,6 +182,15 @@ def main() -> None:
             api = httpx.get(f"{base}/api/panels")
             assert api.status_code == 200, f"/api/panels -> {api.status_code}"
             print(f"serve ok: / -> {idx.status_code}, /api/panels -> {api.status_code}")
+            # Plugin mode "container daemon": TN_DAEMON_URL points at an already running daemon.
+            mcp_handshake(
+                {
+                    **env,
+                    "PATH": f"{tmp_p / 'bin'}{os.pathsep}{os.environ['PATH']}",
+                    "TN_DAEMON_URL": base,
+                },
+                "TN_DAEMON_URL daemon",
+            )
         finally:
             proc.terminate()
             proc.wait(10)

@@ -1,9 +1,9 @@
 {
   "mcpServers": {
     "telemetry-nerd": {
-      "command": "uv",
-      "args": ["run", "--directory", "${CLAUDE_PLUGIN_ROOT:-.}", "telemetry-nerd", "bridge"],
-      "env": { "TN_SOURCE_URL": "http://127.0.0.1:8428" }
+      "command": "sh",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/tn-launch", "bridge"],
+      "env": { "TN_SOURCE_URL": "${TN_SOURCE_URL:-http://127.0.0.1:8428}" }
     }
   }
 }

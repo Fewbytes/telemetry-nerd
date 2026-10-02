@@ -60,3 +60,51 @@ def test_serve_refuses_when_healthy_daemon_same_data_dir(tmp_path, monkeypatch, 
         cli.main(["serve", "--data-dir", str(tmp_path)])
     assert e.value.code == 1
     assert "already running" in capsys.readouterr().err
+
+
+def test_bridge_uses_tn_daemon_url_and_never_spawns(monkeypatch):
+    import argparse
+
+    from telemetry_nerd import daemon
+    from telemetry_nerd.config import Settings
+
+    monkeypatch.setenv("TN_DAEMON_URL", "http://127.0.0.1:7070")
+    monkeypatch.setattr(daemon, "healthy", lambda url, timeout=1.0: True)
+
+    def no_spawn(settings):
+        raise AssertionError("must not spawn")
+
+    monkeypatch.setattr(daemon, "ensure_daemon", no_spawn)
+    args = argparse.Namespace(daemon_url=None, no_autostart=False)
+    url = cli._bridge_url(args, Settings(), logging.getLogger("t"))
+    assert url == "http://127.0.0.1:7070"
+
+
+def test_bridge_tn_daemon_url_unhealthy_exits_with_hint(monkeypatch, caplog):
+    import argparse
+
+    import pytest
+
+    from telemetry_nerd import daemon
+    from telemetry_nerd.config import Settings
+
+    monkeypatch.setenv("TN_DAEMON_URL", "http://127.0.0.1:1")
+    monkeypatch.setattr(daemon, "healthy", lambda url, timeout=1.0: False)
+    args = argparse.Namespace(daemon_url=None, no_autostart=False)
+    with pytest.raises(SystemExit) as e:
+        cli._bridge_url(args, Settings(), logging.getLogger("t"))
+    assert e.value.code == 1
+    assert "daemon not healthy at http://127.0.0.1:1" in caplog.text
+
+
+def test_ensure_with_tn_daemon_url_does_not_spawn(monkeypatch, capsys):
+    from telemetry_nerd import daemon
+
+    monkeypatch.setenv("TN_DAEMON_URL", "http://127.0.0.1:7070")
+    monkeypatch.setattr(daemon, "healthy", lambda url, timeout=1.0: True)
+    monkeypatch.setattr(daemon, "ensure_daemon", lambda s: (_ for _ in ()).throw(AssertionError))
+    cli.main(["ensure"])
+    assert capsys.readouterr().out == "Telemetry Nerd workspace: http://127.0.0.1:7070\n"
+    monkeypatch.setattr(daemon, "healthy", lambda url, timeout=1.0: False)
+    cli.main(["ensure"])
+    assert "no healthy daemon at TN_DAEMON_URL=http://127.0.0.1:7070" in capsys.readouterr().out

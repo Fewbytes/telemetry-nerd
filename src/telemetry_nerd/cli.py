@@ -101,18 +101,24 @@ def _already_running(settings: Settings) -> str | None:
     return None
 
 
+def _remote_daemon_url() -> str | None:
+    """TN_DAEMON_URL: an externally managed daemon (e.g. the container image). Never spawn one."""
+    return os.environ.get("TN_DAEMON_URL") or None
+
+
 def _bridge_url(args: argparse.Namespace, settings: Settings, log: logging.Logger) -> str:
     """Resolve the daemon URL for the bridge, spawning one unless told not to."""
-    if args.daemon_url is not None:
+    explicit = args.daemon_url or _remote_daemon_url()
+    if explicit is not None:
         # An explicit URL points at an existing (often remote) daemon: never spawn.
-        if not daemon.healthy(args.daemon_url):
+        if not daemon.healthy(explicit):
             log.error(
-                "daemon not healthy at %s (hint: start it with `telemetry-nerd serve` "
-                "or drop --daemon-url to autostart one)",
-                args.daemon_url,
+                "daemon not healthy at %s (hint: start it, e.g. `telemetry-nerd serve` or the "
+                "container image, or unset TN_DAEMON_URL / drop --daemon-url to autostart one)",
+                explicit,
             )
             sys.exit(1)
-        return args.daemon_url
+        return explicit
     if args.no_autostart:
         return settings.daemon_url
     try:
@@ -164,7 +170,11 @@ _HOOK_HTTP_TIMEOUT_S = 1.0
 
 
 def _daemon_url(settings: Settings) -> str | None:
-    """State-file URL first (mirrors ensure_daemon), then the default; None if none healthy."""
+    """State-file URL first (mirrors ensure_daemon), then the default; None if none healthy.
+
+    TN_DAEMON_URL, when set, is the only candidate."""
+    if remote := _remote_daemon_url():
+        return remote if daemon.healthy(remote) else None
     state = daemon.read_state(settings.data_dir)
     urls = [state["url"]] if state is not None else []
     if settings.daemon_url not in urls:
@@ -177,7 +187,12 @@ def _daemon_url(settings: Settings) -> str | None:
 
 def _cmd_ensure(settings: Settings) -> None:
     try:
-        url = daemon.ensure_daemon(settings)
+        if remote := _remote_daemon_url():
+            if not daemon.healthy(remote):
+                raise RuntimeError(f"no healthy daemon at TN_DAEMON_URL={remote}")
+            url = remote
+        else:
+            url = daemon.ensure_daemon(settings)
     except RuntimeError as e:
         # SessionStart stdout becomes session context; a missing daemon must not
         # fail the session, so report and exit 0.

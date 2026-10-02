@@ -1,0 +1,44 @@
+#!/bin/sh
+# Plugin launcher (beads ijg.4/ijg.7): runs `telemetry-nerd <args>` from whichever install exists.
+# Used by .mcp.json (bridge) and hooks/hooks.json (ensure, pending).
+#
+# Resolution order:
+#   1. TN_USE_SOURCE=1 and a source checkout at the plugin root -> `uv run --directory <root>`
+#   2. `telemetry-nerd` on PATH (uv tool install; also the pip/venv case)
+#   3. source checkout at the plugin root (pyproject.toml + uv) -> `uv run --directory <root>`
+#   4. fail loudly.
+# A daemon running elsewhere (container image): set TN_DAEMON_URL=http://127.0.0.1:7070; the
+# bridge and hooks then talk to it and never autostart a local one.
+#
+# stdout is the MCP stdio channel (bridge) / hook context, so diagnostics go to stderr, except
+# that the `ensure` hook reports on stdout (session context) and always exits 0.
+set -u
+
+root="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+cmd="${1:-}"
+
+is_source_checkout() {
+    [ -f "$root/pyproject.toml" ] && [ -d "$root/src/telemetry_nerd" ] && command -v uv >/dev/null 2>&1
+}
+
+fail() {
+    msg="telemetry-nerd launcher: cannot find telemetry-nerd. Install it with
+  uv tool install git+https://github.com/Fewbytes/telemetry-nerd
+(or run a source checkout with uv installed, or point TN_DAEMON_URL at a running daemon -- the
+bridge still needs the telemetry-nerd CLI). See docs/install.md."
+    case "$cmd" in
+        ensure) echo "Telemetry Nerd daemon not running: $msg" ;;
+        pending) echo "$msg" >&2 ;;
+        *) echo "$msg" >&2; exit 127 ;;
+    esac
+    exit 0
+}
+
+if [ "${TN_USE_SOURCE:-}" = 1 ] && is_source_checkout; then
+    exec uv run --directory "$root" telemetry-nerd "$@"
+elif command -v telemetry-nerd >/dev/null 2>&1; then
+    exec telemetry-nerd "$@"
+elif is_source_checkout; then
+    exec uv run --directory "$root" telemetry-nerd "$@"
+fi
+fail

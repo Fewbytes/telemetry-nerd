@@ -1,0 +1,20 @@
+{
+  "name": "telemetry-nerd",
+  "owner": { "name": "Fewbytes" },
+  "metadata": {
+    "description": "Telemetry Nerd: evidence-first telemetry analysis for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "telemetry-nerd",
+      "source": "./",
+      "description": "Evidence-first telemetry analysis workspace for Claude",
+      "version": "0.1.0",
+      "author": { "name": "Avishai Ish-Shalom" },
+      "homepage": "https://github.com/Fewbytes/telemetry-nerd",
+      "repository": "https://github.com/Fewbytes/telemetry-nerd",
+      "category": "monitoring",
+      "keywords": ["telemetry", "observability", "metrics", "prometheus", "victoriametrics", "mcp", "analysis"]
+    }
+  ]
+}

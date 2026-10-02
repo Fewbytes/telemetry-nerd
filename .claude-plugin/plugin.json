@@ -2,5 +2,8 @@
   "name": "telemetry-nerd",
   "version": "0.1.0",
   "description": "Evidence-first telemetry analysis workspace for Claude",
-  "author": { "name": "Avishai Ish-Shalom" }
+  "author": { "name": "Avishai Ish-Shalom" },
+  "homepage": "https://github.com/Fewbytes/telemetry-nerd",
+  "repository": "https://github.com/Fewbytes/telemetry-nerd",
+  "keywords": ["telemetry", "observability", "metrics", "prometheus", "victoriametrics", "mcp", "analysis"]
 }
