@@ -47,7 +47,7 @@ const fmt = (v: number): string => String(Number(v.toPrecision(4)));
 // draw (stepped or not), so uPlot's density-based auto marker can skip it too and the
 // sample vanishes. Force a marker for exactly those indices; defer to the default
 // show-all-or-none behaviour otherwise (telemetry-graphing-guide.md §7).
-export const isolatedPointsFilter: uPlot.Series.Points["filter"] = (u, seriesIdx, show) => {
+export const isolatedPointsFilter = (u: uPlot, seriesIdx: number, show: boolean): number[] | null => {
   if (show) return null;
   const ydata = u.data[seriesIdx] as (number | null)[];
   const idxs: number[] = [];
