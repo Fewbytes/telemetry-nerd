@@ -148,6 +148,11 @@ def _str_list(meta: Mapping, key: str) -> list[str]:
     return list(dict.fromkeys(v))
 
 
+def _is_level(v: Any) -> bool:
+    """A confidence/credible level: a number strictly between 0 and 1."""
+    return not isinstance(v, bool) and isinstance(v, int | float) and 0 < v < 1
+
+
 def _uncertainty(meta: Mapping, representation: str) -> tuple[dict | None, bool]:
     u, exact = meta.get("uncertainty"), meta.get("exact", False)
     if not isinstance(exact, bool):
@@ -169,9 +174,7 @@ def _uncertainty(meta: Mapping, representation: str) -> tuple[dict | None, bool]
     method, level, kind = u.get("method"), u.get("level"), u.get("kind", "confidence")
     if not isinstance(method, str) or not method.strip():
         raise ExchangeError("meta.uncertainty.method is required, e.g. 'bootstrap percentile'")
-    if level is not None and (
-        isinstance(level, bool) or not isinstance(level, int | float) or not 0 < level < 1
-    ):
+    if level is not None and not _is_level(level):
         raise ExchangeError(f"meta.uncertainty.level must be in (0, 1), e.g. 0.95; got {level!r}")
     if kind not in INTERVAL_KINDS:
         raise ExchangeError(f"meta.uncertainty.kind must be one of {INTERVAL_KINDS}, got {kind!r}")
@@ -199,7 +202,7 @@ def normalize_output_meta(
     base: Mapping = {}
     if like is not None:
         if like not in declared:
-            raise ExchangeError(_undeclared(like, declared))
+            raise undeclared_error(like, declared)
         base = input_meta(like)
     rep = meta.get("representation") or base.get("representation") or "bucket_agg"
     if rep not in PUTTABLE:
@@ -238,7 +241,7 @@ def normalize_output_meta(
         parents = _str_list(meta, "parents")
         for p in parents:
             if p not in declared:
-                raise ExchangeError(_undeclared(p, declared))
+                raise undeclared_error(p, declared)
     description = meta.get("description")
     if description is not None and not isinstance(description, str):
         raise ExchangeError("meta.description must be a string")
@@ -272,15 +275,25 @@ def normalize_output_meta(
     return out
 
 
-def _undeclared(handle: Any, declared: Sequence[str]) -> str:
-    return (
+def undeclared_error(handle: Any, declared: Sequence[str]) -> ExchangeError:
+    return ExchangeError(
         f"{handle!r} is not a declared input of this run (declared: "
         f"{', '.join(declared) or 'none'}); pass it in run_code(inputs=[...])"
     )
 
 
-def undeclared_error(handle: Any, declared: Sequence[str]) -> ExchangeError:
-    return ExchangeError(_undeclared(handle, declared))
+FIT_META_KEYS = ("parents", "caveats", "start_ms", "end_ms")
+
+
+def normalize_fit_meta(
+    meta: Mapping, declared: Sequence[str], input_meta: Callable[[str], Mapping]
+) -> dict:
+    """The output-meta fields a fit carries (parents, caveats, start_ms/end_ms), validated by
+    the `tn.put` rules; other keys of `meta` are ignored. Used by `tn.put_fit` and by ingest."""
+    given = {k: meta[k] for k in FIT_META_KEYS if meta.get(k) is not None}
+    # step_ms is required by the put rules but means nothing for a fit
+    norm = normalize_output_meta({**given, "step_ms": 1}, declared, input_meta)
+    return {k: norm[k] for k in FIT_META_KEYS}
 
 
 def _finite(v: Any, what: str) -> float:
@@ -306,9 +319,7 @@ def normalize_fit(fit: Mapping) -> dict:
     if not isinstance(method, str) or not method.strip():
         raise ExchangeError("put_fit: method is required, e.g. 'OLS, HC3 standard errors'")
     level = fit.get("level")
-    if level is not None and (
-        isinstance(level, bool) or not isinstance(level, int | float) or not 0 < level < 1
-    ):
+    if level is not None and not _is_level(level):
         raise ExchangeError(f"put_fit: level must be in (0, 1), got {level!r}")
     params = fit.get("params")
     if not isinstance(params, Mapping) or not params:

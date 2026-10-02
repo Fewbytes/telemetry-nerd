@@ -227,10 +227,13 @@ class RunExchange:
             return self._ingest_fit(ctx, name, raw, producer)
         if raw.get("kind") != "dataset":
             raise ExchangeError(f"unknown output kind {raw.get('kind')!r}")
+        return self._ingest_dataset(ctx, out_dir, name, raw, producer, done)
+
+    def _ingest_dataset(
+        self, ctx: _Ctx, out_dir: Path, name: str, raw: dict, producer: dict, done: dict
+    ) -> Ingested:
         meta = fmt.normalize_output_meta(raw, ctx.declared, ctx.input_meta, internal=True)
-        tables = _read_tables(out_dir, raw)
-        tables = normalize_output(meta, tables)
-        rows = tables["rows"]
+        tables = normalize_output(meta, _read_tables(out_dir, raw))
         parents = list(meta["parents"])
         if meta.get("prediction_of"):
             fit_id = done.get(meta["prediction_of"])
@@ -240,9 +243,6 @@ class RunExchange:
                 )
             parents.insert(0, fit_id)
         uncertainty = {"exact": True} if meta["exact"] else meta["uncertainty"]
-        caveats = ctx.parent_caveats(meta["parents"]) + meta["caveats"]
-        if uncertainty is None:
-            caveats.append(fmt.NO_UNCERTAINTY)
         if meta["description"]:
             producer["description"] = meta["description"]
         lineage = Lineage(
@@ -250,13 +250,13 @@ class RunExchange:
             parents=tuple(parents),
             unit=meta["unit"],
             uncertainty=uncertainty,
-            caveats=tuple(dict.fromkeys(caveats)),
+            caveats=ctx.caveats(meta["parents"], meta["caveats"], uncertainty is None),
         )
-        rng = _range(meta, rows)
-        source = ctx.source(meta)
+        rng = _range(meta, tables["rows"])
+        source = ctx.source(meta["parents"], meta["like"])
         expr = f"code:{ctx.node}/{name}"
+        rows, series = ctx.identify(name, tables["rows"], meta)
         if meta["representation"] == fmt.DISTRIBUTION:
-            rows, series = ctx.identify(name, rows, meta)
             columns = tables.get("columns")
             if columns is not None:
                 columns, _ = ctx.identify(name, columns, meta)
@@ -281,7 +281,6 @@ class RunExchange:
                 lineage=lineage,
             )
         else:
-            rows, series = ctx.identify(name, rows, meta)
             stored = self.store.put(
                 source=source,
                 expr=expr,
@@ -302,15 +301,8 @@ class RunExchange:
         if raw.get("files"):
             raise ExchangeError("a fit output carries no tables")
         fit = fmt.normalize_fit(raw.get("fit") or {})
-        meta = fmt.normalize_output_meta(
-            {k: raw.get(k) for k in ("parents", "caveats", "start_ms", "end_ms")} | {"step_ms": 1},
-            ctx.declared,
-            ctx.input_meta,
-        )
+        meta = fmt.normalize_fit_meta(raw, ctx.declared, ctx.input_meta)
         parents = meta["parents"]
-        caveats = ctx.parent_caveats(parents) + meta["caveats"]
-        if fit["params_without_uncertainty"]:
-            caveats.append(fmt.NO_UNCERTAINTY)
         if meta["start_ms"] is not None:
             rng = TimeRange(meta["start_ms"], meta["end_ms"])
         elif parents:
@@ -318,9 +310,8 @@ class RunExchange:
             rng = TimeRange(min(m["start_ms"] for m in pm), max(m["end_ms"] for m in pm))
         else:
             raise ExchangeError("a fit without inputs needs start_ms/end_ms (its fit range)")
-        sources = {ctx.input_meta(p)["source"] for p in parents}
         stored = self.store.put(
-            source=sources.pop() if len(sources) == 1 else "code",
+            source=ctx.source(parents),
             expr=f"code:{ctx.node}/{name}",
             rng=rng,
             step_ms=rng.end_ms - rng.start_ms,
@@ -332,7 +323,9 @@ class RunExchange:
                 parents=tuple(parents),
                 uncertainty=None,
                 fit=fit,
-                caveats=tuple(dict.fromkeys(caveats)),
+                caveats=ctx.caveats(
+                    parents, meta["caveats"], bool(fit["params_without_uncertainty"])
+                ),
             ),
         )
         return Ingested(
@@ -449,10 +442,18 @@ class _Ctx:
     def parent_caveats(self, parents: list[str]) -> list[str]:
         return [c for p in parents for c in self.input_meta(p).get("caveats", [])]
 
-    def source(self, meta: dict) -> str:
-        if meta["like"]:
-            return self.input_meta(meta["like"])["source"]
-        sources = {self.input_meta(p)["source"] for p in meta["parents"]}
+    def caveats(self, parents: list[str], own: list[str], no_uncertainty: bool) -> tuple[str, ...]:
+        """An output's caveats: its parents', its own, and no_uncertainty when it applies."""
+        out = self.parent_caveats(parents) + own
+        if no_uncertainty:
+            out.append(fmt.NO_UNCERTAINTY)
+        return tuple(dict.fromkeys(out))
+
+    def source(self, parents: list[str], like: str | None = None) -> str:
+        """`like`'s source, else the parents' common source, else "code"."""
+        if like:
+            return self.input_meta(like)["source"]
+        sources = {self.input_meta(p)["source"] for p in parents}
         return sources.pop() if len(sources) == 1 else "code"
 
     def _input_labels(self) -> dict[str, str]:

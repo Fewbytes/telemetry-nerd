@@ -35,7 +35,8 @@ class _FileTransport:
         self.inputs: tuple[str, ...] = tuple(self.manifest.get("inputs") or ())
 
     def input_meta(self, handle: str) -> dict:
-        self._declared(handle)
+        if handle not in self.inputs:
+            raise fmt.undeclared_error(handle, self.inputs)
         return fmt.read_json(self.run_dir / fmt.INPUTS / fmt.meta_file(handle))
 
     def read_table(self, handle: str, table: str):
@@ -68,10 +69,6 @@ class _FileTransport:
         fmt.write_json_atomic(
             out / fmt.meta_file(name), {**meta, "files": files, "rows": rows, "bytes": size}
         )
-
-    def _declared(self, handle: str) -> None:
-        if handle not in self.inputs:
-            raise fmt.undeclared_error(handle, self.inputs)
 
 
 def _transport() -> _FileTransport:
@@ -135,6 +132,21 @@ def _claim(tr: _FileTransport, name: str | None, prefix: str = "out") -> str:
     return name
 
 
+def _dataset_meta(norm: dict, **extra: Any) -> dict:
+    """The meta file of a dataset output: its normalized meta plus what tn adds."""
+    return {**norm, "version": fmt.VERSION, "kind": "dataset", **extra}
+
+
+def _output_tables(norm: dict, rows: Any, what: str, columns: Any = None) -> dict:
+    """The output's tables as Arrow, checked against its meta and cast (tables.normalize_output)."""
+    from telemetry_nerd.exchange.tables import normalize_output
+
+    tables = {"rows": _to_arrow(rows, what)}
+    if columns is not None:
+        tables["columns"] = _to_arrow(columns, "columns")
+    return normalize_output(norm, tables)
+
+
 def put(data: Any, meta: Mapping | None = None, *, columns: Any = None, **kw: Any) -> str:
     """Store a time series or distribution result; returns the output name.
 
@@ -149,13 +161,8 @@ def put(data: Any, meta: Mapping | None = None, *, columns: Any = None, **kw: An
     m = {**(meta or {}), **kw}
     m["name"] = _claim(tr, m.get("name"))
     norm = fmt.normalize_output_meta(m, tr.inputs, tr.input_meta)
-    tables = {"rows": _to_arrow(data, "data")}
-    if columns is not None:
-        tables["columns"] = _to_arrow(columns, "columns")
-    from telemetry_nerd.exchange.tables import normalize_output
-
-    tables = normalize_output(norm, tables)
-    tr.write_output(norm["name"], tables, {**norm, "version": fmt.VERSION, "kind": "dataset"})
+    tables = _output_tables(norm, data, "data", columns)
+    tr.write_output(norm["name"], tables, _dataset_meta(norm))
     return norm["name"]
 
 
@@ -189,34 +196,27 @@ def put_fit(
         {"model": model, "params": params, "method": method, "diagnostics": diagnostics,
          "goodness": goodness, "level": level}
     )  # fmt: skip
-    pm = {"parents": parents, "caveats": caveats, "start_ms": start_ms, "end_ms": end_ms}
-    pm = {k: v for k, v in pm.items() if v is not None}
-    norm_parents = fmt.normalize_output_meta(
-        {"step_ms": 1, **pm}, tr.inputs, tr.input_meta
-    )  # step is not used for a fit; this validates parents/caveats/range
+    fit_meta = fmt.normalize_fit_meta(
+        {"parents": parents, "caveats": caveats, "start_ms": start_ms, "end_ms": end_ms},
+        tr.inputs,
+        tr.input_meta,
+    )
+    # validate the whole prediction before anything is written
+    pred: tuple[dict, dict] | None = None
     if prediction is not None:
-        pname = _claim(tr, f"{name}_prediction")
-        pmeta = {**(prediction_meta or {}), "name": pname}
+        pmeta = {**(prediction_meta or {}), "name": _claim(tr, f"{name}_prediction")}
         pnorm = fmt.normalize_output_meta(pmeta, tr.inputs, tr.input_meta)
-        from telemetry_nerd.exchange.tables import normalize_output
-
-        ptables = normalize_output(pnorm, {"rows": _to_arrow(prediction, "prediction")})
+        pred = pnorm, _output_tables(pnorm, prediction, "prediction")
     meta = {
         "version": fmt.VERSION,
         "kind": "fit",
         "name": name,
         "representation": fmt.ESTIMATE,
-        "parents": norm_parents["parents"],
-        "caveats": norm_parents["caveats"],
-        "start_ms": norm_parents["start_ms"],
-        "end_ms": norm_parents["end_ms"],
+        **fit_meta,
         "fit": fit,
     }
     tr.write_output(name, {}, meta)
-    if prediction is not None:
-        tr.write_output(
-            pname,
-            ptables,
-            {**pnorm, "version": fmt.VERSION, "kind": "dataset", "prediction_of": name},
-        )
+    if pred is not None:
+        pnorm, ptables = pred
+        tr.write_output(pnorm["name"], ptables, _dataset_meta(pnorm, prediction_of=name))
     return name
