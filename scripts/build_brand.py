@@ -2,16 +2,19 @@
 # requires-python = ">=3.12"
 # dependencies = ["resvg-py>=0.2", "pillow>=11"]
 # ///
-"""Render brand PNGs and favicon.ico from the SVG sources in assets/brand."""
+"""Render brand PNGs and favicon.ico from the SVG sources in assets/brand, and sync web icons into ui/public."""
 
 import argparse
 import io
+import shutil
 from pathlib import Path
 
 import resvg_py
 from PIL import Image
 
-BRAND = Path(__file__).resolve().parent.parent / "assets" / "brand"
+ROOT = Path(__file__).resolve().parent.parent
+BRAND = ROOT / "assets" / "brand"
+UI_PUBLIC = ROOT / "ui" / "public"
 
 # (source svg, output png, pixel size). favicon.svg is drawn for 16/32 px;
 # icon.svg carries the full detail for larger sizes.
@@ -52,8 +55,18 @@ def main() -> None:
 
     (args.out / "og.png").write_bytes(render(BRAND / "og.svg", 1200, 630))
 
-    for path in sorted(args.out.iterdir()):
-        print(path.relative_to(BRAND.parent.parent))
+    # Vite copies ui/public to the dist root, which the daemon serves at /.
+    UI_PUBLIC.mkdir(exist_ok=True)
+    for src in [
+        BRAND / "favicon.svg",
+        BRAND / "icon.svg",
+        args.out / "favicon.ico",
+        args.out / "apple-touch-icon.png",
+    ]:
+        shutil.copyfile(src, UI_PUBLIC / src.name)
+
+    for path in sorted([*args.out.iterdir(), *UI_PUBLIC.iterdir()]):
+        print(path.relative_to(ROOT))
 
 
 if __name__ == "__main__":

@@ -58,7 +58,7 @@
 
 <main>
   <div class="app-header">
-    <h1>Telemetry Nerd</h1>
+    <h1 class="brand"><img src="/icon.svg" alt="" width="32" height="32" />Telemetry Nerd</h1>
     <div class="header-controls">
       <ConnectionPill daemon={ws.daemon} presence={ws.presence} />
       <select

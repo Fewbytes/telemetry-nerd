@@ -47,7 +47,9 @@ a.obj-id:hover { text-decoration: underline; }
 .panel button.close { margin-left: auto; background: none; border: none; font-size: 1.2em; cursor: pointer; color: var(--muted); }
 
 /* App header (title + theme toggle) */
-.app-header { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.app-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.app-header .brand { display: flex; align-items: center; gap: 10px; }
+.app-header .brand img { width: 32px; height: 32px; flex: none; }
 .theme-toggle {
   background: var(--bg); color: var(--fg); font: inherit; font-size: 12px;
   border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px;
