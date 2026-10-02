@@ -246,3 +246,42 @@ def test_claim_route_confirms_edits_and_rejects(tmp_path):
         )
         card = c.get("/api/panels/p99/card")
         assert card.status_code == 404
+
+
+async def test_a_unit_claim_updates_the_axis_of_open_panels_that_use_the_metric(svc):
+    pid = await panel(svc, "app_odd")
+    before = svc.workspace.get_panel(pid).spec["y"]
+    assert before["unit"] is None
+    other = await panel(svc, "app_requests_total")  # unrelated metric: untouched
+    svc.ws.catalog_claim("default", "app_odd", "unit", "ms", "user", "user")
+    after = svc.workspace.get_panel(pid).spec["y"]
+    assert (after["unit"], after["unit_provenance"]) == ("ms", "set by user")
+    assert svc.workspace.get_panel(other).spec["y"]["unit"] == "count"
+    ev = [e for e in svc.ws.log.since(0) if e.type == "panel.unit_refreshed"]
+    assert ev and ev[-1].object_id == pid and ev[-1].payload["unit"] == "ms"
+
+
+async def test_a_unit_stated_when_the_panel_was_shown_is_not_overridden(svc):
+    ds = (await svc.query("app_odd", start="now-2h", end="now-1h"))["dataset"]
+    pid = svc.show(ds, "q?", unit="items").panel.id
+    svc.ws.catalog_claim("default", "app_odd", "unit", "ms", "user", "user")
+    y = svc.workspace.get_panel(pid).spec["y"]
+    assert (y["unit"], y["unit_provenance"]) == ("items", "provided by claude")
+
+
+async def test_closed_panels_and_other_fields_are_left_alone(svc):
+    pid = await panel(svc, "app_odd")
+    svc.ws.catalog_claim("default", "app_odd", "role", "state", "user", "user")
+    assert [e for e in svc.ws.log.since(0) if e.type == "panel.unit_refreshed"] == []
+    svc.ws.close_panel(pid, "user")
+    svc.ws.catalog_claim("default", "app_odd", "unit", "ms", "user", "user")
+    assert svc.workspace.get_panel(pid).spec["y"]["unit"] is None
+
+
+async def test_a_type_claim_changes_the_rate_unit(svc):
+    pid = await panel(svc, "rate(app_odd[5m])")
+    assert svc.workspace.get_panel(pid).spec["y"]["unit"] is None
+    svc.ws.catalog_claim("default", "app_odd", "unit", "s", "user", "user")
+    assert svc.workspace.get_panel(pid).spec["y"]["unit"] == "s"
+    svc.ws.catalog_claim("default", "app_odd", "type", "counter", "user", "user")
+    assert svc.workspace.get_panel(pid).spec["y"]["unit"] == "s/s"

@@ -42,7 +42,7 @@ from telemetry_nerd.channel.format import describe_event
 from telemetry_nerd.charts.dataview import SignalViews
 from telemetry_nerd.charts.indexed import check_index, shifted
 from telemetry_nerd.charts.spec import ChartSpec, Marginal, Reference, YContext
-from telemetry_nerd.charts.units import metric_names
+from telemetry_nerd.charts.units import infer_unit_with_provenance, metric_names
 from telemetry_nerd.charts.yview import (
     BUILTIN_LABELS,
     INDEX_LABELS,
@@ -351,7 +351,39 @@ class WorkspaceService:
                 "confidence": confidence,
             },
         )
+        if field in ("unit", "type"):
+            self._refresh_panel_units(source, metric)
         return claim
+
+    def _refresh_panel_units(self, source: str, metric: str) -> None:
+        """Panels draw their axis unit from the catalog: when a claim changes a metric's unit (or
+        its type, which decides rate units), re-derive it for open panels that use the metric.
+        A unit someone stated explicitly when the panel was shown ("provided by ...") stays."""
+        for p in self.workspace.list_panels():
+            if p.closed or not p.dataset_ids:
+                continue
+            try:
+                meta = self.datasets.meta(p.dataset_ids[0])
+                spec = ChartSpec.model_validate(p.spec)
+            except (NotFound, ValueError):
+                continue
+            if meta.source != source or metric not in metric_names(meta.expr):
+                continue
+            if (spec.y.unit_provenance or "").startswith("provided by"):
+                continue
+            unit, why = infer_unit_with_provenance(
+                meta.expr, lambda m: self.catalog_facts(source, m)
+            )
+            if (unit, why) == (spec.y.unit, spec.y.unit_provenance):
+                continue
+            spec.y.unit, spec.y.unit_provenance = unit, why
+            self.workspace.set_spec(p.id, spec.model_dump())
+            self.log.append(
+                "system",
+                "panel.unit_refreshed",
+                p.id,
+                {"metric": metric, "unit": unit, "provenance": why},
+            )
 
     @atomic
     def catalog_relearn(
