@@ -192,3 +192,91 @@ def test_clear_and_noisy_rate_changes_are_flagged():
     for counts in ([4, 4, 4, 1, 1, 1], [4, 3, 4, 4, 1, 1, 2, 1]):
         out = run(_change_rows(counts), end=len(counts) * STEP)
         assert any(f & int(Flag.INTERVAL_CHANGE) for f in _flags(out)), counts
+
+
+# --- series scraped slower than the step (fm1) ---
+
+S15 = 15_000  # query step finer than the series' real scrape interval
+
+
+def _slow_run(sample_ts, *, end, step=S15, start=S15, res=S15):
+    rows = [(t, "a", 1.0, 1) for t in sample_ts]
+    return compute(
+        buckets(rows),
+        ("a",),
+        start_ms=start,
+        end_ms=end,
+        step_ms=step,
+        resolution_ms=res,
+        mode="samples",
+    )
+
+
+def _cadence(interval_ms, first, end):
+    return list(range(first, end + 1, interval_ms))
+
+
+HOUR = 3_600_000
+
+
+@pytest.mark.parametrize("phase", [0, 15_000, 30_000, 45_000])
+def test_slow_cadence_at_a_finer_step_is_all_ok(phase):
+    first = 60_000 + phase
+    out = _slow_run(_cadence(60_000, first, HOUR), end=HOUR)
+    st = states(out)
+    assert set(st) <= {State.OK, State.ABSENT}
+    # leading buckets before the first sample are ABSENT, everything after holds the cadence
+    assert State.EMPTY not in st and State.PARTIAL not in st
+    alive = [i for i, s in enumerate(st) if s != State.ABSENT]
+    exp = [e for e, s in zip(out["expected"].to_pylist(), st) if s != State.ABSENT]
+    obs = [o for o, s in zip(out["observed"].to_pylist(), st) if s != State.ABSENT]
+    assert alive and set(exp) == {0.25}
+    assert sum(obs) / sum(exp) == pytest.approx(1.0, abs=0.02)
+
+
+def test_slow_cadence_with_a_real_hole_goes_empty_after_one_and_a_half_intervals():
+    last_before, resume = 20 * 60_000, 30 * 60_000  # 10 minute hole
+    ts = _cadence(60_000, 60_000, last_before) + _cadence(60_000, resume, HOUR)
+    out = _slow_run(ts, end=HOUR)
+    by_ts = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
+    empty = sorted(t for t, s in by_ts.items() if s == State.EMPTY)
+    assert empty
+    assert empty[0] - last_before > 90_000 and empty[0] - last_before <= 90_000 + S15
+    assert empty[-1] < resume and by_ts[last_before + 90_000] == State.OK
+    assert all(by_ts[t] == State.EMPTY for t in range(empty[0], resume, S15))
+    assert by_ts[resume] == State.OK
+    exp = sum(out["expected"].to_pylist())
+    assert sum(out["observed"].to_pylist()) / exp < 0.95
+
+
+def test_irregular_slow_cadence_has_no_empty():
+    ts, t = [], 30_000
+    for i in range(80):
+        ts.append(t)
+        t += 30_000 if i % 2 == 0 else 45_000  # a 40s scrape seen through a 15s grid
+    out = _slow_run(ts, end=ts[-1])
+    assert State.EMPTY not in states(out) and State.PARTIAL not in states(out)
+    assert out["flags"].to_pylist() == [0] * out.num_rows
+
+
+def test_slow_series_trailing_silence_goes_empty_after_one_and_a_half_intervals():
+    end = HOUR
+    last = end - 5 * 60_000
+    out = _slow_run(_cadence(60_000, 60_000, last), end=end)
+    by_ts = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
+    assert by_ts[last + 90_000] == State.OK
+    assert all(by_ts[t] == State.EMPTY for t in range(last + 90_000 + S15, end + 1, S15))
+
+
+def test_slow_series_never_partial_and_never_flags_interval_change():
+    ts = _cadence(60_000, 60_000, HOUR // 2) + _cadence(120_000, HOUR // 2 + 120_000, HOUR)
+    out = _slow_run(ts, end=HOUR)
+    assert State.PARTIAL not in states(out)
+    assert not any(f & Flag.INTERVAL_CHANGE for f in out["flags"].to_pylist())
+
+
+def test_slow_cadence_feeds_summary_coverage_and_claim_share():
+    from telemetry_nerd.core.coverage_check import claim_coverage
+
+    out = _slow_run(_cadence(60_000, 60_000, HOUR), end=HOUR)
+    assert claim_coverage(out, 10 * 60_000, 50 * 60_000, S15) == []

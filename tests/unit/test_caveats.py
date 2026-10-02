@@ -134,3 +134,21 @@ def test_one_sample_per_bucket_says_at_least_the_step():
     t = table(_rows("a", [2] * 5, 2))  # 30s: implied, not a floor
     [c] = interval_caveats(t, {"a": "A"}, STEP, RES)
     assert "about every 30s" in c.message
+
+
+def test_interval_differs_reports_the_slow_series_own_interval_at_a_finer_step():
+    from telemetry_nerd.model.bucket_state import compute
+    from telemetry_nerd.model.series import BUCKET_SCHEMA
+
+    s15 = 15_000
+    ts = list(range(60_000, 3_600_000 + 1, 60_000))
+    buckets = pa.table(
+        {"ts_ms": ts, "series_id": ["a"] * len(ts), "avg": [1.0] * len(ts),
+         "min": [1.0] * len(ts), "max": [1.0] * len(ts), "count": [1] * len(ts)},
+        schema=BUCKET_SCHEMA,
+    )  # fmt: skip
+    st = compute(buckets, ("a",), start_ms=s15, end_ms=3_600_000, step_ms=s15,
+                 resolution_ms=s15, mode="samples")  # fmt: skip
+    # configured 15s, real 60s: ratio 4 -> flagged
+    [c] = interval_caveats(st, {"a": "A"}, s15, s15) or [None]
+    assert c is not None and "about every 60s" in c.message and "15s" in c.message

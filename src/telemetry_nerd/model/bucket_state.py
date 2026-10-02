@@ -31,6 +31,8 @@ class Flag(IntFlag):
 PARTIAL_RATIO = 0.9
 CHANGE_RATIO = 2.0  # a series' sample rate halves or doubles within the window
 CHANGE_MIN_BUCKETS = 3  # non-zero buckets each half needs before it can be judged
+SLOW_MIN_BUCKETS = 3  # non-zero buckets needed to estimate an interval from their spacing
+SLOW_MISS_RATIO = 1.5  # a slower-than-step series misses its cadence after this many intervals
 
 STATE_SCHEMA = pa.schema(
     [
@@ -91,20 +93,30 @@ def compute(
     df = base.join(obs, on=["series_id", "ts_ms"], how="left").with_columns(
         pl.col("observed").fill_null(0.0)
     )
+    df = df.sort("series_id", "ts_ms")
     if mode == "samples":
-        # the series' own resolution, not the source's configured one (a source may scrape
-        # slower than its preset says): the typical count of a bucket that has samples
-        typical = pl.col("observed").filter(pl.col("observed") > 0).median().over("series_id")
-        expected = pl.max_horizontal(pl.lit(1.0), typical.fill_null(1.0))
+        df = _with_expected(df, step_ms)
     else:
-        expected = pl.lit(1.0)
-    df = df.with_columns(expected.alias("expected"))
+        df = df.with_columns(
+            pl.lit(1.0).alias("expected"),
+            pl.lit(False).alias("_slow"),
+            pl.lit(None, dtype=pl.Float64).alias("_i"),
+            pl.lit(None, dtype=pl.Int64).alias("_last_nz"),
+        )
     first = (
         df.filter(pl.col("observed") > 0)
         .group_by("series_id")
         .agg(pl.col("ts_ms").min().alias("first_seen"))
     )
     df = df.join(first, on="series_id", how="left")
+    # a slower-than-step series is empty only once the time since its last sample exceeds its
+    # cadence; faster series (and any series with no interval estimate) miss with every 0 bucket
+    since = pl.col("ts_ms") - pl.col("_last_nz")
+    df = df.with_columns(
+        (~pl.col("_slow") | (since > SLOW_MISS_RATIO * pl.col("_i").fill_null(0.0))).alias(
+            "_missed"
+        )
+    )
     unknown = pl.lit(source_filled)
     for a, b, _reason in failed:
         unknown = unknown | pl.col("ts_ms").is_between(a, b)
@@ -114,7 +126,9 @@ def compute(
         .when(pl.col("first_seen").is_not_null() & (pl.col("ts_ms") < pl.col("first_seen")))
         .then(int(State.ABSENT))
         .when(pl.col("observed") == 0)
-        .then(int(State.EMPTY))
+        .then(pl.when(pl.col("_missed")).then(int(State.EMPTY)).otherwise(int(State.OK)))
+        .when(pl.col("_slow"))
+        .then(int(State.OK))  # a sample on a slower-than-step series holds its cadence
         .when(short(pl.col("observed"), pl.col("expected")))
         .then(int(State.PARTIAL))
         .otherwise(int(State.OK))
@@ -144,12 +158,47 @@ def compute(
     return out.to_arrow().cast(STATE_SCHEMA)
 
 
+def _with_expected(df: pl.DataFrame, step_ms: int) -> pl.DataFrame:
+    """Adds `expected` (samples per bucket), `_slow`, `_i` (the series' sample interval in ms, null
+    when unknown) and `_last_nz` (ts of the series' latest non-zero bucket so far). df is sorted.
+
+    The series' own interval, not the source's configured one (a source may scrape slower than its
+    preset says). Normally the typical count of a bucket that has samples: interval = step / that.
+    When that count is 1 and the non-zero buckets are spaced wider than the step, the series is
+    scraped slower than the step: interval = the median spacing, expected = step / interval < 1.
+    `expected` carries the estimate (interval = step / expected): caveats reads it from there."""
+    nz = df.filter(pl.col("observed") > 0)
+    per = nz.group_by("series_id").agg(
+        pl.col("observed").median().alias("_typical"),
+        pl.col("ts_ms").diff().median().alias("_gap"),
+        pl.len().alias("_n"),
+    )
+    slow = (
+        (pl.col("_typical") <= 1.0)
+        & (pl.col("_n") >= SLOW_MIN_BUCKETS)
+        & (pl.col("_gap") > step_ms)
+    ).fill_null(False)
+    per = per.with_columns(
+        slow.alias("_slow"),
+        pl.when(slow)
+        .then(pl.col("_gap"))
+        .otherwise(step_ms / pl.max_horizontal(pl.lit(1.0), pl.col("_typical")))
+        .alias("_i"),
+    ).select("series_id", "_slow", "_i")
+    df = df.join(per, on="series_id", how="left").with_columns(
+        pl.col("_slow").fill_null(False), pl.col("_i").fill_null(float(step_ms))
+    )
+    last_nz = pl.when(pl.col("observed") > 0).then(pl.col("ts_ms")).forward_fill().over("series_id")
+    return df.with_columns((step_ms / pl.col("_i")).alias("expected"), last_nz.alias("_last_nz"))
+
+
 def _interval_change(df: pl.DataFrame) -> tuple[pl.DataFrame, pl.Expr]:
     """Series whose sample rate differs >= CHANGE_RATIO between the first and second half of their
     non-zero buckets: the half further from the series' baseline (`expected`) gets INTERVAL_CHANGE.
     Only a flag: the baseline and the states are unchanged. Returns df (sorted by series, ts)
     with helper bounds and the flag expression."""
-    nz = df.filter(pl.col("observed") > 0).with_columns(
+    # (slower-than-step series show a 0/1 pattern, not a rate: not judged)
+    nz = df.filter((pl.col("observed") > 0) & ~pl.col("_slow")).with_columns(
         (pl.int_range(pl.len()).over("series_id") >= pl.len().over("series_id") // 2).alias("_late")
     )
     half = {

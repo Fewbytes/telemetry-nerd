@@ -289,3 +289,12 @@ def test_coarse_scrape_and_rate_change_codes_in_summary():
     rows = [(i * STEP, "a", 1.0, 1.0, 1.0, c) for i, c in enumerate(counts)]
     out = run(meta(end=7000, resolution=250), result(rows, {"a": "a"}))
     assert "interval_change" in out["caveats"]
+
+
+def test_series_slower_than_the_step_reads_healthy_in_summary():
+    # one sample every 4th 1s bucket (4s scrape), step 1s, configured 1s: not missing
+    rows = [(t, "a", 1.0, 1.0, 1.0, 1) for t in range(0, 61_000, 4000)]
+    out = run(meta(end=60_000, resolution=1000), result(rows, {"a": "a"}))
+    cov = out["series"][0]["coverage"]
+    assert cov["pct"] == 1.0 and cov["missing"] == "0s"
+    assert "missing_data" not in out["caveats"] and "interval_differs" in out["caveats"]

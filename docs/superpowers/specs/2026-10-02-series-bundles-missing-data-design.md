@@ -139,10 +139,19 @@ accepts both shapes during migration.
 | field | meaning |
 |---|---|
 | `observed` | samples in the bucket (today's `count`) |
-| `expected` | step / series resolution |
+| `expected` | step / series' own sample interval (see below) |
 | `state` | `ok` · `partial` (observed/expected < 0.9) · `empty` (alive, 0 samples) · `absent` (outside first/last seen) · `unknown` (fetch failed, outside retention, source can't tell) |
 | `flags` | bitmask: `reset`, `interval_change`, `stale_marker`, `source_filled` |
 | `reason` | for `unknown`/`source_filled`: short code from the source profile or error |
+
+Series interval `I` (samples mode): normally `step / median(non-zero counts)`. When that median is
+1 and the series' non-zero buckets are spaced wider than the step (median gap, at least 3 such
+buckets), the series is scraped **slower than the step** and `I` = that median gap, so `expected` =
+step / I < 1 and coverage = Σobserved / Σexpected stays ≈ 1 for a healthy series. For such a series
+a bucket with samples is `ok` (never `partial`), and a bucket without is `empty` only when more than
+1.5 × I has passed since the series' last sample (cadence missed; trailing silence likewise), else
+`ok` (within its normal cadence). Buckets before the first sample stay `absent`. `interval_change`
+is not judged for these series. `interval_differs` reports `I`.
 
 Dataset level: failed spans with error text (never cached; retried on next read).
 
