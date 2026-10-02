@@ -61,6 +61,7 @@ from telemetry_nerd.core.card_payload import (
     profile_card,
 )
 from telemetry_nerd.core.events import Actor, EventLog
+from telemetry_nerd.core.fleet_ops import FleetOps
 from telemetry_nerd.core.panel_payloads import (
     ghost_payload,
     heatmap_panel_data,
@@ -181,6 +182,7 @@ class TelemetryService:
     diagnostics: SeriesDiagnostics = field(init=False)
     profiles: ProfileService = field(init=False)
     seasonal: SeasonalOps = field(init=False)
+    fleets: FleetOps = field(init=False)
     _scrape_cache: dict = field(default_factory=dict, init=False, repr=False)
     #: compute a T1 operating profile in the background when a time-series panel is shown
     auto_profile: bool = False
@@ -192,6 +194,7 @@ class TelemetryService:
             self.sources, self.cache, ProfileStore(self.workspace.connection), self.ws, self.clock
         )
         self.seasonal = SeasonalOps(self.datasets, self.signal, self.query, self._profile_periods)
+        self.fleets = FleetOps(self.datasets, self.signal, self.ws.catalog_facts)
 
     def _profile_periods(self, source: str, expr: str) -> list[str]:
         p = self.profiles.cached(source, expr)
@@ -210,6 +213,16 @@ class TelemetryService:
         """Now vs the same phase of previous cycles, band from their spread (lkn.2)."""
         cfg = await self.seasonal.fetch(dataset_id, cycles, tz, exclude, actor)
         return self.seasonal.summary(dataset_id, cfg)
+
+    def fleet(
+        self,
+        dataset_id: str,
+        by: list[str] | None = None,
+        scale: str = "auto",
+        normalise: str = "none",
+    ) -> dict:
+        """Many series of one metric as a group: spread, outlying members, churn (lkn.3)."""
+        return self.fleets.summary(dataset_id, by, scale, normalise)
 
     def seasonal_suggestion(self, dataset_id: str, mark: str = "auto") -> str | None:
         """Hint for `show`: the cached operating profile has a daily/weekly seasonal model."""
@@ -1039,6 +1052,10 @@ class TelemetryService:
         elif mark == "seasonal":
             cfg = self.seasonal.last_config(dataset_id)
             spec.layers = [Layer(mark="seasonal", data=dataset_id, seasonal=cfg)]
+        elif mark == "fleet":
+            cfg = self.fleets.last_config(dataset_id)
+            self.fleets.panel(dataset_id, cfg)  # validates (percentiles, units, members) now
+            spec.layers = [Layer(mark="fleet", data=dataset_id, fleet=cfg)]
         elif meta.derived and mark == "auto":
             d = meta.derived
             views = offered_views(d["op"])
@@ -1158,6 +1175,13 @@ class TelemetryService:
             out = self.diagnostics.panel(
                 dataset_id, w["start_ms"] if w else None, w["end_ms"] if w else None
             )
+            return {
+                "panel": panel.to_dict(),
+                "dataset": self.datasets.meta(dataset_id).to_dict(),
+                **out,
+            }
+        if layer0["mark"] == "fleet":
+            out = self.fleets.panel(dataset_id, layer0.get("fleet") or {})
             return {
                 "panel": panel.to_dict(),
                 "dataset": self.datasets.meta(dataset_id).to_dict(),

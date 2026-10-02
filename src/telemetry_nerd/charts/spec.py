@@ -26,6 +26,7 @@ Mark = Literal[
     "spectrogram",
     "spc",
     "seasonal",
+    "fleet",
 ]
 SPECTRAL_MARKS = {"spectrum", "spectrogram"}
 WINDOW_MARKS = {"histogram", "ecdf", "quantile_curve", "ccdf"}
@@ -54,6 +55,7 @@ class Layer(BaseModel):
     min_period_ms: int | None = None
     max_period_ms: int | None = None
     seasonal: dict | None = None  # compare_seasonal config: tz, exclude, reference datasets
+    fleet: dict | None = None  # fleet config: by, scale, normalise
 
 
 class YLimit(BaseModel):
@@ -249,7 +251,9 @@ def validate(
                 message=(
                     f"chart has {total} line series across {', '.join(datasets)}; line charts "
                     f"allow at most {LINE_SERIES_BUDGET}; aggregate across series (e.g. sum by / "
-                    "avg by a coarser label) or filter to the series that answer the question."
+                    "avg by a coarser label) or filter to the series that answer the question; "
+                    "for many members of one metric (pods, nodes) use fleet(dataset) and "
+                    'show(dataset, question, mark="fleet"): group band + outliers.'
                 ),
             )
         )

@@ -46,6 +46,10 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   analyze/spectrum/show `suggest` it), then `show(dataset, question, mark="seasonal")`. State the
   reference it chose (cycles, alignment/timezone, excluded cycles), the ratio with the normal
   range, and say so when history is insufficient. Never for percentile series.
+- Many series of one metric ("CPU of all nodes", > 5 pods): `fleet(dataset)`, then
+  `show(dataset, question, mark="fleet")`; never 100 lines. State the member count, spread,
+  the named outliers (kind, since, effect with interval), churn and missing share. Never for
+  percentile series (compare per-member rates or threshold fractions).
 - Filters: `filter(dataset, kind, period, reason)` only when the question needs it: lowpass for
   trend/sustained shift, highpass to remove baseline/diurnal before looking for spikes/steps,
   bandpass around a spectrum peak. Never filter percentiles or raw counters. `show` the result;
@@ -227,6 +231,41 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             return _dump(await service.compare_seasonal(dataset, cycles, tz, exclude))
         except SourceError as e:
             raise ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e)) from e
+        except (NotFound, ValueError) as e:
+            raise ToolError(str(e)) from e
+
+    @mcp.tool()
+    def fleet(
+        dataset: str,
+        by: list[str] | None = None,
+        scale: str = "auto",
+        normalise: str = "none",
+    ) -> str:
+        """Analyse many series of one metric as a group (a fleet: pods, nodes, instances) instead
+        of drawing them as lines: spread across members per step, outlying members, churn.
+
+        Spread: median, quartiles, 10/90% and min/max across the members that reported at each
+        step (descriptive; missing members reduce n, never imputed), n per step and missing
+        share. Outliers are judged against the OTHER members (leave-one-out median / MAD),
+        robust to the outliers themselves, by: level (consistently off), change (drifting or
+        shifted over the window) and excursions (spikes, 5- and 15-step episodes). Family-wise
+        error 1% across members, tests and steps (Bonferroni); heavy-tailed noise is detected
+        and thresholds follow the fleet's own peaks. Each outlier: member labels, kind
+        (persistent | drifting | shifted | transient), direction, score (>= 1 = beyond the
+        threshold), since (start of the current deviation; since_window_start = at least
+        since the window began), effect (ratio or difference with 99% interval, from n_eff),
+        transient episodes (sustained vs momentary relative to the autocorrelation time) and
+        an `evidence` statistic for finding_create. Churn: members that appeared or stopped
+        reporting (silent members may be the sick ones).
+        by: label names that identify members (must be unique per series; default: the labels
+        that vary). scale: auto (log = ratios when every value > 0) | log | linear.
+        normalise: none | member (each member relative to its own median: compares shapes of
+        members with different sizes; the level test is off). Ranges over 1440 steps are
+        averaged per member first. Refused on percentile series (median of p99s is not the
+        fleet p99), distributions, raw counters, < 5 members, members with different units.
+        Draw with show(dataset, question, mark="fleet")."""
+        try:
+            return _dump(service.fleet(dataset, by, scale, normalise))
         except (NotFound, ValueError) as e:
             raise ToolError(str(e)) from e
 
@@ -649,6 +688,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         violations, shaded baseline; windows=[{start, end}] is the baseline (default first half).
         seasonal (time series, after compare_seasonal): now vs previous cycles (faint), their
         median and 90% band, flagged points; the user can switch to the ratio view.
+        fleet (many series of one metric, after fleet or directly): spread band across members
+        (min-max, 10-90, 25-75 shaded), median, outlying members drawn and labelled, n per step.
         spectrum / spectrogram (time series): periodicity panels; spectrogram needs `segment`
         (e.g. "30m", state it in your answer) and takes `overlap` (default 0.5). view: for a panel
         drawn from filter(): the default view (overlay | filtered | removed | raw).
