@@ -35,7 +35,7 @@ conclusions.
 5. **Every graph answers an explicit question.** Panels cannot be created without one.
 6. **Bulk data never enters Claude's context.** Claude works with handles and compact
    summaries; the server holds the data.
-7. **The workspace is the single source of truth.** Claude, the UI, and the sandbox all
+7. **The workspace is the single source of truth.** Claude, the UI, and tier-2 code all
    mutate the same object model through the same operation layer.
 
 ### 1.3 Personas
@@ -48,8 +48,8 @@ conclusions.
 
 ## 2. Architecture
 
-Modular monolith: one Python (asyncio) server process, a browser UI, and sibling sandbox
-containers.
+Modular monolith: one Python (asyncio) server process, a browser UI, and per-workspace
+IPython kernel subprocesses for tier-2 code.
 
 ```
  Terminal: Claude Code ◄──── channel events ──────┐
@@ -57,24 +57,24 @@ containers.
         ▼                                          │
  ┌──────────── tn-server (Python, asyncio) ────────┴───────┐
  │  mcp/        MCP tools + channel bridge                  │
- │  api/        HTTP + WebSocket (UI, sandbox, future SDK)  │
+ │  api/        HTTP + WebSocket (UI, tn lib, future SDK)   │
  │  workspace/  panels, annotations, hypotheses, findings…  │
  │  pipeline/   DAG: nodes = query | op | code → datasets   │
  │  analysis/   tier-1 ops (process pool)                   │
  │  datasets/   DuckDB series cache (/data volume)          │
  │  sources/    adapter interface → PromQL/MetricsQL        │
  │  catalog/    metric semantics, relations, profiles       │
- │  sandbox/    Docker + persistent IPython kernel          │
+ │  kernels/    IPython kernel subprocess per workspace     │
  └───────┬──────────────────────────▲──────────────────────┘
          │ WS: workspace events     │ HTTP: tn.query/put (Arrow IPC)
          ▼                          │
-   Browser UI (TS/Svelte/uPlot)  Sandbox container (IPython + tn lib)
+   Browser UI (TS/Svelte/uPlot)  IPython kernel (subprocess + tn lib)
 ```
 
 ### 2.1 Storage
 
 - **DuckDB** (`/data/series.duckdb`): series cache and derived datasets. Only the server
-  process opens it (DuckDB is single-writer). Workers and the sandbox receive Arrow over
+  process opens it (DuckDB is single-writer). Workers and tier-2 kernels receive Arrow over
   IPC/HTTP and write results back through the server. ASOF JOIN is used for aligning
   series with mismatched timestamps.
 - **SQLite** (`/data/workspace.db`): workspace objects, append-only event log, catalog.
@@ -90,7 +90,7 @@ containers.
 
 ### 2.3 Event model
 
-Every mutation is an event `(seq, ts, actor ∈ {claude, user, sandbox}, type, object_id,
+Every mutation is an event `(seq, ts, actor ∈ {claude, user, code}, type, object_id,
 payload)`. Each event is:
 
 1. persisted to the append-only log (replay, audit, evidence trail);
@@ -100,9 +100,9 @@ payload)`. Each event is:
 
 ### 2.4 Deployment
 
-One container image containing the server and the built UI; it spawns sibling sandbox
-containers. Local: `uvx telemetry-nerd serve` or docker compose. Remote: same image near
-the data source, MCP over streamable HTTP. Remote hardening (auth, sandbox isolation) is
+One container image containing the server and the built UI; tier-2 kernels run as
+subprocesses inside it. Local: `uvx telemetry-nerd serve` or docker compose. Remote: same image near
+the data source, MCP over streamable HTTP. Remote hardening (auth, code isolation) is
 out of MVP scope but the seams exist (§6.3).
 
 ## 3. Data and workspace model
@@ -304,23 +304,40 @@ for Claude** — key statistics, notable points, auto-generated caveats (`low_n`
 and significance expressed relative to the normal band ("deviation = 0.3× normal band
 width").
 
-### 5.2 Tier-2 sandbox
+### 5.2 Tier-2 code execution (no sandbox)
 
-- One persistent **IPython kernel per workspace** in a Docker container, driven with
-  `jupyter_client`. Warm kernel removes startup latency; state persists between runs.
-- Preinstalled: numpy, scipy, statsmodels, polars, duckdb, ruptures, pywavelets,
-  scikit-learn, pint, and the `tn` client library.
-- `tn` API: `tn.query(source, expr, range, step)`, `tn.dataset(handle)`,
+**Decision (2026-10-02): no sandbox in the MVP.** If the daemon runs in its container
+image, that container already is the isolation boundary; if it runs on the user's machine,
+Claude-written code in a kernel is equivalent to Claude running Python through Bash (minus
+the per-command prompt, which is accepted). A daemon crash is possible either way. Docker
+sibling containers, `--network none` and a socket broker are deferred to a pluggable backend
+for shared remote deployments (§11.3), not built now. Embedded Lua/WASM Python were rejected
+(no scientific Python ecosystem / heavy for no gain); `exec` inside the daemon was rejected
+because one runaway loop, memory blow-up or native crash would take the daemon down and a
+thread cannot be reliably timed out.
+
+- **Engine:** one persistent **IPython kernel per workspace as a subprocess of the daemon**,
+  driven with `jupyter_client`; started lazily, state persists between runs, shut down when
+  idle. Same interpreter environment as the daemon.
+- **Limits:** wall-clock timeout per run (interrupt, then kill + restart); memory limit
+  where the OS allows (`RLIMIT_AS` on Linux). Crash or kill → code node `failed` with the
+  traceback, kernel restarted; datasets are server-side so only in-memory variables are lost.
+  The daemon is never affected.
+- **Libraries:** numpy, polars, pyarrow are always there; scipy, statsmodels, scikit-learn,
+  ruptures, pywavelets ship as the optional `analysis` extra (`telemetry-nerd[analysis]`;
+  a `-full` image tag carries them).
+- **`tn` API:** `tn.query(source, expr, range, step)`, `tn.dataset(handle)`,
   `tn.stream(...)` (RecordBatch iterator), `tn.put(result, meta)`, `tn.put_fit(...)`,
-  `tn.chart(...)` (spec builder).
-- `tn` talks to the server's HTTP API with Arrow IPC streaming. Adapters and credentials
-  stay in the server. Every broker call is logged against the code node.
-- Each run becomes a `code` node with stored code, reproducible.
-- Outputs must declare uncertainty or `exact`; otherwise tagged `no_uncertainty` and
-  ineligible as evidence.
-- Limits: wall-clock timeout, memory limit. Crash → node `failed` with traceback, kernel
-  restarted; datasets are server-side so only in-memory variables are lost.
-- Promotion path: useful tier-2 functions become tier-1 ops.
+  `tn.chart(...)` (spec builder). `tn` talks to the daemon's HTTP API with Arrow IPC.
+  Adapters and credentials stay in the daemon. Every `tn` call is logged against the code
+  node.
+- **Code nodes:** each run becomes a `code` node with the stored code, its input and output
+  dataset handles (lineage), duration and outcome; re-runnable.
+- **Evidence rule:** outputs must declare uncertainty or `exact`; otherwise they are tagged
+  `no_uncertainty` and are ineligible as evidence.
+- **MCP:** `run_code(code, workspace)` returns stdout (truncated), the produced handles, a
+  compact summary and the traceback on failure. Bulk data never comes back through it.
+- **Promotion path:** useful tier-2 functions become tier-1 ops.
 
 ## 6. Charts and UI
 
@@ -488,7 +505,7 @@ All errors are explicit and typed; nothing fails silently.
 | Source down / timeout | typed error to Claude; partial data carries `partial` caveat |
 | Limit breach | error with actionable hint (narrow selector, coarser step) |
 | Op precondition failure | refusal with reason |
-| Sandbox crash / timeout | node `failed` with traceback; kernel restarted |
+| Tier-2 code crash / timeout | node `failed` with traceback; kernel interrupted or restarted; daemon unaffected |
 | Channel disconnected | events queued; hook fallback delivers them |
 | Recent (settling) data | flagged `settling` |
 | Render budget breach | logged against node; coarser aggregation fallback |
@@ -528,7 +545,7 @@ plug in later via read-only adapter configuration.
 - Ops: `rate`, `resample`, `align`, `aggregate` + outliers, `ratio` (Wilson), heatmap,
   `ecdf`, `fraction_over`, `quantile` (bounded), `compare_dist`, `compare_regions`,
   `changepoints`, `check_littles_law`, `fit linear`.
-- Sandbox (IPython in Docker, `tn` lib, open network in MVP).
+- Tier-2 code execution (IPython kernel subprocess, `tn` lib; no sandbox, see §5.2).
 - Marks: `line+envelope`, `band`, `points+errorbars`, `heatmap`, `ecdf`, `xy`, `fit`,
   `bar`. Validator, reference y-range, normal band, series budget.
 - Panel anatomy: question, marginal histogram, metric card, provenance, follow-ups.
@@ -546,8 +563,8 @@ more knowledge packs.
 ### 11.3 Later
 
 Logs (VictoriaLogs/Loki/Elasticsearch/Quickwit) and other sources (Datadog, CloudWatch,
-Grafana); Agent SDK chat in UI; multi-user collaboration (CRDT); authentication; sandbox
-hardening for remote deployment (`--network none` + Unix-socket broker).
+Grafana); Agent SDK chat in UI; multi-user collaboration (CRDT); authentication; optional
+code isolation for shared remote deployment (`--network none` + Unix-socket broker).
 
 ### 11.4 Build order
 
@@ -555,7 +572,7 @@ hardening for remote deployment (`--network none` + Unix-socket broker).
 2. Workspace objects, event log, channel.
 3. Learning and catalog.
 4. Distribution and statistics ops.
-5. Sandbox.
+5. Tier-2 code execution.
 6. Reasoning objects, UX polish, scenario evals.
 
 ## 12. Tech stack

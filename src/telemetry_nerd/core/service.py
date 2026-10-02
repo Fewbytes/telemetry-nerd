@@ -1,4 +1,4 @@
-"""One operation layer shared by MCP, HTTP, and (later) the sandbox."""
+"""One operation layer shared by MCP, HTTP, and (later) the tier-2 `tn` library."""
 
 from __future__ import annotations
 

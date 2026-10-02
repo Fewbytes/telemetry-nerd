@@ -1,4 +1,4 @@
-"""HTTP + WebSocket API for the UI, the sandbox (M5) and future front doors."""
+"""HTTP + WebSocket API for the UI, the tier-2 `tn` library and future front doors."""
 
 from __future__ import annotations
 

@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 # Telemetry Nerd daemon image (bead ijg.1): workspace UI + HTTP API + MCP at /mcp.
 # Build:  just docker-build        Run:  just docker-run
-# The M5 tier-2 sandbox image (bead b98) is a separate image (deploy/sandbox/); this one
-# stays free of Jupyter/kernel deps.
+# Tier-2 code (bead b98) runs as IPython kernel subprocesses inside this container (no sandbox
+# image); the scientific extras come with the `analysis` extra / a -full tag.
 
 FROM node:26-trixie-slim AS ui
 WORKDIR /ui
