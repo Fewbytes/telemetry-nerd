@@ -74,10 +74,19 @@ function refusal(v: YView, st: YStats, ctx: YContext | null): string | null {
   return null;
 }
 
-/** What "auto" means: log when positive data spans more than two decades, else the reference
- *  range when the catalog knows a normal range or limit, else uPlot's own range. */
+/** The catalog gives both ends: a ratio is [0,1], a percentage [0,100]. */
+export const closedBounds = (c: YContext | null | undefined): boolean =>
+  !!c && c.natural_lo !== null && c.natural_hi !== null;
+
+/** What "auto" means: the metric's fixed natural axis when the catalog bounds it on both sides and
+ *  the data fits (data outside its bounds is a contradiction to show, not to hide); else log when
+ *  positive data spans more than two decades; else the reference range when the catalog knows a
+ *  normal range or limit; else uPlot's own range. */
 function autoView(st: YStats, ctx: YContext | null): YView | null {
   const a = st.all;
+  if (a && closedBounds(ctx) && a.lo >= ctx!.natural_lo! && a.hi <= ctx!.natural_hi!) {
+    return { mode: "semantic", label: `natural bounds ${ctx!.bounds ?? ""} (auto)`.trim() };
+  }
   if (a && a.lo > 0 && decades(a) > 2) return { mode: "log", label: `log (auto: ${decades(a).toFixed(1)} decades)` };
   if (a && hasReference(ctx)) return { mode: "reference", label: "reference range" };
   return null;

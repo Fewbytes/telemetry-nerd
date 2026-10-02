@@ -183,6 +183,7 @@
       ? panelNotes(data.caveats, {
           yScaledToData: panel.spec.y.range_mode === "data",
           yContext: yctx,
+          auto: panel.spec.auto ?? null,
           unit: panel.spec.y.unit,
           nMin: data.dataset.n_min ?? null,
           representation: data.dataset.representation,

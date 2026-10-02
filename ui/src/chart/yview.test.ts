@@ -148,3 +148,33 @@ describe("yview with catalog context (2as.10)", () => {
     expect(text).toMatch(/limit node_filesystem_size_bytes 200/);
   });
 });
+
+describe("auto picks the natural axis for bounded metrics (2as.14)", () => {
+  const ctx = (o: Partial<YContext> = {}): YContext => ({
+    natural_lo: 0, natural_hi: 1, bounds: "[0,1]", bounds_origin: "rule", limit: null, profile: null, notes: [], ...o,
+  });
+  const stats = (vals: number[]) => yStats([{ id: "s", labels: {}, ts: vals.map((_, i) => i), avg: vals, min: vals, max: vals, count: vals.map(() => 1) }], { quantile: false, nMin: null });
+  it("a ratio is drawn on [0,1] by default, whatever the data does inside it", () => {
+    const r = resolveY(null, stats([0.4, 0.5]), ctx());
+    expect(r.range).toEqual([0, 1]);
+    expect(r.effective?.label).toMatch(/natural bounds \[0,1\] \(auto\)/);
+    expect(r.zoomed).toBe(false);
+  });
+  it("a percentage is drawn on [0,100]", () => {
+    expect(resolveY(null, stats([10, 20]), ctx({ natural_hi: 100, bounds: "[0,100]" })).range).toEqual([0, 100]);
+  });
+  it("data outside the bounds is not hidden: the axis falls back", () => {
+    const r = resolveY(null, stats([0.5, 1.4]), ctx());
+    expect(r.effective?.mode).not.toBe("semantic");
+  });
+  it("beats auto-log for a bounded metric spanning decades", () => {
+    expect(resolveY(null, stats([0.0005, 0.9]), ctx()).range).toEqual([0, 1]);
+  });
+  it("a one-sided bound (>= 0) keeps today's automatic behaviour", () => {
+    expect(resolveY(null, stats([5, 6]), ctx({ natural_hi: null, bounds: "≥0" })).range).toBeNull();
+  });
+  it("an explicit choice still wins", () => {
+    const r = resolveY({ mode: "data", label: "data" } as YView, stats([0.4, 0.5]), ctx());
+    expect(r.range![1]).toBeLessThan(1);
+  });
+});

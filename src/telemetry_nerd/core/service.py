@@ -16,6 +16,7 @@ from telemetry_nerd.analysis.distlod import (
 )
 from telemetry_nerd.analysis.exprkind import (
     QUANTILE_HINT,
+    RATE_INTERVAL,
     analyze,
     expand,
     histogram_source,
@@ -33,6 +34,7 @@ from telemetry_nerd.charts.dataview import SignalViews, offered_views
 from telemetry_nerd.charts.spec import (
     SPECTRAL_MARKS,
     WINDOW_MARKS,
+    AutoForm,
     ChartSpec,
     Layer,
     Marginal,
@@ -45,7 +47,7 @@ from telemetry_nerd.charts.spec import (
     auto_spec,
     validate,
 )
-from telemetry_nerd.charts.units import metric_names
+from telemetry_nerd.charts.units import metric_names, raw_counters
 from telemetry_nerd.charts.ycontext import (
     counter_rate_metric,
     limit_expr,
@@ -604,6 +606,51 @@ class TelemetryService:
             "cardinality": {"in_panel": series, "catalog": None},
         }
 
+    async def show_auto(
+        self,
+        dataset_id: str,
+        question: str,
+        actor: Actor = "claude",
+        raw: bool = False,
+        **kw,
+    ) -> ShowResult:
+        """`show`, choosing the form of the signal from the catalog (bead 2as.14).
+
+        A plain selector of a counter is a running total: draw its rate instead, from a new dataset
+        over the same window and step, and say so on the panel. `raw=True` draws what was asked."""
+        meta = self.datasets.meta(dataset_id)
+        auto_ok = (
+            not raw
+            and kw.get("mark", "auto") == "auto"
+            and not meta.derived
+            and meta.representation == "bucket_agg"
+            and selector_parts(meta.expr) is not None
+        )
+        if auto_ok:
+            metric = selector_parts(meta.expr)[0]  # type: ignore[index]
+            if self.ws.catalog_facts(meta.source, metric).type == "counter":
+                try:
+                    rate = (
+                        await self.query(
+                            f"rate({meta.expr.strip()}[{RATE_INTERVAL}])",
+                            start=str(meta.start_ms),
+                            end=str(meta.end_ms),
+                            step=format_duration(meta.step_ms),
+                            source=meta.source,
+                            actor=actor,
+                        )
+                    )["dataset"]
+                except (SourceError, ValueError):
+                    pass  # falls through to the raw chart, with the raw_counter warning
+                else:
+                    form = AutoForm(
+                        transform="rate",
+                        source_dataset=dataset_id,
+                        reason=f"{metric} is a counter (a running total); its per-second rate is drawn",
+                    )
+                    return self.show(rate, question, actor, auto=form, **kw)
+        return self.show(dataset_id, question, actor, raw_ok=raw, **kw)
+
     async def y_context(self, panel_id: str, actor: Actor = "system") -> YContext | None:
         """Work out what the catalog says about a time panel's y axis and record it (bead 2as.10).
 
@@ -909,6 +956,8 @@ class TelemetryService:
         view: str | None = None,
         segment: str | None = None,
         overlap: float | None = None,
+        auto: AutoForm | None = None,
+        raw_ok: bool = False,
     ) -> ShowResult:
         meta = self.datasets.meta(dataset_id)
         # An agent-provided unit (Claude learned it from the source, the emitting
@@ -921,6 +970,7 @@ class TelemetryService:
             representation=meta.representation,
             lookup=lambda metric: self.ws.catalog_facts(meta.source, metric),
         )
+        spec.auto = auto
         panel_datasets = [dataset_id]
         if mark in SPECTRAL_MARKS:
             self.signal.check(dataset_id, mark)
@@ -976,6 +1026,22 @@ class TelemetryService:
             {d: self.datasets.series_count(d) for d in panel_datasets},
             {d: self.datasets.meta(d).representation for d in panel_datasets},
         )
+        counters = (
+            raw_counters(meta.expr, lambda m: self.ws.catalog_facts(meta.source, m))
+            if spec.layers[0].mark == "line+envelope" and not meta.derived
+            else []
+        )
+        if counters and not (auto or raw_ok):
+            issues.append(
+                ValidationIssue(
+                    rule="raw_counter",
+                    severity="warning",
+                    message=(
+                        f"{', '.join(counters)} is a counter, so this draws a running total that "
+                        "only grows; chart rate(...[$__rate_interval]) to see what happens"
+                    ),
+                )
+            )
         errors = [i for i in issues if i.severity == "error"]
         if errors:
             raise ChartRejected(errors)

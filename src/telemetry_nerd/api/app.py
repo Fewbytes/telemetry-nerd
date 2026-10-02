@@ -248,7 +248,13 @@ def create_app(
         if unit is not None and not isinstance(unit, str):
             return _error(400, "unit must be a string", hint='e.g. "s", "B", "req/s"')
         try:
-            res = service.show(body["dataset"], body["question"], actor="user", unit=unit)
+            res = await service.show_auto(
+                body["dataset"],
+                body["question"],
+                actor="user",
+                unit=unit,
+                raw=body.get("raw") is True,
+            )
         except ChartRejected as e:
             return _error(422, "chart rejected", issues=[i.model_dump() for i in e.issues])
         except NotFound as e:

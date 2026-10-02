@@ -29,6 +29,8 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   `query(source=...)` picks the source.
 - `show` draws a dataset as a panel. Every panel must answer an explicit question; phrase
   it as the question the graph answers. Share the returned URL with the user.
+  A plain counter selector is drawn as its rate (the answer's `auto` says so); `raw=true` draws
+  the running total. A metric the catalog bounds on both sides gets its natural axis.
 - When one outlier or a faded low-n bucket squashes a panel's y range, `suggest_y_view` (e.g.
   mode=meaningful) with a one-line reason; do not re-query to hide data.
 - To ask "is now different from before?" about a time panel, `show_marginal(panel,
@@ -586,6 +588,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         view: str | None = None,
         segment: str | None = None,
         overlap: float | None = None,
+        raw: bool = False,
     ) -> str:
         """Draw a dataset as a panel (mean line + min/max envelope) in the shared workspace.
 
@@ -608,7 +611,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         drawn from filter(): the default view (overlay | filtered | removed | raw).
         windows (histogram/ecdf): 1-4 [{start, end, label}] compared on one chart, e.g. the
         spike vs the preceding baseline; each window sums whole steps, n is shown per window.
-        Returns {panel, url, warnings, y_range_notes?}: the y range defaults to the reference
+        A plain selector of a counter (a running total) is drawn as its rate, from a new dataset
+        over the same window; the answer says so under `auto`. raw=true draws exactly the dataset.
+        Returns {panel, url, warnings, auto?, y_range_notes?}: the y range defaults to the reference
         range (data, normal range, physical limit); y_range_notes says what was not available.
         """
         try:
@@ -620,9 +625,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                 )
                 for w in windows or []
             ]
-            res = service.show(
+            res = await service.show_auto(
                 dataset,
                 question,
+                raw=raw,
                 unit=unit,
                 mark=mark,
                 windows=wins,
@@ -641,6 +647,14 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             "url": f"{ui_url}/#/panel/{res.panel.id}",
             "warnings": [i.message for i in res.issues],
         }
+        if res.panel.spec.get("auto"):
+            a = res.panel.spec["auto"]
+            out["auto"] = {
+                "transform": a["transform"],
+                "from": a["source_dataset"],
+                "reason": a["reason"],
+            }
+            out["drawn_dataset"] = res.panel.dataset_ids[0]
         if ctx is not None and ctx.notes:
             out["y_range_notes"] = ctx.notes
         return _dump(out)

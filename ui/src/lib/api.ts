@@ -10,6 +10,7 @@ export interface ChartSpec {
     views?: YView[]; selected?: YView | null; context?: YContext | null;
   };
   overlays?: OverlayFlags;
+  auto?: { transform: "rate"; source_dataset: string; reason: string } | null;
   signal?: { filter: string; kind: string; reason: string; offered: string[]; default: string; selected?: string | null } | null;
   references?: Record<string, { mode: string; label: string; start_ms: number; end_ms: number; shift_ms: number; series: string; dist?: string | null }>;
   marginal?: { reference: "previous" | "week"; author?: string; reason?: string | null } | null;

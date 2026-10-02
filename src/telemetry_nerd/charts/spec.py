@@ -126,6 +126,15 @@ class Overlays(BaseModel):
     ghost: bool = False  # the same window last week (costs a source fetch, so opt-in)
 
 
+class AutoForm(BaseModel):
+    """The panel shows a different form of the signal than the dataset it was asked to show,
+    chosen from what the catalog knows (bead 2as.14). The original dataset is untouched."""
+
+    transform: Literal["rate"]
+    source_dataset: str  # what was asked for
+    reason: str
+
+
 class ChartSpec(BaseModel):
     layers: list[Layer] = Field(min_length=1)
     y: YAxis = Field(default_factory=YAxis)
@@ -133,6 +142,7 @@ class ChartSpec(BaseModel):
     marginal: Marginal | None = None
     signal: SignalViews | None = None  # filtered/raw data views (4ok.9)
     overlays: Overlays = Field(default_factory=Overlays)
+    auto: AutoForm | None = None
 
 
 class ValidationIssue(BaseModel):

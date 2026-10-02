@@ -56,6 +56,7 @@ export function panelNotes(
   caveats: string[],
   opts: {
     yScaledToData: boolean;
+    auto?: { transform: string; source_dataset: string; reason: string } | null;
     yContext?: YContext | null;
     unit?: string | null;
     nMin: number | null;
@@ -94,6 +95,12 @@ export function panelNotes(
     if (mg.n.some((n) => n < mg.nMin)) {
       notes.push({ kind: "caveat", key: "marginal_low_n", text: `The marginal has fewer than ${mg.nMin} values in a window; its shape is noise (drawn faded).` });
     }
+  }
+  if (opts.auto?.transform === "rate") {
+    notes.push({
+      kind: "info", key: "auto_rate",
+      text: `Shown as a rate: ${opts.auto.reason}. The running total is dataset ${opts.auto.source_dataset}; ask Claude for it with show(raw=true).`,
+    });
   }
   notes.push(...contextNotes(opts.yContext ?? null, opts.unit ?? null));
   const yv = opts.yView;

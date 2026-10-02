@@ -100,3 +100,16 @@ describe("quantile estimator provenance", () => {
     expect(describeShown({ representation: "quantile", quantile: 0.95 }, "1m")).toContain("as computed by the source");
   });
 });
+
+describe("auto-charted panels (2as.14)", () => {
+  it("say the rate is drawn, why, and how to get the running total", () => {
+    const notes = panelNotes([], { yScaledToData: false, nMin: null, auto: { transform: "rate", source_dataset: "d3", reason: "m is a counter (a running total); its per-second rate is drawn" } });
+    expect(notes.map((n) => n.key)).toEqual(["auto_rate"]);
+    expect(notes[0].text).toMatch(/Shown as a rate: m is a counter/);
+    expect(notes[0].text).toMatch(/dataset d3/);
+    expect(notes[0].text).toMatch(/raw=true/);
+  });
+  it("no note for ordinary panels", () => {
+    expect(panelNotes([], { yScaledToData: false, nMin: null, auto: null })).toEqual([]);
+  });
+});
