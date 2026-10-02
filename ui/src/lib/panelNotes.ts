@@ -70,7 +70,9 @@ const CAVEATS: Record<string, Describe> = {
   nonmergeable_aggregation: () =>
     "An already-computed percentile was averaged, summed or merged over time or series on request: this is badly wrong in practice (24 hourly p90s averaged to 60.3 ms; the true p90 of the merged 811k requests was 35.8 ms, a 68.5% error). Recompute it from the merged histogram or raw data.",
   overflow: () => "Some observations are above the largest bucket edge; their values are unknown (top strip).",
-  no_uncertainty: () => "Produced by code without a declared uncertainty (or exact): not usable as evidence.",
+  no_uncertainty: () => "Produced by code without a declared uncertainty (or exact): its uncertainty is unknown, not zero. It can be cited, but a finding that does is marked \"uncertainty unknown\".",
+  input_uncertainty_unknown: () => "The interval covers this step only: an input's uncertainty is unknown, so the true error can be larger (a lower bound).",
+  uncertainty_not_propagated: () => "The interval leaves out the inputs' own declared intervals (the code did not say it propagated them): a lower bound on the error.",
   counts_unknown: () => "The code gave no sample counts: coverage is unknown (not zero) and a coarser view averages the bucket values unweighted.",
   failed_spans: () => "An input of the code had spans the source could not return.",
 };

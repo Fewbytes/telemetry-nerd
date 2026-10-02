@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
 from telemetry_nerd.exchange.fmt import ESTIMATE
-from telemetry_nerd.exchange.run import evidence_blocker
 from telemetry_nerd.model.caveats import Caveat
 
 CODE_OUTPUT = "code_output"  # info caveat: where the data came from and what that rules out
@@ -49,15 +48,16 @@ def code_caveat(meta: DatasetMeta) -> Caveat:
 
 
 def _citable(meta: DatasetMeta) -> list[dict]:
-    """Ready-to-cite evidence statistics for a fit's parameters with an interval or exact."""
+    """Ready-to-cite evidence statistics for a fit's parameters, as stored. One without an
+    interval is cited with uncertainty_unknown=true (spec §5.3: citable, flagged)."""
     fit = meta.fit or {}
     out = []
     for name, p in (fit.get("params") or {}).items():
-        if p.get("interval") is None and not p.get("exact"):
-            continue
+        unknown = p.get("interval") is None and not p.get("exact")
         out.append({
             "kind": "statistic", "dataset": meta.id, "name": name, "value": p["value"],
             "interval": p.get("interval"), "exact": bool(p.get("exact")),
+            **({"uncertainty_unknown": True} if unknown else {}),
             "method": fit.get("method") or "fit",
         })  # fmt: skip
     return out
@@ -87,41 +87,47 @@ def refuse_estimate(datasets: DatasetStore, meta: DatasetMeta, what: str = "show
         hints.append(f"show its prediction {pred}")
     if cite:
         names = ", ".join(c["name"] for c in cite)
+        c = next((c for c in cite if not c.get("uncertainty_unknown")), cite[0])
+        stated = (
+            "uncertainty_unknown: true" if c.get("uncertainty_unknown") else
+            f"interval: {c['interval']}, exact: {str(c['exact']).lower()}"
+        )  # fmt: skip
         hints.append(
             f"cite a parameter ({names}) as evidence, e.g. "
-            f"{{kind: statistic, dataset: {meta.id}, name: {cite[0]['name']!r}, value: "
-            f"{cite[0]['value']}, interval: {cite[0]['interval']}, exact: {str(cite[0]['exact']).lower()}, "
-            f"method: {cite[0]['method']!r}}}"
+            f"{{kind: statistic, dataset: {meta.id}, name: {c['name']!r}, value: "
+            f"{c['value']}, {stated}, method: {c['method']!r}}}"
         )
     model = (meta.fit or {}).get("model", "model")
     raise ValueError(
         f"{meta.id} is a fit ({model}, {origin(meta)}): parameters, not rows, so {what} has "
         "nothing to draw"
-        + (f" (hint: {'; or '.join(hints)})" if hints else
-           " (hint: its parameters have no interval, so they are not evidence either; re-run the "
-           "code with intervals or a prediction)")
+        + (f" (hint: {'; or '.join(hints)})" if hints else "")
     )  # fmt: skip
 
 
 def evidence_problem(meta: DatasetMeta, statistic: dict | None) -> str | None:
-    """Why a code output (or one fit parameter) cannot back a finding, or None. `statistic` is
-    the cited StatisticRef as a dict; None for a panel citation. Source datasets: None."""
-    if meta.code_node is None:
+    """Why citing a code output would misstate it, or None. `statistic` is the cited
+    StatisticRef as a dict; None for a panel citation.
+
+    Only fabrication is refused: a fit cited as a panel (it has no rows to show), a fit
+    parameter that does not exist or is not cited exactly as stored. Unknown uncertainty is
+    never a reason (spec §5.3): `core.uncertainty.evidence_flags` flags it instead."""
+    if meta.code_node is None or meta.representation != ESTIMATE:
         return None
-    if meta.representation == ESTIMATE:
-        if statistic is None:
-            return f"{meta.id} is a fit: cite one of its parameters as a statistic, not a panel"
-        name = statistic["name"]
-        if blocked := evidence_blocker(meta, name):
-            return blocked
-        value, interval, exact = _as_cited((meta.fit or {})["params"][name])
-        if _as_cited(statistic) != (value, interval, exact):
-            return (
-                f"fit parameter {name!r} of {meta.id} is value={value}, "
-                f"interval={interval}, exact={exact}: cite it as stored"
-            )
-        return None
-    return evidence_blocker(meta)
+    if statistic is None:
+        return f"{meta.id} is a fit: cite one of its parameters as a statistic, not a panel"
+    name = statistic["name"]
+    params = (meta.fit or {}).get("params") or {}
+    if name not in params:
+        return f"{meta.id} has no fit parameter {name!r} (parameters: {', '.join(params)})"
+    value, interval, exact = _as_cited(params[name])
+    if _as_cited(statistic) != (value, interval, exact):
+        stored = (
+            f"interval={interval}" if interval is not None else
+            "exact=true" if exact else "no interval (cite it with uncertainty_unknown=true)"
+        )  # fmt: skip
+        return f"fit parameter {name!r} of {meta.id} is value={value}, {stored}: cite it as stored"
+    return None
 
 
 def _as_cited(stat: dict) -> tuple:

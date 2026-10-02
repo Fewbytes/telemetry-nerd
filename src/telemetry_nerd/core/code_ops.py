@@ -197,7 +197,7 @@ class CodeOps:
                 representation=d.representation,
                 rows=d.rows,
                 caveats=list(d.caveats),
-                evidence_ok=d.evidence_ok,
+                uncertainty=d.uncertainty,
             )
             for d in (ingest.datasets if ingest else [])
         ]
@@ -415,7 +415,8 @@ class CodeOps:
             base["unit"] = meta.unit
         if meta.uncertainty:
             base["uncertainty"] = meta.uncertainty
-        base["evidence_ok"] = o.evidence_ok
+        if o.uncertainty:  # citable, but a finding citing it is flagged (spec §5.3)
+            base["uncertainty_status"] = o.uncertainty
         base["caveats"] = o.caveats
         if meta.parents:
             base["parents"] = meta.parents

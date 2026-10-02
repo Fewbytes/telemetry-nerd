@@ -106,6 +106,7 @@ a.obj-id:hover { text-decoration: underline; }
 /* Chips */
 .chip { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--badge); border: 1px solid var(--border); margin-right: 4px; }
 .chip.caveat { color: var(--muted); }
+.uncertainty-flag { color: var(--warn); border-color: var(--warn); }
 .status-chip.proposed { background: var(--badge); }
 .status-chip.supported { background: #2e7d32; color: #fff; border-color: #2e7d32; }
 .status-chip.refuted { background: var(--error); color: #fff; border-color: var(--error); }

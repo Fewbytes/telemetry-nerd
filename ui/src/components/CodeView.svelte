@@ -5,6 +5,8 @@
   import {
     boundText, type BoundedText, durationText, highlightPython, inputLinks, outputLinks, statusView,
   } from "../lib/codeView";
+  import { flagLabel } from "../lib/format";
+  import { caveatText } from "../lib/panelNotes";
 
   let { id, runs, panels, onclose, onopen }: {
     id: string; runs: CodeBrief[]; panels: Panel[]; onclose: () => void; onopen: (id: string) => void;
@@ -117,7 +119,7 @@
           {#each node.outputs as o, i (o.dataset)}
             <li><span class="obj-id">{o.dataset}</span> {o.name} · {o.representation}, {o.rows} rows
               {#if outs[i]?.panel}<a href={panelHref(outs[i].panel!)} onclick={() => dialog?.close()}>shown in {outs[i].panel}</a>{/if}
-              {#if !o.evidence_ok}<span class="badge" title="not usable as finding evidence">not evidence{o.caveats.length ? `: ${o.caveats.join(", ")}` : ""}</span>{/if}
+              {#if o.uncertainty || !o.evidence_ok}{@const st = o.uncertainty ?? "no_uncertainty"}<span class="badge uncertainty-flag" title={caveatText(st)}>{flagLabel(st === "no_uncertainty" ? "uncertainty_unknown" : st)}</span>{/if}
             </li>
           {/each}
         </ul>

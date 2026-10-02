@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EvidenceRef, Scope, TimeSpan } from "./api";
-import { fmtRange, fmtSI, fmtTime, refLabel, scopeLine, statLine, type StatisticRef } from "./format";
+import { flagLabel, fmtRange, fmtSI, fmtTime, refLabel, scopeLine, statLine, type StatisticRef } from "./format";
 
 const span = (startMs: number, endMs: number): TimeSpan => ({ start_ms: startMs, end_ms: endMs });
 const minutes = (h: number, m: number) => Date.UTC(2026, 8, 30, h, m);
@@ -70,6 +70,20 @@ describe("statLine", () => {
     expect(
       statLine(statRef({ name: "n", value: 42, interval: null, exact: true, method: "count" })),
     ).toBe("n = 42 (exact, count)");
+  });
+
+  it("never renders a value without an interval as exact (spec §5.3)", () => {
+    expect(statLine(statRef({ interval: null, exact: false, uncertainty_unknown: true }))).toBe(
+      "p99 = 2.5 (uncertainty unknown, bootstrap)",
+    );
+  });
+});
+
+describe("flagLabel", () => {
+  it("names the evidence uncertainty flags in words", () => {
+    expect(flagLabel("uncertainty_unknown")).toBe("uncertainty unknown");
+    expect(flagLabel("input_uncertainty_unknown")).toBe("input uncertainty unknown");
+    expect(flagLabel("something_else")).toBe("something else");
   });
 });
 

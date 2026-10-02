@@ -43,7 +43,12 @@ ESTIMATE = "estimate"
 EXPORTABLE = (*TIME_SERIES, DISTRIBUTION, ESTIMATE)
 PUTTABLE = (*TIME_SERIES, DISTRIBUTION)  # estimate only through put_fit
 INTERVAL_KINDS = ("confidence", "credible", "prediction", "tolerance")
-NO_UNCERTAINTY = "no_uncertainty"
+# Uncertainty status of a dataset (spec §5.3): at most one of these caveats, recomputed for each
+# output rather than inherited. Unknown is citable but flagged, never treated as zero.
+NO_UNCERTAINTY = "no_uncertainty"  # no interval, not exact: uncertainty unknown
+INPUT_UNCERTAINTY_UNKNOWN = "input_uncertainty_unknown"  # own interval; an input's is unknown
+UNCERTAINTY_NOT_PROPAGATED = "uncertainty_not_propagated"  # own interval; inputs' not folded in
+UNCERTAINTY_STATUS = (NO_UNCERTAINTY, INPUT_UNCERTAINTY_UNKNOWN, UNCERTAINTY_NOT_PROPAGATED)
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _NAME = re.compile(r"^[a-z][a-z0-9_]{0,63}$")

@@ -1,6 +1,6 @@
 ---
 name: tier2-code
-description: This skill should be used when no tier-1 tool (query, analyze, fleet, query_distribution, fraction_over, compare_seasonal) answers a telemetry question and custom Python is needed, such as a ratio with a confidence interval, a custom statistic with a bootstrap, a regression or capacity projection ("when will it fill"), a join of two datasets, or when asked to "run_code", "rerun a code node", "read why a code node failed", "declare uncertainty for a result", "put_fit", or "promote this snippet to a tool". Covers tier-1-first routing, declaring inputs, uncertainty rules that decide whether a result can be evidence, the tn API, fits, and failure handling with code_get.
+description: This skill should be used when no tier-1 tool (query, analyze, fleet, query_distribution, fraction_over, compare_seasonal) answers a telemetry question and custom Python is needed, such as a ratio with a confidence interval, a custom statistic with a bootstrap, a regression or capacity projection ("when will it fill"), a join of two datasets, or when asked to "run_code", "rerun a code node", "read why a code node failed", "declare uncertainty for a result", "put_fit", or "promote this snippet to a tool". Covers tier-1-first routing, declaring inputs, uncertainty rules (unknown is citable but flagged, errors propagate maximally), the tn API, fits, and failure handling with code_get.
 ---
 
 # Tier-2 code: `run_code`
@@ -51,7 +51,7 @@ what a tier-1 tool returned.
 5. **Declare uncertainty or exactness on every output** (next section).
 6. **Draw the result** with `show(dataset)` using `outputs[].dataset` from the result. Name the
    code node (`c4`) in the reply.
-7. **Cite it** with `finding_create` (below), only if the output is evidence.
+7. **Cite it** with `finding_create` (below), and report any uncertainty flag it returns.
 
 Defaults: `timeout_s` 120 s (a larger value has a maximum). The result lists `issues` for outputs
 that were not ingested (uncommitted, invalid): read them before assuming the output exists.
@@ -78,9 +78,11 @@ Rules that keep results honest:
 - `exact=True` claims that nothing is estimated. `increase()` extrapolates and is fractional, so
   it is not exact. Sampled counts carry relative error about sqrt((1-p)/(pN)) (p the sampling
   rate, N the true count: plug in observed count / p).
-- An output tagged `no_uncertainty` (`evidence_ok: false` in the result) is exploration only:
-  `finding_create` rejects it with a reason. Never present it as a conclusion; re-run with the
-  interval declared, or call it a sketch.
+- An output tagged `no_uncertainty` (`uncertainty_status` in the result) has *unknown*
+  uncertainty, not zero: derive an interval first (bootstrap, effective n, bucket bounds,
+  Wilson) and re-run. If none can be derived it can still be cited, and the finding is marked
+  "uncertainty unknown" (cite the value with `uncertainty_unknown: true`): say so when you
+  report it, and never present it as exact.
 - Name the method in words (`"moving-block bootstrap, block=12"`): the interval is only as good
   as that sentence. Put assumptions the reader must know in `caveats` (bucket midpoints,
   fractional counts, a stationary window). An interval does not cover bias from a modelling
@@ -95,8 +97,8 @@ and lag-1 autocorrelation of residuals, residual spread, n, skew/kurtosis). Read
 quoting the fit. If they fail, correct the interval (n_eff, block bootstrap of residuals) or
 say the band is optimistic. A prediction is a series with a prediction band, stored with the fit.
 A fit has no panel of its own: `show` its `<fit>_prediction` dataset, cite parameters as
-statistics. Evidence status is per parameter: one without an interval is `no_uncertainty` on
-its own.
+statistics. Uncertainty is per parameter: one without an interval is cited as stored with
+`uncertainty_unknown: true` and flagged; the others are unaffected.
 
 ## Citing results
 
@@ -126,7 +128,10 @@ finding_create(
 
 For a fit parameter, `name` must be the parameter's name and value/interval/exact must match
 what was stored. A statistic named like a percentile (p95, median) needs `params={"q": 0.95,
-"n": <observations>}`. Evidence that a code output cannot back is rejected with the reason.
+"n": <observations>}`. Only fabrication is rejected (a parameter not cited as stored, a fit cited
+as a panel). Uncertainty problems come back as flags in the result
+(`uncertainty: [{evidence, flag, message}]`: `uncertainty_unknown`, `input_uncertainty_unknown`,
+`uncertainty_not_propagated`), are stored on the finding and shown to the user: quote them.
 
 ## When a run fails
 

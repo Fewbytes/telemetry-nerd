@@ -2,7 +2,7 @@
 
 query (fixture source) -> run_code (bootstrap CI, tn.put with an interval) -> output ingested
 with lineage -> show; failing, timed-out and crashing runs fail their node; evidence citing a
-no_uncertainty output is rejected."""
+no_uncertainty output is citable, flagged."""
 
 from __future__ import annotations
 
@@ -77,7 +77,7 @@ async def test_bootstrap_ci_output_has_lineage_and_shows(env):
     assert (out["code_node"], out["status"]) == ("c1", "ok"), out
     assert out["stdout"].startswith("out1 ")
     [o] = out["outputs"]
-    assert o["dataset"] == "d2" and o["evidence_ok"] is True
+    assert o["dataset"] == "d2" and "uncertainty_status" not in o
     assert o["uncertainty"] == {"method": "bootstrap", "level": 0.95, "kind": "confidence"}
     lo, hi = o["series"][0]["last_interval"]
     assert lo <= o["series"][0]["last"] <= hi
@@ -143,11 +143,12 @@ async def test_crash_fails_the_node_and_reports_lost_state(env):
 
 
 @module_loop
-async def test_no_uncertainty_output_cannot_be_evidence(env):
+async def test_no_uncertainty_output_is_citable_but_flagged(env):
+    """Spec §5.3 (x2x): unknown uncertainty is not zero trust: cited, and the finding says so."""
     svc, mcp = env
     out = await run(mcp, BARE, inputs=["d1"])
     [o] = out["outputs"]
-    assert o["evidence_ok"] is False and "no_uncertainty" in o["caveats"]
+    assert o["uncertainty_status"] == "no_uncertainty" and "no_uncertainty" in o["caveats"]
     meta = svc.datasets.meta("d1")
     f = await call(
         mcp,
@@ -160,5 +161,6 @@ async def test_no_uncertainty_output_cannot_be_evidence(env):
                           "value": 2.0, "interval": [1.9, 2.1], "method": "mean"}],
         },
     )  # fmt: skip
-    assert f.is_error
-    assert "no_uncertainty" in text_of(f) and "is not evidence" in text_of(f)
+    assert not f.is_error, text_of(f)
+    flags = json.loads(text_of(f))["uncertainty"]
+    assert [u["flag"] for u in flags] == ["input_uncertainty_unknown"]

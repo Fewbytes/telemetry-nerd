@@ -3,7 +3,7 @@
 Examples are marked `<!-- run: inputs=d1,d2 show=<output name> -->` right above the fence. The
 fixture source returns data shaped like what each example expects (d1 errors, d2 requests,
 d3 a latency histogram, d4 a linear disk-usage series); each example must finish `ok`, store
-only outputs that can be evidence, and (when `show=` is given) draw with `show`. Also checks
+only outputs with a clean uncertainty status (spec §5.3), and (when `show=` is given) draw with `show`. Also checks
 that the skill's prose only names real tools."""
 
 from __future__ import annotations
@@ -133,7 +133,7 @@ async def test_skill_example_runs_and_is_drawable(env, name, attrs, code):
     out = json.loads(text_of(r))
     assert out["status"] == "ok", (name, out.get("error"), out.get("traceback"), out.get("issues"))
     assert out["outputs"] and not out.get("issues"), (name, out)
-    assert all(o["evidence_ok"] for o in out["outputs"]), (name, out["outputs"])
+    assert not any(o.get("uncertainty_status") for o in out["outputs"]), (name, out["outputs"])
     if show := attrs.get("show"):
         ds = next(o["dataset"] for o in out["outputs"] if o["name"] == show)
         s = await call(mcp, "show", {"dataset": ds, "question": "result of the example?"})
@@ -157,7 +157,7 @@ async def test_skill_has_examples_and_names_real_tools(tmp_path):
 
 
 @module_loop
-async def test_fit_parameter_can_be_cited_as_stored_and_no_uncertainty_cannot(env):
+async def test_fit_parameter_is_cited_exactly_as_stored(env):
     """The skill's finding_create snippet: a fit parameter is evidence exactly as stored."""
     svc, mcp = env
     code = next(c for n, a, c in EXAMPLES if "worked-examples" in n and "put_fit" in c)

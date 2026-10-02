@@ -73,6 +73,7 @@ from telemetry_nerd.core.card_payload import binding_row, browse_row, field_rows
 from telemetry_nerd.core.code_outputs import evidence_problem
 from telemetry_nerd.core.coverage_check import claim_coverage
 from telemetry_nerd.core.events import Actor, Event, EventLog, check_actor
+from telemetry_nerd.core.uncertainty import evidence_flags
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.companions import dataset_bundle
 from telemetry_nerd.model.discovery import Discovery
@@ -257,7 +258,12 @@ class WorkspaceService:
             self.objects.get_hypothesis(data.hypothesis)
         if data.answers_panel is not None:
             self.workspace.get_panel(data.answers_panel)
-        f = self.objects.create_finding(data, actor)
+        flags = evidence_flags(
+            self.datasets,
+            [ref.model_dump() for ref in data.evidence],
+            lambda pid: self.workspace.get_panel(pid).dataset_ids,
+        )
+        f = self.objects.create_finding(data, actor, flags)
         if data.hypothesis is not None and data.stance is not None:
             self.objects.link_evidence(data.hypothesis, f.id, data.stance)
         self.log.append(
@@ -269,8 +275,10 @@ class WorkspaceService:
                 "hypothesis": f.hypothesis,
                 "stance": f.stance,
                 "answers_panel": f.answers_panel,
+                **({"evidence_flags": [e.model_dump() for e in f.evidence_flags]}
+                   if f.evidence_flags else {}),
             },
-        )
+        )  # fmt: skip
         if data.answers_panel is not None:
             self.workspace.set_answered(data.answers_panel, f.id)
             self.log.append(actor, "panel.answered", data.answers_panel, {"finding": f.id})
@@ -1666,7 +1674,17 @@ class WorkspaceService:
             for h in reversed(self.objects.list_hypotheses())
         ]
         finds = [
-            {"id": f.id, "claim": f.claim, "verdict": f.verdict}
+            {
+                "id": f.id,
+                "claim": f.claim,
+                "verdict": f.verdict,
+                # spec §5.3: a finding resting on values of unknown/lower-bound uncertainty says so
+                **(
+                    {"uncertainty": sorted({e.flag for e in f.evidence_flags})}
+                    if f.evidence_flags
+                    else {}
+                ),
+            }
             for f in reversed(self.objects.list_findings())
         ]
         open_threads = [

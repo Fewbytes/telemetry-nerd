@@ -52,11 +52,12 @@ class Ingested:
     representation: str
     rows: int
     parents: tuple[str, ...]
-    caveats: tuple[str, ...]  # includes no_uncertainty when nothing was declared
+    caveats: tuple[str, ...]  # includes the uncertainty status (spec §5.3), if any
 
     @property
-    def evidence_ok(self) -> bool:
-        return fmt.NO_UNCERTAINTY not in self.caveats
+    def uncertainty(self) -> str | None:
+        """The output's uncertainty status (fmt.UNCERTAINTY_STATUS), None when clean."""
+        return next((c for c in self.caveats if c in fmt.UNCERTAINTY_STATUS), None)
 
 
 @dataclass(frozen=True)
@@ -70,21 +71,6 @@ class Issue:
 class IngestResult:
     datasets: list[Ingested] = field(default_factory=list)
     issues: list[Issue] = field(default_factory=list)
-
-
-def evidence_blocker(meta: DatasetMeta, statistic: str | None = None) -> str | None:
-    """Why a dataset (or one fit param) cannot back a finding, or None. For b98.4's evidence
-    check: code outputs without declared uncertainty are not evidence."""
-    if meta.fit is not None and statistic is not None:
-        p = meta.fit["params"].get(statistic)
-        if p is None:
-            return f"{meta.id} has no fit parameter {statistic!r}"
-        if p["interval"] is None and not p["exact"]:
-            return f"{fmt.NO_UNCERTAINTY}: fit parameter {statistic!r} of {meta.id} has no interval"
-        return None
-    if fmt.NO_UNCERTAINTY in meta.source_caveats:
-        return f"{fmt.NO_UNCERTAINTY}: {meta.id} was produced without declared uncertainty"
-    return None
 
 
 def _caveats(meta: DatasetMeta) -> list[str]:

@@ -141,9 +141,15 @@ class ObjectStore:
         return self._list("hypothesis", Hypothesis)
 
     # findings -----------------------------------------------------------
-    def create_finding(self, data: FindingIn, author: str) -> Finding:
+    def create_finding(
+        self, data: FindingIn, author: str, evidence_flags: list[dict] | None = None
+    ) -> Finding:
         f = Finding(
-            **data.model_dump(), id=self._new_id("f"), author=author, created_at_ms=self._clock()
+            **data.model_dump(),
+            id=self._new_id("f"),
+            author=author,
+            created_at_ms=self._clock(),
+            evidence_flags=evidence_flags or [],
         )
         self._insert("finding", f, data.answers_panel)
         return f

@@ -157,7 +157,9 @@ describe("code outputs (tier-2)", () => {
     expect(provenanceText({ source: "vm", producer: null })).toBe("vm");
   });
   it("explains no_uncertainty and unknown counts", () => {
-    expect(caveatText("no_uncertainty")).toContain("not usable as evidence");
+    expect(caveatText("no_uncertainty")).toContain("unknown, not zero");
+    expect(caveatText("input_uncertainty_unknown")).toContain("lower bound");
+    expect(caveatText("uncertainty_not_propagated")).toContain("lower bound");
     expect(caveatText("counts_unknown")).toContain("unknown (not zero)");
   });
 });

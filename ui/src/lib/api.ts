@@ -169,7 +169,15 @@ export type EvidenceRef =
       kind: "statistic"; dataset: string; name: string; value: number;
       interval: [number, number] | null; exact: boolean; method: string;
       params: Record<string, unknown>;
+      /** spec §5.3: the value's uncertainty is not known (citable, flagged) */
+      uncertainty_unknown?: boolean;
     };
+/** Server-derived uncertainty flag on one evidence item of a finding (spec §5.3). */
+export interface EvidenceFlag {
+  evidence: number;
+  flag: "uncertainty_unknown" | "input_uncertainty_unknown" | "uncertainty_not_propagated";
+  message: string;
+}
 export interface Annotation {
   id: string; kind: "event" | "region" | "threshold" | "band" | "note";
   panel: string | null; t_start_ms: number | null; t_end_ms: number | null;
@@ -186,6 +194,7 @@ export interface Finding {
   hypothesis: string | null; stance: "for" | "against" | null; answers_panel: string | null;
   author: string; created_at_ms: number;
   verdict: "accepted" | "rejected" | "needs-more" | null; verdict_comment: string | null;
+  evidence_flags?: EvidenceFlag[];
 }
 export interface Gap {
   id: string; missing_signal: string; needed_for: string;
@@ -220,7 +229,11 @@ export interface CodeBrief {
   error: string | null; restarted: boolean;
 }
 export interface CodeOutput {
-  name: string; dataset: string; representation: string; rows: number; caveats: string[]; evidence_ok: boolean;
+  name: string; dataset: string; representation: string; rows: number; caveats: string[];
+  /** always true since x2x (spec §5.3: every output is citable); false on nodes stored before */
+  evidence_ok: boolean;
+  /** uncertainty status: no_uncertainty | input_uncertainty_unknown | uncertainty_not_propagated */
+  uncertainty?: string | null;
 }
 export interface CodeIssue { name: string; code: string; message: string }
 /** A tier-2 run in full (spec §5.2). Finished nodes are immutable; a re-run is a new node. */

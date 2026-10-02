@@ -34,11 +34,20 @@ export function scopeLine(scope: Scope): string {
  * or "name = value (exact, method)" when the value is exact.
  */
 export function statLine(ref: StatisticRef): string {
-  if (ref.exact || ref.interval === null) {
-    return `${ref.name} = ${ref.value} (exact, ${ref.method})`;
-  }
+  if (ref.exact) return `${ref.name} = ${ref.value} (exact, ${ref.method})`;
+  // no interval and not exact: unknown, never shown as if exact (spec §5.3)
+  if (ref.interval === null) return `${ref.name} = ${ref.value} (uncertainty unknown, ${ref.method})`;
   return `${ref.name} = ${ref.value} [${ref.interval[0]}, ${ref.interval[1]}] (${ref.method})`;
 }
+
+const FLAG_LABELS: Record<string, string> = {
+  uncertainty_unknown: "uncertainty unknown",
+  input_uncertainty_unknown: "input uncertainty unknown",
+  uncertainty_not_propagated: "uncertainty not propagated",
+};
+
+/** Short chip text for an evidence uncertainty flag (spec §5.3). */
+export const flagLabel = (flag: string): string => FLAG_LABELS[flag] ?? flag.replaceAll("_", " ");
 
 /** Short label for any evidence ref; statistic refs render via statLine. */
 export function refLabel(ref: EvidenceRef): string {

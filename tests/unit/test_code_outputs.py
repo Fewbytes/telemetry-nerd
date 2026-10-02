@@ -235,6 +235,7 @@ async def test_code_distribution_shows_and_fraction_over_works(svc, run):
 
 
 async def test_evidence_rules_for_code_outputs(svc, run):
+    """Spec §5.3 (x2x): unknown uncertainty is citable and flagged; only fabrication refused."""
     d = await _input(svc)
 
     def body():
@@ -253,28 +254,44 @@ async def test_evidence_rules_for_code_outputs(svc, run):
             FindingIn(claim="c", scope=_scope(), evidence=list(refs)), "claude"
         )
 
-    def stat(ds, name, value, interval=(1.0, 3.0)):
+    def stat(ds, name, value, interval=(1.0, 3.0), **kw):
         return StatisticRef(kind="statistic", dataset=ds, name=name, value=value,
-                            interval=interval, method="m")  # fmt: skip
+                            interval=interval, method="m", **kw)  # fmt: skip
 
-    with pytest.raises(ValueError, match="no_uncertainty"):
-        finding(stat(out["bare"], "mean", 10.0))
+    def flags(f):
+        return [(e.evidence, e.flag) for e in f.evidence_flags]
+
+    # a value of a no_uncertainty output, cited without an interval: unknown, flagged
+    f = finding(stat(out["bare"], "mean", 10.0, None, uncertainty_unknown=True))
+    assert flags(f) == [(0, "uncertainty_unknown")]
+    assert "uncertainty unknown" in f.evidence_flags[0].message
+    # an interval computed over it (e.g. a bootstrap): a lower bound, flagged
+    assert flags(finding(stat(out["bare"], "mean", 10.0))) == [(0, "input_uncertainty_unknown")]
+    # exact never hides it either
+    exact = stat(out["bare"], "rows", 3.0, None, exact=True)
+    assert flags(finding(exact)) == [(0, "input_uncertainty_unknown")]
     bare_panel = svc.show(out["bare"], "bare").panel.id
-    with pytest.raises(ValueError, match=f"panel {bare_panel} is not evidence.*no_uncertainty"):
-        finding(PanelRef(kind="panel", panel=bare_panel))
-    finding(stat(out["ci"], "mean", 10.0))  # declared interval: evidence
-    finding(PanelRef(kind="panel", panel=svc.show(out["ci"], "ci").panel.id))
+    assert flags(finding(PanelRef(kind="panel", panel=bare_panel))) == [(0, "uncertainty_unknown")]
+    assert flags(finding(stat(out["ci"], "mean", 10.0))) == []  # declared interval: clean
+    assert flags(finding(PanelRef(kind="panel", panel=svc.show(out["ci"], "ci").panel.id))) == []
     fit = out["fit1"]
-    finding(stat(fit, "slope", 2.0, (1.5, 2.5)))  # as stored
+    assert flags(finding(stat(fit, "slope", 2.0, (1.5, 2.5)))) == []  # as stored
+    # a parameter stored without an interval: cited as stored, flagged unknown
+    f = finding(stat(fit, "intercept", 0.3, None, uncertainty_unknown=True))
+    assert flags(f) == [(0, "uncertainty_unknown")]
+    # fabrication is still refused
     with pytest.raises(ValueError, match="cite it as stored"):
         finding(stat(fit, "slope", 2.2, (1.5, 2.5)))
-    with pytest.raises(ValueError, match="no_uncertainty.*intercept"):
-        finding(stat(fit, "intercept", 0.3, (0.2, 0.4)))
+    with pytest.raises(ValueError, match="intercept.*cite it as stored"):
+        finding(stat(fit, "intercept", 0.3, (0.2, 0.4)))  # an interval the fit never had
     with pytest.raises(ValueError, match="no fit parameter 'r2'"):
         finding(stat(fit, "r2", 0.9, (0.8, 1.0)))
+    with pytest.raises(ValueError, match="is a fit: cite one of its parameters"):
+        finding(PanelRef(kind="panel", panel=svc.ws.workspace.create_panel(
+            "fit", svc.ws.workspace.get_panel(bare_panel).spec, [fit]).id))  # fmt: skip
 
 
-async def test_panel_evidence_checks_every_dataset_of_the_panel(svc, run):
+async def test_panel_evidence_flags_every_dataset_of_the_panel(svc, run):
     d = await _input(svc)
 
     def body():
@@ -284,10 +301,13 @@ async def test_panel_evidence_checks_every_dataset_of_the_panel(svc, run):
 
     out = run("c6", [d], body)
     spec = svc.ws.workspace.get_panel(svc.show(out["ci"], "ci").panel.id).spec
-    # a panel whose first dataset is evidence but a later one is not: not evidence
+    # a panel whose first dataset is clean but a later one's uncertainty is unknown: flagged
     mixed = svc.ws.workspace.create_panel("mixed", spec, [out["ci"], out["bare"]])
-    with pytest.raises(ValueError, match=f"panel {mixed.id} is not evidence.*{out['bare']}"):
-        svc.ws.finding_create(
-            FindingIn(claim="c", scope=_scope(), evidence=[PanelRef(kind="panel", panel=mixed.id)]),
-            "claude",
-        )
+    f = svc.ws.finding_create(
+        FindingIn(claim="c", scope=_scope(), evidence=[PanelRef(kind="panel", panel=mixed.id)]),
+        "claude",
+    )
+    assert [e.flag for e in f.evidence_flags] == ["uncertainty_unknown"]
+    assert svc.ws.objects.get_finding(f.id).evidence_flags == f.evidence_flags  # stored
+    (row,) = [x for x in svc.ws.brief()["findings"] if x["id"] == f.id]
+    assert row["uncertainty"] == ["uncertainty_unknown"]

@@ -152,8 +152,8 @@ def put(data: Any, meta: Mapping | None = None, *, columns: Any = None, **kw: An
     end_ms, unit, description, labels (string columns naming each series; else a series_id
     column from an input, else one series), caveats, parents (inputs it depends on; default
     all declared), and the evidence rule: uncertainty={"method", "level", "kind"} with lo/hi
-    columns, or exact=True for exact counts. Without either the output is stored but tagged
-    no_uncertainty and cannot back a finding. `columns`: a distribution's (ts_ms, n) table."""
+    columns, or exact=True for exact counts. Without either the output is tagged no_uncertainty:
+    uncertainty unknown (not zero), citable but flagged in any finding. `columns`: a distribution's (ts_ms, n) table."""
     tr = _transport()
     m = {**(meta or {}), **kw}
     m["name"] = _claim(tr, m.get("name"))
@@ -182,8 +182,8 @@ def put_fit(
     """Store a fit as an `estimate` dataset; returns its output name.
 
     params: {name: {"value": v, "interval": [lo, hi]}} (or {"value": n, "exact": True} for
-    integral quantities), the shape of an evidence statistic; params without either are kept
-    but tagged no_uncertainty. diagnostics (assumption checks) are mandatory. prediction: an
+    integral quantities), the shape of an evidence statistic; params without either are kept,
+    tagged no_uncertainty, and cited with uncertainty_unknown=true (flagged). diagnostics (assumption checks) are mandatory. prediction: an
     optional time series (put() rules; give lo/hi + prediction_meta["uncertainty"] for bands)
     stored as output "<name>_prediction" with the fit as a parent. The fit's time range is
     its parents' unless start_ms/end_ms are given."""

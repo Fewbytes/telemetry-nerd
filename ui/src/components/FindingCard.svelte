@@ -1,6 +1,6 @@
 <script lang="ts">
   import { postJSON, type Annotation, type Finding } from "../lib/api";
-  import { refLabel, scopeLine, statLine } from "../lib/format";
+  import { flagLabel, refLabel, scopeLine, statLine } from "../lib/format";
   import PinButton from "./PinButton.svelte";
 
   let {
@@ -13,6 +13,8 @@
   let error = $state<string | null>(null);
 
   const annPanels = $derived(new Map(annotations.map((a) => [a.id, a.panel])));
+  // spec §5.3: uncertainty flags the server derived, per evidence item
+  const flagsOf = $derived((i: number) => (finding.evidence_flags ?? []).filter((f) => f.evidence === i));
 
   const verdict = (v: "accepted" | "rejected" | "needs-more") => {
     busy = true;
@@ -48,6 +50,9 @@
           {:else}
             {statLine(ref)}
           {/if}
+          {#each flagsOf(i) as f (f.flag)}
+            <span class="chip uncertainty-flag" data-flag={f.flag} title={f.message}>{flagLabel(f.flag)}</span>
+          {/each}
         </li>
       {/each}
     </ul>

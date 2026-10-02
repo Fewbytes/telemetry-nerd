@@ -292,3 +292,26 @@ async def test_show_marginal(tmp_path):
     assert out["basis"] == "samples" and out["n"]["now"] > 0 and "not requests" in out["what"]
     bad = await call(mcp, "show_marginal", {"panel": pid, "reference": "yesterday", "reason": "r"})
     assert bad.is_error and "unknown reference" in text_of(bad)
+
+
+async def test_finding_with_unknown_uncertainty_is_recorded_and_flagged(tmp_path):
+    """Spec §5.3 (x2x.1): unknown uncertainty is citable; the result and workspace_get say so."""
+    _, mcp = await _finding_setup(tmp_path)
+    r = await call(
+        mcp,
+        "finding_create",
+        {
+            "claim": "up is about 1",
+            "scope": SCOPE,
+            "evidence": [
+                {"kind": "statistic", "dataset": "d1", "name": "mean", "value": 1.0,
+                 "method": "read off the chart", "uncertainty_unknown": True}
+            ],
+        },
+    )  # fmt: skip
+    assert not r.is_error, text_of(r)
+    out = json.loads(text_of(r))
+    assert [(u["evidence"], u["flag"]) for u in out["uncertainty"]] == [(0, "uncertainty_unknown")]
+    assert "uncertainty unknown" in out["uncertainty"][0]["message"]
+    brief = json.loads(text_of(await call(mcp, "workspace_get", {})))
+    assert brief["findings"][0]["uncertainty"] == ["uncertainty_unknown"]

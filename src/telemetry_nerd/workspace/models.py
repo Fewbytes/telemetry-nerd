@@ -71,19 +71,28 @@ class StatisticRef(_Strict):
     value: Finite
     interval: tuple[Finite, Finite] | None = None
     exact: bool = False
+    #: the value's uncertainty is not known (spec §5.3): citable, and the finding says so
+    uncertainty_unknown: bool = False
     method: str = Field(min_length=1)
     params: dict = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _uncertainty(self) -> StatisticRef:
+        stated = (self.interval is not None) + self.exact + self.uncertainty_unknown
         if self.exact and self.interval is not None:
             raise ValueError("contradictory: exact=true cannot be combined with an interval")
+        if stated > 1:
+            raise ValueError(
+                "contradictory: uncertainty_unknown=true goes without interval and exact"
+            )
         if self.exact and not float(self.value).is_integer():
             raise ValueError("exact=true is only for integral quantities such as counts")
-        if self.interval is None and not self.exact:
+        if stated == 0:
             raise ValueError(
-                "no_uncertainty: a statistic needs an interval [lo, hi]; "
-                "set exact=true only for exact quantities such as counts"
+                "no_uncertainty: a statistic states its uncertainty: an interval [lo, hi] "
+                "(derive one: bootstrap, effective n, bucket bounds, Wilson), exact=true for "
+                "exact quantities such as counts, or uncertainty_unknown=true when none can be "
+                "derived (the finding then shows 'uncertainty unknown')"
             )
         if self.interval is not None and self.interval[0] > self.interval[1]:
             raise ValueError("interval must be [lo, hi] with lo <= hi")
@@ -204,12 +213,21 @@ class FindingIn(_Strict):
 Verdict = Literal["accepted", "rejected", "needs-more"]
 
 
+class EvidenceFlag(_Strict):
+    """An uncertainty flag the server derived for one evidence item (spec §5.3)."""
+
+    evidence: int  # index into Finding.evidence
+    flag: Literal["uncertainty_unknown", "input_uncertainty_unknown", "uncertainty_not_propagated"]
+    message: str
+
+
 class Finding(FindingIn):
     id: str
     author: str
     created_at_ms: int
     verdict: Verdict | None = None
     verdict_comment: str | None = None
+    evidence_flags: list[EvidenceFlag] = Field(default_factory=list)
 
 
 class MetricSuggestion(_Strict):
@@ -258,7 +276,11 @@ class CodeOutput(_Strict):
     representation: str
     rows: int
     caveats: list[str] = Field(default_factory=list)
-    evidence_ok: bool
+    #: spec §5.3: every output is citable; kept so nodes stored before x2x still load
+    evidence_ok: bool = True
+    #: uncertainty status (no_uncertainty | input_uncertainty_unknown |
+    #: uncertainty_not_propagated), None when the declared interval/exactness is the whole story
+    uncertainty: str | None = None
 
 
 class CodeIssue(_Strict):

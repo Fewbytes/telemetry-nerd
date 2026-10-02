@@ -14,10 +14,11 @@ import pytest
 
 from telemetry_nerd import tn
 from telemetry_nerd.analysis.histogram import from_matrix
+from telemetry_nerd.core.code_outputs import evidence_problem
 from telemetry_nerd.datasets.db import open_duckdb
 from telemetry_nerd.datasets.store import DatasetStore, Lineage
 from telemetry_nerd.exchange import fmt
-from telemetry_nerd.exchange.run import RunExchange, evidence_blocker, runs_root
+from telemetry_nerd.exchange.run import RunExchange, runs_root
 from telemetry_nerd.model.series import BUCKET_SCHEMA, SERIES_SCHEMA, FetchResult, labels_json
 from telemetry_nerd.model.time import TimeRange
 
@@ -259,7 +260,7 @@ def test_time_series_round_trip_keeps_schema_and_meta(store, rx, kernel):
     res = rx.ingest_run("n7", succeeded=True)
     assert res.issues == []
     (ing,) = res.datasets
-    assert ing.name == "out1" and ing.parents == (d,) and not ing.evidence_ok
+    assert ing.name == "out1" and ing.parents == (d,) and ing.uncertainty == "no_uncertainty"
     src_meta, src = store.get(d)
     meta, got = store.get(ing.dataset_id)
     assert (meta.step_ms, meta.resolution_ms, meta.start_ms, meta.end_ms) == (
@@ -280,7 +281,7 @@ def test_time_series_round_trip_keeps_schema_and_meta(store, rx, kernel):
     assert set(got.series.column("series_id").to_pylist()).isdisjoint(
         src.series.column("series_id").to_pylist()
     )
-    assert evidence_blocker(meta).startswith("no_uncertainty")
+    assert evidence_problem(meta, None) is None  # unknown uncertainty is a flag, not a refusal
 
 
 def test_interval_round_trip_and_evidence(store, rx, kernel):
@@ -291,10 +292,9 @@ def test_interval_round_trip_and_evidence(store, rx, kernel):
     u = {"method": "bootstrap percentile", "level": 0.95}
     tn.put(out, like=d, uncertainty=u)
     (first,) = rx.ingest_run("n1", succeeded=True).datasets
-    assert first.evidence_ok and "no_uncertainty" not in first.caveats
+    assert first.uncertainty is None and "no_uncertainty" not in first.caveats
     meta = store.meta(first.dataset_id)
     assert meta.uncertainty == {**u, "kind": "confidence"}
-    assert evidence_blocker(meta) is None
     iv = store.interval(first.dataset_id)
     assert sorted(iv.column("lo").to_pylist()) == pytest.approx([1.35, 2.7, 3.6])
 
@@ -318,7 +318,7 @@ def test_exact_and_label_columns(store, rx, kernel):
     tn.put(out, step_ms=STEP, labels=["svc"], exact=True, unit="1")
     (ing,) = rx.ingest_run("n1", succeeded=True).datasets
     meta, got = store.get(ing.dataset_id)
-    assert meta.uncertainty == {"exact": True} and evidence_blocker(meta) is None
+    assert meta.uncertainty == {"exact": True} and ing.uncertainty is None
     assert meta.start_ms == 0 and meta.end_ms == STEP  # range from the data
     assert sorted(got.series.column("labels").to_pylist()) == ['{"svc":"a"}', '{"svc":"b"}']
     assert got.buckets.column("min").null_count == 2  # not given: unknown, never invented
@@ -379,8 +379,13 @@ def test_fit_with_prediction(store, rx, kernel):
     assert fmeta.fit["params"]["slope"] == {"value": 2.1, "interval": [1.8, 2.4], "exact": False}
     assert fmeta.fit["params_without_uncertainty"] == ["intercept"]
     assert (fmeta.start_ms, fmeta.end_ms) == (0, 2 * STEP)
-    assert evidence_blocker(fmeta, "slope") is None
-    assert "no_uncertainty" in evidence_blocker(fmeta, "intercept")
+    slope = {"name": "slope", "value": 2.1, "interval": [1.8, 2.4], "exact": False}
+    assert evidence_problem(fmeta, slope) is None
+    # a parameter without an interval is citable as stored (flagged unknown), not refused
+    intercept = {"name": "intercept", "value": fmeta.fit["params"]["intercept"]["value"]}
+    assert evidence_problem(fmeta, intercept) is None
+    assert "cite it as stored" in evidence_problem(fmeta, {**intercept, "interval": [0, 1]})
+    assert "no fit parameter" in evidence_problem(fmeta, {**slope, "name": "bogus"})
     assert prediction.name == "fit1_prediction" and prediction.parents == (fit.dataset_id, d)
     assert store.meta(prediction.dataset_id).uncertainty["kind"] == "prediction"
 

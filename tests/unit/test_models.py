@@ -218,3 +218,16 @@ def test_percentile_names_are_recognised_anywhere(name):
 def test_percentile_n_may_be_an_integral_float_and_mad_is_not_a_percentile():
     assert _stat(params={"n": 5000.0})
     assert _stat(name="median absolute deviation", params={})
+
+
+def test_statistic_with_unknown_uncertainty_is_explicit_and_exclusive():
+    """Spec §5.3: unknown is citable, but stated, never an omission or mixed with an interval."""
+    base = {"kind": "statistic", "dataset": "d1", "name": "x", "value": 1.5, "method": "m"}
+    s = ref.validate_python(base | {"uncertainty_unknown": True})
+    assert s.uncertainty_unknown and s.interval is None and not s.exact
+    with pytest.raises(ValidationError, match="uncertainty_unknown=true goes without"):
+        ref.validate_python(base | {"uncertainty_unknown": True, "interval": [1, 2]})
+    with pytest.raises(ValidationError, match="uncertainty_unknown=true goes without"):
+        ref.validate_python(base | {"value": 2, "uncertainty_unknown": True, "exact": True})
+    with pytest.raises(ValidationError, match="derive one"):
+        ref.validate_python(base)

@@ -99,7 +99,7 @@ async def test_run_creates_node_with_lineage_and_events(svc, kernels):
     assert (node.status, node.exec_status, node.inputs) == ("ok", "ok", ["d1"])
     assert node.stdout.startswith("rows ") and node.finished_at_ms is not None
     [out] = node.outputs
-    assert (out.name, out.dataset, out.evidence_ok) == ("out1", "d2", True)
+    assert (out.name, out.dataset, out.uncertainty) == ("out1", "d2", None)
     meta = svc.datasets.meta("d2")
     assert meta.producer == {"kind": "code", "node": "c1", "output": "out1"}
     assert meta.parents == ["d1"] and meta.expr == "code:c1/out1"
@@ -125,7 +125,7 @@ async def test_result_is_compact_and_summarizes_outputs(svc):
     r = svc.code.result(node)
     assert (r["code_node"], r["status"]) == ("c1", "ok") and r["stdout"].startswith("rows ")
     [o] = r["outputs"]
-    assert o["dataset"] == "d2" and o["evidence_ok"] is True and o["parents"] == ["d1"]
+    assert o["dataset"] == "d2" and "uncertainty_status" not in o and o["parents"] == ["d1"]
     assert o["uncertainty"]["method"] == "bootstrap"
     assert o["series_count"] == 2 and "last_interval" in o["series"][0]
     assert "traceback" not in r and "restarted" not in r
@@ -200,10 +200,12 @@ async def test_rerun_is_a_new_node_on_the_same_inputs(svc):
     assert svc.datasets.meta("d3").producer["node"] == "c2"
 
 
-async def test_evidence_from_no_uncertainty_output_is_rejected(svc):
+async def test_evidence_from_no_uncertainty_output_is_flagged_not_rejected(svc):
+    """Spec §5.3 (x2x.1): no_uncertainty means unknown, not zero: citable, flagged."""
     node = await svc.code.run(PUT_BARE, ["d1"])
     [out] = node.outputs
-    assert out.evidence_ok is False and "no_uncertainty" in out.caveats
+    assert out.uncertainty == "no_uncertainty" and "no_uncertainty" in out.caveats
+    assert svc.code.result(node)["outputs"][0]["uncertainty_status"] == "no_uncertainty"
     finding = {
         "claim": "level is about 1",
         "scope": {
@@ -214,19 +216,19 @@ async def test_evidence_from_no_uncertainty_output_is_rejected(svc):
         "evidence": [{"kind": "statistic", "dataset": out.dataset, "name": "mean level",
                       "value": 1.0, "interval": [0.5, 1.5], "method": "bootstrap"}],
     }  # fmt: skip
-    with pytest.raises(ValueError, match="no_uncertainty") as e:
-        svc.ws.finding_create(FindingIn.model_validate(finding), "claude")
-    assert "is not evidence" in str(e.value)
-    # a panel of it is no evidence either
+    f = svc.ws.finding_create(FindingIn.model_validate(finding), "claude")
+    assert [e.flag for e in f.evidence_flags] == ["input_uncertainty_unknown"]
+    # a panel of it: its values are shown without a known interval
     panel = svc.show(out.dataset, "Level per instance?").panel
     finding["evidence"] = [{"kind": "panel", "panel": panel.id}]
-    with pytest.raises(ValueError, match="no_uncertainty"):
-        svc.ws.finding_create(FindingIn.model_validate(finding), "claude")
-    # an output with a declared interval is accepted
+    f = svc.ws.finding_create(FindingIn.model_validate(finding), "claude")
+    assert [e.flag for e in f.evidence_flags] == ["uncertainty_unknown"]
+    # an output with a declared interval: no flag
     ok = (await svc.code.run(PUT_CI, ["d1"])).outputs[0]
     finding["evidence"] = [{"kind": "statistic", "dataset": ok.dataset, "name": "mean level",
                             "value": 1.0, "interval": [0.5, 1.5], "method": "bootstrap"}]  # fmt: skip
-    assert svc.ws.finding_create(FindingIn.model_validate(finding), "claude").id == "f1"
+    f = svc.ws.finding_create(FindingIn.model_validate(finding), "claude")
+    assert f.id == "f3" and f.evidence_flags == []
 
 
 async def test_fit_params_without_interval_are_rejected_by_name(svc):

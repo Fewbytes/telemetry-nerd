@@ -93,7 +93,10 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
 - A thread reply cannot be evidence. When data or a user reply contradicts a hypothesis,
   also call `finding_create(hypothesis=<id>, stance="against", ...)` and, if the verdict
   changes, `hypothesis_update`: that is how the contradiction surfaces on the hypothesis.
-- `finding_create` needs a scope and evidence; a statistic needs an interval unless exact.
+- `finding_create` needs a scope and evidence; a statistic states its uncertainty: an
+  interval, exact, or `uncertainty_unknown: true` when none can be derived. Unknown is citable
+  but never silent: the finding carries `uncertainty unknown` (say so when you report it).
+  Derive an interval first where you can (bootstrap, effective n, bucket bounds, Wilson).
 - Summaries carry `coverage` per series (share of expected samples, longest gap) and `unknown_spans`; missing data is evidence too — scope claims around it.
 - `gap_create` records a signal you wish existed. `annotate` marks events/regions/thresholds.
 - When you tell the user to look at an object ("see p5"), also call `highlight(object, note?)`
@@ -116,7 +119,7 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
 - `workspace_activity` lists what the user did since a sequence number.
 - Tier-2 `run_code` is for the long tail only: tier-1 tools first. Declare `inputs` (dataset
   handles) up front, print only small aggregates, declare uncertainty or `exact` on every output
-  (no_uncertainty outputs cannot be evidence), `show` results. Read a failed run in full with
+  (a no_uncertainty output is citable only flagged 'uncertainty unknown'), `show` results. Read a failed run in full with
   `code_get`. Load the `tier2-code` skill before writing code: when to use it, the `tn` API, how
   to declare intervals, worked examples.
 """
@@ -1170,13 +1173,13 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             tn.meta("d3")          # unit, step_ms, representation, caveats, ...
             tn.put(out, like="d3", uncertainty={"method": "bootstrap", "level": 0.95})
               # out has lo/hi columns; or exact=True for exact counts. Without either the
-              # output is stored but tagged no_uncertainty and cannot back a finding.
+              # output is tagged no_uncertainty: citable, flagged 'uncertainty unknown'.
             tn.put_fit("linear", {"slope": {"value": b, "interval": [lo, hi]}},
                        method="OLS", diagnostics={...})
         Each run is a code node (c1, c2, ...) with lineage to its inputs and outputs.
         Returns {code_node, status (ok|failed), exec_status, duration_s, stdout (short),
         result, outputs: [{dataset, name, representation, rows, unit, uncertainty,
-        evidence_ok, caveats, series summary or fit params}], issues (outputs not ingested),
+        uncertainty_status?, caveats, series summary or fit params}], issues (outputs not ingested),
         error + traceback on failure, restarted + note when kernel state was lost}. Never
         bulk data: print small aggregates only; `show` an output to draw it."""
         try:
@@ -1242,8 +1245,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         """Record a scoped, evidenced claim. scope: {source, selector, start, end, step,
         aggregation, baseline_start?, baseline_end?} (times: now-2h, epoch ms, ISO).
         evidence: [{kind: panel, panel} | {kind: annotation, annotation} |
-        {kind: statistic, dataset, name, value, method, interval: [lo, hi] | exact: true}].
-        hypothesis and stance (for|against) go together. Returns {finding, url}."""
+        {kind: statistic, dataset, name, value, method, interval: [lo, hi] | exact: true |
+        uncertainty_unknown: true}]. hypothesis and stance (for|against) go together.
+        Returns {finding, url, uncertainty?: [{evidence, flag, message}]}: flags the server
+        derived (uncertainty unknown / lower bound); report them with the finding."""
         try:
             sc = dict(scope)
             try:
@@ -1268,7 +1273,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             f = ws.finding_create(data, "claude")
         except (ValidationError, NotFound, ValueError) as e:
             raise _fail(e) from e
-        return _dump({"finding": f.id, "url": f"{ui_url}/#/finding/{f.id}"})
+        out: dict = {"finding": f.id, "url": f"{ui_url}/#/finding/{f.id}"}
+        if f.evidence_flags:
+            out["uncertainty"] = [e.model_dump() for e in f.evidence_flags]
+        return _dump(out)
 
     @mcp.tool()
     def gap_create(missing_signal: str, needed_for: str, suggestion: dict[str, Any]) -> str:
