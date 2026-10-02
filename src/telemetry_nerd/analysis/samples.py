@@ -7,6 +7,7 @@ is evidence of a counter. A short window can only suggest: callers treat it so.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
@@ -127,3 +128,57 @@ def pool(stats: Iterable[SeriesStats]) -> SampleStats:
         integral=bool(ss) and all(s.integral for s in ss),
         constant=bool(ss) and all(s.constant for s in ss),
     )
+
+
+#: fewer pooled samples than this say nothing about a metric's range
+RANGE_MIN_SAMPLES = 30
+RANGE_QUANTILES = (0.01, 0.99)
+
+
+@dataclass(frozen=True)
+class CharacteristicRange:
+    """What a metric's values look like over a short window (telemetry-nerd-4f1): observed, not
+    physical (bounds are physical facts; this shifts over time and is shown with its window).
+
+    p1-p99 survives a lone spike; min/max are kept beside it. Each end carries a distribution-free
+    95% interval from order statistics, which assumes independent samples: under autocorrelation
+    (usual for gauges) the true interval is wider, so it is a lower bound."""
+
+    lo: float  # p1
+    hi: float  # p99
+    median: float
+    min: float
+    max: float
+    n: int
+    lo_ci: tuple[float, float]
+    hi_ci: tuple[float, float]
+
+    def claim_value(self, window: str, series: int) -> dict:
+        return {
+            "lo": self.lo, "hi": self.hi, "median": self.median, "min": self.min,
+            "max": self.max, "q": list(RANGE_QUANTILES), "n": self.n, "series": series,
+            "window": window, "lo_ci95": list(self.lo_ci), "hi_ci95": list(self.hi_ci),
+            "interval": "order statistics, independent samples assumed: a lower bound under "
+            "autocorrelation",
+        }  # fmt: skip
+
+
+def _order_ci(v: np.ndarray, p: float) -> tuple[float, float]:
+    n = v.size
+    half = 1.96 * math.sqrt(n * p * (1 - p))
+    lo_rank = max(0, math.floor(n * p - half) - 1)
+    hi_rank = min(n - 1, math.ceil(n * p + half) - 1)
+    return float(v[lo_rank]), float(v[hi_rank])
+
+
+def characteristic_range(values: Iterable[float | None]) -> CharacteristicRange | None:
+    """Robust range of pooled samples (every series, every step); None below RANGE_MIN_SAMPLES."""
+    v = np.sort(np.array([x for x in values if x is not None and math.isfinite(x)], dtype=float))
+    if v.size < RANGE_MIN_SAMPLES:
+        return None
+    qlo, qhi = RANGE_QUANTILES
+    lo, med, hi = (float(x) for x in np.quantile(v, [qlo, 0.5, qhi]))
+    return CharacteristicRange(
+        lo=lo, hi=hi, median=med, min=float(v[0]), max=float(v[-1]), n=int(v.size),
+        lo_ci=_order_ci(v, qlo), hi_ci=_order_ci(v, qhi),
+    )  # fmt: skip

@@ -36,7 +36,7 @@ from telemetry_nerd.analysis.profile_reference import describe, hourly_means, ma
 from telemetry_nerd.analysis.quantile import attach_counts
 from telemetry_nerd.analysis.reference import reference_window
 from telemetry_nerd.analysis.resample import lod
-from telemetry_nerd.analysis.samples import pool, scan_series
+from telemetry_nerd.analysis.samples import characteristic_range, pool, scan_series
 from telemetry_nerd.catalog.family_query import SLOT, FamilyQueryRefused
 from telemetry_nerd.catalog.family_query import rewrite as rewrite_families
 from telemetry_nerd.catalog.mergeability import NONMERGEABLE_CAVEAT
@@ -66,6 +66,7 @@ from telemetry_nerd.charts.spec import (
     YLimit,
     YProfile,
     YReframe,
+    YTypical,
     auto_spec,
     validate,
 )
@@ -746,12 +747,23 @@ class TelemetryService:
             ds = out["dataset"]
             _, result = self.datasets.get(ds)
             stats = pool(_series_stats(result.buckets))
-            done = self.ws.record_scan(source, metric, stats, ds, window_ms, step_ms, actor)
+            vrange = characteristic_range(result.buckets["avg"].to_pylist())
+            done = self.ws.record_scan(
+                source, metric, stats, ds, window_ms, step_ms, actor, value_range=vrange
+            )
             scanned.append(
                 {
                     "metric": metric, "verdict": stats.verdict, "series": stats.series,
                     "samples": stats.n, "increases": stats.increases, "resets": stats.resets,
                     "small_decreases": stats.small_decreases, "negatives": stats.negatives,
+                    "range": (
+                        {
+                            "p1": vrange.lo, "p99": vrange.hi, "min": vrange.min,
+                            "max": vrange.max, "p1_ci95": list(vrange.lo_ci),
+                            "p99_ci95": list(vrange.hi_ci),
+                        }
+                        if vrange else None
+                    ),
                     **done,
                 }
             )  # fmt: skip
@@ -998,6 +1010,8 @@ class TelemetryService:
             ctx.natural_lo, ctx.bounds, ctx.bounds_origin = 0.0, "≥0", "counter rate"
         if ctx.bounds is None and metric is None:
             ctx.notes.append("natural_bounds_unknown: the expression is not a single metric")
+        if parts is not None:
+            ctx.typical = self._typical_range(meta.source, parts[0])
         if fleet:
             # the spread band shares the members' value axis: bounds apply (unless the fleet is
             # normalised to each member's median, or log-scaled); limits and profiles are per series
@@ -1029,6 +1043,25 @@ class TelemetryService:
         ctx.profile = await self._fetch_profile(meta, ctx.notes)
         self.ws.set_y_context(p.id, ctx, actor, unit=unit)
         return ctx
+
+    def _typical_range(self, source: str, metric: str) -> YTypical | None:
+        """The catalog's observed range of a metric's values (4f1), for a y view: descriptive,
+        labelled with its window and sample count, never treated as a bound."""
+        e = (
+            self.ws.catalog_entry(source, metric)
+            if self.ws.catalog.has_metric(source, metric)
+            else None
+        )
+        r = e.fields.get("typical_range") if e is not None else None
+        if r is None or not isinstance(r.value, dict):
+            return None
+        v = r.value
+        q = v.get("q") or [0.01, 0.99]
+        basis = (
+            f"p{q[0] * 100:g}–p{q[1] * 100:g} of {v['n']} samples ({v.get('series', '?')} series) "
+            f"over a {v['window']} scan on {iso(r.ts_ms)[:10]}; observed, not a bound"
+        )
+        return YTypical(lo=float(v["lo"]), hi=float(v["hi"]), basis=basis)
 
     def _derived_bounds(self, meta: DatasetMeta):
         """Bounds the rule library carries for a derived expression, from catalog facts."""

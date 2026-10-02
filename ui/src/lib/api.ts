@@ -36,10 +36,12 @@ export interface YContext {
   lines?: ContextLine[];
   reframes?: Reframing[];
   profile: { lo: number; hi: number; label: string } | null;
+  /** observed characteristic range from a catalog scan (4f1): descriptive, never a bound */
+  typical?: { lo: number; hi: number; label: string; basis: string } | null;
   notes: string[];
 }
 export interface YView {
-  mode: "auto" | "zero" | "data" | "reference" | "semantic" | "meaningful" | "band" | "log" | "indexed";
+  mode: "auto" | "zero" | "data" | "reference" | "semantic" | "meaningful" | "band" | "log" | "indexed" | "typical";
   baseline?: "window" | "previous" | "week" | null;
   label: string; reason?: string | null; lo?: number | null; hi?: number | null;
   id?: string | null; author?: string | null;

@@ -753,7 +753,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         """Measure what a short window of raw samples says about catalogued metrics: negatives,
         monotonic growth, counter resets, small decreases (a counter never does that). Writes
         origin=stats claims (type counter/gauge when the evidence is strong, bounds >=0 to fill a
-        gap; never over a pack, Claude or user claim) and files contradictions (a declared gauge
+        gap; never over a pack, Claude or user claim; typical_range = observed p1-p99 with
+        min/max for non-counters, descriptive and shown as a "typical range" y view, never a
+        bound) and files contradictions (a declared gauge
         that only grows, a counter that decreases, negative values) as system findings.
         Targets: `metrics`, else `prefix`, else the metrics this workspace already queried. Bounded:
         <= 100 queries per call, a time budget, metrics scanned in the last day skipped, metrics
@@ -1198,7 +1200,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
         mode: zero (include 0), data (fit the data), meaningful (percentile panels: range
         only over buckets with n >= n_min, so a faded low-n outlier does not squash the
-        real values), band (lo..hi), log (all values must be > 0; good when data spans
+        real values), band (lo..hi), typical (the metric's observed p1-p99 from catalog_scan:
+        descriptive, spikes beyond it are counted, never hidden), log (all values must be > 0; good when data spans
         more than 2 decades), indexed (needs baseline: window = each series' own mean,
         previous/week = the same series point by point; log axis, 1 centred; THE way to compare
         series of different scales, never a dual axis). label: short button text (<=40 chars). reason: ONE line

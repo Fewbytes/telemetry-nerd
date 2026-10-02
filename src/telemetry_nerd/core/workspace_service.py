@@ -10,7 +10,7 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from typing import Any
 
-from telemetry_nerd.analysis.samples import SampleStats
+from telemetry_nerd.analysis.samples import CharacteristicRange, SampleStats
 from telemetry_nerd.catalog.binding_suggest import find_suggestion, suggest_bindings
 from telemetry_nerd.catalog.browse import Browse
 from telemetry_nerd.catalog.browse import browse as browse_catalog
@@ -478,6 +478,7 @@ class WorkspaceService:
         window_ms: int,
         step_ms: int,
         actor: Actor = "system",
+        value_range: CharacteristicRange | None = None,
     ) -> dict[str, Any]:
         """Store a sample scan; write the `stats` claims it justifies and file contradictions.
 
@@ -520,6 +521,20 @@ class WorkspaceService:
                 source, metric, "bounds", "≥0", 0.4, f"no negative samples in {window}", now
             )
             claims.append("bounds")
+
+        # the characteristic range (4f1): what values look like, never a bound. A counter's raw
+        # values are a running total: their range says nothing (its rate's range is the
+        # operating profile's job).
+        is_counter = evidence_type == "counter" or (
+            evidence_type is None and declared_type is not None and declared_type.value == "counter"
+        )
+        if value_range is not None and not is_counter:
+            self._put_stats_claim(
+                source, metric, "typical_range", value_range.claim_value(window, stats.series),
+                0.5, f"sample scan over {window}: p1–p99 of {value_range.n} samples across "
+                f"{stats.series} series (observed, not a bound)", now,
+            )  # fmt: skip
+            claims.append("typical_range")
 
         findings = []
         basis = (

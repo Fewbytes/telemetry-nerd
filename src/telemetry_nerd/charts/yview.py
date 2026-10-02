@@ -15,7 +15,16 @@ if TYPE_CHECKING:
     from telemetry_nerd.charts.spec import YContext
 
 YMode = Literal[
-    "auto", "zero", "data", "reference", "semantic", "meaningful", "band", "log", "indexed"
+    "auto",
+    "zero",
+    "data",
+    "reference",
+    "semantic",
+    "meaningful",
+    "band",
+    "log",
+    "indexed",
+    "typical",
 ]
 MAX_SUGGESTIONS = 4
 BUILTIN_LABELS: dict[str, str] = {
@@ -28,6 +37,7 @@ BUILTIN_LABELS: dict[str, str] = {
     "band": "y band",
     "log": "log scale",
     "indexed": "indexed",
+    "typical": "typical range",
 }
 INDEX_LABELS = {"window": "÷ own mean", "previous": "÷ previous window", "week": "÷ last week"}
 
@@ -101,6 +111,11 @@ def check_view(view: YView, st: ValueStats, ctx: YContext | None = None) -> list
         raise ValueError(
             "no natural bounds are known for this metric (no catalog bounds claim); "
             "semantic needs them: learn the source or record a bounds claim"
+        )
+    if view.mode == "typical" and (ctx is None or ctx.typical is None):
+        raise ValueError(
+            "no typical range is known for this metric; catalog_scan observes one (p1-p99 of a "
+            "short window) for a plain selector of a non-counter metric"
         )
     if st.lo is None or st.hi is None:
         raise ValueError("the panel has no drawn values; only the auto view applies")

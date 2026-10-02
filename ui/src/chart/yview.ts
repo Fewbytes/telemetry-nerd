@@ -74,6 +74,7 @@ function refusal(v: YView, st: YStats, ctx: YContext | null): string | null {
   const a = st.all;
   if (!a) return "no drawn values";
   if (v.mode === "semantic" && !hasBounds(ctx)) return "no natural bounds are known for this metric";
+  if (v.mode === "typical" && !ctx?.typical) return "no typical range is known (catalog_scan observes one)";
   if (v.mode === "log" && a.lo <= 0) return `log needs every value > 0 (min ${a.lo})`;
   if (v.mode === "meaningful" && !st.meaningful) return "no bucket has n ≥ n_min";
   if (v.mode === "band" && (v.hi! < a.lo || v.lo! > a.hi)) return "the band contains no data";
@@ -122,6 +123,7 @@ export function resolveY(chosen: YView | null, st: YStats, ctx: YContext | null 
       break;
     }
     case "meaningful": range = pad(st.meaningful!, ctx); break;
+    case "typical": range = pad({ lo: ctx!.typical!.lo, hi: ctx!.typical!.hi }, ctx); break;
     case "band": range = [v.lo!, v.hi!]; break;
     case "log": range = [10 ** Math.floor(Math.log10(a.lo)), 10 ** Math.ceil(Math.log10(a.hi))]; break;
     case "indexed": range = ratioRange(st.values); break;
@@ -134,7 +136,7 @@ export function resolveY(chosen: YView | null, st: YStats, ctx: YContext | null 
     : 0;
   // reference is "zoomed" only when it has nothing beyond the data to show (then it is just a fit)
   const zoomed =
-    v.mode === "data" || v.mode === "meaningful" || v.mode === "band" || (v.mode === "reference" && !ref) ||
+    v.mode === "data" || v.mode === "meaningful" || v.mode === "band" || v.mode === "typical" || (v.mode === "reference" && !ref) ||
     (v.mode !== "indexed" && above.length + below > 0);
   const spanPct = base.hi > base.lo ? Math.min(100, ((range[1] - range[0]) / (base.hi - base.lo)) * 100) : null;
   return {
@@ -156,6 +158,9 @@ export function offeredViews(st: YStats, ctx: YContext | null = null): Offer[] {
       title: hasBounds(ctx) ? `the metric's natural bounds (${ctx!.bounds})` : "the catalog has no bounds for this metric" },
     { mode: "data", label: "data range", enabled: !!st.all, suggest: false, title: "fit the drawn data (labelled y zoomed)" },
   ];
+  if (ctx?.typical)
+    out.push({ mode: "typical", label: "typical range", enabled: !!st.all, suggest: false,
+      title: `the metric's observed range: ${ctx.typical.basis}` });
   if (st.quantile && st.lowN > 0)
     out.push({ mode: "meaningful", label: "meaningful only", enabled: !!st.meaningful, suggest: false,
       title: `range over buckets with n ≥ n_min only; ${st.lowN} faded bucket(s) may fall outside` });
@@ -200,6 +205,7 @@ export function badgeText(v: YView, r: YResolved, unit: string | null, indexLabe
     const why = ctx.bounds_basis ? `; ${ctx.bounds_basis}` : "";
     parts.push(`bounds: ${provenance(ctx.bounds_origin, ctx.bounds_confidence)}${why}`);
   }
+  if (ctx?.typical && v.mode === "typical") parts.push(ctx.typical.basis);
   if (r.outside && ctx?.bounds) parts.push(`values outside the physical bounds ${ctx.bounds}: ${r.outside} point${r.outside > 1 ? "s" : ""}`);
   const { above, below, maxAbove } = r.clipped;
   if (above) parts.push(`${above} point${above > 1 ? "s" : ""} above view (max ${fmtValue(maxAbove!, unit)})`);

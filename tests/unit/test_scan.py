@@ -269,3 +269,45 @@ async def test_a_classic_histogram_base_is_skipped_not_scanned(tmp_path):
     out = await svc.scan_metrics("default", metrics=["lat_seconds"])
     assert out["scanned"] == [] and "lat_seconds_count" in out["skipped"][0]["reason"]
     assert svc.sources.get("default").queried == []
+
+
+async def test_scan_learns_the_characteristic_range_of_a_gauge_not_a_counter(svc):
+    """4f1: observed p1-p99 (with min/max and order-statistic intervals) as a stats claim."""
+    out = await scan(svc, "loki_files_total", "plain_counter")
+    rows = {r["metric"]: r for r in out["scanned"]}
+    assert "typical_range" in rows["loki_files_total"]["claims"]
+    assert "typical_range" not in rows["plain_counter"]["claims"]  # a running total's range
+    assert claim_of(svc, "plain_counter", "typical_range", "stats") is None
+    c = claim_of(svc, "loki_files_total", "typical_range", "stats")
+    v = c.value
+    assert c.confidence == 0.5 and "not a bound" in c.citation and v["window"] == "30m"
+    assert v["min"] <= v["lo"] <= v["median"] <= v["hi"] <= v["max"]
+    assert v["lo_ci95"][0] <= v["lo"] <= v["lo_ci95"][1] and "lower bound" in v["interval"]
+    assert v["series"] == 2 and v["n"] >= 30
+    assert rows["loki_files_total"]["range"]["p99"] == v["hi"]
+    # it feeds the y context of a plain-selector panel, labelled as observed
+    ds = (await svc.query("loki_files_total", start="now-2h", end="now-1h"))["dataset"]
+    pid = svc.show(ds, "files?").panel.id
+    ctx = await svc.y_context(pid)
+    assert ctx.typical and (ctx.typical.lo, ctx.typical.hi) == (v["lo"], v["hi"])
+    assert "observed, not a bound" in ctx.typical.basis and "30m scan" in ctx.typical.basis
+
+
+def test_characteristic_range_needs_enough_samples_and_survives_a_spike():
+    from telemetry_nerd.analysis.samples import characteristic_range
+
+    assert characteristic_range([1.0] * 29 + [None]) is None
+    r = characteristic_range([float(i % 10) for i in range(1000)] + [1e6])
+    assert r.max == 1e6 and r.hi == 9.0 and r.lo == 0.0 and r.n == 1001
+    assert r.hi_ci[0] <= r.hi <= r.hi_ci[1]
+
+
+def test_the_typical_view_needs_a_typical_range():
+    from telemetry_nerd.charts.spec import YContext, YTypical
+    from telemetry_nerd.charts.yview import ValueStats, YView, check_view
+
+    st = ValueStats(0.0, 5.0, quantile=False)
+    v = YView(mode="typical", label="typical range")
+    with pytest.raises(ValueError, match="catalog_scan"):
+        check_view(v, st, YContext())
+    assert check_view(v, st, YContext(typical=YTypical(lo=1, hi=2, basis="b"))) == []

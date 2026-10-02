@@ -139,6 +139,20 @@ describe("yview with catalog context (2as.10)", () => {
     expect(off(ctx({ natural_lo: 0, bounds: "≥0" })).semantic.enabled).toBe(true);
     expect(off(ctx({ profile: { lo: 0, hi: 5, label: "n" } })).reference.title).toMatch(/normal range/);
   });
+  it("offers the observed typical range only when the catalog has one, zoomed and labelled with its basis (4f1)", () => {
+    const st = stats([0.01, 0.2, 30]);
+    const off = (c: YContext | null) => offeredViews(st, c).find((o) => o.mode === "typical");
+    expect(off(ctx())).toBeUndefined();
+    const c = ctx({ typical: { lo: 0.01, hi: 2, label: "typical range", basis: "p1–p99 of 240 samples over a 30m scan" } });
+    expect(off(c)?.title).toMatch(/observed range: p1–p99/);
+    const r = resolveY(view("typical", "typical range"), st, c);
+    expect(r.range![0]).toBeCloseTo(0, 6);
+    expect(r.range![1]).toBeCloseTo(2 + 1.99 * 0.05, 6);
+    expect(r.zoomed).toBe(true);
+    expect(r.clipped.above).toBe(3); // the 30 s spike (mean, min, max) is outside the typical range: counted, never hidden
+    expect(badgeText(r.effective!, r, "s", undefined, c)).toMatch(/typical range.*p1–p99 of 240 samples.*3 points above view/);
+    expect(resolveY(view("typical", "typical range"), st, ctx()).refused).toMatch(/no typical range/);
+  });
   it("badge says what the reference includes", () => {
     const c = ctx({ profile: { lo: 10, hi: 90, label: "normal range (30d)" }, limit: { metric: "node_filesystem_size_bytes", dataset: "d2", hi: 200, basis: "bounded_by" } });
     const r = resolveY(null, stats([40, 50]), c);

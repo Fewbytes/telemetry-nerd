@@ -100,6 +100,16 @@ class YProfile(BaseModel):
     label: str = "normal range"
 
 
+class YTypical(BaseModel):
+    """Observed characteristic range from a sample scan (telemetry-nerd-4f1): descriptive, it
+    shifts over time and is shown with its basis; never a bound."""
+
+    lo: float
+    hi: float
+    label: str = "typical range"
+    basis: str  # one line: window, quantiles, samples, when
+
+
 class YContext(BaseModel):
     """Catalog-derived inputs to the y range. A reference exists when a limit or profile does."""
 
@@ -114,6 +124,7 @@ class YContext(BaseModel):
     )  # every context line: limits, thresholds, references
     reframes: list[YReframe] = Field(default_factory=list)
     profile: YProfile | None = None
+    typical: YTypical | None = None  # the catalog's observed range (scan), not a bound
     notes: list[str] = Field(default_factory=list)  # honest gaps, shown to the user
 
     @model_validator(mode="before")

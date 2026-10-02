@@ -42,6 +42,7 @@ FieldName = Literal[
     "operating_profile_ref",
     "thresholds",
     "statistic",
+    "typical_range",
 ]
 FIELDS = frozenset(get_args(FieldName))
 
@@ -96,6 +97,26 @@ def _validate_thresholds(value: Any) -> None:
             )
 
 
+def _validate_typical_range(value: Any) -> None:
+    """An observed characteristic range {lo, hi, window, n, ...}: descriptive, not a bound."""
+    ok = (
+        isinstance(value, dict)
+        and all(
+            isinstance(value.get(k), int | float)
+            and not isinstance(value.get(k), bool)
+            and math.isfinite(value[k])
+            for k in ("lo", "hi", "n")
+        )
+        and value["lo"] <= value["hi"]
+        and value["n"] > 0
+        and isinstance(value.get("window"), str)
+    )
+    if not ok:
+        raise ValueError(
+            "typical_range must be {lo, hi, n, window, ...} with finite lo <= hi and n > 0"
+        )
+
+
 def validate_value(field: str, value: Any) -> Any:
     """Return the value if it is valid for the field, else raise ValueError."""
     if field not in FIELDS:
@@ -115,6 +136,8 @@ def validate_value(field: str, value: Any) -> Any:
             raise ValueError(f"{field} must be a non-empty string")
     elif field == "thresholds":
         _validate_thresholds(value)
+    elif field == "typical_range":
+        _validate_typical_range(value)
     elif field == "histogram_family" and (
         not isinstance(value, list) or not value or not all(isinstance(v, str) for v in value)
     ):
