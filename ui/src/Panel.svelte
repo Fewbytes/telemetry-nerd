@@ -22,6 +22,7 @@
   import SelectionMenu from "./components/SelectionMenu.svelte";
   import PanelThread from "./components/PanelThread.svelte";
   import PinButton from "./components/PinButton.svelte";
+  import MetricCard from "./components/MetricCard.svelte";
   import HeatmapPlot from "./components/HeatmapPlot.svelte";
   import PercentilePlot from "./components/PercentilePlot.svelte";
   import CountStrip from "./components/CountStrip.svelte";
@@ -597,6 +598,9 @@
         {/each}
       </ul>
     {/if}
+  {/if}
+  {#if data}
+    <MetricCard panelId={panel.id} />
   {/if}
   {#if panelThreads.length > 0}
     <div class="threads">

@@ -200,3 +200,25 @@ ul.gaps { list-style: none; margin: 0; padding: 0; }
 .panel .marginal { position: absolute; top: 0; right: 0; }
 .panel .marginal-head { position: absolute; top: -2px; right: 2px; width: 80px; font-size: 10px; line-height: 11px; color: var(--muted); display: flex; flex-direction: column; text-align: right; }
 .panel .plot:has(.marginal) .y-badge, .panel .plot:has(.marginal) .y-strip { right: 88px; }
+
+/* Metric card (bead 2as.12) */
+.metric-card { margin-top: 8px; font-size: 12px; border-top: 1px solid var(--border); padding-top: 6px; }
+.metric-card > summary { cursor: pointer; color: var(--muted); }
+.metric-card .summary-line { margin-left: 8px; color: var(--fg); }
+.metric-card h4 { margin: 10px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.card-fields { border-collapse: collapse; width: 100%; }
+.card-fields th, .metric-card table th { text-align: left; font-weight: 400; color: var(--muted); padding: 2px 10px 2px 0; white-space: nowrap; vertical-align: top; width: 1%; }
+.card-fields td, .metric-card table td { padding: 2px 0; }
+.card-fields tr.conflict { background: color-mix(in srgb, var(--warn) 8%, transparent); }
+.metric-card .chip { font-size: 10px; padding: 0 5px; border: 1px solid var(--border); border-radius: 8px; color: var(--muted); margin-left: 4px; }
+.metric-card .chip.origin.user { color: var(--fg); border-color: var(--ann-user); }
+.metric-card .chip.origin.claude { border-color: var(--ann-claude); }
+.metric-card .chip.conflict { color: var(--warn); border-color: var(--warn); }
+.metric-card button { font: inherit; font-size: 11px; padding: 0 6px; border: 1px solid var(--border); background: none; color: var(--muted); border-radius: 4px; cursor: pointer; margin-left: 4px; }
+.metric-card button:hover:not(:disabled) { color: var(--fg); border-color: var(--fg); }
+.metric-card .basis { color: var(--muted); }
+.metric-card .claims { display: inline-block; margin-left: 6px; }
+.metric-card .claims ul { margin: 2px 0 0; padding-left: 14px; }
+.metric-card .card-rel { margin: 4px 0; }
+.metric-card .rel { margin-right: 10px; }
+.metric-card input[type="text"] { font: inherit; font-size: 12px; min-width: 200px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; }

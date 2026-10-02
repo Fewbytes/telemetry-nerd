@@ -21,6 +21,7 @@
   // message text resolves object ids (p3, f2) to hover/click chips
   setContext("refs", () => (ws.snapshot ? refTargets(ws.snapshot) : new Map()));
   setContext("highlights", () => ws.highlights);
+  setContext("catalogSeq", () => ws.catalogSeq);
   $effect(() => ws.start());
 
   // accent every highlighted target; re-runs on snapshot change so re-rendered DOM keeps it

@@ -262,3 +262,32 @@ export const refreshYContext = (id: string) => postJSON<unknown>(`/api/panels/${
 export const setOverlays = (id: string, body: Partial<OverlayFlags>) =>
   postJSON<unknown>(`/api/panels/${id}/overlays`, body);
 
+/** The metric card behind a panel (bead 2as.12). */
+export interface CardClaim { value: unknown; origin: string; confidence: number; basis: string | null }
+export interface CardField {
+  field: string; editable: boolean; value: unknown; origin: string | null; confidence: number | null;
+  basis: string | null; conflict: boolean; claims: CardClaim[];
+}
+export interface CardRelation { subject: string; kind: string; object: string; origin: string; confidence: number; contested: boolean; basis: string | null }
+export interface CardBinding { kind: string; key: string; roles: Record<string, string | null>; join_on: string[]; origin: string; confidence: number; contested: boolean }
+export interface CardMetric {
+  metric: string; present: boolean; fields: CardField[]; relations: CardRelation[]; bindings: CardBinding[];
+  gaps: { id: string; binding: string; role: string }[];
+}
+export interface MetricCard {
+  source: string; learned: boolean; metrics: CardMetric[];
+  profile: {
+    available: boolean; reason?: string; window_ms?: number; stale?: boolean; series_total?: number;
+    range?: Record<string, number | null>; seasonal?: { period: string; amplitude: number | null }; caveats?: string[];
+  };
+  quality: {
+    step_ms: number; resolution_ms: number; scrape_interval_ms: number | null; scrape_interval_reason: string | null;
+    series: number; gap_pct: number | null; resets: { measured: boolean; reason: string };
+    cardinality: { in_panel: number; catalog: number | null };
+  };
+}
+export const fetchCard = (id: string) => fetch(`/api/panels/${id}/card`).then((r) => json<MetricCard>(r));
+/** The user confirms (current value) or edits a catalog field: recorded as origin "user". */
+export const postClaim = (source: string, metric: string, field: string, value: unknown) =>
+  postJSON<unknown>("/api/catalog/claims", { source, metric, field, value });
+

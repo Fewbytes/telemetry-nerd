@@ -5,7 +5,7 @@ import { applyHighlightEvent, expire, nextExpiry, type Highlights } from "./high
 const RELOAD_TYPES = new Set([
   "panel.created", "panel.answered", "finding.created", "finding.verdict",
   "annotation.created", "annotation.deleted", "hypothesis.created",
-  "hypothesis.status_changed", "gap.created", "thread.message", "panel.closed", "panel.y_context", "panel.overlays_set",
+  "hypothesis.status_changed", "gap.created", "thread.message", "panel.closed", "panel.y_context", "panel.overlays_set", "panel.unit_refreshed",
   "panel.y_view_suggested", "panel.marginal_set",
 ]);
 
@@ -22,6 +22,7 @@ export function createWorkspace() {
   let daemon = $state<DaemonState>("connecting");
   let presence = $state.raw<Presence | null>(null);
   let highlights = $state.raw<Highlights>(new Map());
+  let catalogSeq = $state(0); // bumps when anything the metric card shows may have changed
   let expiryTimer: ReturnType<typeof setTimeout> | undefined;
   let lastSeq = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -68,6 +69,8 @@ export function createWorkspace() {
     get daemon() { return daemon; },
     /** latest presence frame; null until known and while the daemon is unreachable */
     get presence() { return presence; },
+    /** a counter that changes whenever catalog claims, relations or bindings change */
+    get catalogSeq() { return catalogSeq; },
     /** active highlights (Claude's and the user's), expired ones already dropped */
     get highlights() { return highlights; },
     reload: load,
@@ -79,6 +82,7 @@ export function createWorkspace() {
         let dropped = false;
         stopUnsub = subscribe((e) => {
           lastSeq = Math.max(lastSeq, e.seq);
+          if (/^(catalog|relation|binding)\./.test(e.type)) catalogSeq++;
           const next = applyHighlightEvent(highlights, e, Date.now());
           if (next !== highlights) {
             highlights = next;
