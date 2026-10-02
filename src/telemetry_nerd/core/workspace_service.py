@@ -39,7 +39,6 @@ from telemetry_nerd.catalog.relations import (
     ResolvedBinding,
     ResolvedRelation,
     canonical_ends,
-    metric_slug,
     validate_binding,
     validate_relation,
 )
@@ -873,7 +872,6 @@ class WorkspaceService:
         self, level: str, scope: str, resolved: ResolvedBinding, actor: Actor
     ) -> list[str]:
         created = []
-        slug = metric_slug(resolved.key)
         for role, metric in resolved.winner.roles.items():
             if metric is not None or self.relations.binding_gap(
                 level, scope, resolved.kind, resolved.key, role
@@ -885,7 +883,9 @@ class WorkspaceService:
                     missing_signal=f"{role} signal for {resolved.kind} on '{resolved.key}'",
                     needed_for=f"{resolved.kind} model of '{resolved.key}': {hint.why}",
                     suggestion=MetricSuggestion(
-                        name=hint.name.format(key=slug), type=hint.type, labels=list(hint.labels)
+                        name=hint.metric_name(resolved.key),
+                        type=hint.type,
+                        labels=list(hint.labels),
                     ),
                 ),
                 actor,

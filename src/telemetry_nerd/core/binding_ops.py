@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from telemetry_nerd.catalog.binding_suggest import find_suggestion
-from telemetry_nerd.catalog.relations import BINDING_ROLES, SUGGESTIONS, metric_slug
+from telemetry_nerd.catalog.relations import BINDING_ROLES, SUGGESTIONS
 from telemetry_nerd.charts.spec import LINE_SERIES_BUDGET, GroupRef
 from telemetry_nerd.charts.yview import value_stats
 from telemetry_nerd.core.binding_view import (
@@ -78,6 +78,21 @@ class Resolved:
     native: frozenset[str] = frozenset()
 
 
+def _gap_role(b: Resolved, role: str) -> GroupRole:
+    """An unfilled role: the instrumentation that would fill it (and its gap, if one is open)."""
+    u = b.unfilled.get(role) or {}
+    h = SUGGESTIONS[(b.kind, role)]
+    return GroupRole(
+        role=role, view="gap",
+        suggestion=MetricSuggestion(
+            name=u.get("name") or h.metric_name(b.key),
+            type=u.get("type") or h.type,
+            labels=list(u.get("labels") or h.labels),
+        ),
+        why=u.get("why") or h.why, gap=u.get("gap"),
+    )  # fmt: skip
+
+
 class BindingViews:
     def __init__(self, svc: TelemetryService) -> None:
         self.svc = svc
@@ -86,22 +101,30 @@ class BindingViews:
     def resolve(
         self, source: str, kind: str | None, key: str | None, suggestion: str | None
     ) -> Resolved:
-        ws = self.svc.ws
+        """The binding to draw or judge: a binding_suggest proposal (by id) or a confirmed binding
+        (by kind and key)."""
         if suggestion:
-            s = find_suggestion(ws.binding_suggest(source, key=key, limit=1000), suggestion)
-            detail = s["detail"]
-            return Resolved(
-                kind=s["kind"], key=s["key"], roles=dict(s["roles"]), join_on=list(s["join_on"]),
-                hints={r: Hint(d["form"], d.get("expr")) for r, d in detail.items()},
-                unfilled={u["role"]: dict(u["suggest_instrumentation"]) for u in s["unfilled"]},
-                basis="suggestion", suggestion=s["id"],
-                native=frozenset(d["metric"] for d in detail.values() if d.get("histogram") == "native"),
-            )  # fmt: skip
+            return self._from_suggestion(source, key, suggestion)
         if not kind or not key:
             raise ValueError(
                 "show_binding needs kind and key of a confirmed binding, or a suggestion id "
                 "(binding_suggest)"
             )
+        return self._from_binding(source, kind, key)
+
+    def _from_suggestion(self, source: str, key: str | None, suggestion: str) -> Resolved:
+        s = find_suggestion(self.svc.ws.binding_suggest(source, key=key, limit=1000), suggestion)
+        detail = s["detail"]
+        return Resolved(
+            kind=s["kind"], key=s["key"], roles=dict(s["roles"]), join_on=list(s["join_on"]),
+            hints={r: Hint(d["form"], d.get("expr")) for r, d in detail.items()},
+            unfilled={u["role"]: dict(u["suggest_instrumentation"]) for u in s["unfilled"]},
+            basis="suggestion", suggestion=s["id"],
+            native=frozenset(d["metric"] for d in detail.values() if d.get("histogram") == "native"),
+        )  # fmt: skip
+
+    def _from_binding(self, source: str, kind: str, key: str) -> Resolved:
+        ws = self.svc.ws
         found = [
             b for b in ws.relations.bindings("catalog", source, kind=kind, key=key)
             if not b.winner.retracted
@@ -121,7 +144,7 @@ class BindingViews:
             if metric is None:
                 h = SUGGESTIONS[(kind, role)]
                 unfilled[role] = {
-                    "name": h.name.format(key=metric_slug(key)), "type": h.type,
+                    "name": h.metric_name(key), "type": h.type,
                     "labels": list(h.labels), "why": h.why, "gap": gaps.get(role),
                 }  # fmt: skip
         return Resolved(
@@ -235,24 +258,12 @@ class BindingViews:
             *(self.fetch(source, p, when, actor) for p in plans.values()), return_exceptions=True
         )
         by_role = dict(zip(plans, fetched, strict=True))
-        roles: list[GroupRole] = []
-        for role in BINDING_ROLES[b.kind]:
-            if role in plans:
-                roles.append(self._draw(group, plans[role], by_role[role], step_ms, actor))
-            else:
-                u = b.unfilled.get(role) or {}
-                h = SUGGESTIONS[(b.kind, role)]
-                roles.append(
-                    GroupRole(
-                        role=role, view="gap",
-                        suggestion=MetricSuggestion(
-                            name=u.get("name") or h.name.format(key=metric_slug(b.key)),
-                            type=u.get("type") or h.type,
-                            labels=list(u.get("labels") or h.labels),
-                        ),
-                        why=u.get("why") or h.why, gap=u.get("gap"),
-                    )
-                )  # fmt: skip
+        roles = [
+            self._draw(group, plans[role], by_role[role], step_ms, actor)
+            if role in plans
+            else _gap_role(b, role)
+            for role in BINDING_ROLES[b.kind]
+        ]
         if b.kind == "littles_law" and set(BINDING_ROLES[b.kind]) <= infos.keys():
             roles.append(await self._littles(group, b, infos, mt, rng, actor))
         await asyncio.gather(

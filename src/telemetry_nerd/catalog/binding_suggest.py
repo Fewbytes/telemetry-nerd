@@ -27,7 +27,6 @@ from telemetry_nerd.catalog.relations import (
     SUGGESTIONS,
     ResolvedBinding,
     ResolvedRelation,
-    metric_slug,
 )
 
 #: a role is never reported above this: nothing here has looked at the data
@@ -1043,7 +1042,7 @@ def _assemble(
                 {
                     "role": role,
                     "suggest_instrumentation": {
-                        "name": hint.name.format(key=metric_slug(prefix or sc.key)),
+                        "name": hint.metric_name(prefix or sc.key),
                         "type": hint.type,
                         "why": hint.why,
                     },

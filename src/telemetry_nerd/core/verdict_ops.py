@@ -23,6 +23,8 @@ from telemetry_nerd.analysis.seasonal import DEFAULT_K, cycle_shifts
 from telemetry_nerd.analysis.seasonal_dist import Hist, common_edges, distance, expit, pool
 from telemetry_nerd.analysis.verdicts import (
     SLOW_SHARE,
+    Judgement,
+    Level,
     Onset,
     RoleInput,
     RoleResult,
@@ -230,22 +232,7 @@ class VerdictOps:
         }
         panels = {r.role: r.panel for r in g.roles if r.panel} if g else {}
         roles = {r: _Role(p) for r, p in plans.items()}
-
-        async def now_ds(role: str, p: RolePlan) -> str:
-            if pid := panels.get(role):
-                return svc.workspace.get_panel(pid).dataset_ids[0]
-            return (await svc.bindings.fetch(source, p, when, actor))["dataset"]
-
-        got = await asyncio.gather(
-            *(now_ds(r, p) for r, p in plans.items()), return_exceptions=True
-        )
-        for (r, st), x in zip(roles.items(), got, strict=True):
-            if isinstance(x, BaseException):
-                if not isinstance(x, ROLE_FAILURES):
-                    raise x
-                st.error = str(x)
-            else:
-                st.now = x
+        await self._fetch_now(source, roles, panels, when, actor)
         first = next((st.now for st in roles.values() if st.now), None)
         if first is None:
             raise ValueError(
@@ -257,24 +244,8 @@ class VerdictOps:
         span = grid.size * m0.step_ms
         shifts = cycle_shifts(int(grid[0]), scheme, k, tz, span, m0.step_ms)
         windows = [[iso(int(grid[0]) - m0.step_ms - s), iso(int(grid[-1]) - s)] for s in shifts]
-
-        async def ref_ds(p: RolePlan, shift: int) -> str | None:
-            w = {
-                "start": str(int(grid[0]) - shift),
-                "end": str(int(grid[-1]) - shift),
-                "step": format_duration(m0.step_ms),
-            }
-            try:
-                return (await svc.bindings.fetch(source, p, w, actor))["dataset"]
-            except ROLE_FAILURES:
-                return None
-
         live = [r for r, st in roles.items() if st.now]
-        fetched = await asyncio.gather(*(ref_ds(roles[r].plan, s) for r in live for s in shifts))
-        for i, r in enumerate(live):
-            roles[r].refs = list(fetched[i * k : (i + 1) * k])
-            if missing := sum(d is None for d in roles[r].refs):
-                roles[r].notes.append(f"{missing} of {k} reference windows could not be fetched")
+        await self._fetch_refs(source, [roles[r] for r in live], grid, m0.step_ms, shifts, k, actor)
 
         step_s = m0.step_ms / 1000
         inputs: dict[str, RoleInput] = {}
@@ -296,19 +267,14 @@ class VerdictOps:
             if role not in plans:
                 u = b.unfilled.get(role) or {}
                 out_roles[role] = {"status": "gap", "suggest": u.get("name"), "why": u.get("why")}
-                continue
-            st = roles[role]
-            if role not in results:
-                out_roles[role] = {
-                    "status": "error", "metric": st.plan.metric, "form": st.plan.form,
-                    "error": st.error, **({"notes": st.notes} if st.notes else {}),
-                }  # fmt: skip
-                continue
-            d = self._wire(role, st, results[role], k, grid, m0.step_ms)
-            if role == "concurrency" and model is not None:
-                d["model_check"] = model
-            add_caveats(caveats, d.get("caveats", []))
-            out_roles[role] = d
+            elif role not in results:
+                out_roles[role] = _error_wire(roles[role])
+            else:
+                d = self._wire(role, roles[role], results[role], k, grid, m0.step_ms)
+                if role == "concurrency" and model is not None:
+                    d["model_check"] = model
+                add_caveats(caveats, d.get("caveats", []))
+                out_roles[role] = d
         summary = self._summary(out_roles, results, order)
         out: dict[str, Any] = {
             "binding": {"kind": b.kind, "key": b.key, "basis": b.basis,
@@ -338,6 +304,57 @@ class VerdictOps:
         if g is not None:
             self._annotate(g, out_roles, summary, out["reference"], alpha, actor)
         return out
+
+    async def _fetch_now(
+        self, source: str, roles: dict[str, _Role], panels: dict[str, str], when: dict, actor: Actor
+    ) -> None:
+        """Each role's dataset for now: its group panel's, else fetched as show_binding does."""
+        svc = self.svc
+
+        async def now_ds(role: str, p: RolePlan) -> str:
+            if pid := panels.get(role):
+                return svc.workspace.get_panel(pid).dataset_ids[0]
+            return (await svc.bindings.fetch(source, p, when, actor))["dataset"]
+
+        got = await asyncio.gather(
+            *(now_ds(r, st.plan) for r, st in roles.items()), return_exceptions=True
+        )
+        for st, x in zip(roles.values(), got, strict=True):
+            if isinstance(x, BaseException):
+                if not isinstance(x, ROLE_FAILURES):
+                    raise x
+                st.error = str(x)
+            else:
+                st.now = x
+
+    async def _fetch_refs(
+        self,
+        source: str,
+        live: list[_Role],
+        grid: np.ndarray,
+        step_ms: int,
+        shifts: list[int],
+        k: int,
+        actor: Actor,
+    ) -> None:
+        """The k reference windows of each fetched role (None where one could not be fetched)."""
+
+        async def ref_ds(p: RolePlan, shift: int) -> str | None:
+            w = {
+                "start": str(int(grid[0]) - shift),
+                "end": str(int(grid[-1]) - shift),
+                "step": format_duration(step_ms),
+            }
+            try:
+                return (await self.svc.bindings.fetch(source, p, w, actor))["dataset"]
+            except ROLE_FAILURES:
+                return None
+
+        fetched = await asyncio.gather(*(ref_ds(st.plan, s) for st in live for s in shifts))
+        for i, st in enumerate(live):
+            st.refs = list(fetched[i * k : (i + 1) * k])
+            if missing := sum(d is None for d in st.refs):
+                st.notes.append(f"{missing} of {k} reference windows could not be fetched")
 
     def _input(
         self,
@@ -476,25 +493,7 @@ class VerdictOps:
         evidence: list[dict] = []
         lv = j.level
         if lv is not None:
-            lo, hi = lv.effect_interval()
-            n90 = lv.normal()
-            if lv.scale == "linear":
-                name, val, iv = "level_difference_vs_reference", lv.effect, [lo, hi]
-                normal = [n90[0], n90[1]]
-                ref_value = lv.centre
-            else:
-                name = "odds_ratio_vs_reference" if lv.scale == "logit" else "ratio_vs_reference"
-                val, iv = math.exp(lv.effect), [math.exp(lo), math.exp(hi)]
-                conv = expit if lv.scale == "logit" else math.exp
-                normal = [conv(n90[0]), conv(n90[1])]
-                ref_value = conv(lv.centre)
-            d["level"] = {
-                "now": sig(j.now_value), "now_ci95": sig_pair(j.now_interval) if j.now_interval else None,
-                "reference": sig(ref_value), "normal_90": sig_pair(normal),
-                name.removesuffix("_vs_reference"): sig(val), "ci95": sig_pair(iv),
-                "p": sig(lv.p), "flagged": lv.flagged, "reference_windows": len(lv.previous),
-                **({"excluded_atypical": lv.excluded} if lv.excluded else {}),
-            }  # fmt: skip
+            name, val, iv, d["level"] = _level_wire(j, lv)
             evidence.append(
                 statistic(ds, f"{role}_{name}", sig(val), sig_pair(iv),
                           d["method"], {**params, "p": sig(lv.p), "scale": lv.scale})
@@ -508,23 +507,7 @@ class VerdictOps:
                           {**params, "n_eff": sig(j.n_eff_now)})
             )  # fmt: skip
         if j.episodes:
-
-            def start(i: int) -> str:
-                return iso(int(grid[min(i * j.block, grid.size - 1)]) - step)
-
-            def end(i: int) -> str:
-                return iso(int(grid[min((i + 1) * j.block, grid.size) - 1]))
-
-            d["episodes"] = [
-                {
-                    "direction": "higher" if e.side > 0 else "lower",
-                    "start": start(e.start),
-                    "detected": end(e.signal),
-                    "ended": None if e.end is None else end(e.end),
-                    "peak_sigma": sig(e.peak, 3),
-                }
-                for e in j.episodes[:5]
-            ]  # fmt: skip
+            d["episodes"] = _episodes_wire(j, grid, step)
             d["episode_threshold_h"] = sig(j.stage.h, 3) if j.stage else None
         if j.onset is not None:
             d["onset"] = _onset_wire(j.onset)
@@ -637,6 +620,59 @@ def _utilization_bound(p: RolePlan, members: dict) -> float | None:
 
 def _shape(now: Hist, refs: list[Hist], edges: np.ndarray) -> float:
     return distance(now, pool(refs), edges) if refs else math.nan
+
+
+def _level_wire(j: Judgement, lv: Level) -> tuple[str, float, list[float], dict]:
+    """(statistic name, effect, its 95% interval, the wire `level`) of a level test, on the
+    data's scale: an odds ratio (logit), a ratio (log) or a difference (linear)."""
+    lo, hi = lv.effect_interval()
+    n90 = lv.normal()
+    if lv.scale == "linear":
+        name, val, iv = "level_difference_vs_reference", lv.effect, [lo, hi]
+        normal = [n90[0], n90[1]]
+        ref_value = lv.centre
+    else:
+        name = "odds_ratio_vs_reference" if lv.scale == "logit" else "ratio_vs_reference"
+        val, iv = math.exp(lv.effect), [math.exp(lo), math.exp(hi)]
+        conv = expit if lv.scale == "logit" else math.exp
+        normal = [conv(n90[0]), conv(n90[1])]
+        ref_value = conv(lv.centre)
+    level = {
+        "now": sig(j.now_value), "now_ci95": sig_pair(j.now_interval) if j.now_interval else None,
+        "reference": sig(ref_value), "normal_90": sig_pair(normal),
+        name.removesuffix("_vs_reference"): sig(val), "ci95": sig_pair(iv),
+        "p": sig(lv.p), "flagged": lv.flagged, "reference_windows": len(lv.previous),
+        **({"excluded_atypical": lv.excluded} if lv.excluded else {}),
+    }  # fmt: skip
+    return name, val, iv, level
+
+
+def _episodes_wire(j: Judgement, grid: np.ndarray, step: int) -> list[dict]:
+    """The first five CUSUM episodes, block indexes as times on now's grid."""
+
+    def start(i: int) -> str:
+        return iso(int(grid[min(i * j.block, grid.size - 1)]) - step)
+
+    def end(i: int) -> str:
+        return iso(int(grid[min((i + 1) * j.block, grid.size) - 1]))
+
+    return [
+        {
+            "direction": "higher" if e.side > 0 else "lower",
+            "start": start(e.start),
+            "detected": end(e.signal),
+            "ended": None if e.end is None else end(e.end),
+            "peak_sigma": sig(e.peak, 3),
+        }
+        for e in j.episodes[:5]
+    ]
+
+
+def _error_wire(st: _Role) -> dict:
+    return {
+        "status": "error", "metric": st.plan.metric, "form": st.plan.form, "error": st.error,
+        **({"notes": st.notes} if st.notes else {}),
+    }  # fmt: skip
 
 
 def _member_text(m: str) -> str:

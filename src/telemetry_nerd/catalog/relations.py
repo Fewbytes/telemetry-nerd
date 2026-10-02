@@ -51,6 +51,10 @@ class Suggestion:
     labels: tuple[str, ...]
     why: str
 
+    def metric_name(self, key: str) -> str:
+        """The suggested metric name for a binding key."""
+        return self.name.format(key=metric_slug(key))
+
 
 SUGGESTIONS: dict[tuple[str, str], Suggestion] = {
     ("littles_law", "arrival_rate"): Suggestion(

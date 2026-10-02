@@ -18,7 +18,7 @@ import polars as pl
 from telemetry_nerd.analysis.exprkind import rate_interval_ms
 from telemetry_nerd.analysis.littles import Block, GroupResult, Substeps, check, combine
 from telemetry_nerd.catalog.models import native_family
-from telemetry_nerd.catalog.relations import SUGGESTIONS, metric_slug
+from telemetry_nerd.catalog.relations import SUGGESTIONS
 from telemetry_nerd.core.uncertainty import mark_statistics
 from telemetry_nerd.core.wire import Memo, sig, sig_pair, statistic
 from telemetry_nerd.datasets.store import DatasetStore
@@ -89,6 +89,69 @@ def _nice_window(span_ms: int, floor_ms: int) -> int:
     return next((w for w in _NICE if w >= want), _NICE[-1])
 
 
+def _windows(
+    start: str, end: str, window: str, res: int, now: int
+) -> tuple[TimeRange, int, int, int]:
+    """The range aligned to whole windows, the window, the sub-step (a multiple of the
+    resolution, ~SUBSTEPS_PER_WINDOW per window) and sub-steps per window."""
+    rng = TimeRange(parse_time(start, now), parse_time(end, now))
+    span = rng.end_ms - rng.start_ms
+    if span <= 0:
+        raise ValueError("end must be after start")
+    floor = MIN_SUBSTEPS_PER_WINDOW * res
+    win = _nice_window(span, floor) if window == "auto" else parse_duration(window)
+    if win < floor:
+        raise ValueError(
+            f"window {format_duration(win)} holds fewer than {MIN_SUBSTEPS_PER_WINDOW} scrapes "
+            f"({format_duration(res)} each) (hint: window >= {format_duration(floor)})"
+        )
+    step = max(res, (win // SUBSTEPS_PER_WINDOW) // res * res)
+    k = win // step
+    win = k * step
+    rng = rng.align(win)
+    if (rng.end_ms - rng.start_ms) // step > MAX_SUBSTEPS:
+        raise ValueError(
+            "range / sub-step is too many points (hint: a shorter range or longer window)"
+        )
+    if (rng.end_ms - rng.start_ms) < 2 * win:
+        raise ValueError(
+            f"the range holds fewer than two {format_duration(win)} windows (hint: a longer "
+            "range or a shorter window)"
+        )
+    return rng, win, step, k
+
+
+def _exprs(
+    by: list[str], lat: dict, arr_name: str, arr_sel: str, arr_form: str, concurrency: str
+) -> dict[str, str]:
+    """The four queries, summed by `by`. A native histogram has no _sum/_count series: its sum
+    and count are histogram_sum/histogram_count of its rate. `arr_form`: gauge (already a
+    rate) | native | classic (a histogram: its _count) | counter."""
+    agg = f"sum by ({', '.join(by)})" if by else "sum"
+    ri = "[$__rate_interval]"
+    base, lsel = lat["base"], lat["selector"]
+    if lat["native"]:
+        sum_q = f"{agg} (histogram_sum(rate({base}{lsel}{ri})))"
+        cnt_q = f"{agg} (histogram_count(rate({base}{lsel}{ri})))"
+    else:
+        sum_q = f"{agg} (rate({base}_sum{lsel}{ri}))"
+        cnt_q = f"{agg} (rate({base}_count{lsel}{ri}))"
+    if arr_form == "gauge":
+        arr_q = f"{agg} ({arr_name}{arr_sel})"
+    elif arr_form == "native":
+        arr_q = f"{agg} (histogram_count(rate({arr_name}{arr_sel}{ri})))"
+    elif arr_form == "classic":
+        arr_q = f"{agg} (rate({arr_name}_count{arr_sel}{ri}))"
+    else:
+        arr_q = f"{agg} (rate({arr_name}{arr_sel}{ri}))"
+    return {
+        "arrival_rate": arr_q,
+        "latency_sum": sum_q,
+        "latency_count": cnt_q,
+        "concurrency": f"{agg} ({concurrency})",
+    }
+
+
 def _key(labels: dict, by: list[str]) -> tuple[str, ...]:
     return tuple(labels.get(b, "") for b in by)
 
@@ -139,10 +202,10 @@ class LittlesOps:
         roles.update({r: v for r, v in given.items() if v})
         missing = [r for r in ROLES if not roles.get(r)]
         if missing:
+            hints = [SUGGESTIONS[("littles_law", r)] for r in missing]
             sug = "; ".join(
-                f"{r}: e.g. {SUGGESTIONS[('littles_law', r)].name.format(key=metric_slug(binding or 'service'))}"
-                f" ({SUGGESTIONS[('littles_law', r)].type})"
-                for r in missing
+                f"{r}: e.g. {h.metric_name(binding or 'service')} ({h.type})"
+                for r, h in zip(missing, hints, strict=True)
             )
             raise ValueError(
                 f"no signal for {', '.join(missing)}: Little's law needs all three (hint: pass "
@@ -249,64 +312,22 @@ class LittlesOps:
             )
         factor, unit, unit_basis = self._unit(source, lat["base"], latency_unit)
         res = self._resolution(source)
-        now = self._clock()
-        rng = TimeRange(parse_time(start, now), parse_time(end, now))
-        span = rng.end_ms - rng.start_ms
-        if span <= 0:
-            raise ValueError("end must be after start")
-        win = (
-            _nice_window(span, MIN_SUBSTEPS_PER_WINDOW * res)
-            if window == "auto"
-            else parse_duration(window)
-        )
-        if win < MIN_SUBSTEPS_PER_WINDOW * res:
-            raise ValueError(
-                f"window {format_duration(win)} holds fewer than {MIN_SUBSTEPS_PER_WINDOW} scrapes "
-                f"({format_duration(res)} each) (hint: window >= {format_duration(MIN_SUBSTEPS_PER_WINDOW * res)})"
-            )
-        step = max(res, (win // SUBSTEPS_PER_WINDOW) // res * res)
-        k = win // step
-        win = k * step
-        rng = rng.align(win)
-        if (rng.end_ms - rng.start_ms) // step > MAX_SUBSTEPS:
-            raise ValueError(
-                "range / sub-step is too many points (hint: a shorter range or longer window)"
-            )
-        if (rng.end_ms - rng.start_ms) < 2 * win:
-            raise ValueError(
-                f"the range holds fewer than two {format_duration(win)} windows (hint: a longer "
-                "range or a shorter window)"
-            )
+        rng, win, step, k = _windows(start, end, window, res, self._clock())
         skip = 1 + (-(-parse_duration(warmup) // step) if warmup else 0)
-        agg = f"sum by ({', '.join(by)})" if by else "sum"
-        ri = "[$__rate_interval]"
-        lsel = lat["selector"]
-        if lat["native"]:
-            sum_q = f"{agg} (histogram_sum(rate({lat['base']}{lsel}{ri})))"
-            cnt_q = f"{agg} (histogram_count(rate({lat['base']}{lsel}{ri})))"
-        else:
-            sum_q = f"{agg} (rate({lat['base']}_sum{lsel}{ri}))"
-            cnt_q = f"{agg} (rate({lat['base']}_count{lsel}{ri}))"
         arr_is_rate = arr_type == "gauge"
-        # a native histogram has no _count series: its count is histogram_count(rate(h))
         # a histogram named as the arrival signal: its count (classic _count, native
         # histogram_count) counts completions
         arr_hist = arr_type == "histogram" or arr_name == lat["base"]
         arr_native = arr_hist and self.native_histogram(source, arr_name)
         if arr_is_rate:
-            arr_q = f"{agg} ({arr_name}{arr_sel})"
+            arr_form = "gauge"
         elif arr_native:
-            arr_q = f"{agg} (histogram_count(rate({arr_name}{arr_sel}{ri})))"
+            arr_form = "native"
         elif arr_hist:
-            arr_q = f"{agg} (rate({arr_name}_count{arr_sel}{ri}))"
+            arr_form = "classic"
         else:
-            arr_q = f"{agg} (rate({arr_name}{arr_sel}{ri}))"
-        exprs = {
-            "arrival_rate": arr_q,
-            "latency_sum": sum_q,
-            "latency_count": cnt_q,
-            "concurrency": f"{agg} ({conc_name}{conc_sel})",
-        }  # fmt: skip
+            arr_form = "counter"
+        exprs = _exprs(by, lat, arr_name, arr_sel, arr_form, f"{conc_name}{conc_sel}")
         ds = {}
         for role, expr in exprs.items():
             out = await self._query(
@@ -325,7 +346,7 @@ class LittlesOps:
             "resolution_ms": res, "arrivals": arrivals, "arrival_is_rate": arr_is_rate,
             "roles": roles, "binding": bound, "exprs": exprs, "warmup": warmup,
             "matchers": {
-                "arrival_rate": _matchers(arr_sel), "latency": _matchers(lsel),
+                "arrival_rate": _matchers(arr_sel), "latency": _matchers(lat["selector"]),
                 "concurrency": _matchers(conc_sel),
             },
         }  # fmt: skip
