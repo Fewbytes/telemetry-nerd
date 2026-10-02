@@ -7,7 +7,7 @@
 <p align="center"><b>Evidence-first telemetry analysis for you and your agent.</b></p>
 
 Telemetry Nerd is a workspace where you and Claude investigate your metrics together. Claude
-queries your Prometheus or VictoriaMetrics data, draws graphs into a shared browser workspace,
+queries your datasource (e.g. Prometheus, VictoriaMetrics, Thanos), draws graphs into a shared browser workspace,
 and writes down what it thinks is going on as hypotheses and findings. Every finding points at
 the evidence behind it. You see the same graphs, ask about any part of them, and mark
 hypotheses supported or refuted.
