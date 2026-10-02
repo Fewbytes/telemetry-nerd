@@ -1,14 +1,17 @@
 import asyncio
 import json
 
+import pyarrow as pa
 import pytest
 
 from telemetry_nerd.channel.format import describe_event
 from telemetry_nerd.charts.yview import YView
 from telemetry_nerd.model.errors import NotFound
+from telemetry_nerd.model.series import BUCKET_SCHEMA, FetchResult
 from telemetry_nerd.workspace.models import AnnotationIn, FindingIn, GapIn, TimeSpan
 
-from .fakes import make_service
+from .fakes import FakeSource, make_service
+from .test_service import HoleySource
 
 
 def scope():
@@ -447,3 +450,48 @@ async def test_indexed_selection_window_and_week(svc):
     assert (
         ix["series"][0]["ts"] == svc.panel_data(pid, 800)["series"][0]["ts"]
     )  # same grid after shift + LOD
+
+
+class AllHoleSource(FakeSource):
+    """Every series loses the same three 1m buckets 2-5 min past each hour."""
+
+    async def fetch(self, expr, rng, step_ms):
+        res = await super().fetch(expr, rng, step_ms)
+        kept = [
+            r for r in res.buckets.to_pylist() if not 120_000 <= r["ts_ms"] % 3_600_000 < 300_000
+        ]
+        return FetchResult(pa.Table.from_pylist(kept, schema=BUCKET_SCHEMA), res.series)
+
+
+def claim_in(dataset, start_ms, end_ms):
+    ev = [{"kind": "statistic", "dataset": dataset, "name": "n", "value": 1.0,
+           "exact": True, "method": "count"}]  # fmt: skip
+    sc = {**scope(), "time_range": {"start_ms": start_ms, "end_ms": end_ms}}
+    return FindingIn(claim="avg dropped", scope=sc, evidence=ev)
+
+
+async def _queried(tmp_path, source):
+    svc = make_service(tmp_path, source)
+    ds = (await svc.query("up", start="now-2h", end="now-1h", step="1m"))["dataset"]
+    meta = svc.datasets.meta(ds)
+    first = next(t for t in range(meta.start_ms, meta.end_ms + 1, 60_000)
+                 if 120_000 <= t % 3_600_000 < 300_000)  # fmt: skip
+    return svc, ds, meta, first
+
+
+async def test_finding_over_a_window_with_no_data_is_rejected(tmp_path):
+    svc, ds, _, hole = await _queried(tmp_path, AllHoleSource())
+    with pytest.raises(ValueError, match="coverage"):
+        svc.ws.finding_create(claim_in(ds, hole - 60_000, hole + 120_000), "claude")
+
+
+async def test_finding_over_a_partial_window_is_created_with_a_warning(tmp_path):
+    svc, ds, _, hole = await _queried(tmp_path, HoleySource())
+    f = svc.ws.finding_create(claim_in(ds, hole - 60_000, hole + 120_000), "claude")
+    assert len(f.caveats) == 1 and f.caveats[0].startswith(f"{ds}: 50%")
+
+
+async def test_finding_over_a_clean_window_gains_no_caveats(tmp_path):
+    svc, ds, meta, _ = await _queried(tmp_path, HoleySource())
+    f = svc.ws.finding_create(claim_in(ds, meta.start_ms, meta.start_ms + 600_000), "claude")
+    assert f.caveats == []

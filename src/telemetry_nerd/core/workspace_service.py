@@ -56,8 +56,10 @@ from telemetry_nerd.charts.yview import (
     value_stats,
 )
 from telemetry_nerd.core.card_payload import binding_row, browse_row, field_rows, relation_row
+from telemetry_nerd.core.coverage_check import claim_coverage
 from telemetry_nerd.core.events import Actor, Event, EventLog, check_actor
 from telemetry_nerd.datasets.store import DatasetStore
+from telemetry_nerd.model.companions import dataset_bundle
 from telemetry_nerd.model.discovery import Discovery
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.time import format_duration, now_ms
@@ -173,6 +175,42 @@ class WorkspaceService:
         return h
 
     # findings -----------------------------------------------------------
+    def _evidence_datasets(self, data: FindingIn) -> list[str]:
+        out: list[str] = []
+        for ref in data.evidence:
+            match ref:
+                case PanelRef(panel=pid):
+                    out.extend(self.workspace.get_panel(pid).dataset_ids[:1])
+                case StatisticRef(dataset=did):
+                    out.append(did)
+        return list(dict.fromkeys(out))
+
+    def _check_claim_coverage(self, data: FindingIn) -> FindingIn:
+        """Reject a claim whose window lacks the data to support it; warn on partial coverage."""
+        span = data.scope.time_range
+        blocking: list[str] = []
+        warnings: list[str] = []
+        for did in self._evidence_datasets(data):
+            if self.datasets.meta(did).representation not in ("bucket_agg", "quantile"):
+                continue
+            meta, result = self.datasets.get(did)
+            states = dataset_bundle(self.datasets, meta, result).companions.get("bucket_state")
+            if states is None:
+                continue
+            for c in claim_coverage(states, span.start_ms, span.end_ms):
+                (blocking if c.severity == "blocks_claim" else warnings).append(
+                    f"{did}: {c.message}"
+                )
+        if blocking:
+            raise ValueError(
+                "insufficient coverage for this claim: "
+                + " ".join(blocking)
+                + " (hint: narrow scope.time_range or the selector to data that exists)"
+            )
+        if warnings:
+            data = data.model_copy(update={"caveats": [*data.caveats, *warnings]})
+        return data
+
     @atomic
     def finding_create(self, data: FindingIn, actor: Actor) -> Finding:
         for ref in data.evidence:
@@ -184,6 +222,7 @@ class WorkspaceService:
                         raise NotFound(f"dataset {did} not found")
                 case AnnotationRef(annotation=aid):
                     self.objects.get_annotation(aid)
+        data = self._check_claim_coverage(data)
         if data.hypothesis is not None:
             self.objects.get_hypothesis(data.hypothesis)
         if data.answers_panel is not None:
