@@ -70,8 +70,7 @@ class Coverage(NamedTuple):
 
 
 class FleetRun(NamedTuple):
-    """One analysed fleet. A tuple (index access stays as before: meta, step, ts, labels, names,
-    fleet, caveats); `groups` (behaviour groups, lkn.10) is appended."""
+    """One analysed fleet, as memoised by FleetOps.run."""
 
     meta: DatasetMeta
     step: int
@@ -80,9 +79,9 @@ class FleetRun(NamedTuple):
     names: list[str]
     fleet: Fleet
     caveats: list[str]
-    groups: Groups | None = None
-    coverage: Coverage | None = None
-    series_ids: list[str] | None = None
+    groups: Groups | None  # behaviour groups (lkn.10)
+    coverage: Coverage
+    series_ids: list[str]
 
 
 def member_names(labels: list[dict], by: list[str] | None) -> list[str]:
@@ -123,7 +122,7 @@ class FleetOps:
         key = (dataset_id, tuple(by or ()), scale, normalise)
         if (hit := self._memo.get(key)) is not None:
             return hit
-        meta = self.check(dataset_id)
+        self.check(dataset_id)
         meta, result = self._datasets.get(dataset_id)
         table, step = result.buckets, meta.step_ms
         caveats: list[str] = []
@@ -280,17 +279,16 @@ class FleetOps:
         normalise: str = "none",
     ) -> dict:
         run = self.run(dataset_id, by, scale, normalise)
-        _, step, ts, labels, names, f, caveats, groups, cov, _sids = run
+        f, ts, names, groups, cov = run.fleet, run.ts, run.names, run.groups, run.coverage
         self._last[dataset_id] = {"by": by, "scale": scale, "normalise": normalise}
-        caveats = list(caveats)  # the memoised list stays as computed
+        caveats = list(run.caveats)  # the memoised list stays as computed
         ranked = self.ranked_outliers(run)
         m_, t_ = f.z.shape
         sp = f.spread
-        eff = format_duration(step)
+        eff = format_duration(run.step)
         tol = max(3, math.ceil(CHURN_TOL * t_))
         # steps whose data is unknown (fetch failed) cannot show a member absent or silent
-        known = np.ones((m_, t_), bool) if cov is None or cov.state is None else (
-            cov.state != State.UNKNOWN)  # fmt: skip
+        known = np.ones((m_, t_), bool) if cov.state is None else cov.state != State.UNKNOWN
         appeared = [
             {"member": names[i], "first_seen": iso(ts[f.first_seen[i]])}
             for i in range(m_)
@@ -302,7 +300,7 @@ class FleetOps:
             if not (0 <= last < t_ - tol and known[i, last + 1 :].sum() >= tol):
                 continue
             item = {"member": names[i], "last_seen": iso(ts[last])}
-            if cov is not None and cov.stale is not None and cov.stale[i, last:].any():
+            if cov.stale is not None and cov.stale[i, last:].any():
                 item["state"] = "ended"  # the source marked it stale: target or series went away
             else:
                 item["state"] = "silent"  # alive, no samples (spec §5.2): ended or sick
@@ -344,11 +342,11 @@ class FleetOps:
                          for gf, o, gn, gl, extra, gi in ranked[:MAX_LISTED]],
             "tests": self._tests(f),
             "caveats": caveats,
-            "located": [c.model_dump() for c in cov.located] if cov is not None else [],
+            "located": [c.model_dump() for c in cov.located],
             "draw": f'show("{dataset_id}", question, mark="fleet")',
         }  # fmt: skip
         if groups is not None:
-            out["clusters"] = self._clusters(f, groups, names, labels)
+            out["clusters"] = self._clusters(f, groups, names, run.labels)
         if len(ranked) > MAX_LISTED:
             out["more_outliers"] = len(ranked) - MAX_LISTED
         return out
@@ -376,10 +374,10 @@ class FleetOps:
         return out
 
     @staticmethod
-    def _partial(cov: Coverage | None, gi: int, o: Outlier) -> dict:
+    def _partial(cov: Coverage, gi: int, o: Outlier) -> dict:
         """Partial buckets of an outlier (values from fewer samples than expected), overall and
         within each episode: an excursion that coincides with partial buckets is suspect."""
-        if cov is None or cov.state is None:
+        if cov.state is None:
             return {}
         part = cov.state[gi] == State.PARTIAL
         if not part.any():
@@ -573,8 +571,7 @@ class FleetOps:
         run = self.run(
             dataset_id, cfg.get("by"), cfg.get("scale", "auto"), cfg.get("normalise", "none")
         )
-        _, step, ts, _labels, names, f, caveats, groups, cov, _sids = run
-        caveats = list(caveats)
+        f, ts, groups, cov = run.fleet, run.ts, run.groups, run.coverage
         sp = f.spread
         ranked = self.ranked_outliers(run)
         drawn = []
@@ -589,9 +586,9 @@ class FleetOps:
             })  # fmt: skip
         payload = {
             "kind": "fleet",
-            "effective_step_ms": step,
+            "effective_step_ms": run.step,
             "ts": ts,
-            "members": len(names),
+            "members": len(run.names),
             "normalise": f.normalise,
             "scale": f.scale,
             "band": {
@@ -602,8 +599,8 @@ class FleetOps:
             "alive": [int(v) for v in sp.alive],
             "outliers": drawn,
             "outlier_count": len(ranked),
-            "caveats": caveats,
-            "located": [c.model_dump() for c in cov.located] if cov is not None else [],
+            "caveats": list(run.caveats),
+            "located": [c.model_dump() for c in cov.located],
         }
         if groups is not None:  # per-group bands (additive; lkn.10)
             payload["clusters"] = [

@@ -345,6 +345,30 @@ def analyse(
     thr = t_isf(a_test / (2 * k), DF_FACTOR * (k - 1))
     thresholds["member"] = thr
     zt = z[tested]
+    tests = _level_change_tests(zt, normalise)
+    flagged_lc = np.zeros(k, bool)
+    for v in tests.values():
+        flagged_lc |= np.abs(v) > thr
+    tau_hat = typical_tau(d[tested])
+    thresholds["tau"] = tau_hat
+    scans, bars = _excursion_bars(
+        zt, cnt[tested], ~flagged_lc, tau_hat, a_test, thresholds, caveats
+    )
+    for row, i in enumerate(tested):
+        fired, zs, exceed, ratio = _member_tests(row, tests, thr, scans, bars)
+        if fired:
+            outliers.append(_describe(i, z[i], d[i], fired, zs, exceed, ratio, thr, t_, tau_hat))
+    if len(outliers) > MANY_OUTLIERS * k:
+        caveats.append("many_outliers")
+    outliers.sort(key=lambda o: -o.score)
+    return Fleet(sc, normalise, sp, loo, tested, untested, outliers, thresholds, caveats,
+                 first, last, z, d, band_y)  # fmt: skip
+
+
+def _level_change_tests(zt: np.ndarray, normalise: Normalise) -> dict[str, np.ndarray]:
+    """Across-member robust z of each tested member's level (trimmed mean z over the window; off
+    when members are normalised) and change (last third minus first third)."""
+    k, t_ = zt.shape
     third = max(1, t_ // 3)
     level = trimmed_mean(zt)
     change = trimmed_mean(zt[:, t_ - third :]) - trimmed_mean(zt[:, :third])
@@ -356,25 +380,36 @@ def analyse(
     if ok_change.sum() >= MIN_TESTED:
         zc[ok_change] = loo_robust_z(change[ok_change])
     tests["change"] = zc
-    flagged_lc = np.zeros(k, bool)
-    for v in tests.values():
-        flagged_lc |= np.abs(v) > thr
-    tau_hat = typical_tau(d[tested])
-    thresholds["tau"] = tau_hat
-    # excursions at three durations, alpha split: single steps (spikes) and rolling medians over
-    # 5 and 15 steps (episodes: most of the window out, so heavy-tailed single-step noise cannot
-    # fake them). Light tails: Student t with the pooled sigma's df, Bonferroni over every
-    # member-step. Heavy tails at a scale (the typical member exceeds t's 0.1% point too often):
-    # each member's peak also against a Gumbel fitted to the other members' peaks.
+    return tests
+
+
+def _excursion_bars(
+    zt: np.ndarray,
+    cnt: np.ndarray,
+    calm: np.ndarray,
+    tau_hat: float,
+    a_test: float,
+    thresholds: dict[str, float],
+    caveats: list[str],
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """Per excursion scale: the scanned z (tested members x steps) and the bar each step must
+    stay within. `calm`: members no level / change test fired on (the pool for scale and tails).
+    Records thresholds and the heavy-tail caveat.
+
+    Excursions at three durations, alpha split: single steps (spikes) and rolling medians over
+    5 and 15 steps (episodes: most of the window out, so heavy-tailed single-step noise cannot
+    fake them). Light tails: Student t with the pooled sigma's df, Bonferroni over every
+    member-step. Heavy tails at a scale (the typical member exceeds t's 0.1% point too often):
+    each member's peak also against a Gumbel fitted to the other members' peaks."""
+    k = zt.shape[0]
     w = 2 * POOL_HALF + 1
-    df = np.maximum(DF_FACTOR * (cnt[tested] / min(max(tau_hat, 1.0), w) - 1), 1.0)
+    df = np.maximum(DF_FACTOR * (cnt / min(max(tau_hat, 1.0), w) - 1), 1.0)
     bars: dict[str, np.ndarray] = {}
     # episodes are scanned on AR(1)-prewhitened deviations: under heavy-tailed noise one huge
     # innovation decays over several steps and can hold a rolling median of raw z up (the
     # 15-step scale's false alarms under t(3), lkn.14); innovations do not. A sustained shift
     # delta becomes (1 - phi) delta against innovation noise sd sqrt(1 - phi^2) sigma: for the
     # 15-step median about the same power as raw z at phi = 0.6.
-    calm = ~flagged_lc
     phi = fleet_phi(zt[calm]) if calm.any() else 0.0
     thresholds["phi"] = phi
     ep_in = prewhiten(zt, phi)
@@ -389,14 +424,14 @@ def analyse(
         if name == "spike":
             unit = np.ones(zz.shape)
         else:  # the rolling median's own scale relative to single steps (pool members)
-            pool = zz[~flagged_lc]
-            ratio = float(np.nanmedian(np.abs(pool))) / float(np.nanmedian(np.abs(zt[~flagged_lc])))
+            pool = zz[calm]
+            ratio = float(np.nanmedian(np.abs(pool))) / float(np.nanmedian(np.abs(zt[calm])))
             unit = np.full(zz.shape, ratio)
         tdf = np.vectorize(lambda v, q=p: t_isf(q / 2, float(round(v, 1))), otypes=[float])(df)
         bar = tdf * unit
         thresholds[f"{name}_threshold"] = float(np.median(bar))
         # a median needing few independent exceedances keeps the single-step tails
-        own = heavy_tailed(zz / unit, ~flagged_lc, float(np.median(df)), tau_hat)
+        own = heavy_tailed(zz / unit, calm, float(np.median(df)), tau_hat)
         if name == "spike":
             spike_heavy = own
         inherits = math.ceil(EXCURSIONS[name] / (2 * max(tau_ep, 1.0))) < MIN_EXCEEDING
@@ -407,38 +442,43 @@ def analyse(
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
                 peaks = np.nanmax(np.abs(zz), axis=1)
-            gb = gumbel_bars(peaks, ~flagged_lc, a_test / n_scales / k)
+            gb = gumbel_bars(peaks, calm, a_test / n_scales / k)
             thresholds[f"{name}_tail_threshold"] = (
                 float(np.median(gb[np.isfinite(gb)])) if np.isfinite(gb).any() else math.inf
             )
             bar = np.maximum(bar, gb[:, None])
         bars[name] = bar
-    for row, i in enumerate(tested):
-        fired: list[str] = []
-        zs: dict[str, float] = {}
-        for name, v in tests.items():
-            zs[name] = float(v[row])
-            if abs(v[row]) > thr:
-                fired.append(name)
-        exceed = np.zeros(t_, bool)
-        ratio = 0.0
-        for name, zz_all in scans.items():
-            zz = zz_all[row]
-            with np.errstate(invalid="ignore"):
-                ex = np.abs(zz) > bars[name][row]
-                r = np.abs(zz) / bars[name][row]
-            zs[name] = float(np.nanmax(np.abs(zz))) if np.isfinite(zz).any() else 0.0
-            if ex.any():
-                fired.append(name)
-                exceed |= ex
-                ratio = max(ratio, float(np.nanmax(r)))
-        if fired:
-            outliers.append(_describe(i, z[i], d[i], fired, zs, exceed, ratio, thr, t_, tau_hat))
-    if len(outliers) > MANY_OUTLIERS * k:
-        caveats.append("many_outliers")
-    outliers.sort(key=lambda o: -o.score)
-    return Fleet(sc, normalise, sp, loo, tested, untested, outliers, thresholds, caveats,
-                 first, last, z, d, band_y)  # fmt: skip
+    return scans, bars
+
+
+def _member_tests(
+    row: int,
+    tests: dict[str, np.ndarray],
+    thr: float,
+    scans: dict[str, np.ndarray],
+    bars: dict[str, np.ndarray],
+) -> tuple[list[str], dict[str, float], np.ndarray, float]:
+    """One tested member (row of the tested matrices): the tests that fired, its z per test,
+    the steps beyond an excursion bar and its largest |z| / bar."""
+    fired: list[str] = []
+    zs: dict[str, float] = {}
+    for name, v in tests.items():
+        zs[name] = float(v[row])
+        if abs(v[row]) > thr:
+            fired.append(name)
+    exceed = np.zeros(scans["spike"].shape[1], bool)
+    ratio = 0.0
+    for name, zz_all in scans.items():
+        zz = zz_all[row]
+        with np.errstate(invalid="ignore"):
+            ex = np.abs(zz) > bars[name][row]
+            r = np.abs(zz) / bars[name][row]
+        zs[name] = float(np.nanmax(np.abs(zz))) if np.isfinite(zz).any() else 0.0
+        if ex.any():
+            fired.append(name)
+            exceed |= ex
+            ratio = max(ratio, float(np.nanmax(r)))
+    return fired, zs, exceed, ratio
 
 
 def fleet_phi(z: np.ndarray) -> float:

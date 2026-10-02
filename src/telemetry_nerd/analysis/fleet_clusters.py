@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from telemetry_nerd.analysis.fleet import ALPHA, MIN_MEMBERS, TRIM, Fleet, analyse, trimmed_mean
+from telemetry_nerd.analysis.fleet import ALPHA, MIN_MEMBERS, Fleet, analyse, trimmed_mean
 
 BLOCKS = 8  # time blocks per member feature vector
 MIN_BLOCK = 4  # steps per block at least
@@ -73,11 +73,8 @@ def features(d: np.ndarray, blocks: int = BLOCKS) -> np.ndarray:
     out = np.full((m_, b), np.nan)
     for j in range(b):
         seg = d[:, edges[j] : edges[j + 1]]
-        for i in range(m_):
-            v = np.sort(seg[i][np.isfinite(seg[i])])
-            if v.size >= max(1, seg.shape[1] // 2):
-                c = int(v.size * TRIM)
-                out[i, j] = float(v[c : v.size - c].mean())
+        enough = np.sum(np.isfinite(seg), axis=1) >= max(1, seg.shape[1] // 2)
+        out[:, j] = np.where(enough, trimmed_mean(seg), np.nan)
     return out
 
 
