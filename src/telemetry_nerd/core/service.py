@@ -324,6 +324,7 @@ class TelemetryService:
             quantile=q,
             n_min=n_min,
             histogram=histogram,
+            semantics_flags=_semantics_flags(src),
         )
         summary = self._time_summary(meta, result, now)
         self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
@@ -1290,6 +1291,12 @@ class TelemetryService:
             "located": [c.model_dump() for c in located],
             "caveats": caveats,
         }
+
+
+def _semantics_flags(src) -> dict:
+    """Source semantics the dataset needs when read back (only those that hold)."""
+    sem = getattr(src, "semantics", None)
+    return {"post_gap_increase_spike": True} if sem and sem.post_gap_increase_spike.value else {}
 
 
 def _series_stats(buckets) -> list:

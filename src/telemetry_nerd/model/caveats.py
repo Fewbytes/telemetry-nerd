@@ -47,6 +47,10 @@ SUBQUERY_FILLS_GAPS = "subquery_fills_gaps"
 UNOBSERVABLE_MESSAGE = (
     "Coverage unknown: this expression's sample counts cannot be observed (subquery fills gaps)."
 )
+SPIKE_MESSAGE = (
+    "value after a gap includes the gap's increase (source uses the previous sample, "
+    "e.g. VictoriaMetrics); not a spike."
+)
 
 
 def _total(spans: list[tuple[int, int]]) -> str:
@@ -92,6 +96,22 @@ def from_bucket_state(
                     message=f"{name}: {', '.join(parts)}.",
                     # one highlight per contiguous stretch of trouble, whatever its kind
                     where=Where(spans=runs(empty_ts + partial_ts, step_ms), series=[sid]),
+                    source="bucket_state",
+                )
+            )
+        spike = runs(
+            g.filter(
+                (pl.col("state") != int(State.UNKNOWN))
+                & ((pl.col("flags") & int(Flag.SOURCE_FILLED)) != 0)
+            )["ts_ms"].to_list(),
+            step_ms,
+        )
+        if spike:
+            out.append(
+                Caveat(
+                    code="post_gap_spike",
+                    message=f"{name}: {SPIKE_MESSAGE}",
+                    where=Where(spans=spike, series=[sid]),
                     source="bucket_state",
                 )
             )

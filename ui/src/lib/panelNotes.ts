@@ -51,6 +51,7 @@ const CAVEATS: Record<string, Describe> = {
   dst_wall_clock: () => "The window or a previous cycle crosses a daylight-saving change: points are matched by local wall-clock time, so a skipped hour has no comparison and a repeated hour is compared with the same reference hour.",
   missing_data: () => "Some series have buckets with no or too few samples (see the coverage rug).",
   untrusted_data: () => "Part of the window could not be fetched or judged; it is hatched.",
+  post_gap_spike: () => "A value right after a gap includes the gap's increase (source behaviour); not a real spike.",
   member_coverage_unknown: () => "Aggregated at the source: missing member series cannot be seen.",
   heavy_tailed_noise: () => "The members' noise has heavier tails than normal: spike and short-episode thresholds follow the other members' own peaks, so only excursions unusual for this fleet are named.",
   many_outliers: () => "More than 10% of the members were named: they differ systematically (sizes, roles, zones). Compare shapes with normalise=\"member\" or split the fleet by a label.",

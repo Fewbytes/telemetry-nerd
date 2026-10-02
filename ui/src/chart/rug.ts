@@ -88,6 +88,8 @@ const WORDS: Record<number, string> = {
   [STATE.ABSENT]: "series not seen yet", [STATE.UNKNOWN]: "unknown (fetch failed or source could not tell)",
 };
 
+export const FLAG_SOURCE_FILLED = 8;
+
 /** `samples`: the state counts scrape samples (expected = the series' own rate in this bucket);
  * otherwise it only records presence (quantiles, heatmap columns) and has no sample count. */
 export function rugHint(cell: RugCell, s: BucketStatePayload, stepMs: number, name: string, samples: boolean): string {
@@ -96,6 +98,9 @@ export function rugHint(cell: RugCell, s: BucketStatePayload, stepMs: number, na
   if (samples && exp > 0 && cell.state !== STATE.ABSENT && cell.state !== STATE.UNKNOWN) {
     const every = Math.max(1000, Math.round(stepMs / exp / 1000) * 1000);
     lines.push(`${obs} of ${Math.round(exp)} expected samples (series reports every ${fmtStep(every)})`);
+  }
+  if ((s.flags[cell.i] ?? 0) & FLAG_SOURCE_FILLED) {
+    lines.push(cell.state === STATE.UNKNOWN ? "coverage cannot be observed for this expression" : "value filled by the source");
   }
   const seen = s.ts.filter((t, k) => t <= cell.ts && s.observed[k] > 0).at(-1);
   if (cell.state === STATE.EMPTY && seen !== undefined) lines.push(`last seen in bucket ending ${fmtRange(seen - stepMs, seen)}`);

@@ -10,6 +10,7 @@ from typing import Literal
 import polars as pl
 import pyarrow as pa
 
+from telemetry_nerd.analysis.exprkind import _mask_strings, _strip_comments
 from telemetry_nerd.model.bucket_state import STATE_SCHEMA, coarsen, compute
 from telemetry_nerd.model.caveats import Caveat, from_bucket_state
 from telemetry_nerd.model.series import FetchResult
@@ -22,6 +23,14 @@ SOURCE_AGGREGATED = re.compile(
     r"(by|without)?\s*(\([^)]*\))?\s*\(",
     re.IGNORECASE,
 )
+
+
+# increase/rate use the sample before the window on VictoriaMetrics (VQ2); verified for these two
+_PREVIOUS_SAMPLE_FUNCS = re.compile(r"\b(?:increase|rate)\s*\(", re.IGNORECASE)
+
+
+def applies_previous_sample_rule(expr: str) -> bool:
+    return _PREVIOUS_SAMPLE_FUNCS.search(_mask_strings(_strip_comments(expr))) is not None
 
 
 @dataclass(frozen=True)
@@ -76,6 +85,8 @@ def derive_states(meta, result: FetchResult) -> pa.Table:
         failed=failed,
         # counts that are subquery evaluations (lookback-filled) cannot show coverage
         source_filled=not counts_are_observed(meta.expr),
+        post_gap_spike=bool(getattr(meta, "semantics_flags", {}).get("post_gap_increase_spike"))
+        and applies_previous_sample_rule(meta.expr),
     )
 
 

@@ -11,7 +11,7 @@ import pyarrow as pa
 from telemetry_nerd.analysis.exprkind import min_samples
 from telemetry_nerd.analysis.quantiles import quantile_bucket
 from telemetry_nerd.datasets.store import DatasetMeta
-from telemetry_nerd.model.bucket_state import State, grid
+from telemetry_nerd.model.bucket_state import Flag, State, grid
 from telemetry_nerd.model.caveats import runs
 from telemetry_nerd.model.companions import derive_states
 from telemetry_nerd.model.distribution import DistResult
@@ -83,6 +83,9 @@ def _coverage_caveats(df: pl.DataFrame, unknown: dict, caveats: list[str]) -> No
     """missing_data: some alive bucket is PARTIAL or EMPTY; untrusted_data: anything UNKNOWN."""
     if unknown["unknown_spans"]:
         caveats.append("untrusted_data")
+    filled = (df["flags"] & int(Flag.SOURCE_FILLED)) != 0
+    if (filled & (df["state"] != int(State.UNKNOWN))).any():
+        caveats.append("post_gap_spike")
     if df.height and df["state"].is_in([int(State.PARTIAL), int(State.EMPTY)]).any():
         caveats.append("missing_data")
 

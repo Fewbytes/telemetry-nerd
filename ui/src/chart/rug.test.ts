@@ -38,6 +38,15 @@ describe("rug", () => {
     expect(text).toContain('{instance="a"}');
   });
 
+  it("says when the source filled the value", () => {
+    const s = { ...st("a", [STATE.PARTIAL], [2]), flags: [8] };
+    const [cell] = rugCells([s], 60_000, toX);
+    expect(rugHint(cell, s, 60_000, "a", true)).toContain("value filled by the source");
+    const u = { ...st("a", [STATE.UNKNOWN], [0]), flags: [8] };
+    const [uc] = rugCells([u], 60_000, toX);
+    expect(rugHint(uc, u, 60_000, "a", true)).toContain("cannot be observed");
+  });
+
   it("derives the interval from the series' own expected count, not a preset", () => {
     const s = { ...st("a", [STATE.PARTIAL], [0]), expected: [1] };
     const [cell] = rugCells([s], 60_000, toX);

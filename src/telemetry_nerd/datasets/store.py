@@ -34,6 +34,9 @@ class DatasetMeta:
     source_caveats: list[str] = field(default_factory=list)  # conversion caveats from the source
     derived: dict | None = None  # filter() output: {op, from, label, reason, period_ms, ...}
     failed_spans: list[list] = field(default_factory=list)  # [[a, b, reason]] fetch failures
+    # source semantics that shape how values read, recorded at query time (the dataset is a
+    # snapshot; the source may be reconfigured): {"post_gap_increase_spike": True}
+    semantics_flags: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -64,6 +67,7 @@ class DatasetStore:
         n_min: int | None = None,
         histogram: dict | None = None,
         derived: dict | None = None,
+        semantics_flags: dict | None = None,
     ) -> DatasetMeta:
         meta = DatasetMeta(
             id=self._new_id("d"),
@@ -81,6 +85,7 @@ class DatasetStore:
             histogram=histogram,
             derived=derived,
             failed_spans=[list(f) for f in result.failed],
+            semantics_flags=dict(semantics_flags or {}),
         )
         con = self._con
         con.begin()

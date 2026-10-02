@@ -25,6 +25,7 @@ class Flag(IntFlag):
     INTERVAL_CHANGE = 2
     STALE_MARKER = 4
     # UNKNOWN bucket: the expression's counts are subquery evaluations, not samples.
+    # OK/PARTIAL bucket: the source filled the value from outside the bucket (post-gap increase)
     SOURCE_FILLED = 8
 
 
@@ -67,9 +68,12 @@ def compute(
     mode: Mode,
     failed: Sequence[FailedSpan] = (),
     source_filled: bool = False,
+    post_gap_spike: bool = False,
 ) -> pa.Table:
     """`source_filled`: the counts are not observed samples (expression cannot tell), so every
-    bucket is UNKNOWN + SOURCE_FILLED."""
+    bucket is UNKNOWN + SOURCE_FILLED. `post_gap_spike`: the source's increase/rate after a gap
+    carries the whole gap, so the first OK/PARTIAL bucket after an EMPTY/UNKNOWN one is flagged
+    SOURCE_FILLED (state unchanged)."""
     ts = grid(start_ms, end_ms, step_ms)
     if not ts or not series_ids:
         return STATE_SCHEMA.empty_table()
@@ -118,7 +122,14 @@ def compute(
         state.cast(pl.UInt8).alias("state"),
         pl.when(unknown).then(0.0).otherwise(pl.col("observed")).alias("observed"),
     ).sort("series_id", "ts_ms")
-    flags = pl.when(pl.lit(source_filled)).then(int(Flag.SOURCE_FILLED)).otherwise(0)
+    filled = int(Flag.SOURCE_FILLED)
+    after_gap = (
+        pl.col("state").is_in([int(State.OK), int(State.PARTIAL)])
+        & pl.col("state").shift(1).over("series_id").is_in([int(State.EMPTY), int(State.UNKNOWN)])
+        if post_gap_spike
+        else pl.lit(False)
+    )
+    flags = pl.when(pl.lit(source_filled) | after_gap).then(filled).otherwise(0)
     out = df.with_columns(flags.cast(pl.UInt16).alias("flags")).select(STATE_SCHEMA.names)
     return out.to_arrow().cast(STATE_SCHEMA)
 
