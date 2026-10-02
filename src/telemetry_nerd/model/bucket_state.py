@@ -84,7 +84,7 @@ def compute(
     post_gap_buckets: int = 0,
 ) -> pa.Table:
     """`source_filled`: the counts are not observed samples (expression cannot tell), so every
-    bucket is UNKNOWN + SOURCE_FILLED. `post_gap_buckets`: the source's increase/rate after a gap
+    bucket is UNKNOWN + SOURCE_FILLED. `post_gap_buckets`: the source's increase/delta/idelta after a gap
     reaches back over the gap, so the first n OK/PARTIAL buckets after an EMPTY/UNKNOWN one
     (stopping at the next gap) are flagged POST_GAP (state unchanged); 0 turns it off."""
     ts = grid(start_ms, end_ms, step_ms)

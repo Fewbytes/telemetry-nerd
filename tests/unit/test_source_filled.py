@@ -107,7 +107,7 @@ def test_vm_post_gap_bucket_is_flagged_but_keeps_its_state():
 
 
 def test_post_gap_caveat_is_located_on_the_bucket():
-    m, r = meta("rate(x[1m])", VM), result()
+    m, r = meta("delta(x[1m])", VM), result()
     codes = {c.code: c for c in from_bucket_state(derive_states(m, r), {"a": "{n}"}, STEP)}
     spike = codes["post_gap_spike"]
     assert spike.severity == "warn"
@@ -148,8 +148,14 @@ def test_other_expressions_are_not_flagged_on_vm():
     ("expr", "hit"),
     [
         ("increase(x[5m])", True),
-        ("sum by (a) (rate(x[1m]))", True),
+        ("sum by (a) (delta(x[1m]))", True),
+        ("idelta(x[1m])", True),
+        ("increase_pure(x[1m])", True),
+        # VM leaves the first bucket after a gap empty for these: nothing to flag (vm__pg_*)
+        ("rate(x[1m])", False),
         ("irate(x[1m])", False),
+        ("deriv(x[1m])", False),
+        ("rate_over_sum(x[1m])", False),
         ("sum_rate(x)", False),
         ("up", False),
         ('up{job="rate("}', False),
@@ -164,13 +170,35 @@ def test_previous_sample_functions(expr, hit):
     [
         ("increase(x[1m])", 1),
         ("increase(x[5m])", 5),
-        ("sum(rate(x[150s]))", 3),
-        ("increase(x[1h30m])", 1),  # unparsable range: first bucket only
+        ("sum(delta(x[150s]))", 3),
+        ("increase(x[1h30m])", 90),  # compound duration
+        ("increase(x[$__range])", 1),  # unparsable range: first bucket only
+        ("idelta(x[5m])", 1),  # raw sample, first bucket only whatever the window
+        ("rate(x[5m])", 0),
         ("up", 0),
+        ("INCREASE(x[5m])", 5),
+        ("Delta(x[2m])", 2),
+        ("IDelta(x[5m])", 1),
+        # a subquery over the call keeps the spike inside its window: reaches add up
+        ("rate(increase(x[5m])[10m:1m])", 15),
+        ("max_over_time(idelta(x[5m])[10m:1m])", 10),
+        ("increase(rate(x[1m])[5m:30s])", 5),  # outermost range of the call, not the inner one
+        ("sum(increase(x[2m])) / sum(increase(y[3m]))", 3),
     ],
 )
 def test_post_gap_bucket_count_follows_the_range(expr, n):
     assert post_gap_buckets(expr, STEP) == n
+
+
+def test_idelta_flags_only_the_first_bucket_even_on_a_wide_window():
+    m = meta("idelta(x[3m])", VM)
+    post = int(Flag.POST_GAP)
+    assert flags_of(m, result(hole={2})) == [0, 0, post, 0, 0, 0, 0, 0]
+
+
+def test_rate_family_is_not_flagged_on_vm():
+    for expr in ("rate(x[3m])", "irate(x[3m])"):
+        assert set(flags_of(meta(expr, VM), result())) == {0}
 
 
 def test_wide_window_flags_every_bucket_that_reaches_over_the_gap_up_to_the_next_gap():

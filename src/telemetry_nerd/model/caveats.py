@@ -49,7 +49,8 @@ UNOBSERVABLE_MESSAGE = (
 )
 SPIKE_MESSAGE = (
     "value right after a gap is computed from the sample before the gap (VictoriaMetrics): "
-    "increase includes the gap's growth, rate averages across it; not a real spike."
+    "increase/delta include the whole gap's change, idelta returns the raw sample; "
+    "not a real spike."
 )
 
 

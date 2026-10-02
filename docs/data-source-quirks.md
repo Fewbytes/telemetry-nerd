@@ -45,8 +45,8 @@ Research bead: `telemetry-nerd-1h9.10`. Findings written 2026-10-02.
    `bucket_state` would call those buckets `ok`. Selector queries are honest. Fixed in
    `telemetry-nerd-1h9.11`: counts now come from the underlying selector where derivable,
    else the expression is flagged "cannot tell" (`sources/observed.py`; spec §6).
-2. **VictoriaMetrics `increase()` after a gap returns the whole gap's increase in the first
-   bucket** (615 instead of 15, 41× the truth), and 0, not "no data", for the first steps
+2. **VictoriaMetrics `increase()`/`delta()`/`idelta()` after a gap return the whole gap's change
+   in the first bucket(s); `rate`/`irate` do not**. For `increase` (615 instead of 15, 41× the truth), and 0, not "no data", for the first steps
    inside a gap (VQ2; bead `telemetry-nerd-1h9.13`). Prometheus returns no value for those buckets.
 3. **Pushed data (OTLP, remote write) gets no staleness markers**: a series that stopped
    keeps evaluating for the whole lookback: 285 s on Grafana Play's OTel-demo series, 300 s
@@ -239,7 +239,41 @@ returns **615** (41 samples' worth) instead of 15; also on 30 s, 60 s and 300 s 
 (`victoriametrics/vm__increase_w15`, `_w30`, `_w60`, `_w300`). Inside the hole VM returns **0** for
 the first steps (not "no data"), then nothing. Every other bucket was exact (285 where
 Prometheus extrapolates to 300; `vm__increase_w300`). **Decision:** VM buckets whose `count`
-shows a preceding gap longer than the window are `source_filled` for `increase`/`rate` values.
+shows a preceding gap longer than the window are `source_filled` for `increase`/`rate` values
+(superseded for `rate` by the table below).
+
+**Other rollups (bead `telemetry-nerd-mj0`, VM v1.137.0).** Recorded by
+`scripts/record_vm_post_gap.py` (`victoriametrics/vm__pg_<counter|gauge>_<func>_w<15|75>`; sample
+every 15 s, 10 min hole, step 15 s, windows = step and 5 × step; counter +15 per sample, gauge a
++2 ramp). First sample after the hole, counter (gauge likewise, scaled):
+
+| rollup | value at the first post-gap step (w15 / w75) | after | verdict |
+|---|---|---|---|
+| `increase`, `increase_pure` | 615 / 615 (truth 15 / 75) | 630, 645, 660, 675 on w75, then 75 | spike, `ceil(w/step)` buckets |
+| `delta` | same as increase (gauge: 82 vs 2) | same | spike, `ceil(w/step)` buckets |
+| `idelta` | 1215 / 1215: the raw sample value, as if nothing preceded (gauge: 260) | 15 at once, any window | spike, first bucket only |
+| `rate`, `irate` | absent / absent | 1 (exact) from the next step | no spike: **not flagged** |
+| `deriv` | 0 (single sample: no slope) / 0 | 1 | no spike |
+| `rate_over_sum` | 81 / 16.2 = the window's own samples / window | continues | ignores the previous sample |
+
+So only the rollups that return *change over the window* use the pre-gap sample as a baseline; the
+rate family drops that bucket. The earlier flagging of `rate` ("averages across the gap") was wrong
+and is removed. Nested calls: a subquery around a spiking call keeps the spike inside its window,
+so reaches add (`max_over_time(increase(x[5m])[10m:1m])` spikes for 15 m).
+
+Not verified: `rollup_delta`, `rollup_increase`, `rollup_rate`, `increase_prometheus` and other VM-only variants; they are not flagged.
+
+**Blind spot.** If the query window starts inside a gap, the leading buckets read `absent` and the
+first returned `increase`/`delta` is still computed from the sample before the window
+(`vm__pg_straddle_increase_w15`: 615 first bucket). `bucket_state` cannot tell this from a series
+that starts mid-window and a magnitude heuristic would flag healthy series, so it stays
+undetected (documented in spec §6).
+
+**Rolling counters as `increase` over `*_over_time` windows instead** (evaluated, not done): replacing
+`increase(x[w])` with e.g. `last_over_time(x[w]) - first_over_time(x[w])` stays honest on VM (windows
+have no previous-sample rule, absent in gaps) but loses the increment between windows, mishandles
+resets and breaks Prometheus equivalence, and costs two queries; flagging is cheaper and keeps the
+value users expect.
 
 ### VQ3 Partial-response marker ✅ (shape) / ❓ (provoked)
 

@@ -9,7 +9,8 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from zoneinfo import ZoneInfo
 
-_DURATION = re.compile(r"^(\d+)(ms|s|m|h|d|w)$")
+_DURATION = re.compile(r"^(?:\d+(?:ms|s|m|h|d|w))+$")
+_DURATION_PART = re.compile(r"(\d+)(ms|s|m|h|d|w)")
 _UNIT_MS = {
     "ms": 1,
     "s": 1_000,
@@ -25,10 +26,11 @@ def now_ms() -> int:
 
 
 def parse_duration(text: str) -> int:
-    match = _DURATION.match(text.strip())
-    if not match:
-        raise ValueError(f"invalid duration {text!r}; use e.g. 15s, 5m, 1h, 2d")
-    return int(match.group(1)) * _UNIT_MS[match.group(2)]
+    """`15s`, `5m`, and compound forms such as `1h30m` (Prometheus syntax)."""
+    value = text.strip()
+    if not _DURATION.match(value):
+        raise ValueError(f"invalid duration {text!r}; use e.g. 15s, 5m, 1h, 1h30m, 2d")
+    return sum(int(n) * _UNIT_MS[u] for n, u in _DURATION_PART.findall(value))
 
 
 def format_duration(ms: int) -> str:

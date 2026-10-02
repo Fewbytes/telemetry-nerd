@@ -54,3 +54,17 @@ def test_time_range_align_expands_to_step_multiples():
 
 def test_iso():
     assert iso(1_700_000_000_000) == "2023-11-14T22:13:20+00:00"
+
+
+@pytest.mark.parametrize(
+    ("text", "ms"),
+    [("1h30m", 5_400_000), ("1m30s", 90_000), ("1d12h", 129_600_000), ("2m500ms", 120_500)],
+)
+def test_parse_duration_compound(text, ms):
+    assert parse_duration(text) == ms
+
+
+@pytest.mark.parametrize("text", ["1h 30m", "h", "1h30", "30m1h2", "1x"])
+def test_parse_duration_rejects_malformed_compound(text):
+    with pytest.raises(ValueError, match="invalid duration"):
+        parse_duration(text)

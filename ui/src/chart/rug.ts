@@ -104,7 +104,9 @@ export function rugHint(cell: RugCell, s: BucketStatePayload, stepMs: number, na
   const flags = s.flags[cell.i] ?? 0;
   if (flags & FLAG_INTERVAL_CHANGE) lines.push("sample rate changed here (this series reports at a different rate than in the rest of the window)");
   if (flags & FLAG_SOURCE_FILLED) lines.push("coverage cannot be observed for this expression");
-  if (flags & FLAG_POST_GAP) lines.push("computed from the sample before the gap (VictoriaMetrics); not a real spike");
+  if (flags & FLAG_POST_GAP && cell.state !== STATE.UNKNOWN) {
+    lines.push("computed from the sample before the gap (VictoriaMetrics): increase/delta include the whole gap's change, idelta returns the raw sample; not a real spike");
+  }
   const seen = s.ts.filter((t, k) => t <= cell.ts && s.observed[k] > 0).at(-1);
   if (cell.state === STATE.EMPTY && seen !== undefined) lines.push(`last seen in bucket ending ${fmtRange(seen - stepMs, seen)}`);
   return lines.join("\n");

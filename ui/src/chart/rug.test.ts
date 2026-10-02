@@ -47,6 +47,20 @@ describe("rug", () => {
     expect(rugHint(uc, u, 60_000, "a", true)).toContain("cannot be observed");
   });
 
+  it("names what each function returns after the gap", () => {
+    const s = { ...st("a", [STATE.OK], [4]), flags: [16] };
+    const text = rugHint(rugCells([s], 60_000, toX)[0], s, 60_000, "a", true);
+    expect(text).toContain("increase/delta include the whole gap's change");
+    expect(text).toContain("idelta returns the raw sample");
+  });
+
+  it("does not claim a post-gap spike on an unknown cell", () => {
+    const u = { ...st("a", [STATE.UNKNOWN], [0]), flags: [8 | 16] };
+    const text = rugHint(rugCells([u], 60_000, toX)[0], u, 60_000, "a", true);
+    expect(text).toContain("cannot be observed");
+    expect(text).not.toContain("before the gap");
+  });
+
   it("says when the series' sample rate changed", () => {
     const s = { ...st("a", [STATE.OK], [1]), flags: [2] };
     const [cell] = rugCells([s], 60_000, toX);

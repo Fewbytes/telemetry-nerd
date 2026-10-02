@@ -26,39 +26,106 @@ SOURCE_AGGREGATED = re.compile(
 )
 
 
-# increase/rate use the sample before the window on VictoriaMetrics (VQ2); verified for these two
-_PREVIOUS_SAMPLE_FUNCS = re.compile(r"\b(?:increase|rate)\s*\(", re.IGNORECASE)
+# VictoriaMetrics computes these from the sample before the window (VQ2, vm__pg_* fixtures):
+# increase/increase_pure/delta return the whole gap's change in every bucket whose window reaches
+# back over it; idelta returns the raw sample value, in the first bucket only. rate/irate/deriv/
+# rate_over_sum leave that bucket empty or ignore the previous sample: not flagged.
+_WINDOW_WIDE = ("increase_pure", "increase", "delta")
+_PREVIOUS_SAMPLE_FUNCS = re.compile(
+    r"\b(" + "|".join((*_WINDOW_WIDE, "idelta")) + r")\s*\(", re.IGNORECASE
+)
+
+_RANGE_BODY = re.compile(r"\s*((?:[0-9]+[a-z]+)+)\s*(?::[^\]]*)?")
 
 
-_RANGE = re.compile(r"\[\s*([0-9]+[a-z]+)\s*(?::[^\]]*)?\]")
+def _bracket_duration(text: str, open_idx: int) -> int | None:
+    """Range in ms of the `[...]` opening at `open_idx` (a subquery's step is ignored), None if
+    it is not a literal duration."""
+    try:
+        body = text[open_idx + 1 : _close(text, open_idx)]
+    except ValueError:
+        return None
+    m = _RANGE_BODY.fullmatch(body)
+    try:
+        return parse_duration(m.group(1)) if m else None
+    except ValueError:
+        return None
+
+
+def _open_of(text: str, close_idx: int) -> int:
+    depth = 0
+    for i in range(close_idx, -1, -1):
+        c = text[i]
+        if c in ")]}":
+            depth += 1
+        elif c in "([{":
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
+
+def _top_level_bracket(text: str, start: int, end: int) -> int | None:
+    depth = 0
+    for i in range(start, end):
+        c = text[i]
+        if c == "[" and depth == 0:
+            return i
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+    return None
+
+
+def _enclosing_subquery_ms(text: str, call_open: int, call_close: int) -> int:
+    """Sum of the ranges of subqueries `(...)[range:step]` whose parenthesised expression holds
+    the call: its spike stays inside each of those windows for that much longer."""
+    total = 0
+    for m in re.finditer(r"\)\s*\[", text):
+        bracket = m.end() - 1
+        if ":" not in text[bracket : _safe_close(text, bracket)]:
+            continue
+        paren = _open_of(text, m.start())
+        if 0 <= paren <= call_open and m.start() >= call_close:
+            total += _bracket_duration(text, bracket) or 0
+    return total
+
+
+def _safe_close(text: str, idx: int) -> int:
+    try:
+        return _close(text, idx)
+    except ValueError:
+        return len(text)
 
 
 def previous_sample_windows(expr: str) -> list[int | None]:
-    """Range (ms) of each increase()/rate() call in `expr`, None where it cannot be parsed;
-    empty when the expression has no such call."""
+    """How far (ms) the spike of each increase/increase_pure/delta/idelta call reaches in the
+    output: its own range (idelta: none) plus the ranges of subqueries around it; None where a
+    range cannot be parsed. Empty when the expression has no such call."""
     text = _mask_strings(_strip_comments(expr))
     out: list[int | None] = []
     for call in _PREVIOUS_SAMPLE_FUNCS.finditer(text):
         try:
-            args = text[call.end() : _close(text, call.end() - 1)]
+            end = _close(text, call.end() - 1)
         except ValueError:
             out.append(None)
             continue
-        m = _RANGE.search(args)
-        try:
-            out.append(parse_duration(m.group(1)) if m else None)
-        except ValueError:
-            out.append(None)
+        bracket = _top_level_bracket(text, call.end(), end)
+        own = _bracket_duration(text, bracket) if bracket is not None else None
+        if call.group(1).lower() == "idelta":
+            own = own and 0
+        out.append(None if own is None else own + _enclosing_subquery_ms(text, call.end() - 1, end))
     return out
 
 
 def post_gap_buckets(expr: str, step_ms: int) -> int:
-    """How many buckets after a gap carry the gap: a window of w reaches back over the gap for
-    ceil(w / step) steps; the first bucket only if the range cannot be parsed. 0: not applicable."""
-    windows = previous_sample_windows(expr)
-    if not windows:
+    """How many buckets after a gap carry the gap: a reach of w covers ceil(w / step) steps; the
+    first bucket only if the range cannot be parsed or for idelta. 0: not applicable."""
+    reaches = previous_sample_windows(expr)
+    if not reaches:
         return 0
-    return max([1, *(-(-w // step_ms) for w in windows if w)])
+    return max([1, *(-(-w // step_ms) for w in reaches if w)])
 
 
 @dataclass(frozen=True)

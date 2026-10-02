@@ -104,7 +104,9 @@ class MissingDataSemantics:
     #: `increase`/`rate` over a window: extrapolated to the window edges, or exact using the
     #: sample before the window
     rate_edge: Fact[Literal["extrapolate", "previous_sample"]]
-    #: first window after a gap carries the whole gap's increase (fake spike)
+    #: first window after a gap carries the whole gap's change (fake spike): increase,
+    #: increase_pure, delta (every window reaching back over the gap) and idelta (raw sample,
+    #: first bucket only); rate/irate/deriv/rate_over_sum do not (vm__pg_* fixtures)
     post_gap_increase_spike: Fact[bool]
     #: `increase`/`rate` need at least two samples inside a window shorter than the interval
     rate_needs_two_samples_in_window: Fact[bool]
@@ -144,7 +146,7 @@ class MissingDataSemantics:
         edge = (
             "rate/increase extrapolate to window edges"
             if self.rate_edge.value == "extrapolate"
-            else "rate/increase use the previous sample (post-gap spike)"
+            else "increase/delta/idelta use the previous sample (post-gap spike)"
             if self.post_gap_increase_spike.value
             else "rate/increase use the previous sample"
         )
@@ -399,7 +401,14 @@ VICTORIAMETRICS = MissingDataSemantics(
     stale_marker_visible=verified(True, f"{_V}/vm__scrape_gauge_samples"),
     rate_edge=verified("previous_sample", f"{_V}/vm__increase_w300", f"{_V}/vm__increase_w15"),
     post_gap_increase_spike=verified(
-        True, f"{_V}/vm__increase_w15", f"{_V}/vm__increase_w60", f"{_V}/vm__increase_w300"
+        True,
+        f"{_V}/vm__increase_w15",
+        f"{_V}/vm__increase_w60",
+        f"{_V}/vm__increase_w300",
+        f"{_V}/vm__pg_counter_delta_w75",
+        f"{_V}/vm__pg_counter_idelta_w15",
+        f"{_V}/vm__pg_counter_increase_pure_w75",
+        f"{_V}/vm__pg_gauge_delta_w75",
     ),
     rate_needs_two_samples_in_window=verified(False, f"{_V}/vm__increase_w15"),
     reset_visible_in_step_window=verified(True, f"{_V}/vm__resets_w15", f"{_V}/vm__resets_w30"),

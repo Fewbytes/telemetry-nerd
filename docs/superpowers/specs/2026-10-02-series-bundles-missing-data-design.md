@@ -250,8 +250,19 @@ Adapter rules:
 4. Each profile property is pinned by recorded-fixture tests (`1h9.6`, `1h9.10`).
 
 Known current gaps (evidence: `docs/data-source-quirks.md`, bead `1h9.10`): VictoriaMetrics
-`increase`/`rate` carry a gap's whole increase into the first bucket after it (`1h9.13`); warnings /
-`isPartial` are ignored (`1h9.12`). Profiles are in `sources/semantics.py`.
+`increase`/`increase_pure`/`delta` carry a gap's whole change into the buckets whose window reaches
+back over it, `idelta` returns the raw sample in the first bucket (`1h9.13`, `mj0`; `rate`, `irate`,
+`deriv`, `rate_over_sum` verified unaffected); warnings / `isPartial` are ignored (`1h9.12`).
+Profiles are in `sources/semantics.py`.
+
+**Blind spot (`mj0`, undetectable from states).** A gap that straddles the *query window start*
+reads `absent` ("series not seen yet") in the leading buckets, not `empty`, and VictoriaMetrics
+still computes the first returned value from the sample before the window
+(`vm__pg_straddle_*`: 615 instead of 15). No state or flag marks that bucket, so the post-gap
+caveat cannot cover it. It is indistinguishable from a series that really starts mid-window, and a
+magnitude test against the series' typical increase would also flag healthy series (a series
+that just restarted, a burst), so it is deliberately not guessed at: documented only. Mitigation
+for the reader: start the window a little before the period of interest.
 
 **Expression path observed counts (decision, `1h9.11`).** A non-selector expression's values come
 from a subquery `(expr)[step:res]`; its `count_over_time` counts instant evaluations, which lookback
