@@ -202,6 +202,22 @@ def create_app(
             return _error(400, str(e))
         return JSONResponse(out)
 
+    async def compare_seasonal(request: Request) -> JSONResponse:
+        try:
+            body = await _body(request, dataset=str)
+        except _BadRequest as e:
+            return _error(e.status, str(e), hint=e.hint)
+        args = {k: body[k] for k in ("cycles", "tz", "exclude", "threshold") if k in body}
+        try:
+            out = await service.compare_seasonal(body["dataset"], **args, actor="user")
+        except NotFound as e:
+            return _error(404, str(e))
+        except SourceError as e:
+            return _error(400, str(e), hint=e.hint)
+        except ValueError as e:
+            return _error(400, str(e))
+        return JSONResponse(out)
+
     async def query_distribution(request: Request) -> JSONResponse:
         try:
             body = await _body(request, selector=str)
@@ -248,6 +264,9 @@ def create_app(
         unit = body.get("unit")
         if unit is not None and not isinstance(unit, str):
             return _error(400, "unit must be a string", hint='e.g. "s", "B", "req/s"')
+        mark = body.get("mark", "auto")
+        if not isinstance(mark, str):
+            return _error(400, "mark must be a string", hint='e.g. "auto", "spectrum", "seasonal"')
         try:
             res = await service.show_auto(
                 body["dataset"],
@@ -255,6 +274,7 @@ def create_app(
                 actor="user",
                 unit=unit,
                 raw=body.get("raw") is True,
+                mark=mark,
             )
         except ChartRejected as e:
             return _error(422, "chart rejected", issues=[i.model_dump() for i in e.issues])
@@ -729,6 +749,7 @@ def create_app(
         Route("/api/panels/{id}/data", panel_data),
         Route("/api/query", query, methods=["POST"]),
         Route("/api/query-distribution", query_distribution, methods=["POST"]),
+        Route("/api/compare-seasonal", compare_seasonal, methods=["POST"]),
         Route("/api/show", show, methods=["POST"]),
         Route("/api/panels/{id}/distribution", panel_distribution, methods=["POST"]),
         Route("/api/render-report", render_report, methods=["POST"]),

@@ -167,7 +167,12 @@ Choices that calibration forced (each was wrong first):
 - False alarms: normal cycles flagged `unusual` at a rate consistent with the 3 x 1% design.
 - Alignment: shifts across the EU spring / autumn DST changes are 23 h / 25 h with `tz`, 24 h in UTC;
   a window across the change is matched point by point (the local 10:00 peak stays aligned).
-- Insufficient history, missing cycles, user and atypical exclusions, percentile refusal.
+- Insufficient history, missing cycles, user and atypical exclusions, summary-quantile refusal.
+- Browser (lkn.9, `ui/e2e/seasonal.spec.ts`): seeds its own metric (8 days, daily cycle, one
+  series x2.5 over the last 3h) into the dev VictoriaMetrics; checks the verdict attributes
+  (`data-seasonal-verdict`), the overlay / ratio toggle (`data-seasonal-view`) and renders dark
+  and light screenshots. Run without touching the demo series:
+  `cd ui && E2E_SKIP_SEED=1 E2E_PORT=<free port> npx playwright test e2e/seasonal.spec.ts`.
 
 ## Latency: the histogram per cycle (lkn.7)
 

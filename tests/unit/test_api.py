@@ -341,3 +341,20 @@ def test_distribution_followup_route(client):
         client.post(f"/api/panels/{panel['id']}/distribution", json={"start_ms": "x"}).status_code
         == 400
     )
+
+
+def test_compare_seasonal_route(client):
+    ds = client.post("/api/query", json={"expr": "up", "start": "now-2h", "end": "now-1h"}).json()
+    r = client.post("/api/compare-seasonal", json={"dataset": ds["dataset"], "cycles": ["1d"]})
+    assert r.status_code == 200 and r.json()["schemes"] == {"1d": "7 cycles fetched"}
+    assert client.post("/api/compare-seasonal", json={"dataset": "nope"}).status_code == 404
+    bad = client.post("/api/compare-seasonal", json={"dataset": ds["dataset"], "cycles": ["2d"]})
+    assert bad.status_code == 400
+    shown = client.post(
+        "/api/show", json={"dataset": ds["dataset"], "question": "Usual?", "mark": "seasonal"}
+    ).json()["panel"]
+    assert client.get(f"/api/panels/{shown['id']}/data?width=400").json()["kind"] == "seasonal"
+    assert (
+        client.post("/api/show", json={"dataset": "x", "question": "q?", "mark": 3}).status_code
+        == 400
+    )
