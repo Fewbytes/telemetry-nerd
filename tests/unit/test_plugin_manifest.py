@@ -40,7 +40,8 @@ def test_plugin_metadata_complete():
 
 def test_mcp_and_hooks_use_launcher():
     mcp = json.loads((ROOT / ".mcp.json").read_text())["mcpServers"]["telemetry-nerd"]
-    assert mcp["args"] == ["${CLAUDE_PLUGIN_ROOT}/scripts/tn-launch", "bridge"]
+    # project-level .mcp.json (dev, not loaded as a plugin) has no CLAUDE_PLUGIN_ROOT: fall back to cwd
+    assert mcp["args"] == ["${CLAUDE_PLUGIN_ROOT:-.}/scripts/tn-launch", "bridge"]
     hooks = json.loads((ROOT / "hooks/hooks.json").read_text())["hooks"]
     cmds = [h["command"] for ev in hooks.values() for g in ev for h in g["hooks"]]
     assert cmds and all("scripts/tn-launch" in c for c in cmds)
