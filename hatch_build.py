@@ -21,7 +21,12 @@ class UiBuildHook(BuildHookInterface):
     PLUGIN_NAME = "custom"
 
     def initialize(self, version: str, build_data: dict) -> None:
-        if self.target_name != "wheel" or os.environ.get("TN_SKIP_UI_BUILD"):
+        # editable installs (uv sync in a checkout) serve ui/dist from the repo via Settings.ui_dir
+        if (
+            self.target_name != "wheel"
+            or version == "editable"
+            or os.environ.get("TN_SKIP_UI_BUILD")
+        ):
             return
         ui = Path(self.root) / "ui"
         dist = ui / "dist"
