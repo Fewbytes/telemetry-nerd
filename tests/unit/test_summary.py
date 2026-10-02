@@ -337,3 +337,20 @@ def test_no_silent_members_adds_nothing():
     rows = [(t, "a", 1.0, 1.0, 1.0, 1) for t in range(0, 5000, 1000)]
     out = run(meta(end=4000), result(rows, {"a": "a"}))
     assert "silent_members" not in out and "silent_more" not in out
+
+
+def test_one_failed_minute_of_ten_is_not_lost_coverage():
+    """Unknown is neither present nor missing: the other nine buckets read full coverage, no gap,
+    and the failure is reported as an unknown span."""
+    rows = [(t, "a", 1.0, 1.0, 1.0, 1) for t in range(0, 10_000, 1000) if t != 4000]
+    out = run(
+        replace(meta(end=9000), failed_spans=[[4000, 4000, "boom"]]), result(rows, {"a": "a"})
+    )
+    assert out["series"][0]["coverage"] == {"pct": 1.0, "missing": "0s", "longest_gap": None}
+    assert len(out["unknown_spans"]) == 1 and "untrusted_data" in out["caveats"]
+
+
+def test_a_series_unknown_everywhere_has_no_coverage_figure():
+    rows = [(t, "a", 1.0, 1.0, 1.0, 1) for t in range(0, 4000, 1000)]
+    out = run(replace(meta(end=3000), failed_spans=[[0, 3000, "boom"]]), result(rows, {"a": "a"}))
+    assert out["series"][0]["coverage"]["pct"] is None

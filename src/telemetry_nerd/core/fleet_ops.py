@@ -41,7 +41,14 @@ from telemetry_nerd.core.signal_ops import SignalOps
 from telemetry_nerd.core.wire import Memo, sig, sig_list, statistic
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
 from telemetry_nerd.model.bucket_state import Flag, State, coarsen, grid
-from telemetry_nerd.model.caveats import NO_REASON, Caveat, Where, failure_reasons, runs
+from telemetry_nerd.model.caveats import (
+    MAX_WHERE_SERIES,
+    NO_REASON,
+    Caveat,
+    Where,
+    failure_reasons,
+    runs,
+)
 from telemetry_nerd.model.companions import dataset_bundle
 from telemetry_nerd.model.time import TimeRange, format_duration, iso
 
@@ -50,7 +57,6 @@ MAX_LISTED = 10
 MAX_DRAWN = 6
 CHURN_TOL = 0.05  # appeared / stopped: beyond max(3 steps, 5% of the window) from the edge
 MISSING_WARN = 0.05  # members_missing / members_partial warn above this share of member-steps
-MAX_WHERE_SERIES = 50  # located caveats name at most this many series (the message counts all)
 _QUANTILE_EXPR = re.compile(r"\b(histogram_quantile|quantile_over_time)\s*\(", re.IGNORECASE)
 
 QUANTILE_REFUSAL = (

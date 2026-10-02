@@ -604,3 +604,29 @@ async def test_expression_fetch_counts_observed_samples_and_drops_filled_buckets
         {"series_id": series_id("p", {"i": "a"}), "labels": '{"i":"a"}'}
     ]
     assert res.partial == 0
+
+
+_TWO_NAMES = [
+    {"metric": {"__name__": n, "instance": "a"}, "values": [[1700000100, "3"]]}
+    for n in ("up", "down")
+]
+
+
+@respx.mock
+async def test_fetch_series_differing_only_by_name_are_refused_with_a_hint():
+    result = [
+        {**item, "metric": {**item["metric"], "rollup": "avg"}} for item in _TWO_NAMES
+    ]  # MetricsQL keeps __name__ in rollup(): two names, one label set
+    respx.get(**ROUTE).mock(return_value=httpx.Response(200, json=matrix(result)))
+    with pytest.raises(SourceError, match="differ only by __name__") as exc:
+        await PromQLSource("vm", BASE).fetch("{__name__=~'up|down'}", RNG, 60_000)
+    assert "'up'" in str(exc.value) and "'down'" in str(exc.value)
+    assert exc.value.hint and "label_replace" in exc.value.hint
+
+
+@respx.mock
+async def test_fetch_values_series_differing_only_by_name_are_refused_with_a_hint():
+    respx.get(**ROUTE).mock(return_value=httpx.Response(200, json=matrix(_TWO_NAMES)))
+    with pytest.raises(SourceError, match="differ only by __name__") as exc:
+        await PromQLSource("vm", BASE).fetch_values("{__name__=~'up|down'}", RNG, 60_000)
+    assert exc.value.hint and "sum by" in exc.value.hint

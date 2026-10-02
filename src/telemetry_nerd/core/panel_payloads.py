@@ -153,7 +153,8 @@ def histogram_panel_data(panel, meta, dist, labels, caveats, width_px) -> dict:
         want = grid(first, last, meta.step_ms)
         g = states.filter((pl.col("series_id") == sid) & pl.col("ts_ms").is_in(want))
         out["expected_columns"] = len(want)
-        out["unknown"] = bool((g["state"] == int(State.UNKNOWN)).any())
+        out["unknown_columns"] = int((g["state"] == int(State.UNKNOWN)).sum())
+        out["unknown"] = out["unknown_columns"] > 0
         return out
 
     series = [
@@ -170,7 +171,11 @@ def histogram_panel_data(panel, meta, dist, labels, caveats, width_px) -> dict:
     # fractions and counts of a window cover only its observed columns (spec §7.3)
     wins = [w for s in series for w in s["windows"]]
     for code, hit in (
-        ("missing_data", any(w["expected_columns"] > w["columns"] for w in wins)),
+        # an unknown column is not a missing one (it is reported as untrusted)
+        (
+            "missing_data",
+            any(w["expected_columns"] - w["columns"] - w["unknown_columns"] > 0 for w in wins),
+        ),
         ("untrusted_data", any(w["unknown"] for w in wins)),
     ):
         if hit and code not in caveats:

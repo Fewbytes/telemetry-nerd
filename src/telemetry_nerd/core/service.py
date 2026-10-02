@@ -2022,7 +2022,7 @@ class TelemetryService:
                 for a, b, r in meta.failed_spans
                 if (g := grid(max(a, meta.start_ms), min(b, meta.end_ms), meta.step_ms))
             ]
-            spans = runs([t for g, _ in in_window for t in g], meta.step_ms)
+            spans = runs(sorted({t for g, _ in in_window for t in g}), meta.step_ms)
             reasons = sorted({r for _, r in in_window})  # only failures inside the window
             total = format_duration(sum(b - a for a, b in spans))
             if spans:  # a failed span wholly outside the window says nothing about it

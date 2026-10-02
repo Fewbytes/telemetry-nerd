@@ -41,6 +41,7 @@ def runs(ts: Sequence[int], step_ms: int) -> list[tuple[int, int]]:
 
 
 NO_REASON = "source could not tell"
+MAX_WHERE_SERIES = 50  # located caveats name at most this many series
 
 
 def failure_reasons(failed: Sequence[FailedSpan], ts: Sequence[int], step_ms: int) -> list[str]:
@@ -230,7 +231,10 @@ def _untrusted(df: pl.DataFrame, step_ms: int, failed: Sequence[FailedSpan]) -> 
             Caveat(
                 code="untrusted_data",
                 message=message,
-                where=Where(spans=list(spans), series=None if len(sids) == n_series else sids),
+                where=Where(
+                    spans=list(spans),
+                    series=None if len(sids) == n_series else sids[:MAX_WHERE_SERIES],
+                ),
                 source="bucket_state",
             )
         )

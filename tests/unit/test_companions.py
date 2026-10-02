@@ -4,6 +4,7 @@ from typing import get_args
 import pytest
 
 from telemetry_nerd.analysis.filters import Kind as FilterKind
+from telemetry_nerd.datasets.store import Lineage
 from telemetry_nerd.devtools.synthetic import periodic_buckets
 from telemetry_nerd.model.bucket_state import STATE_SCHEMA, State
 from telemetry_nerd.model.companions import KINDS, OPS, SOURCE_AGGREGATED, dataset_bundle, policy
@@ -131,16 +132,22 @@ def test_carry_without_a_source_state_drops_the_companion_with_a_caveat(tmp_path
     """A filter of a code output: the source carries no bucket_state (coverage is not tracked
     through code), so there is nothing to carry. Dropped and said so, never invented."""
     svc = make_service(tmp_path)
-    src, f = _filtered(svc)
-    src_meta, src_result = svc.datasets.get(src)
-    code_meta = dataclasses.replace(src_meta, producer={"kind": "code", "node": "n", "output": "o"})
-
-    class Store:
-        def get(self, dataset_id):
-            return code_meta, src_result
-
+    r = periodic_buckets(0, 4 * DAY, M, [(5 * M, 3, None), (DAY, 5, None)], noise=1, seed=1)
+    code = svc.datasets.put(
+        source="default", expr="code:n/o", rng=TimeRange(0, 4 * DAY), step_ms=M,
+        resolution_ms=15_000, result=r, representation="bucket_agg",
+        lineage=Lineage(producer={"kind": "code", "node": "n", "output": "o"}),
+    ).id  # fmt: skip
+    f = svc.filter(code, "lowpass", "1h", "trend")["dataset"]
     meta, result = svc.datasets.get(f)
-    b = dataset_bundle(Store(), meta, result)  # type: ignore[arg-type]
+    assert meta.derived and meta.derived["op"] == "lowpass"
+    assert (
+        dataset_bundle(
+            svc.datasets, svc.datasets.get(code)[0], svc.datasets.get(code)[1]
+        ).companions
+        == {}
+    )
+    b = dataset_bundle(svc.datasets, meta, result)  # carries through the real store.get path
     assert b.companions == {}
     [c] = [c for c in b.caveats if c.code == "companion_dropped"]
     assert "lowpass" in c.message

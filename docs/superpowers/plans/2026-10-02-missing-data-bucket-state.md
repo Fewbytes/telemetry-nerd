@@ -56,8 +56,8 @@ nothing sets them until phase 5.
    Re-applying the jitter tolerance to summed observed/expected would turn all-`ok` data
    `partial` (each sub-bucket is within jitter, the sum of their shortfalls is not). So `observed`
    and `expected` are summed (absent sub-buckets add nothing) but the state comes from the
-   sub-bucket states: `unknown` if any is unknown (and its `observed` reads 0: no trustworthy
-   information), `absent` only when every one is, `empty` when none is `ok`/`partial`, `partial`
+   sub-bucket states: `unknown` if any is unknown (it is left out of the `observed`/`expected` sums:
+   neither present nor missing), `absent` only when every one is, `empty` when none is `ok`/`partial`, `partial`
    when any alive one is `partial` or `empty`, else `ok`. This keeps coarsening associative and
    consistent with merge; a 10-minute bucket missing one minute reads partial, not empty. The spec
    (§5.3) says the same.
@@ -1174,7 +1174,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Produces:
   - `state_payload(states: pa.Table) -> list[dict]`: one entry per series with any non-OK bucket: `{"id", "ts", "state", "observed", "expected", "flags"}`
   - Time panel payload adds `"bucket_state": list[dict]` and `"located": list[dict]` (`Caveat.model_dump()`). It drops the legacy `"gaps"` code when a `missing_data` caveat is present. Codes from located caveats with severity ≥ warn are appended to `caveats` (deduplicated) so existing note rendering keeps working.
-  - Summary: each series gains `"coverage": {"pct": float, "missing": str, "longest_gap": str | None}`; the dataset gains `"unknown_spans": [[iso, iso], ...]`; codes `missing_data`/`untrusted_data` join `caveats`.
+  - Summary: each series gains `"coverage": {"pct": float, "missing": str, "longest_gap": str | None}`; the dataset gains `"unknown_spans": [[iso, iso, reason], ...]`; codes `missing_data`/`untrusted_data` join `caveats`.
 
 - [ ] **Step 1: Make FakeSource counts realistic**
 
@@ -1353,7 +1353,7 @@ In `src/telemetry_nerd/mcp/server.py`, in the instructions text next to the `fin
 lines, add one line:
 
 ```
-- Summaries carry `coverage` per series (share of expected samples, longest gap) and `unknown_spans`; missing data is evidence too — scope claims around it.
+- Summaries carry `coverage` per series (share of expected samples, longest gap) and `unknown_spans` ([start, end, reason]), `silent_members` (+ `silent_more`); missing data is evidence too — scope claims around it.
 ```
 
 If `tests/unit/test_mcp_instructions.py` checks length or exact content, update it to match.

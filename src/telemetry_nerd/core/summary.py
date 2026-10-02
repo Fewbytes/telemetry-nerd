@@ -109,10 +109,12 @@ def _coverage(
     if states is None:
         states = STATE_SCHEMA.empty_table() if meta.code_node else derive_states(meta, result)
     df = pl.from_arrow(states)
-    bad = [int(State.EMPTY), int(State.PARTIAL), int(State.UNKNOWN)]
+    bad = [int(State.EMPTY), int(State.PARTIAL)]
     out: dict[str, dict] = {}
     for (sid,), g in df.group_by("series_id"):
-        alive = g.filter(pl.col("state") != int(State.ABSENT))
+        # UNKNOWN is neither present nor missing: out of the share and of the gaps (it is
+        # reported as unknown_spans, with its reason)
+        alive = g.filter(~pl.col("state").is_in([int(State.ABSENT), int(State.UNKNOWN)]))
         exp = alive["expected"].sum()
         gaps = runs(alive.filter(pl.col("state").is_in(bad))["ts_ms"].to_list(), meta.step_ms)
         longest = max((b - a for a, b in gaps), default=0)
@@ -120,8 +122,11 @@ def _coverage(
             # coverage cannot be told from this expression: unknown, not zero
             out[sid] = {"pct": None, "missing": None, "longest_gap": None}
             continue
+        unjudged = not exp and (g["state"] == int(State.UNKNOWN)).any()  # nothing could tell
         out[sid] = {
-            "pct": _round(min(1.0, alive["observed"].sum() / exp) if exp else 0.0),
+            "pct": None
+            if unjudged
+            else _round(min(1.0, alive["observed"].sum() / exp) if exp else 0.0),
             "missing": format_duration(sum(b - a for a, b in gaps)) if gaps else "0s",
             "longest_gap": format_duration(longest) if longest else None,
         }

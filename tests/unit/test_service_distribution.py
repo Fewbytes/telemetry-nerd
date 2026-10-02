@@ -365,6 +365,9 @@ async def test_histogram_window_over_a_failed_fetch_is_untrusted(tmp_path):
     data = histogram_panel_data(panel, meta, dist, series_labels(dist.series), [], 600)
     assert all(s["windows"][0]["unknown"] for s in data["series"])
     assert "untrusted_data" in data["caveats"]
+    # the failed columns are unknown, not missing: nothing else is absent in the window
+    assert all(s["windows"][0]["unknown_columns"] == 2 for s in data["series"])
+    assert "missing_data" not in data["caveats"]
 
 
 async def test_a_previous_window_that_starts_before_the_data_widens_the_dataset(tmp_path):

@@ -77,6 +77,19 @@ def _malformed(message: str) -> SourceError:
     )
 
 
+def _name_collision(
+    name_a: str | None, name_b: str | None, labels: Mapping[str, str]
+) -> SourceError:
+    """Two series of one result that differ only by `__name__`, which the dataset drops (series
+    identity is the label set without it): they would share a series id and bucket timestamps."""
+    return SourceError(
+        f"series {name_a!r} and {name_b!r} differ only by __name__ (shared labels {dict(labels)}): "
+        "they cannot be told apart in one dataset",
+        hint="select one metric name, or aggregate/relabel them apart, e.g. sum by (...) (...) or "
+        "label_replace(...) to put the name in a label",
+    )
+
+
 _LIMIT_HINTS = {
     "max_points": "use a coarser step or a shorter range",
     "max_samples": "narrow the selector, shorten the range, or use a coarser step",
@@ -238,6 +251,7 @@ class PromQLSource:
         )
         cells: dict[tuple[str, int], dict[str, float | None]] = {}
         labels_by_sid: dict[str, dict[str, str]] = {}
+        named: dict[tuple[str, str], str | None] = {}  # (field, series id) -> its __name__
         for query_field, matrix in zip(queries, results, strict=True):
             for item in matrix.result:
                 if isinstance(item, dict) and "histograms" in item:
@@ -253,10 +267,13 @@ class PromQLSource:
                 # rules. Series identity is the label set without __name__: the metric
                 # name is the expression being queried, and keeping it would split
                 # avg/min/max and count of the same series across different buckets.
-                labels.pop("__name__", None)
+                name = labels.pop("__name__", None)
                 if field not in _FIELDS:
                     continue
                 sid = series_id(self.name, labels)
+                if (field, sid) in named:  # one query gave this series twice (names differ)
+                    raise _name_collision(named[(field, sid)], name, labels)
+                named[(field, sid)] = name
                 labels_by_sid[sid] = labels
                 for sample in samples:
                     try:
@@ -384,6 +401,7 @@ class PromQLSource:
         counts = None if count_matrix is None else count_matrix.result
         rows: list[tuple[int, str, float | None]] = []
         labels_by_sid: dict[str, dict[str, str]] = {}
+        named: dict[str, str | None] = {}
         for item in result:
             if isinstance(item, dict) and "histograms" in item:
                 raise _native_histograms()
@@ -392,8 +410,11 @@ class PromQLSource:
                 samples = list(item["values"])
             except (KeyError, TypeError, ValueError) as e:
                 raise _malformed(f"malformed series {item!r} in query result") from e
-            labels.pop("__name__", None)
+            name = labels.pop("__name__", None)
             sid = series_id(self.name, labels)
+            if sid in named:
+                raise _name_collision(named[sid], name, labels)
+            named[sid] = name
             labels_by_sid[sid] = labels
             for sample in samples:
                 try:

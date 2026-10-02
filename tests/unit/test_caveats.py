@@ -189,3 +189,28 @@ def test_unknown_spans_stay_per_series():
     assert "third" not in got[("a",)][1]
     assert got[("b",)][0] == [(2 * STEP, 3 * STEP)] and "third" in got[("b",)][1]
     assert "first" not in got[("b",)][1]
+
+
+def test_series_sharing_unknown_spans_share_one_caveat_and_the_odd_one_has_its_own():
+    t = table(
+        [row(1, "a", State.UNKNOWN, 0), row(2, "a", State.OK),
+         row(1, "b", State.UNKNOWN, 0), row(2, "b", State.OK),
+         row(1, "c", State.OK), row(2, "c", State.UNKNOWN, 0)]
+    )  # fmt: skip
+    failed = [(STEP, STEP, "first"), (2 * STEP, 2 * STEP, "second")]
+    cs = from_bucket_state(t, {k: k for k in "abc"}, STEP, failed=failed)
+    got = {tuple(c.where.series): c for c in cs}
+    assert got.keys() == {("a", "b"), ("c",)}
+    assert "first" in got[("a", "b")].message and "second" not in got[("a", "b")].message
+    assert "second" in got[("c",)].message and "first" not in got[("c",)].message
+
+
+def test_unknown_caveat_names_at_most_the_series_cap():
+    from telemetry_nerd.model.caveats import MAX_WHERE_SERIES
+
+    n = MAX_WHERE_SERIES + 5
+    rows = [row(1, f"s{k:03}", State.UNKNOWN, 0) for k in range(n // 2)]
+    rows += [row(1, f"s{k:03}", State.OK) for k in range(n // 2, n + 50)]  # most are fine
+    rows += [row(1, f"u{k:03}", State.UNKNOWN, 0) for k in range(n)]
+    cs = from_bucket_state(table(rows), {}, STEP)
+    assert all(len(c.where.series) <= MAX_WHERE_SERIES for c in cs if c.where.series)

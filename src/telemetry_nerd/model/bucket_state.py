@@ -146,6 +146,7 @@ def compute(
     df = df.with_columns(
         state.cast(pl.UInt8).alias("state"),
         pl.when(pl.col("_unk")).then(0.0).otherwise(pl.col("observed")).alias("observed"),
+        pl.when(pl.col("_unk")).then(0.0).otherwise(pl.col("expected")).alias("expected"),
     )
     flags = pl.lit(int(Flag.SOURCE_FILLED) if source_filled else 0)
     if mode == "samples" and not source_filled:
@@ -692,6 +693,9 @@ GROUP_SCHEMA = pa.schema(
 )
 
 _ALIVE = pl.col("state") != int(State.ABSENT)
+# UNKNOWN is neither present nor missing (no trustworthy information): `compute` gives such a bucket
+# observed = expected = 0, so the plain sums over alive buckets below leave it out of coverage
+# (and coarsening stays associative); its state still shows.
 
 
 def _classify(
@@ -712,13 +716,6 @@ def _classify(
     )
 
 
-def _observed_unless(unknown: pl.Expr) -> pl.Expr:
-    """Σobserved over the alive buckets; 0 where any is UNKNOWN. An UNKNOWN bucket carries no
-    trustworthy information (compute zeroes it), so a combined bucket holding one cannot claim the
-    samples of its siblings either: its coverage reads 0, as the fine bucket's did."""
-    return pl.when(unknown.any()).then(0.0).otherwise(pl.col("observed").filter(_ALIVE).sum())
-
-
 def coarsen(states: pa.Table, new_step_ms: int) -> pa.Table:
     """Merge buckets into coarser ones ending at multiples of new_step_ms (as resample.rebucket)."""
     if states.num_rows == 0:
@@ -729,7 +726,7 @@ def coarsen(states: pa.Table, new_step_ms: int) -> pa.Table:
         .with_columns(((pl.col("ts_ms") + k - 1) // k * k).alias("ts_ms"))
         .group_by(["series_id", "ts_ms"])
         .agg(
-            _observed_unless(pl.col("state") == int(State.UNKNOWN)).alias("observed"),
+            pl.col("observed").filter(_ALIVE).sum().alias("observed"),
             pl.col("expected").filter(_ALIVE).sum().alias("expected"),
             _ALIVE.any().alias("_alive"),
             (pl.col("state") == int(State.UNKNOWN)).any().alias("_unknown"),
@@ -765,7 +762,7 @@ def merge(states: pa.Table, group_of: Mapping[str, str]) -> pa.Table:
         .agg(
             _ALIVE.sum().cast(pl.Int32).alias("alive"),
             reporting.sum().cast(pl.Int32).alias("reporting"),
-            _observed_unless(pl.col("state") == int(State.UNKNOWN)).alias("observed"),
+            pl.col("observed").filter(_ALIVE).sum().alias("observed"),
             pl.col("expected").filter(_ALIVE).sum().alias("expected"),
             (pl.col("state") == int(State.UNKNOWN)).any().alias("_unknown"),
             pl.col("flags").bitwise_or().alias("flags"),

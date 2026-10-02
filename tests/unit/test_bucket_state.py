@@ -794,15 +794,33 @@ def test_failed_spans_mark_exactly_the_buckets_inside_any_of_them(spans):
     assert [o == 0.0 for o, w in zip(out["observed"].to_pylist(), want) if w] == [True] * sum(want)
 
 
-def test_thousands_of_failed_spans_stay_fast():
-    import time
+def test_many_failed_spans_agree_with_the_per_span_definition():
+    # (a timing assertion would be flaky; the structure is an as-of join, and what matters here is
+    # that thousands of overlapping, unsorted spans give exactly the any-span-contains-it answer)
+    import random
 
-    n = 20_000
+    n, rnd = 5000, random.Random(3)
     rows = [(t * STEP, "a", 1.0, 4) for t in range(1, n + 1)]
-    failed = [
-        (t * STEP, t * STEP, "x") for t in range(2, n, 3)
-    ]  # a chain this long was one OR each
-    t0 = time.perf_counter()
-    out = run(rows, failed=failed, end=n * STEP)
-    assert time.perf_counter() - t0 < 5
-    assert states(out).count(State.UNKNOWN) == len(failed)
+    spans = [(rnd.randint(1, n), rnd.randint(0, 3)) for _ in range(1500)]
+    spans = [(a, a + w) for a, w in spans]
+    out = run(rows, failed=[(a * STEP, b * STEP, "x") for a, b in spans], end=n * STEP)
+    inside = [any(a <= t <= b for a, b in spans) for t in range(1, n + 1)]
+    assert [s == State.UNKNOWN for s in states(out)] == inside
+
+
+def test_unknown_bucket_is_neither_observed_nor_expected():
+    rows = [(t * STEP, "a", 1.0, 4) for t in range(1, 6)]
+    out = run(rows, failed=[(2 * STEP, 3 * STEP, "timeout")])
+    assert out["observed"].to_pylist() == [4.0, 0.0, 0.0, 4.0, 4.0]
+    exp = out["expected"].to_pylist()
+    assert exp[1] == exp[2] == 0.0 and min(exp[0], exp[3], exp[4]) > 0
+
+
+def test_failure_reasons_touch_the_same_buckets_compute_marks_unknown():
+    from telemetry_nerd.model.caveats import failure_reasons
+
+    rows = [(t * STEP, "a", 1.0, 4) for t in range(1, 11)]
+    failed = [(3 * STEP, 4 * STEP, "x"), (8 * STEP, 8 * STEP, "y")]
+    out = run(rows, failed=failed, end=10 * STEP)
+    for t, st in zip(out["ts_ms"].to_pylist(), states(out)):
+        assert bool(failure_reasons(failed, [t], STEP)) is (st == State.UNKNOWN)

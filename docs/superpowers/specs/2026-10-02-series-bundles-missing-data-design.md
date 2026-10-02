@@ -224,7 +224,9 @@ Dataset level: failed spans with error text (never cached; retried on next read)
 ### 5.2 Merge across series (per bucket)
 
 - `alive` = members not `absent`; `reporting` = members `ok` or `partial`
-- `coverage` = Σobserved / Σexpected over alive
+- `coverage` = Σobserved / Σexpected over alive members that are not `unknown`: `unknown` is
+  neither present nor missing (no trustworthy information), so it is out of numerator and
+  denominator (1 unknown member of 44: coverage of the other 43)
 - `silent` = alive members that are `empty` → join the outlier set
 - state: `unknown` if any member `unknown`; else `ok` if reporting = alive; else `partial`
   (`empty` if reporting = 0); flags OR-ed
@@ -232,9 +234,10 @@ Dataset level: failed spans with error text (never cached; retried on next read)
 
 ### 5.3 Coarsen across time
 
-Sum `observed`, `expected`; OR flags. A coarse bucket that is `unknown` reports `observed` = 0
-(as an `unknown` fine bucket does: no trustworthy information, its siblings' samples included);
-merge (§5.2) does the same for an `unknown` group bucket. State is re-classified from the sub-bucket states, not from
+Sum `observed` and `expected` over the sub-buckets that are neither `absent` nor `unknown`; OR
+flags. An `unknown` sub-bucket is neither present nor missing (no trustworthy information), so it
+is out of both sums: a coarse bucket of 9 good minutes and 1 failed one reports the 9 minutes'
+coverage, and one that is all `unknown` reports 0 / 0. Merge (§5.2) does the same. State is re-classified from the sub-bucket states, not from
 the sums (re-applying jitter tolerance to sums would turn all-`ok` data `partial`): `unknown` if any
 sub-bucket is `unknown`; `absent` only if every sub-bucket is absent (absent sub-buckets add nothing
 to the sums); `empty` if nothing was observed; `partial` if any alive sub-bucket was `partial` or

@@ -69,21 +69,29 @@ def test_coarsen_ok_plus_partial_is_partial():
     assert row[4] == State.PARTIAL
 
 
-def test_coarsen_unknown_reports_no_observed_samples():
-    """An UNKNOWN sub-bucket carries no trustworthy information: the coarse bucket cannot claim
-    its siblings' samples either (compute zeroes the fine UNKNOWN bucket the same way)."""
-    t = table([(STEP, "a", 0, 4, State.UNKNOWN, 0), (2 * STEP, "a", 4, 4, State.OK, 0)])
+def test_coarsen_unknown_is_neither_present_nor_missing():
+    """An UNKNOWN fine bucket carries 0 observed / 0 expected (compute): the coarse bucket reports
+    the coverage of the sub-buckets that could tell, and is UNKNOWN all the same."""
+    t = table([(STEP, "a", 0, 0, State.UNKNOWN, 0), (2 * STEP, "a", 4, 4, State.OK, 0)])
     [row] = as_rows(coarsen(t, 2 * STEP))
-    assert row[4] == State.UNKNOWN and row[2] == 0.0 and row[3] == 8.0
-    # a coarse bucket without an unknown one keeps its sum
-    t = table([(STEP, "a", 2, 4, State.PARTIAL, 0), (2 * STEP, "a", 4, 4, State.OK, 0)])
-    assert as_rows(coarsen(t, 2 * STEP))[0][2] == 6.0
+    assert row[4] == State.UNKNOWN and row[2:4] == (4.0, 4.0)
 
 
-def test_merge_unknown_member_reports_no_observed_samples():
-    t = table([(STEP, "a", 4, 4, State.OK, 0), (STEP, "b", 0, 4, State.UNKNOWN, 0)])
-    [row] = merge(t, {"a": "g", "b": "g"}).to_pylist()
-    assert row["state"] == State.UNKNOWN and row["observed"] == 0.0 and row["expected"] == 8.0
+def test_coarsen_one_failed_minute_of_ten_keeps_the_other_nine_at_full_coverage():
+    t = table(
+        [(i * STEP, "a", 0 if i == 4 else 4, 0 if i == 4 else 4,
+          State.UNKNOWN if i == 4 else State.OK, 0) for i in range(1, 11)]
+    )  # fmt: skip
+    [row] = as_rows(coarsen(t, 10 * STEP))
+    assert row[4] == State.UNKNOWN and row[2] / row[3] == 1.0 and row[3] == 36.0
+
+
+def test_merge_one_unknown_member_of_44_leaves_the_coverage_of_the_other_43():
+    rows = [(STEP, f"s{k}", 4, 4, State.OK, 0) for k in range(43)]
+    rows.append((STEP, "s43", 0, 0, State.UNKNOWN, 0))
+    [row] = merge(table(rows), {f"s{k}": "g" for k in range(44)}).to_pylist()
+    assert (row["state"], row["alive"], row["reporting"]) == (State.UNKNOWN, 44, 43)
+    assert row["observed"] == 43 * 4.0 and row["expected"] == 43 * 4.0
 
 
 states_st = st.sampled_from([State.OK, State.PARTIAL, State.EMPTY, State.ABSENT, State.UNKNOWN])
@@ -100,10 +108,10 @@ def state_tables(draw, n_series=3, n_buckets=8):
                 State.PARTIAL: 2,
                 State.EMPTY: 0,
                 State.ABSENT: 0,
-                # compute() zeroes these, but the algebra must not depend on it
-                State.UNKNOWN: draw(st.integers(0, 8)),
+                State.UNKNOWN: 0,
             }[s]
-            rows.append((i * STEP, f"s{k}", float(obs), 4.0, int(s), draw(st.integers(0, 15))))
+            exp = 0.0 if s == State.UNKNOWN else 4.0  # compute(): unknown counts as neither
+            rows.append((i * STEP, f"s{k}", float(obs), exp, int(s), draw(st.integers(0, 15))))
     return table(rows)
 
 
@@ -143,7 +151,7 @@ def _reference_group(members):
         "alive": len(alive),
         "reporting": len(reporting),
         "state": state,
-        "observed": 0.0 if state == State.UNKNOWN else float(sum(m[1] for m in alive)),
+        "observed": float(sum(m[1] for m in alive)),
         "expected": float(sum(m[2] for m in alive)),
         "silent": sorted(m[0] for m in alive if m[3] == State.EMPTY),
     }
@@ -169,9 +177,9 @@ def test_merge_matches_the_per_bucket_rules(t):
 
 @settings(max_examples=60)
 @given(state_tables())
-def test_coarsen_unknown_absorbs_and_reports_no_samples(t):
-    """Per coarse bucket: unknown iff some sub-bucket is; its observed is 0 then, else the sum
-    over the alive ones."""
+def test_coarsen_unknown_absorbs_and_sums_what_could_tell(t):
+    """Per coarse bucket: unknown iff some sub-bucket is; the sums are over the alive ones (an
+    unknown one carries 0 / 0, so it is neither present nor missing)."""
     rows = t.to_pylist()
     for r in coarsen(t, 4 * STEP).to_pylist():
         subs = [
@@ -181,10 +189,9 @@ def test_coarsen_unknown_absorbs_and_reports_no_samples(t):
         ]
         has_unknown = any(x["state"] == State.UNKNOWN for x in subs)
         assert (r["state"] == State.UNKNOWN) is has_unknown
-        want = (
-            0.0 if has_unknown else sum(x["observed"] for x in subs if x["state"] != State.ABSENT)
-        )
-        assert r["observed"] == want
+        alive = [x for x in subs if x["state"] != State.ABSENT]
+        assert r["observed"] == sum(x["observed"] for x in alive)
+        assert r["expected"] == sum(x["expected"] for x in alive)
 
 
 @settings(max_examples=60)
