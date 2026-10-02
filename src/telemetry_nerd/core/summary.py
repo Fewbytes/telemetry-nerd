@@ -71,6 +71,10 @@ def _coverage(
         exp = alive["expected"].sum()
         gaps = runs(alive.filter(pl.col("state").is_in(bad))["ts_ms"].to_list(), meta.step_ms)
         longest = max((b - a for a, b in gaps), default=0)
+        if ((g["flags"] & int(Flag.SOURCE_FILLED)) != 0).any():
+            # coverage cannot be told from this expression: unknown, not zero
+            out[sid] = {"pct": None, "missing": None, "longest_gap": None}
+            continue
         out[sid] = {
             "pct": _round(min(1.0, alive["observed"].sum() / exp) if exp else 0.0),
             "missing": format_duration(sum(b - a for a, b in gaps)) if gaps else "0s",
@@ -83,8 +87,10 @@ def _coverage_caveats(df: pl.DataFrame, unknown: dict, caveats: list[str]) -> No
     """missing_data: some alive bucket is PARTIAL or EMPTY; untrusted_data: anything UNKNOWN."""
     if unknown["unknown_spans"]:
         caveats.append("untrusted_data")
-    filled = (df["flags"] & int(Flag.SOURCE_FILLED)) != 0
-    if (filled & (df["state"] != int(State.UNKNOWN))).any():
+    if ((df["flags"] & int(Flag.SOURCE_FILLED)) != 0).any():  # the expression itself hides coverage
+        caveats.append("unobservable_counts")
+    post_gap = ((df["flags"] & int(Flag.POST_GAP)) != 0) & (df["state"] != int(State.UNKNOWN))
+    if post_gap.any():
         caveats.append("post_gap_spike")
     if df.height and df["state"].is_in([int(State.PARTIAL), int(State.EMPTY)]).any():
         caveats.append("missing_data")

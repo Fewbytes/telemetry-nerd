@@ -89,6 +89,7 @@ const WORDS: Record<number, string> = {
 };
 
 export const FLAG_SOURCE_FILLED = 8;
+export const FLAG_POST_GAP = 16;
 
 /** `samples`: the state counts scrape samples (expected = the series' own rate in this bucket);
  * otherwise it only records presence (quantiles, heatmap columns) and has no sample count. */
@@ -99,9 +100,9 @@ export function rugHint(cell: RugCell, s: BucketStatePayload, stepMs: number, na
     const every = Math.max(1000, Math.round(stepMs / exp / 1000) * 1000);
     lines.push(`${obs} of ${Math.round(exp)} expected samples (series reports every ${fmtStep(every)})`);
   }
-  if ((s.flags[cell.i] ?? 0) & FLAG_SOURCE_FILLED) {
-    lines.push(cell.state === STATE.UNKNOWN ? "coverage cannot be observed for this expression" : "value filled by the source");
-  }
+  const flags = s.flags[cell.i] ?? 0;
+  if (flags & FLAG_SOURCE_FILLED) lines.push("coverage cannot be observed for this expression");
+  if (flags & FLAG_POST_GAP) lines.push("computed from the sample before the gap (VictoriaMetrics); not a real spike");
   const seen = s.ts.filter((t, k) => t <= cell.ts && s.observed[k] > 0).at(-1);
   if (cell.state === STATE.EMPTY && seen !== undefined) lines.push(`last seen in bucket ending ${fmtRange(seen - stepMs, seen)}`);
   return lines.join("\n");

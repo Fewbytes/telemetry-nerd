@@ -10,10 +10,11 @@ from typing import Literal
 import polars as pl
 import pyarrow as pa
 
-from telemetry_nerd.analysis.exprkind import _mask_strings, _strip_comments
+from telemetry_nerd.analysis.exprkind import _close, _mask_strings, _strip_comments
 from telemetry_nerd.model.bucket_state import STATE_SCHEMA, coarsen, compute
 from telemetry_nerd.model.caveats import Caveat, from_bucket_state
 from telemetry_nerd.model.series import FetchResult
+from telemetry_nerd.model.time import parse_duration
 from telemetry_nerd.sources.observed import counts_are_observed
 
 Policy = Literal["carry", "recompute", "derive", "drop"]
@@ -29,8 +30,35 @@ SOURCE_AGGREGATED = re.compile(
 _PREVIOUS_SAMPLE_FUNCS = re.compile(r"\b(?:increase|rate)\s*\(", re.IGNORECASE)
 
 
-def applies_previous_sample_rule(expr: str) -> bool:
-    return _PREVIOUS_SAMPLE_FUNCS.search(_mask_strings(_strip_comments(expr))) is not None
+_RANGE = re.compile(r"\[\s*([0-9]+[a-z]+)\s*(?::[^\]]*)?\]")
+
+
+def previous_sample_windows(expr: str) -> list[int | None]:
+    """Range (ms) of each increase()/rate() call in `expr`, None where it cannot be parsed;
+    empty when the expression has no such call."""
+    text = _mask_strings(_strip_comments(expr))
+    out: list[int | None] = []
+    for call in _PREVIOUS_SAMPLE_FUNCS.finditer(text):
+        try:
+            args = text[call.end() : _close(text, call.end() - 1)]
+        except ValueError:
+            out.append(None)
+            continue
+        m = _RANGE.search(args)
+        try:
+            out.append(parse_duration(m.group(1)) if m else None)
+        except ValueError:
+            out.append(None)
+    return out
+
+
+def post_gap_buckets(expr: str, step_ms: int) -> int:
+    """How many buckets after a gap carry the gap: a window of w reaches back over the gap for
+    ceil(w / step) steps; the first bucket only if the range cannot be parsed. 0: not applicable."""
+    windows = previous_sample_windows(expr)
+    if not windows:
+        return 0
+    return max([1, *(-(-w // step_ms) for w in windows if w)])
 
 
 @dataclass(frozen=True)
@@ -85,8 +113,11 @@ def derive_states(meta, result: FetchResult) -> pa.Table:
         failed=failed,
         # counts that are subquery evaluations (lookback-filled) cannot show coverage
         source_filled=not counts_are_observed(meta.expr),
-        post_gap_spike=bool(getattr(meta, "semantics_flags", {}).get("post_gap_increase_spike"))
-        and applies_previous_sample_rule(meta.expr),
+        post_gap_buckets=(
+            post_gap_buckets(meta.expr, meta.step_ms)
+            if getattr(meta, "semantics_flags", {}).get("post_gap_increase_spike")
+            else 0
+        ),
     )
 
 

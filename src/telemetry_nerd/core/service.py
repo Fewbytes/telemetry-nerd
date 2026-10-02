@@ -1295,7 +1295,7 @@ class TelemetryService:
 
 def _semantics_flags(src) -> dict:
     """Source semantics the dataset needs when read back (only those that hold)."""
-    sem = getattr(src, "semantics", None)
+    sem = src.semantics
     return {"post_gap_increase_spike": True} if sem and sem.post_gap_increase_spike.value else {}
 
 

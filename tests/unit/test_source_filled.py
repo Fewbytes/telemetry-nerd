@@ -7,9 +7,9 @@ import pytest
 from telemetry_nerd.core.coverage_check import claim_coverage
 from telemetry_nerd.core.summary import summarize
 from telemetry_nerd.datasets.store import DatasetMeta
-from telemetry_nerd.model.bucket_state import Flag, State
+from telemetry_nerd.model.bucket_state import Flag, State, coarsen
 from telemetry_nerd.model.caveats import UNOBSERVABLE_MESSAGE, from_bucket_state
-from telemetry_nerd.model.companions import applies_previous_sample_rule, derive_states
+from telemetry_nerd.model.companions import derive_states, post_gap_buckets, previous_sample_windows
 from telemetry_nerd.model.series import BUCKET_SCHEMA, SERIES_SCHEMA, FetchResult
 from telemetry_nerd.sources.semantics import semantics_for
 from tests.unit.fakes import FakeSource, make_service
@@ -79,6 +79,8 @@ def test_summary_reports_one_unknown_span_for_the_window():
     out = summarize(m, r, now_ms=10**12, settle_ms=0, states=derive_states(m, r))
     assert len(out["unknown_spans"]) == 1
     assert "untrusted_data" in out["caveats"]
+    assert "unobservable_counts" in out["caveats"]
+    assert out["series"][0]["coverage"] == {"pct": None, "missing": None, "longest_gap": None}
 
 
 def test_claims_on_unobservable_expression_are_blocked_and_say_how_to_rephrase():
@@ -95,7 +97,7 @@ def test_claims_on_unobservable_expression_are_blocked_and_say_how_to_rephrase()
 def test_vm_post_gap_bucket_is_flagged_but_keeps_its_state():
     m = meta("increase(x[1m])", VM)
     assert states_of(m, result()) == [0, 0, 2, 2, 2, 0, 0, 0]
-    assert flags_of(m, result()) == [0, 0, 0, 0, 0, int(Flag.SOURCE_FILLED), 0, 0]
+    assert flags_of(m, result()) == [0, 0, 0, 0, 0, int(Flag.POST_GAP), 0, 0]
 
 
 def test_post_gap_caveat_is_located_on_the_bucket():
@@ -105,14 +107,14 @@ def test_post_gap_caveat_is_located_on_the_bucket():
     assert spike.severity == "warn"
     assert spike.where.spans == [(5 * STEP, 6 * STEP)]
     assert spike.where.series == ["a"]
-    assert "not a spike" in spike.message
+    assert "not a real spike" in spike.message
 
 
 def test_post_gap_after_unknown_span_is_flagged_too():
     m = meta("increase(x[1m])", VM)
     m = DatasetMeta(**{**m.__dict__, "failed_spans": [[3 * STEP, 4 * STEP, "boom"]]})
     r = result(hole=(3, 4))
-    assert flags_of(m, r)[4] == int(Flag.SOURCE_FILLED)
+    assert flags_of(m, r)[4] == int(Flag.POST_GAP)
 
 
 def test_prometheus_semantics_never_flag():
@@ -148,7 +150,71 @@ def test_other_expressions_are_not_flagged_on_vm():
     ],
 )
 def test_previous_sample_functions(expr, hit):
-    assert applies_previous_sample_rule(expr) is hit
+    assert bool(previous_sample_windows(expr)) is hit
+
+
+@pytest.mark.parametrize(
+    ("expr", "n"),
+    [
+        ("increase(x[1m])", 1),
+        ("increase(x[5m])", 5),
+        ("sum(rate(x[150s]))", 3),
+        ("increase(x[1h30m])", 1),  # unparsable range: first bucket only
+        ("up", 0),
+    ],
+)
+def test_post_gap_bucket_count_follows_the_range(expr, n):
+    assert post_gap_buckets(expr, STEP) == n
+
+
+def test_wide_window_flags_every_bucket_that_reaches_over_the_gap_up_to_the_next_gap():
+    m = meta("increase(x[3m])", VM)
+    r = result(hole={3, 4, 6})  # buckets 5 and 7, 8 follow gaps
+    f = flags_of(m, r)
+    post = int(Flag.POST_GAP)
+    assert f == [0, 0, 0, 0, post, 0, post, post]
+    r = result(hole={2})  # 3 buckets after the gap, bounded by the window
+    assert flags_of(m, r) == [0, 0, post, post, post, 0, 0, 0]
+
+
+def test_coarsened_post_gap_with_failed_span_keeps_the_failure_reason():
+    base = meta("increase(x[1m])", VM)
+    failed = [(4 * STEP, 4 * STEP, "boom")]
+    m = DatasetMeta(**{**base.__dict__, "failed_spans": [list(f) for f in failed]})
+    # bucket 4 failed, bucket 5 is post-gap; both coarsen into the bucket ending at 6
+    states = coarsen(derive_states(m, result(hole={4})), 3 * STEP)
+    caveats = from_bucket_state(states, {"a": "a"}, 3 * STEP, failed)
+    [untrusted] = [c for c in caveats if c.code == "untrusted_data"]
+    assert "boom" in untrusted.message and "cannot be observed" not in untrusted.message
+    # that coarse bucket is UNKNOWN: no spike claim for it
+    assert "post_gap_spike" not in {c.code for c in caveats}
+    # a post-gap bucket in a coarse bucket that is not UNKNOWN still gets its caveat
+    states = coarsen(derive_states(meta("increase(x[1m])", VM), result(hole={3, 4, 5})), 3 * STEP)
+    assert "post_gap_spike" in {c.code for c in from_bucket_state(states, {"a": "a"}, 3 * STEP)}
+
+
+def test_failed_span_on_an_unobservable_expression_names_both():
+    base = meta("x / y")
+    m = DatasetMeta(**{**base.__dict__, "failed_spans": [[3 * STEP, 4 * STEP, "boom"]]})
+    r = result(hole=())
+    [c] = from_bucket_state(derive_states(m, r), {"a": "a"}, STEP, [(3 * STEP, 4 * STEP, "boom")])
+    assert "cannot be observed" in c.message and "boom" in c.message
+
+
+def test_claim_over_post_gap_value_warns():
+    m, r = meta("increase(x[1m])", VM), result()
+    [c] = [
+        c
+        for c in claim_coverage(derive_states(m, r), STEP, 8 * STEP, STEP)
+        if c.code == "post_gap_spike"
+    ]
+    assert c.severity == "warn"
+    assert c.where.spans == [(5 * STEP, 6 * STEP)]
+    assert not [
+        c
+        for c in claim_coverage(derive_states(m, r), 6 * STEP, 8 * STEP, STEP)
+        if c.code == "post_gap_spike"
+    ]
 
 
 def test_summary_carries_post_gap_spike_caveat():

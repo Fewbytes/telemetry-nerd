@@ -39,9 +39,9 @@ describe("rug", () => {
   });
 
   it("says when the source filled the value", () => {
-    const s = { ...st("a", [STATE.PARTIAL], [2]), flags: [8] };
+    const s = { ...st("a", [STATE.PARTIAL], [2]), flags: [16] };
     const [cell] = rugCells([s], 60_000, toX);
-    expect(rugHint(cell, s, 60_000, "a", true)).toContain("value filled by the source");
+    expect(rugHint(cell, s, 60_000, "a", true)).toContain("sample before the gap");
     const u = { ...st("a", [STATE.UNKNOWN], [0]), flags: [8] };
     const [uc] = rugCells([u], 60_000, toX);
     expect(rugHint(uc, u, 60_000, "a", true)).toContain("cannot be observed");

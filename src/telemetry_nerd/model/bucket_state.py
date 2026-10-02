@@ -24,9 +24,8 @@ class Flag(IntFlag):
     RESET = 1
     INTERVAL_CHANGE = 2
     STALE_MARKER = 4
-    # UNKNOWN bucket: the expression's counts are subquery evaluations, not samples.
-    # OK/PARTIAL bucket: the source filled the value from outside the bucket (post-gap increase)
-    SOURCE_FILLED = 8
+    SOURCE_FILLED = 8  # the expression's counts are subquery evaluations, not samples (UNKNOWN)
+    POST_GAP = 16  # value right after a gap is computed from the sample before it (OK/PARTIAL)
 
 
 PARTIAL_RATIO = 0.9
@@ -68,12 +67,12 @@ def compute(
     mode: Mode,
     failed: Sequence[FailedSpan] = (),
     source_filled: bool = False,
-    post_gap_spike: bool = False,
+    post_gap_buckets: int = 0,
 ) -> pa.Table:
     """`source_filled`: the counts are not observed samples (expression cannot tell), so every
-    bucket is UNKNOWN + SOURCE_FILLED. `post_gap_spike`: the source's increase/rate after a gap
-    carries the whole gap, so the first OK/PARTIAL bucket after an EMPTY/UNKNOWN one is flagged
-    SOURCE_FILLED (state unchanged)."""
+    bucket is UNKNOWN + SOURCE_FILLED. `post_gap_buckets`: the source's increase/rate after a gap
+    reaches back over the gap, so the first n OK/PARTIAL buckets after an EMPTY/UNKNOWN one
+    (stopping at the next gap) are flagged POST_GAP (state unchanged); 0 turns it off."""
     ts = grid(start_ms, end_ms, step_ms)
     if not ts or not series_ids:
         return STATE_SCHEMA.empty_table()
@@ -122,14 +121,19 @@ def compute(
         state.cast(pl.UInt8).alias("state"),
         pl.when(unknown).then(0.0).otherwise(pl.col("observed")).alias("observed"),
     ).sort("series_id", "ts_ms")
-    filled = int(Flag.SOURCE_FILLED)
-    after_gap = (
-        pl.col("state").is_in([int(State.OK), int(State.PARTIAL)])
-        & pl.col("state").shift(1).over("series_id").is_in([int(State.EMPTY), int(State.UNKNOWN)])
-        if post_gap_spike
-        else pl.lit(False)
-    )
-    flags = pl.when(pl.lit(source_filled) | after_gap).then(filled).otherwise(0)
+    flags = pl.lit(int(Flag.SOURCE_FILLED) if source_filled else 0)
+    if post_gap_buckets > 0:
+        is_gap = pl.col("state").is_in([int(State.EMPTY), int(State.UNKNOWN)])
+        df = df.with_columns(is_gap.cum_sum().over("series_id").alias("_gap_no"))
+        # position after the gap bucket that opened this run (the gap bucket itself is 0)
+        pos = pl.int_range(pl.len()).over(["series_id", "_gap_no"])
+        after = (
+            ~is_gap
+            & (pl.col("_gap_no") > 0)
+            & (pl.col("state") != int(State.ABSENT))
+            & (pos <= post_gap_buckets)
+        )
+        flags = flags | pl.when(after).then(int(Flag.POST_GAP)).otherwise(0)
     out = df.with_columns(flags.cast(pl.UInt16).alias("flags")).select(STATE_SCHEMA.names)
     return out.to_arrow().cast(STATE_SCHEMA)
 

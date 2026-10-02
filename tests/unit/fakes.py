@@ -29,6 +29,8 @@ NOW = 6_000_000_000
 
 
 class FakeSource:
+    semantics = None
+
     def __init__(
         self,
         name="fake",

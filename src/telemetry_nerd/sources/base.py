@@ -10,6 +10,7 @@ from telemetry_nerd.model.discovery import Discovery
 from telemetry_nerd.model.distribution import DistResult
 from telemetry_nerd.model.series import FetchResult
 from telemetry_nerd.model.time import TimeRange
+from telemetry_nerd.sources.semantics import MissingDataSemantics
 
 
 class SourceError(Exception):
@@ -41,6 +42,8 @@ class Source(Protocol):
     name: str
     identity: str  # stable id of what this source reads (flavor, endpoint, resolution)
     resolution_ms: int
+    #: what the backend does at the edges of its data; None for sources without a profile
+    semantics: MissingDataSemantics | None
 
     async def fetch(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult: ...
 

@@ -48,8 +48,8 @@ UNOBSERVABLE_MESSAGE = (
     "Coverage unknown: this expression's sample counts cannot be observed (subquery fills gaps)."
 )
 SPIKE_MESSAGE = (
-    "value after a gap includes the gap's increase (source uses the previous sample, "
-    "e.g. VictoriaMetrics); not a spike."
+    "value right after a gap is computed from the sample before the gap (VictoriaMetrics): "
+    "increase includes the gap's growth, rate averages across it; not a real spike."
 )
 
 
@@ -74,6 +74,8 @@ def from_bucket_state(
         if ((unknown["flags"] & int(Flag.SOURCE_FILLED)) != 0).any():
             # the expression itself hides coverage: one dataset-level reason, not per bucket
             message = UNOBSERVABLE_MESSAGE
+            if failed:
+                message += f" Also failed fetches ({'; '.join(reasons)})."
         out.append(
             Caveat(
                 code="untrusted_data",
@@ -102,7 +104,7 @@ def from_bucket_state(
         spike = runs(
             g.filter(
                 (pl.col("state") != int(State.UNKNOWN))
-                & ((pl.col("flags") & int(Flag.SOURCE_FILLED)) != 0)
+                & ((pl.col("flags") & int(Flag.POST_GAP)) != 0)
             )["ts_ms"].to_list(),
             step_ms,
         )
