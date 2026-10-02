@@ -118,6 +118,8 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   suggestion)`: per role changed / no_change against stated reference windows, its pattern and
   onset interval, and which signal moved first (only when onset intervals do not overlap);
   one family-wise alpha over the roles. Report the reference and the alpha; cite `evidence`.
+  Load the `model-views` skill before binding or judging: the workflow, how to report verdicts
+  honestly, how to read the Little's law check and its assumptions, worked examples.
 - When you can read the service's repo, `catalog_context` turns its metric registrations,
   dashboards and docs into cited claims (description, type, unit): find the files with rg, read the
   few that matter, send their text. Say where a claim came from when you cite it.
