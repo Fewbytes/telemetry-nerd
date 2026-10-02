@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { axisGutterSize, placeTip } from "./plotKit";
+import { axisGutterSize, clampTip, placeTip } from "./plotKit";
 
 // Minimal uPlot-like stub: just enough for axisGutterSize's `self.ctx.measureText` call.
 // Width is modelled as 7 device px per character, like a typical 12px sans-serif digit.
@@ -20,6 +20,23 @@ describe("placeTip", () => {
   });
   it("flips left on the right half and above on the bottom half, so it grows toward free space", () => {
     expect(placeTip(390, 190, 400, 200, "t")).toMatchObject({ x: 378, y: 178, flip: true, flipY: true });
+  });
+});
+
+describe("clampTip", () => {
+  it("ends a flipped tip at the pointer and starts an unflipped one there", () => {
+    expect(clampTip({ x: 300, y: 50, flip: true, flipY: false }, 100, 20, 400, 200)).toEqual({ left: 200, top: 50 });
+    expect(clampTip({ x: 100, y: 50, flip: false, flipY: false }, 100, 20, 400, 200)).toEqual({ left: 100, top: 50 });
+  });
+  it("a wide tip just past the midpoint stays inside both edges", () => {
+    const w = 400, t = placeTip(201, 10, w, 200, "x");
+    const c = clampTip(t, 390, 20, w, 200);
+    expect(c.left).toBeGreaterThanOrEqual(0);
+    expect(c.left + 390).toBeLessThanOrEqual(w);
+  });
+  it("is pushed up from the bottom edge and pinned top-left when larger than the wrapper", () => {
+    expect(clampTip({ x: 10, y: 190, flip: false, flipY: false }, 50, 40, 400, 200).top).toBe(160);
+    expect(clampTip({ x: 10, y: 190, flip: false, flipY: false }, 500, 300, 400, 200)).toEqual({ left: 0, top: 0 });
   });
 });
 

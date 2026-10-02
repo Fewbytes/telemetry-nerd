@@ -155,6 +155,8 @@ describe("stepify", () => {
     const out = stepify([[60, 60.001, 120], [1, 2, 3]], 60);
     const x = out[0] as number[];
     expect(x.every((v, i) => i === 0 || v > x[i - 1])).toBe(true);
+    expect(x[1]).toBe(60);
+    expect(x[2]).toBeCloseTo(60.001, 6);
     expect(out[1]).toEqual([1, 1, 2, 3, 3]);
     expect(x).toHaveLength(5);
   });

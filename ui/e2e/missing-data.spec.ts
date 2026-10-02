@@ -23,6 +23,7 @@ test("a series with a hole shows a coverage rug and a located caveat", async ({ 
   // layout-dependent, so the state is not pinned), and stays inside the panel's plot area
   const tip = el.locator(".rug-tip");
   await expect(tip).toBeVisible();
+  expect(await tip.evaluate((n) => getComputedStyle(n).position)).toBe("absolute");
   await expect(tip).toContainText(/instance="[de]"/);
   await expect(tip).toContainText(/\d{2}:\d{2}–\d{2}:\d{2} · (ok|fewer samples than expected|no samples|series not seen yet)/);
   const plot = await el.locator(".plot").boundingBox();
@@ -30,4 +31,13 @@ test("a series with a hole shows a coverage rug and a located caveat", async ({ 
   if (!plot || !tb) throw new Error("tip or plot not laid out");
   expect(tb.x).toBeGreaterThanOrEqual(plot.x - 1);
   expect(tb.x + tb.width).toBeLessThanOrEqual(plot.x + plot.width + 1);
+  // pointer at the right and bottom edges of the rug: the tip stays inside the plot area
+  const rug = await el.locator("[data-rug]").boundingBox();
+  if (!rug) throw new Error("rug not laid out");
+  await page.mouse.move(rug.x + rug.width - 2, rug.y + 4);
+  const edge = await tip.boundingBox();
+  if (edge) {
+    expect(edge.x + edge.width).toBeLessThanOrEqual(plot.x + plot.width + 1);
+    expect(edge.y + edge.height).toBeLessThanOrEqual(plot.y + plot.height + 1);
+  }
 });

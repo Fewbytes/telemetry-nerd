@@ -61,6 +61,16 @@ export function placeTip(x: number, y: number, w: number, h: number, text: strin
   return { x: flip ? x - 12 : x + 12, y: flipY ? y - 12 : y + 12, text, flip, flipY };
 }
 
+/**
+ * Final top-left of a tip of measured size tw x th inside a w x h wrapper: flipped tips end at the
+ * pointer instead of starting there, then the box is pushed back inside (and pinned to the
+ * top-left when it is bigger than the wrapper).
+ */
+export function clampTip(tip: Pick<HoverTip, "x" | "y" | "flip" | "flipY">, tw: number, th: number, w: number, h: number): { left: number; top: number } {
+  const left = tip.flip ? tip.x - tw : tip.x, top = tip.flipY ? tip.y - th : tip.y;
+  return { left: Math.max(0, Math.min(left, w - tw)), top: Math.max(0, Math.min(top, h - th)) };
+}
+
 /** `placeTip` from a uPlot cursor position (`left`/`top`, relative to the plot area). */
 export function tipAt(p: uPlot, wrap: HTMLElement, left: number, top: number, text: string): HoverTip {
   const o = p.over.getBoundingClientRect(), w = wrap.getBoundingClientRect();

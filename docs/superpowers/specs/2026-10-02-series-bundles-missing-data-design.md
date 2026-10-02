@@ -341,7 +341,7 @@ fills (`subquery_fills_gaps`, verified on Prometheus and VictoriaMetrics), so it
 
 ### 7.2 Heatmaps
 
-Rug as above, plus in-plot textures on missing columns: dots = `empty`, hatch = `unknown`. Blank
+Rug as above, plus in-plot textures on missing columns: dots = `empty`, hatch = `unknown`, a thin dotted mid-line = `absent` (series not born yet; as in the rug). Blank
 cell = measured, nothing happened. Partial columns faded like low-n cells.
 
 ### 7.3 Window views (histogram, ECDF, CCDF, threshold readout)

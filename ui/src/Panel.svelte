@@ -844,7 +844,7 @@
     {#if notes.length > 0}
       <ul class="notes" aria-label="Notes and warnings">
         {#each notes as note (note.key)}
-          <!-- svelte-ignore a11y_no_noninteractive_tabindex (focus mirrors hover so keyboard users get the same graph highlight) -->
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex (notes with a where take focus so keyboard users get the same graph highlight as hover) -->
           <li
             class="note {note.kind}" class:active={activeNotes.includes(note.key)} data-note={note.key}
             tabindex={hasFocus(note) ? 0 : undefined}
