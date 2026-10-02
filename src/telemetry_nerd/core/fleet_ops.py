@@ -41,7 +41,7 @@ from telemetry_nerd.core.signal_ops import SignalOps
 from telemetry_nerd.core.wire import Memo, sig, sig_list, statistic
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
 from telemetry_nerd.model.bucket_state import Flag, State, coarsen, grid
-from telemetry_nerd.model.caveats import Caveat, Where, runs
+from telemetry_nerd.model.caveats import NO_REASON, Caveat, Where, failure_reasons, runs
 from telemetry_nerd.model.companions import dataset_bundle
 from telemetry_nerd.model.time import TimeRange, format_duration, iso
 
@@ -219,12 +219,18 @@ class FleetOps:
         alive_cells = float(np.sum(sp.alive))
         if cov.state is not None:
             unk = cov.state == State.UNKNOWN
-            if unk.any():
-                steps = unk.any(axis=0)
-                members = [int(i) for i in np.flatnonzero(unk.any(axis=1))]
-                reasons = sorted({str(x[2]) for x in meta.failed_spans}) or [
-                    "source could not tell"
-                ]
+            # one caveat per set of members unknown at the same steps: a member is not marked
+            # unknown where only another one was, and reasons are those touching its own steps
+            by_steps: dict[bytes, list[int]] = {}
+            for i in np.flatnonzero(unk.any(axis=1)):
+                by_steps.setdefault(unk[i].tobytes(), []).append(int(i))
+            for members in by_steps.values():
+                steps = unk[members[0]]
+                reasons = failure_reasons(
+                    [(a, b, str(r)) for a, b, r in meta.failed_spans],
+                    [ts[j] for j in np.flatnonzero(steps)],
+                    step,
+                ) or [NO_REASON]
                 out.append(Caveat(
                     code="untrusted_data",
                     message=f"Data unknown for {total(steps)} ({'; '.join(reasons)}): those "

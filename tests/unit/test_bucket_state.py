@@ -764,3 +764,45 @@ def test_long_20s_stretch_with_losses_before_50s_ones_reads_as_430():
     lost = (3, 8, 12, 13, 14, 15, 16, 17, 69, 82)
     empty, _ = _slow_after(20_000, 50_000, 37, 2_448, lost)
     assert sorted(t // 1000 for t in empty) == [120, 270, 285, 300, 315, 330, 345, 360, 2415]
+
+
+def test_duplicate_series_ts_rows_are_refused():
+    rows = [(t * STEP, "a", 1.0, 4) for t in range(1, 6)] + [(3 * STEP, "a", 1.0, 4)]
+    with pytest.raises(ValueError, match="one row per"):
+        run(rows)
+    # the same ts on different series is not a duplicate
+    run([(STEP, "a", 1.0, 4), (STEP, "b", 1.0, 4)], sids=("a", "b"), end=STEP)
+
+
+@pytest.mark.parametrize(
+    "spans",
+    [
+        [(2, 2)],
+        [(4, 5), (2, 3)],  # unsorted, adjacent
+        [(2, 6), (3, 4)],  # nested
+        [(2, 4), (3, 7), (9, 9)],  # overlapping, then apart
+        [(0, 1), (12, 40)],  # touching the window edges from outside
+        [(7, 8)],  # none of the buckets
+    ],
+)
+def test_failed_spans_mark_exactly_the_buckets_inside_any_of_them(spans):
+    n = 10
+    rows = [(t * STEP, "a", 1.0, 4) for t in range(1, n + 1)]
+    out = run(rows, failed=[(a * STEP, b * STEP, "x") for a, b in spans], end=n * STEP)
+    want = [any(a <= t <= b for a, b in spans) for t in range(1, n + 1)]
+    assert [s == State.UNKNOWN for s in states(out)] == want
+    assert [o == 0.0 for o, w in zip(out["observed"].to_pylist(), want) if w] == [True] * sum(want)
+
+
+def test_thousands_of_failed_spans_stay_fast():
+    import time
+
+    n = 20_000
+    rows = [(t * STEP, "a", 1.0, 4) for t in range(1, n + 1)]
+    failed = [
+        (t * STEP, t * STEP, "x") for t in range(2, n, 3)
+    ]  # a chain this long was one OR each
+    t0 = time.perf_counter()
+    out = run(rows, failed=failed, end=n * STEP)
+    assert time.perf_counter() - t0 < 5
+    assert states(out).count(State.UNKNOWN) == len(failed)

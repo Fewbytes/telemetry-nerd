@@ -62,6 +62,10 @@ One entry per kind:
 | `caveats(table, series)` | produce localized caveats |
 | `visuals` | default related marks (rug, strip, linked panel) |
 
+Implementation note: while `bucket_state` is the only kind the registry is the tuple of kind names
+the per-op policies (§3.3) must cover (`model/companions.KINDS`); callers use its schema, `coarsen`
+and `from_bucket_state` directly. The per-kind entry above is introduced with the second kind.
+
 ### 3.3 Chaining through ops
 
 Every op declares, per companion kind:
@@ -228,7 +232,9 @@ Dataset level: failed spans with error text (never cached; retried on next read)
 
 ### 5.3 Coarsen across time
 
-Sum `observed`, `expected`; OR flags. State is re-classified from the sub-bucket states, not from
+Sum `observed`, `expected`; OR flags. A coarse bucket that is `unknown` reports `observed` = 0
+(as an `unknown` fine bucket does: no trustworthy information, its siblings' samples included);
+merge (§5.2) does the same for an `unknown` group bucket. State is re-classified from the sub-bucket states, not from
 the sums (re-applying jitter tolerance to sums would turn all-`ok` data `partial`): `unknown` if any
 sub-bucket is `unknown`; `absent` only if every sub-bucket is absent (absent sub-buckets add nothing
 to the sums); `empty` if nothing was observed; `partial` if any alive sub-bucket was `partial` or

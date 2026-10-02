@@ -62,15 +62,21 @@ def _gappy(start, end, instance):
 
 def test_gappy_hole_is_anchored_to_wall_clock_so_reseeding_never_fills_it():
     # Seeds overlap in the persistent dev VM: a hole placed relative to each seed's own range
-    # gets filled by the next seed. Anchored holes agree across seeds.
-    period, offset, width = 3 * 3_600_000, 3_600_000, 15 * 60_000
+    # gets filled by the next seed. Anchored holes agree across seeds, and the hole is exactly
+    # [offset, offset + width): the scrape just before and the one at its end are present.
+    period, offset, width, scrape = 3 * 3_600_000, 3_600_000, 15 * 60_000, 15_000
     in_hole = lambda t: offset <= t % period < offset + width
     for start in (0, 2 * 3_600_000 + 15_000, 5 * 3_600_000):
         end = start + 6 * 3_600_000
-        d = _gappy(start, end, "d")
+        d = set(_gappy(start, end, "d"))
         assert d and not any(in_hole(t) for t in d)
-        holes = [h for h in range(start, end) if h % period == offset and h + width <= end]
+        first = start + (offset - start) % period  # first hole start at or after the window start
+        holes = [h for h in range(first, end, period) if h + width < end]  # scrapes are < end
         assert holes, "every 6h window holds at least one complete hole"
+        for h in holes:
+            assert h + width in d  # first scrape after the hole
+            assert h - scrape in d or h - scrape < start  # last scrape before it
+            assert {t for t in range(h, h + width, scrape)}.isdisjoint(d)
 
 
 def test_late_series_starts_mid_range():

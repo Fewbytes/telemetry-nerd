@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -11,8 +10,9 @@ import polars as pl
 import pyarrow as pa
 
 from telemetry_nerd.analysis.exprkind import _close, _mask_strings, _strip_comments
-from telemetry_nerd.model.bucket_state import STATE_SCHEMA, coarsen, compute
-from telemetry_nerd.model.caveats import Caveat, from_bucket_state
+from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
+from telemetry_nerd.model.bucket_state import STATE_SCHEMA, compute
+from telemetry_nerd.model.caveats import Caveat
 from telemetry_nerd.model.series import FetchResult
 from telemetry_nerd.model.time import parse_duration
 from telemetry_nerd.sources.observed import counts_are_observed
@@ -128,17 +128,11 @@ def post_gap_buckets(expr: str, step_ms: int) -> int:
     return max([1, *(-(-w // step_ms) for w in reaches if w)])
 
 
-@dataclass(frozen=True)
-class CompanionKind:
-    name: str
-    schema: pa.Schema
-    coarsen: Callable[[pa.Table, int], pa.Table]
-    caveats: Callable[..., list[Caveat]]
-
-
-KINDS: dict[str, CompanionKind] = {
-    "bucket_state": CompanionKind("bucket_state", STATE_SCHEMA, coarsen, from_bucket_state),
-}
+# The companion kinds a dataset carries. With one kind there is nothing to dispatch on, so callers
+# use its schema (`STATE_SCHEMA`), `coarsen` and `from_bucket_state` directly and this is only the
+# list `OPS` must declare a policy against (spec §3.3). A second kind is the time to give each one a
+# registry entry (schema, merge, coarsen, caveats) that callers go through.
+KINDS = ("bucket_state",)
 
 OPS: dict[str, dict[str, Policy]] = {
     "query": {"bucket_state": "derive"},
@@ -164,11 +158,11 @@ class Bundle:
     caveats: list[Caveat] = field(default_factory=list)
 
 
-def derive_states(meta, result: FetchResult) -> pa.Table:
+def derive_states(meta: DatasetMeta, result: FetchResult) -> pa.Table:
     """bucket_state of a stored dataset: pure function of its buckets, failed spans, expression
     and the semantics hints recorded at query time."""
     mode = "presence" if meta.representation == "quantile" else "samples"
-    failed = [tuple(f) for f in getattr(meta, "failed_spans", [])]
+    failed = [(a, b, str(reason)) for a, b, reason in meta.failed_spans]
     return compute(
         result.buckets,
         result.series["series_id"].to_pylist(),
@@ -182,22 +176,16 @@ def derive_states(meta, result: FetchResult) -> pa.Table:
         source_filled=not counts_are_observed(meta.expr),
         post_gap_buckets=(
             post_gap_buckets(meta.expr, meta.step_ms)
-            if getattr(meta, "semantics_flags", {}).get("post_gap_increase_spike")
+            if meta.semantics_flags.get("post_gap_increase_spike")
             else 0
         ),
     )
 
 
-def dataset_bundle(store, meta, result: FetchResult) -> Bundle:
+def dataset_bundle(store: DatasetStore, meta: DatasetMeta, result: FetchResult) -> Bundle:
     # a code output's counts are whatever the code gave (often unknown): coverage of its inputs
     # is not carried through code, and judging it from those counts would invent it
-    op = (
-        meta.derived["op"]
-        if meta.derived
-        else "code"
-        if getattr(meta, "code_node", None)
-        else "query"
-    )
+    op = meta.derived["op"] if meta.derived else "code" if meta.code_node else "query"
     caveats: list[Caveat] = []
     companions: dict[str, pa.Table] = {}
     p = policy(op, "bucket_state")

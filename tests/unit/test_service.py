@@ -174,7 +174,10 @@ class HoleySource(FakeSource):
     """Series i1 has no samples 2-5 min past each hour (three 1m buckets).
 
     Fixed by wall-clock position, not by index: the cache fetches whole chunks that start
-    before the queried range, so an index-based hole would fall outside it."""
+    before the queried range, so an index-based hole would fall outside it. The tests query
+    now-2h..now-1h; NOW (tests.unit.fakes) is 40 min past a whole hour, so that range crosses
+    exactly one hour boundary and holds exactly one of these holes, whole (:02-:05 of the hour
+    after the range start). Move NOW and the hole may fall outside the range or be cut by its edge."""
 
     async def fetch(self, expr, rng, step_ms):
         res = await super().fetch(expr, rng, step_ms)

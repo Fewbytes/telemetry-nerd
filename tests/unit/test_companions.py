@@ -8,7 +8,7 @@ from telemetry_nerd.devtools.synthetic import periodic_buckets
 from telemetry_nerd.model.bucket_state import STATE_SCHEMA, State
 from telemetry_nerd.model.companions import KINDS, OPS, SOURCE_AGGREGATED, dataset_bundle, policy
 from telemetry_nerd.model.time import TimeRange
-from tests.unit.fakes import make_service
+from tests.unit.fakes import NOW, make_service
 
 DATASET_OPS = {"query", "query_distribution", "lod", "dist_rebucket", *get_args(FilterKind)}
 
@@ -101,3 +101,46 @@ def test_recompute_op_on_stored_dataset_raises(tmp_path):
     meta = dataclasses.replace(meta, derived={"op": "lod", "from": src})
     with pytest.raises(ValueError, match="render time"):
         dataset_bundle(svc.datasets, meta, result)
+
+
+def test_filtered_dataset_summary_reports_the_source_gap(tmp_path):
+    """Coverage is carried through a filter: the filtered dataset's summary names the source's gap
+    (an hour of empty buckets), not a fresh judgement of its own counts."""
+    svc = make_service(tmp_path)
+    r = periodic_buckets(
+        0, 4 * DAY, M, [(5 * M, 3, None), (DAY, 5, None)], noise=1, seed=1,
+        gaps=[(DAY, DAY + 60 * M)],
+    )  # fmt: skip
+    src = svc.datasets.put(
+        source="default", expr="queue_depth", rng=TimeRange(0, 4 * DAY), step_ms=M,
+        resolution_ms=15_000, result=r, representation="bucket_agg",
+    ).id  # fmt: skip
+    f = svc.filter(src, "lowpass", "1h", "trend")["dataset"]
+    summaries = {}
+    for ds in (src, f):
+        meta, result = svc.datasets.get(ds)
+        summaries[ds] = svc._time_summary(meta, result, NOW)
+    for out in summaries.values():
+        assert "missing_data" in out["caveats"]
+        [cov] = [x["coverage"] for x in out["series"]]
+        assert cov["missing"] == "1h" and cov["longest_gap"] == "1h" and cov["pct"] < 1.0
+    assert summaries[f]["series"][0]["coverage"] == summaries[src]["series"][0]["coverage"]
+
+
+def test_carry_without_a_source_state_drops_the_companion_with_a_caveat(tmp_path):
+    """A filter of a code output: the source carries no bucket_state (coverage is not tracked
+    through code), so there is nothing to carry. Dropped and said so, never invented."""
+    svc = make_service(tmp_path)
+    src, f = _filtered(svc)
+    src_meta, src_result = svc.datasets.get(src)
+    code_meta = dataclasses.replace(src_meta, producer={"kind": "code", "node": "n", "output": "o"})
+
+    class Store:
+        def get(self, dataset_id):
+            return code_meta, src_result
+
+    meta, result = svc.datasets.get(f)
+    b = dataset_bundle(Store(), meta, result)  # type: ignore[arg-type]
+    assert b.companions == {}
+    [c] = [c for c in b.caveats if c.code == "companion_dropped"]
+    assert "lowpass" in c.message

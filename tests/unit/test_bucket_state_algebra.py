@@ -69,6 +69,23 @@ def test_coarsen_ok_plus_partial_is_partial():
     assert row[4] == State.PARTIAL
 
 
+def test_coarsen_unknown_reports_no_observed_samples():
+    """An UNKNOWN sub-bucket carries no trustworthy information: the coarse bucket cannot claim
+    its siblings' samples either (compute zeroes the fine UNKNOWN bucket the same way)."""
+    t = table([(STEP, "a", 0, 4, State.UNKNOWN, 0), (2 * STEP, "a", 4, 4, State.OK, 0)])
+    [row] = as_rows(coarsen(t, 2 * STEP))
+    assert row[4] == State.UNKNOWN and row[2] == 0.0 and row[3] == 8.0
+    # a coarse bucket without an unknown one keeps its sum
+    t = table([(STEP, "a", 2, 4, State.PARTIAL, 0), (2 * STEP, "a", 4, 4, State.OK, 0)])
+    assert as_rows(coarsen(t, 2 * STEP))[0][2] == 6.0
+
+
+def test_merge_unknown_member_reports_no_observed_samples():
+    t = table([(STEP, "a", 4, 4, State.OK, 0), (STEP, "b", 0, 4, State.UNKNOWN, 0)])
+    [row] = merge(t, {"a": "g", "b": "g"}).to_pylist()
+    assert row["state"] == State.UNKNOWN and row["observed"] == 0.0 and row["expected"] == 8.0
+
+
 states_st = st.sampled_from([State.OK, State.PARTIAL, State.EMPTY, State.ABSENT, State.UNKNOWN])
 
 
@@ -83,7 +100,8 @@ def state_tables(draw, n_series=3, n_buckets=8):
                 State.PARTIAL: 2,
                 State.EMPTY: 0,
                 State.ABSENT: 0,
-                State.UNKNOWN: 0,
+                # compute() zeroes these, but the algebra must not depend on it
+                State.UNKNOWN: draw(st.integers(0, 8)),
             }[s]
             rows.append((i * STEP, f"s{k}", float(obs), 4.0, int(s), draw(st.integers(0, 15))))
     return table(rows)
@@ -107,17 +125,66 @@ def test_merge_ignores_row_order(t):
     )
 
 
+def _reference_group(members):
+    """§5.2 spelled out for one bucket: members are (series, observed, expected, state)."""
+    alive = [m for m in members if m[3] != State.ABSENT]
+    reporting = [m for m in alive if m[3] in (State.OK, State.PARTIAL)]
+    if not alive:
+        state = State.ABSENT
+    elif any(m[3] == State.UNKNOWN for m in alive):
+        state = State.UNKNOWN
+    elif not reporting:
+        state = State.EMPTY
+    elif len(reporting) < len(alive):
+        state = State.PARTIAL
+    else:
+        state = State.OK
+    return {
+        "alive": len(alive),
+        "reporting": len(reporting),
+        "state": state,
+        "observed": 0.0 if state == State.UNKNOWN else float(sum(m[1] for m in alive)),
+        "expected": float(sum(m[2] for m in alive)),
+        "silent": sorted(m[0] for m in alive if m[3] == State.EMPTY),
+    }
+
+
 @settings(max_examples=60)
 @given(state_tables())
-def test_unknown_member_makes_group_unknown(t):
+def test_merge_matches_the_per_bucket_rules(t):
+    """Every group bucket (none missing, none extra) follows §5.2: unknown absorbs, absent is
+    outside the denominator, unknown buckets report no samples."""
     g = {f"s{k}": "g" for k in range(3)}
-    by_ts = {}
+    by_ts: dict[int, list] = {}
     for r in t.to_pylist():
-        by_ts.setdefault(r["ts_ms"], []).append(r["state"])
-    for r in merge(t, g).to_pylist():
-        members = by_ts[r["ts_ms"]]
-        if State.UNKNOWN in members and any(m != State.ABSENT for m in members):
-            assert r["state"] == State.UNKNOWN
+        by_ts.setdefault(r["ts_ms"], []).append(
+            (r["series_id"], r["observed"], r["expected"], r["state"])
+        )
+    got = {r["ts_ms"]: r for r in merge(t, g).to_pylist()}
+    assert got.keys() == by_ts.keys()
+    for ts, members in by_ts.items():
+        want = _reference_group(members)
+        assert {k: got[ts][k] for k in want} == want
+
+
+@settings(max_examples=60)
+@given(state_tables())
+def test_coarsen_unknown_absorbs_and_reports_no_samples(t):
+    """Per coarse bucket: unknown iff some sub-bucket is; its observed is 0 then, else the sum
+    over the alive ones."""
+    rows = t.to_pylist()
+    for r in coarsen(t, 4 * STEP).to_pylist():
+        subs = [
+            x
+            for x in rows
+            if x["series_id"] == r["series_id"] and r["ts_ms"] - 4 * STEP < x["ts_ms"] <= r["ts_ms"]
+        ]
+        has_unknown = any(x["state"] == State.UNKNOWN for x in subs)
+        assert (r["state"] == State.UNKNOWN) is has_unknown
+        want = (
+            0.0 if has_unknown else sum(x["observed"] for x in subs if x["state"] != State.ABSENT)
+        )
+        assert r["observed"] == want
 
 
 @settings(max_examples=60)

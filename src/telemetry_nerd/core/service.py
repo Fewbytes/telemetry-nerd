@@ -2017,13 +2017,13 @@ class TelemetryService:
             state_rows, state_more = rug_payload(states)
         if meta.failed_spans and not any(c.code == "untrusted_data" for c in located):
             # failed fetches are known from the dataset even when no series carries the state
-            ts = [
-                t
-                for a, b, _ in meta.failed_spans
-                for t in grid(max(a, meta.start_ms), min(b, meta.end_ms), meta.step_ms)
+            in_window = [
+                (g, r)
+                for a, b, r in meta.failed_spans
+                if (g := grid(max(a, meta.start_ms), min(b, meta.end_ms), meta.step_ms))
             ]
-            spans = runs(ts, meta.step_ms)
-            reasons = sorted({r for *_ab, r in meta.failed_spans})
+            spans = runs([t for g, _ in in_window for t in g], meta.step_ms)
+            reasons = sorted({r for _, r in in_window})  # only failures inside the window
             total = format_duration(sum(b - a for a, b in spans))
             if spans:  # a failed span wholly outside the window says nothing about it
                 located.append(

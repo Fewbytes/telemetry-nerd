@@ -1,7 +1,10 @@
+import polars as pl
 import pytest
 
 from telemetry_nerd.catalog.mergeability import HARTMANN_CAVEAT, NONMERGEABLE_CAVEAT
 from telemetry_nerd.catalog.models import Claim
+from telemetry_nerd.model.bucket_state import State
+from telemetry_nerd.model.companions import dataset_bundle
 from telemetry_nerd.sources.base import SourceError, SourceUnavailable
 from tests.unit.fakes import NOW, FakeSource, make_service
 
@@ -62,18 +65,34 @@ async def test_panel_data_never_rebuckets_quantiles(tmp_path):
 
 
 async def test_failed_counts_chunk_reaches_quantile_dataset(tmp_path):
+    # Fails whatever chunk holds a fixed wall-clock instant, so the test does not depend on the
+    # cache's chunk size: the failed span is some chunk around T0, never the whole window.
+    t0 = NOW - 20 * 3_600_000
+
     class FlakyCounts(FakeSource):
         async def fetch_values(self, expr, rng, step_ms):
-            if "histogram_count" in expr and rng.start_ms <= NOW - 24 * 3_600_000:
+            if "histogram_count" in expr and rng.start_ms <= t0 <= rng.end_ms:
                 raise SourceUnavailable("counts down")
             return await super().fetch_values(expr, rng, step_ms)
 
     src = FlakyCounts(values={"histogram_count": 250.0, "histogram_quantile": 0.42})
     svc = make_service(tmp_path, src)
     out = await svc.query(Q, "now-30h", "now-1h", step="1m")
-    meta, _ = svc.datasets.get(out["dataset"])
+    meta, result = svc.datasets.get(out["dataset"])
     assert meta.failed_spans
     assert all(r.endswith("counts down") for *_, r in meta.failed_spans)
+    assert any(a <= t0 <= b for a, b, _ in meta.failed_spans)
+    assert sum(b - a for a, b, _ in meta.failed_spans) < meta.end_ms - meta.start_ms
+    # coverage of a quantile dataset (presence mode): unknown exactly over the failed span, with
+    # its reason; the buckets outside it are observed
+    s = out["summary"]
+    assert "untrusted_data" in s["caveats"] and s["unknown_spans"]
+    assert all(r.endswith("counts down") for *_, r in s["unknown_spans"])
+    states = dataset_bundle(svc.datasets, meta, result).companions["bucket_state"]
+    df = pl.from_arrow(states)
+    failed = lambda t: any(a <= t <= b for a, b, _ in meta.failed_spans)
+    for t, st in zip(df["ts_ms"].to_list(), df["state"].to_list()):
+        assert (st == State.UNKNOWN) is failed(t)
 
 
 # -- catalog-flagged non-mergeable statistics (telemetry-nerd-2as.20, spec §5 [H]/[SfE]) ------

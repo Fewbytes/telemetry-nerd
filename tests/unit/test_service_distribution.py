@@ -1,3 +1,4 @@
+import dataclasses
 import json
 import math
 from types import SimpleNamespace
@@ -269,6 +270,7 @@ async def test_histogram_windows_report_column_coverage(tmp_path):
     assert w["i1"]["columns"] < w["i1"]["expected_columns"]
     assert w["i1"]["unknown"] is False
     assert w["i0"]["columns"] == w["i0"]["expected_columns"]
+    assert "missing_data" in data["caveats"] and "untrusted_data" not in data["caveats"]
 
 
 class MinuteHoleSource(FakeSource):
@@ -325,14 +327,44 @@ async def test_window_beyond_the_dataset_counts_missing_columns(tmp_path):
     )
     meta, dist = svc.datasets.get_distribution(out["dataset"])
     step = meta.step_ms
-    w = {"start_ms": meta.end_ms - 2 * step, "end_ms": meta.end_ms + 3 * step, "label": "over"}
-    panel = SimpleNamespace(spec={"layers": [{"mark": "histogram", "windows": [w]}]},
-                            to_dict=dict)  # fmt: skip
     labels = series_labels(dist.series)
-    data = histogram_panel_data(panel, meta, dist, labels, [], 600)
-    for s in data["series"]:
-        [win] = s["windows"]
+
+    def payload(w, caveats):
+        panel = SimpleNamespace(spec={"layers": [{"mark": "histogram", "windows": [w]}]},
+                                to_dict=dict)  # fmt: skip
+        return histogram_panel_data(panel, meta, dist, labels, caveats, 600)
+
+    over = {"start_ms": meta.end_ms - 2 * step, "end_ms": meta.end_ms + 3 * step, "label": "over"}
+    inside = {"start_ms": meta.end_ms - 2 * step, "end_ms": meta.end_ms, "label": "in"}
+    caveats: list[str] = []
+    data, ref = payload(over, caveats), payload(inside, [])
+    # the columns that do exist are summed as if the window had ended at the dataset: coverage
+    # shows what is missing, the values are exactly those of the observed columns
+    assert "missing_data" in caveats and "missing_data" not in ref["caveats"]
+    for s, r in zip(data["series"], ref["series"], strict=True):
+        [win], [want] = s["windows"], r["windows"]
         assert (win["columns"], win["expected_columns"]) == (2, 5)
+        assert (want["columns"], want["expected_columns"]) == (2, 2)
+        assert win["n"] == want["n"] and win["n"] > 0
+        for k in ("lo", "hi", "c"):
+            assert win[k] == want[k] and win[k]
+
+
+async def test_histogram_window_over_a_failed_fetch_is_untrusted(tmp_path):
+    svc = make_service(tmp_path)
+    out = await svc.query_distribution(
+        "lat_bucket", by=["instance"], start="now-2h", end="now-1h", step="1m"
+    )
+    meta, dist = svc.datasets.get_distribution(out["dataset"])
+    meta = dataclasses.replace(
+        meta,
+        failed_spans=[[meta.start_ms + 2 * meta.step_ms, meta.start_ms + 3 * meta.step_ms, "boom"]],
+    )
+    w = {"start_ms": meta.start_ms, "end_ms": meta.start_ms + 6 * meta.step_ms, "label": "w"}
+    panel = SimpleNamespace(spec={"layers": [{"mark": "histogram", "windows": [w]}]}, to_dict=dict)
+    data = histogram_panel_data(panel, meta, dist, series_labels(dist.series), [], 600)
+    assert all(s["windows"][0]["unknown"] for s in data["series"])
+    assert "untrusted_data" in data["caveats"]
 
 
 async def test_a_previous_window_that_starts_before_the_data_widens_the_dataset(tmp_path):

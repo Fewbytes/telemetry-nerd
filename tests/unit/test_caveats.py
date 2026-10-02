@@ -152,3 +152,40 @@ def test_interval_differs_reports_the_slow_series_own_interval_at_a_finer_step()
     # configured 15s, real 60s: ratio 4 -> flagged
     [c] = interval_caveats(st, {"a": "A"}, s15, s15) or [None]
     assert c is not None and "about every 60s" in c.message and "15s" in c.message
+
+
+def test_unknown_cites_only_the_failures_over_its_own_spans():
+    t = table(
+        [row(i, "a", State.UNKNOWN if i in (2, 3) else State.OK, 0 if i in (2, 3) else 4.0)
+         for i in range(1, 8)]
+    )  # fmt: skip
+    failed = [(2 * STEP, 3 * STEP, "timeout"), (6 * STEP, 7 * STEP, "other window")]
+    [c] = from_bucket_state(t, {"a": "A"}, STEP, failed=failed)
+    assert "timeout" in c.message and "other window" not in c.message
+    # a coarse bucket (end 4 covers (0, 4]) still touches the failure at 2..3
+    [c] = from_bucket_state(
+        table([row(4, "a", State.UNKNOWN, 0)]), {"a": "A"}, 4 * STEP, failed=failed
+    )
+    assert "timeout" in c.message and "other window" not in c.message
+
+
+def test_unknown_without_a_failure_over_it_says_the_source_could_not_tell():
+    t = table([row(1, "a", State.UNKNOWN, 0)])
+    [c] = from_bucket_state(t, {"a": "A"}, STEP, failed=[(5 * STEP, 6 * STEP, "elsewhere")])
+    assert "source could not tell" in c.message and "elsewhere" not in c.message
+
+
+def test_unknown_spans_stay_per_series():
+    # a is unknown at 1, b at 3: neither is marked unknown where only the other one was
+    t = table(
+        [row(1, "a", State.UNKNOWN, 0), row(2, "a", State.OK), row(3, "a", State.OK),
+         row(1, "b", State.OK), row(2, "b", State.OK), row(3, "b", State.UNKNOWN, 0)]
+    )  # fmt: skip
+    failed = [(STEP, STEP, "first"), (3 * STEP, 3 * STEP, "third")]
+    cs = from_bucket_state(t, {"a": "A", "b": "B"}, STEP, failed=failed)
+    got = {tuple(c.where.series): (c.where.spans, c.message) for c in cs}
+    assert got.keys() == {("a",), ("b",)}
+    assert got[("a",)][0] == [(0, STEP)] and "first" in got[("a",)][1]
+    assert "third" not in got[("a",)][1]
+    assert got[("b",)][0] == [(2 * STEP, 3 * STEP)] and "third" in got[("b",)][1]
+    assert "first" not in got[("b",)][1]

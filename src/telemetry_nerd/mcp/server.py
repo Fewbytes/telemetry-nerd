@@ -100,7 +100,7 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   A tier-1 op over data of unknown uncertainty (a code output) still gives evidence with its
   own interval, marked `params.input_uncertainty` + caveat `input_uncertainty_unknown`: that
   interval is a lower bound; pass the statistic as is and say so.
-- Summaries carry `coverage` per series (share of expected samples, longest gap) and `unknown_spans`; missing data is evidence too — scope claims around it.
+- Summaries carry `coverage` per series (share of expected samples, longest gap) and `unknown_spans` ([start, end, reason]); `silent_members` (alive but no samples; top few named, `silent_more` counts the rest; may be the sick ones); missing data is evidence too — scope claims around it.
 - `gap_create` records a signal you wish existed. `annotate` marks events/regions/thresholds.
 - When you tell the user to look at an object ("see p5"), also call `highlight(object, note?)`
   so it is accented in their UI; `unhighlight` clears it. Mention ids like p5/f2 in text: they

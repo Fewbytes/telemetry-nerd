@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from collections.abc import Mapping, Sequence
 from typing import Literal
 
@@ -37,6 +38,22 @@ def runs(ts: Sequence[int], step_ms: int) -> list[tuple[int, int]]:
         else:
             out.append((t - step_ms, t))
     return out
+
+
+NO_REASON = "source could not tell"
+
+
+def failure_reasons(failed: Sequence[FailedSpan], ts: Sequence[int], step_ms: int) -> list[str]:
+    """Reasons of the failed fetches that touch these buckets (ends `ts`, each covering
+    (t - step, t]): a bucket is in a failed span [a, b] when a <= t < b + step. Sorted, unique;
+    empty when no failure reaches them (a caveat never cites a failure elsewhere in the window)."""
+    ordered = sorted(ts)
+    out: set[str] = set()
+    for a, b, reason in failed:
+        i = bisect_left(ordered, a)
+        if i < len(ordered) and ordered[i] < b + step_ms:
+            out.add(reason)
+    return sorted(out)
 
 
 def series_name(labels: Mapping[str, str]) -> str:
@@ -136,27 +153,7 @@ def from_bucket_state(
     if states.num_rows == 0:
         return []
     df = pl.from_arrow(states)
-    out: list[Caveat] = []
-    unknown = df.filter(pl.col("state") == int(State.UNKNOWN))
-    if unknown.height:
-        affected = sorted(unknown["series_id"].unique().to_list())
-        everyone = len(affected) == df["series_id"].n_unique()
-        spans = runs(unknown["ts_ms"].unique().to_list(), step_ms)
-        reasons = sorted({r for *_ab, r in failed}) or ["source could not tell"]
-        message = f"Data unknown for {_total(spans)} ({'; '.join(reasons)})."
-        if ((unknown["flags"] & int(Flag.SOURCE_FILLED)) != 0).any():
-            # the expression itself hides coverage: one dataset-level reason, not per bucket
-            message = UNOBSERVABLE_MESSAGE
-            if failed:
-                message += f" Also failed fetches ({'; '.join(reasons)})."
-        out.append(
-            Caveat(
-                code="untrusted_data",
-                message=message,
-                where=Where(spans=spans, series=None if everyone else affected),
-                source="bucket_state",
-            )
-        )
+    out = _untrusted(df, step_ms, failed)
     for (sid,), g in df.sort("ts_ms").group_by("series_id", maintain_order=True):
         name = names.get(sid, sid)
         empty_ts = g.filter(pl.col("state") == int(State.EMPTY))["ts_ms"].to_list()
@@ -204,6 +201,39 @@ def from_bucket_state(
                     source="bucket_state",
                 )
             )
+    return out
+
+
+def _untrusted(df: pl.DataFrame, step_ms: int, failed: Sequence[FailedSpan]) -> list[Caveat]:
+    """One `untrusted_data` caveat per set of series that share their unknown spans (a failed fetch
+    hits every series alike, so normally one). Spans stay per series: a series is not marked
+    unknown where only another one was, and each caveat cites only the failures that touch its own
+    spans."""
+    unknown = df.filter(pl.col("state") == int(State.UNKNOWN))
+    if not unknown.height:
+        return []
+    n_series = df["series_id"].n_unique()
+    groups: dict[tuple[tuple[int, int], ...], list[str]] = {}
+    for (sid,), g in unknown.sort("series_id").group_by("series_id", maintain_order=True):
+        groups.setdefault(tuple(runs(g["ts_ms"].to_list(), step_ms)), []).append(sid)
+    out: list[Caveat] = []
+    for spans, sids in groups.items():
+        rows = unknown.filter(pl.col("series_id").is_in(sids))
+        reasons = failure_reasons(failed, rows["ts_ms"].unique().to_list(), step_ms)
+        message = f"Data unknown for {_total(list(spans))} ({'; '.join(reasons or [NO_REASON])})."
+        if ((rows["flags"] & int(Flag.SOURCE_FILLED)) != 0).any():
+            # the expression itself hides coverage: one dataset-level reason, not per bucket
+            message = UNOBSERVABLE_MESSAGE
+            if reasons:
+                message += f" Also failed fetches ({'; '.join(reasons)})."
+        out.append(
+            Caveat(
+                code="untrusted_data",
+                message=message,
+                where=Where(spans=list(spans), series=None if len(sids) == n_series else sids),
+                source="bucket_state",
+            )
+        )
     return out
 
 

@@ -257,7 +257,7 @@ def test_a_hole_is_missing_data_and_unknown_is_untrusted():
     m = replace(meta(), failed_spans=[[1000, 2000, "boom"]])
     out = run(m, result(rows, {"a": "a"}))
     assert "untrusted_data" in out["caveats"] and out["unknown_spans"] == [
-        ["1970-01-01T00:00:00+00:00", "1970-01-01T00:00:02+00:00"]
+        ["1970-01-01T00:00:00+00:00", "1970-01-01T00:00:02+00:00", "boom"]
     ]
 
 
@@ -298,3 +298,42 @@ def test_series_slower_than_the_step_reads_healthy_in_summary():
     cov = out["series"][0]["coverage"]
     assert cov["pct"] == 1.0 and cov["missing"] == "0s"
     assert "missing_data" not in out["caveats"] and "interval_differs" in out["caveats"]
+
+
+def test_unknown_spans_name_their_own_reasons():
+    rows = [(t, "a", 1.0, 1.0, 1.0, 1) for t in range(0, 10_000, 1000)]
+    failed = [[1000, 2000, "timeout"], [5000, 5000, "boom"], [20_000, 30_000, "outside"]]
+    out = run(replace(meta(end=9000), failed_spans=failed), result(rows, {"a": "a"}))
+    assert [(a[17:19], b[17:19], why) for a, b, why in out["unknown_spans"]] == [
+        ("00", "02", "timeout"),
+        ("04", "05", "boom"),
+    ]
+
+
+def test_unobservable_expression_unknown_spans_say_why():
+    rows = [(t, "a", 1.0, 1.0, 1.0, 1) for t in range(0, 4000, 1000)]
+    out = run(replace(meta(end=3000), expr="a / on(job) b"), result(rows, {"a": "a"}))
+    assert [why for *_ab, why in out["unknown_spans"]] == ["subquery_fills_gaps"]
+
+
+def test_silent_members_are_named_up_to_top_and_the_rest_counted():
+    # a lost 1 bucket, b 2, c 3, d none; ranked by value (a first), the silent ones are anywhere
+    lost = {"a": [4000], "b": [4000, 5000], "c": [4000, 5000, 6000], "d": []}
+    rows = [
+        (t, sid, 10.0 - k, 10.0 - k, 10.0 - k, 1)
+        for k, sid in enumerate("abcd")
+        for t in range(0, 10_000, 1000)
+        if t not in lost[sid]
+    ]
+    out = run(meta(end=9000), result(rows, {s: s for s in "abcd"}), top=2)
+    assert [(m["labels"], m["silent_for"]) for m in out["silent_members"]] == [
+        ({"n": "c"}, "3s"),
+        ({"n": "b"}, "2s"),
+    ]
+    assert out["silent_more"] == 1
+
+
+def test_no_silent_members_adds_nothing():
+    rows = [(t, "a", 1.0, 1.0, 1.0, 1) for t in range(0, 5000, 1000)]
+    out = run(meta(end=4000), result(rows, {"a": "a"}))
+    assert "silent_members" not in out and "silent_more" not in out

@@ -85,7 +85,11 @@ def compute(
     post_gap_buckets: int = 0,
 ) -> pa.Table:
     """`source_filled`: the counts are not observed samples (expression cannot tell), so every
-    bucket is UNKNOWN + SOURCE_FILLED. `post_gap_buckets`: the source's increase/delta/idelta after a gap
+    bucket is UNKNOWN + SOURCE_FILLED. `resolution_ms`: the source's configured scrape interval; in
+    samples mode a step at least that coarse also judges INTERVAL_CHANGE from counts (a finer step
+    holds under one sample per bucket, which counts cannot show), presence mode ignores it.
+    Duplicate (series_id, ts_ms) rows in `buckets` raise ValueError: a bucket is one row, and a
+    join would double its state. `post_gap_buckets`: the source's increase/delta/idelta after a gap
     reaches back over the gap, so the first n OK/PARTIAL buckets after an EMPTY/UNKNOWN one
     (stopping at the next gap) are flagged POST_GAP (state unchanged); 0 turns it off."""
     ts = grid(start_ms, end_ms, step_ms)
@@ -95,6 +99,13 @@ def compute(
         pl.DataFrame({"ts_ms": ts}, schema={"ts_ms": pl.Int64}), how="cross"
     )
     rows = pl.from_arrow(buckets)
+    keys = rows.select("series_id", "ts_ms")
+    dup = keys.filter(keys.is_duplicated())
+    if dup.height:
+        raise ValueError(
+            f"bucket_state needs one row per (series_id, ts_ms); {dup.unique().height} bucket(s) "
+            f"are repeated, e.g. {dup.row(0)}"
+        )
     seen = (
         pl.col("count").cast(pl.Float64)
         if mode == "samples"
@@ -104,10 +115,7 @@ def compute(
     df = base.join(obs, on=["series_id", "ts_ms"], how="left").with_columns(
         pl.col("observed").fill_null(0.0)
     )
-    unknown = pl.lit(source_filled)
-    for a, b, _reason in failed:
-        unknown = unknown | pl.col("ts_ms").is_between(a, b)
-    df = df.with_columns(unknown.alias("_unk"))
+    df = _mark_unknown(df, failed, source_filled)
     first = (
         df.filter(pl.col("observed") > 0)
         .group_by("series_id")
@@ -167,6 +175,37 @@ def compute(
 
 
 _S = "series_id"
+
+
+def _merge_spans(failed: Sequence[FailedSpan]) -> list[tuple[int, int]]:
+    """Failed spans as sorted, disjoint inclusive ranges."""
+    out: list[tuple[int, int]] = []
+    for a, b in sorted((a, b) for a, b, _reason in failed):
+        if out and a <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], b))
+        else:
+            out.append((a, b))
+    return out
+
+
+def _mark_unknown(
+    df: pl.DataFrame, failed: Sequence[FailedSpan], source_filled: bool
+) -> pl.DataFrame:
+    """Adds `_unk`: the bucket lies in a failed span (or the counts are source-filled). An as-of
+    join onto the sorted, disjoint spans: O((rows + spans) log spans), not a chain of one
+    comparison per span."""
+    if not failed:
+        return df.with_columns(pl.lit(source_filled).alias("_unk"))
+    spans = pl.DataFrame(
+        _merge_spans(failed), schema={"_a": pl.Int64, "_b": pl.Int64}, orient="row"
+    )
+    inside = (pl.col("ts_ms") <= pl.col("_b")).fill_null(False)
+    return (
+        df.sort("ts_ms")
+        .join_asof(spans, left_on="ts_ms", right_on="_a", strategy="backward")
+        .with_columns((inside | source_filled).alias("_unk"))
+        .drop("_a", "_b")
+    )
 
 
 def _cadence(df: pl.DataFrame, step_ms: int) -> pl.DataFrame:
@@ -673,6 +712,13 @@ def _classify(
     )
 
 
+def _observed_unless(unknown: pl.Expr) -> pl.Expr:
+    """Σobserved over the alive buckets; 0 where any is UNKNOWN. An UNKNOWN bucket carries no
+    trustworthy information (compute zeroes it), so a combined bucket holding one cannot claim the
+    samples of its siblings either: its coverage reads 0, as the fine bucket's did."""
+    return pl.when(unknown.any()).then(0.0).otherwise(pl.col("observed").filter(_ALIVE).sum())
+
+
 def coarsen(states: pa.Table, new_step_ms: int) -> pa.Table:
     """Merge buckets into coarser ones ending at multiples of new_step_ms (as resample.rebucket)."""
     if states.num_rows == 0:
@@ -683,7 +729,7 @@ def coarsen(states: pa.Table, new_step_ms: int) -> pa.Table:
         .with_columns(((pl.col("ts_ms") + k - 1) // k * k).alias("ts_ms"))
         .group_by(["series_id", "ts_ms"])
         .agg(
-            pl.col("observed").filter(_ALIVE).sum().alias("observed"),
+            _observed_unless(pl.col("state") == int(State.UNKNOWN)).alias("observed"),
             pl.col("expected").filter(_ALIVE).sum().alias("expected"),
             _ALIVE.any().alias("_alive"),
             (pl.col("state") == int(State.UNKNOWN)).any().alias("_unknown"),
@@ -719,7 +765,7 @@ def merge(states: pa.Table, group_of: Mapping[str, str]) -> pa.Table:
         .agg(
             _ALIVE.sum().cast(pl.Int32).alias("alive"),
             reporting.sum().cast(pl.Int32).alias("reporting"),
-            pl.col("observed").filter(_ALIVE).sum().alias("observed"),
+            _observed_unless(pl.col("state") == int(State.UNKNOWN)).alias("observed"),
             pl.col("expected").filter(_ALIVE).sum().alias("expected"),
             (pl.col("state") == int(State.UNKNOWN)).any().alias("_unknown"),
             pl.col("flags").bitwise_or().alias("flags"),

@@ -12,7 +12,13 @@ from telemetry_nerd.analysis.exprkind import min_samples
 from telemetry_nerd.analysis.quantiles import quantile_bucket
 from telemetry_nerd.datasets.store import DatasetMeta
 from telemetry_nerd.model.bucket_state import STATE_SCHEMA, Flag, State, grid
-from telemetry_nerd.model.caveats import differing_intervals, runs
+from telemetry_nerd.model.caveats import (
+    NO_REASON,
+    SUBQUERY_FILLS_GAPS,
+    differing_intervals,
+    failure_reasons,
+    runs,
+)
 from telemetry_nerd.model.companions import derive_states
 from telemetry_nerd.model.distribution import DistResult
 from telemetry_nerd.model.series import FetchResult
@@ -41,16 +47,55 @@ UNKNOWN_SPANS_CAP = 10
 
 
 def _unknown_spans(meta: DatasetMeta, df: pl.DataFrame | None) -> dict:
-    """Where the data is unknown: failed fetches plus UNKNOWN buckets; capped for Claude."""
-    ts: list[int] = []  # straight from the dataset's failed fetches, independent of series
+    """Where the data is unknown, and why: failed fetches plus UNKNOWN buckets; capped for Claude.
+    Each span is [start, end, reasons]: the failures touching it, `subquery_fills_gaps` for an
+    expression whose counts cannot be observed, else "source could not tell"."""
+    ts: set[int] = set()  # straight from the dataset's failed fetches, independent of series
     for a, b, _reason in meta.failed_spans:
-        ts += grid(max(a, meta.start_ms), min(b, meta.end_ms), meta.step_ms)
+        ts.update(grid(max(a, meta.start_ms), min(b, meta.end_ms), meta.step_ms))
+    filled: set[int] = set()
     if df is not None and df.height:
-        ts += df.filter(pl.col("state") == int(State.UNKNOWN))["ts_ms"].to_list()
-    spans = runs(sorted(set(ts)), meta.step_ms)
+        unknown = df.filter(pl.col("state") == int(State.UNKNOWN))
+        ts.update(unknown["ts_ms"].to_list())
+        filled.update(
+            unknown.filter((pl.col("flags") & int(Flag.SOURCE_FILLED)) != 0)["ts_ms"].to_list()
+        )
+    spans = runs(sorted(ts), meta.step_ms)
+
+    def why(a: int, b: int) -> str:
+        inside = grid(a + 1, b, meta.step_ms)  # the bucket ends the span covers
+        found = failure_reasons(meta.failed_spans, inside, meta.step_ms)
+        if filled.intersection(inside):
+            found = sorted({*found, SUBQUERY_FILLS_GAPS})
+        return "; ".join(found or [NO_REASON])
+
     return {
-        "unknown_spans": [[iso(a), iso(b)] for a, b in spans[:UNKNOWN_SPANS_CAP]],
+        "unknown_spans": [[iso(a), iso(b), why(a, b)] for a, b in spans[:UNKNOWN_SPANS_CAP]],
         "unknown_spans_more": max(0, len(spans) - UNKNOWN_SPANS_CAP),
+    }
+
+
+def _silent_members(meta: DatasetMeta, df: pl.DataFrame, labels: dict[str, dict], top: int) -> dict:
+    """Members alive but without samples somewhere (EMPTY, spec §5.2: ended or sick, the data
+    cannot tell), worst first, `top` named and the rest counted: the series list is ranked by
+    value, so a silent member would otherwise be anywhere in it or past its end."""
+    per = (
+        df.filter(pl.col("state") == int(State.EMPTY))
+        .group_by("series_id")
+        .agg(pl.len().alias("n"))
+        .sort("n", "series_id", descending=[True, False])
+    )
+    if not per.height:
+        return {}
+    return {
+        "silent_members": [
+            {
+                "labels": labels.get(r["series_id"], {}),
+                "silent_for": format_duration(r["n"] * meta.step_ms),
+            }
+            for r in per.head(top).to_dicts()
+        ],
+        "silent_more": max(0, per.height - top),
     }
 
 
@@ -151,7 +196,7 @@ def summarize(
     # even with nothing returned, failed fetches make the data untrusted (not merely empty)
     labels = _labels_by_id(result.series)
     coverage, unknown, df = _coverage(meta, result, states)
-    base |= unknown
+    base |= unknown | _silent_members(meta, df, labels, top)
     _coverage_caveats(meta, df, unknown, caveats)
     if result.buckets.num_rows == 0:
         return _empty(base, caveats)

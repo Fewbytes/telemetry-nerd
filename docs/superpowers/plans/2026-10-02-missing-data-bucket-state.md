@@ -52,11 +52,15 @@ nothing sets them until phase 5.
 2. **Partial tolerates jitter.** A bucket is `partial` when observed < expected − max(1,
    0.1·expected). The rule allows one sample of scrape jitter, so 3 of 4 counts as ok while 2 of
    4 is partial. Spec §5.1 says "< 0.9"; this is the jitter-safe form of the same rule.
-3. **Coarsen classifies from sums.** Spec §5.3 says "worst inside". Instead we recompute the
-   state from the summed observed/expected counts, with `unknown` still absorbing everything and
-   `absent` only when the whole bucket is absent. This keeps coarsening associative and
-   consistent with merge: a 10-minute bucket missing one minute reads as partial, not empty.
-   Task 2 updates the spec.
+3. **Coarsen classifies from sub-bucket states, not from sums.** Spec §5.3 says "worst inside".
+   Re-applying the jitter tolerance to summed observed/expected would turn all-`ok` data
+   `partial` (each sub-bucket is within jitter, the sum of their shortfalls is not). So `observed`
+   and `expected` are summed (absent sub-buckets add nothing) but the state comes from the
+   sub-bucket states: `unknown` if any is unknown (and its `observed` reads 0: no trustworthy
+   information), `absent` only when every one is, `empty` when none is `ok`/`partial`, `partial`
+   when any alive one is `partial` or `empty`, else `ok`. This keeps coarsening associative and
+   consistent with merge; a 10-minute bucket missing one minute reads partial, not empty. The spec
+   (§5.3) says the same.
 4. **`Bundle` is built on read; `FetchResult` is not replaced.** Bundles are assembled where
    panels and summaries are built. The only change to `FetchResult` is a new `failed` field.
    This avoids touching every source and cache path in this plan.

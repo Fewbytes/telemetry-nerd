@@ -167,6 +167,14 @@ def histogram_panel_data(panel, meta, dist, labels, caveats, width_px) -> dict:
     n_min = meta.n_min or 0
     if any(0 < w["n"] < n_min for s in series for w in s["windows"]) and "low_count" not in caveats:
         caveats.append("low_count")
+    # fractions and counts of a window cover only its observed columns (spec §7.3)
+    wins = [w for s in series for w in s["windows"]]
+    for code, hit in (
+        ("missing_data", any(w["expected_columns"] > w["columns"] for w in wins)),
+        ("untrusted_data", any(w["unknown"] for w in wins)),
+    ):
+        if hit and code not in caveats:
+            caveats.append(code)
     return {"kind": "histogram", "mark": layer["mark"], "panel": panel.to_dict(),
             "dataset": meta.to_dict(), "effective_step_ms": meta.step_ms,
             "value_merge": value_merge, "series": series, "caveats": caveats}  # fmt: skip
