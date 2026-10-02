@@ -320,11 +320,34 @@ def create_app(
             findings=flag("findings"),
             reviewed=None if not reviewed else reviewed == "yes",
             removed=flag("removed"),
+            members=flag("members"),
+            family=qp.get("family") or None,
             sort=qp.get("sort", "name"),
             offset=max(0, _int_param(request, "offset", 0)),
             limit=_int_param(request, "limit", 50),
         )
         return service.ws.catalog_browse(source, b)
+
+    @_api
+    async def catalog_family_members(request: Request) -> object:
+        return service.ws.family_members(
+            request.path_params["source"],
+            request.path_params["template"],
+            max(0, _int_param(request, "offset", 0)),
+            _int_param(request, "limit", 50),
+        )
+
+    @_api
+    async def catalog_family_decide(request: Request) -> object:
+        body = await _body(request, source=str, template=str, action=str)
+        return service.ws.catalog_family_decide(
+            body["source"],
+            body["template"],
+            body["action"],
+            "user",
+            "user",
+            basis=body.get("basis"),
+        )
 
     @_api
     async def catalog_metric(request: Request) -> object:
@@ -745,6 +768,8 @@ def create_app(
         Route("/api/panels/{id}/card", panel_card),
         Route("/api/catalog/claims", catalog_claim_create, methods=["POST"]),
         Route("/api/catalog", catalog_list),
+        Route("/api/catalog/families", catalog_family_decide, methods=["POST"]),
+        Route("/api/catalog/{source}/families/{template}/members", catalog_family_members),
         Route("/api/catalog/{source}/{metric}", catalog_metric),
         Route("/api/panels/{id}/marginal", panel_marginal, methods=["POST"]),
         Route("/api/panels/{id}/data-view", panel_data_view, methods=["POST"]),

@@ -44,7 +44,29 @@ CREATE TABLE IF NOT EXISTS catalog_metrics (
     first_seen_ms INTEGER NOT NULL,
     last_seen_ms INTEGER NOT NULL,
     present INTEGER NOT NULL DEFAULT 1,
+    family TEXT,
+    dimension TEXT,
+    is_family INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (source, metric)
+);
+CREATE INDEX IF NOT EXISTS catalog_metrics_family ON catalog_metrics (source, family);
+CREATE TABLE IF NOT EXISTS catalog_families (
+    source TEXT NOT NULL,
+    template TEXT NOT NULL,
+    members INTEGER NOT NULL,
+    distinct_dims INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'detected',
+    decided_by TEXT,
+    basis TEXT,
+    ts_ms INTEGER NOT NULL,
+    PRIMARY KEY (source, template)
+);
+CREATE TABLE IF NOT EXISTS catalog_family_rejections (
+    source TEXT NOT NULL,
+    template TEXT NOT NULL,
+    decided_by TEXT NOT NULL,
+    ts_ms INTEGER NOT NULL,
+    PRIMARY KEY (source, template)
 );
 CREATE TABLE IF NOT EXISTS catalog_claims (
     source TEXT NOT NULL,
@@ -149,6 +171,13 @@ _PANEL_COLUMNS = {
 }
 
 
+_METRIC_COLUMNS = {
+    "family": "ALTER TABLE catalog_metrics ADD COLUMN family TEXT",
+    "dimension": "ALTER TABLE catalog_metrics ADD COLUMN dimension TEXT",
+    "is_family": "ALTER TABLE catalog_metrics ADD COLUMN is_family INTEGER NOT NULL DEFAULT 0",
+}
+
+
 def open_workspace_db(path: str | Path) -> sqlite3.Connection:
     con = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
     con.execute("PRAGMA journal_mode=WAL")
@@ -156,5 +185,9 @@ def open_workspace_db(path: str | Path) -> sqlite3.Connection:
     existing = {row[1] for row in con.execute("PRAGMA table_info(panels)")}
     for column, ddl in _PANEL_COLUMNS.items():
         if column not in existing:
+            con.execute(ddl)
+    have = {row[1] for row in con.execute("PRAGMA table_info(catalog_metrics)")}
+    for column, ddl in _METRIC_COLUMNS.items():
+        if column not in have:
             con.execute(ddl)
     return con

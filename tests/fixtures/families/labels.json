@@ -1,0 +1,534 @@
+[
+{
+"name": "airflow_dag_mediawiki_dumps_sql_xml_large_a_to_z_full_mgwiktionary_sync_metacurrentdumprecombine_full_queued_duration",
+"family": true,
+"entity": "mgwiktionary"
+},
+{
+"name": "airflow_dag_mediawiki_dumps_sql_xml_regular_c_to_e_full_dewiktionary_sync_createdirs_full_duration",
+"family": true,
+"entity": "dewiktionary"
+},
+{
+"name": "airflow_dag_mediawiki_dumps_sql_xml_regular_i_to_k_full_kuwiktionary_sync_articlesmultistreamdump_full_queued_duration",
+"family": true,
+"entity": "kuwiktionary"
+},
+{
+"name": "airflow_dag_mediawiki_dumps_sql_xml_regular_l_to_m_full_liwikibooks_sync_xmlstubsdump_full_duration",
+"family": true,
+"entity": "liwikibooks"
+},
+{
+"name": "airflow_dag_mediawiki_dumps_sql_xml_regular_n_to_p_full_pihwiki_dump_remaining_full_queued_duration",
+"family": true,
+"entity": "pihwiki"
+},
+{
+"name": "airflow_dag_mediawiki_dumps_sql_xml_regular_q_to_s_full_rmwiki_validate_rmwiki_dump_complete_queued_duration",
+"family": true,
+"entity": "rmwiki"
+},
+{
+"name": "airflow_dag_mediawiki_dumps_sql_xml_regular_q_to_s_full_ruwikisource_dump_articlesmultistreamdump_full_queued_duration",
+"family": true,
+"entity": "ruwikisource"
+},
+{
+"name": "airflow_dag_mediawiki_dumps_sql_xml_regular_t_to_v_full_twwiki_sync_xmlstubsdump_full_queued_duration",
+"family": true,
+"entity": "twwiki"
+},
+{
+"name": "airflow_dag_mediawiki_dumps_sql_xml_regular_t_to_v_full_urwikiquote_sync_articlesdump_full_duration",
+"family": true,
+"entity": "urwikiquote"
+},
+{
+"name": "airflow_dag_mediawiki_dumps_sql_xml_regular_t_to_v_full_uzwiki_sync_createdirs_full_duration",
+"family": true,
+"entity": "uzwiki"
+},
+{
+"name": "airflow_dag_mediawiki_dumps_sql_xml_regular_t_to_v_full_viwikibooks_sync_remaining_full_queued_duration",
+"family": true,
+"entity": "viwikibooks"
+},
+{
+"name": "airflow_dag_mediawiki_dumps_sql_xml_regular_w_to_z_full_wikimania2009wiki_sync_createdirs_full_duration",
+"family": true,
+"entity": "wikimania2009wiki"
+},
+{
+"name": "airflow_dag_mediawiki_dumps_sql_xml_regular_w_to_z_full_xhwikibooks_dump_metacurrentdump_full_queued_duration",
+"family": true,
+"entity": "xhwikibooks"
+},
+{
+"name": "airflow_dag_mediawiki_dumps_sql_xml_regular_w_to_z_full_zghwiktionary_sync_tables_full_queued_duration",
+"family": true,
+"entity": "zghwiktionary"
+},
+{
+"name": "airflow_dag_table_maintenance_iceberg_weekly_wmf_content__mediawiki_content_current_v1_rewrite_position_delete_files_queued_duration",
+"family": true,
+"entity": "wmf_content__mediawiki_content_current_v1"
+},
+{
+"name": "airflow_task_cpu_usage_mediawiki_dumps_sql_xml_regular_a_to_b_full_atjwiki_sync_tables_full",
+"family": true,
+"entity": "atjwiki"
+},
+{
+"name": "airflow_task_cpu_usage_mediawiki_dumps_sql_xml_regular_a_to_b_full_biwiki_sync_createdirs_full",
+"family": true,
+"entity": "biwiki"
+},
+{
+"name": "airflow_task_cpu_usage_mediawiki_dumps_sql_xml_regular_c_to_e_full_dzwiktionary_dump_remaining_full",
+"family": true,
+"entity": "dzwiktionary"
+},
+{
+"name": "airflow_task_cpu_usage_mediawiki_dumps_sql_xml_regular_c_to_e_full_extwiki_sync_tables_full",
+"family": true,
+"entity": "extwiki"
+},
+{
+"name": "airflow_task_cpu_usage_mediawiki_dumps_sql_xml_regular_l_to_m_full_lawikisource_dump_xmlstubsdump_full",
+"family": true,
+"entity": "lawikisource"
+},
+{
+"name": "airflow_task_cpu_usage_mediawiki_dumps_sql_xml_regular_n_to_p_full_pa_uswikimedia_validate_pa_uswikimedia_dump_complete",
+"family": true,
+"entity": "pa_uswikimedia"
+},
+{
+"name": "airflow_task_cpu_usage_mediawiki_dumps_sql_xml_regular_q_to_s_full_rkiwiki_dump_articlesdump_full",
+"family": true,
+"entity": "rkiwiki"
+},
+{
+"name": "airflow_task_cpu_usage_mediawiki_dumps_sql_xml_regular_q_to_s_full_sewikimedia_dump_createdirs_full",
+"family": true,
+"entity": "sewikimedia"
+},
+{
+"name": "airflow_task_cpu_usage_mediawiki_dumps_sql_xml_regular_t_to_v_full_uzwikibooks_dump_articlesdump_full",
+"family": true,
+"entity": "uzwikibooks"
+},
+{
+"name": "airflow_task_mem_usage_mediawiki_dumps_sql_xml_regular_a_to_b_full_aswikiquote_dump_createdirs_full",
+"family": true,
+"entity": "aswikiquote"
+},
+{
+"name": "airflow_task_mem_usage_mediawiki_dumps_sql_xml_regular_c_to_e_full_cywiktionary_validate_cywiktionary_dump_complete",
+"family": true,
+"entity": "cywiktionary"
+},
+{
+"name": "airflow_task_mem_usage_mediawiki_dumps_sql_xml_regular_c_to_e_full_dtpwiki_validate_dtpwiki_dump_complete",
+"family": true,
+"entity": "dtpwiki"
+},
+{
+"name": "airflow_task_mem_usage_mediawiki_dumps_sql_xml_regular_i_to_k_full_igwikiquote_dump_xmlstubsdump_full",
+"family": true,
+"entity": "igwikiquote"
+},
+{
+"name": "airflow_task_mem_usage_mediawiki_dumps_sql_xml_regular_q_to_s_full_rmwiki_dump_tables_full",
+"family": true,
+"entity": "rmwiki"
+},
+{
+"name": "airflow_ti_finish_mediawiki_dumps_sql_xml_regular_a_to_b_full_bewwiktionary_dump_remaining_full_up_for_retry",
+"family": true,
+"entity": "bewwiktionary"
+},
+{
+"name": "airflow_ti_finish_mediawiki_dumps_sql_xml_regular_a_to_b_full_biwiktionary_sync_tables_full_None",
+"family": true,
+"entity": "biwiktionary"
+},
+{
+"name": "airflow_ti_finish_mediawiki_dumps_sql_xml_regular_a_to_b_full_blkwiktionary_dump_articlesdump_full_skipped",
+"family": true,
+"entity": "blkwiktionary"
+},
+{
+"name": "airflow_ti_finish_mediawiki_dumps_sql_xml_regular_c_to_e_full_elwikinews_dump_articlesmultistreamdump_full_queued",
+"family": true,
+"entity": "elwikinews"
+},
+{
+"name": "airflow_ti_finish_mediawiki_dumps_sql_xml_regular_f_to_h_full_gvwiki_sync_articlesdump_full_success",
+"family": true,
+"entity": "gvwiki"
+},
+{
+"name": "airflow_ti_finish_mediawiki_dumps_sql_xml_regular_i_to_k_full_itwikinews_dump_articlesdump_full_removed",
+"family": true,
+"entity": "itwikinews"
+},
+{
+"name": "airflow_ti_finish_mediawiki_dumps_sql_xml_regular_i_to_k_full_kwwiktionary_sync_articlesdump_full_up_for_reschedule",
+"family": true,
+"entity": "kwwiktionary"
+},
+{
+"name": "airflow_ti_finish_mediawiki_dumps_sql_xml_regular_n_to_p_full_nzwikimedia_dump_xmlstubsdump_full_queued",
+"family": true,
+"entity": "nzwikimedia"
+},
+{
+"name": "airflow_ti_finish_mediawiki_dumps_sql_xml_regular_q_to_s_full_skwikisource_dump_articlesmultistreamdump_full_up_for_retry",
+"family": true,
+"entity": "skwikisource"
+},
+{
+"name": "airflow_ti_finish_mediawiki_dumps_sql_xml_regular_q_to_s_full_slwiki_dump_articlesmultistreamdump_full_running",
+"family": true,
+"entity": "slwiki"
+},
+{
+"name": "airflow_ti_finish_mediawiki_dumps_sql_xml_regular_q_to_s_full_slwiktionary_sync_articlesdump_full_shutdown",
+"family": true,
+"entity": "slwiktionary"
+},
+{
+"name": "airflow_ti_finish_mediawiki_dumps_sql_xml_regular_q_to_s_full_srnwiki_sync_articlesdump_full_queued",
+"family": true,
+"entity": "srnwiki"
+},
+{
+"name": "airflow_ti_queued_default_maintenance_cleanup_airflow_db_clean_airflow_db",
+"family": true,
+"entity": "maintenance_cleanup_airflow_db_clean_airflow_db"
+},
+{
+"name": "alertmanager_cluster_members",
+"family": false
+},
+{
+"name": "alertmanager_oversized_gossip_message_dropped_total",
+"family": false
+},
+{
+"name": "authorization_duration_seconds_sum",
+"family": false
+},
+{
+"name": "bird_bfd_session_timeout_seconds",
+"family": false
+},
+{
+"name": "blazegraph_deadlock_remediation_last_restart_timestamp_seconds",
+"family": false
+},
+{
+"name": "caches_memory_cached_gerrit_file_diff",
+"family": true,
+"entity": "gerrit_file_diff"
+},
+{
+"name": "cassandra_hintsservice_hint_delays_10_192_48_197_7000_75p",
+"family": true,
+"entity": "10_192_48_197_7000"
+},
+{
+"name": "cluster:node_netstat_TcpExt_TCPFastOpenListenOverflow:rate5m",
+"family": false
+},
+{
+"name": "controller_runtime_reconcile_time_seconds_sum",
+"family": false
+},
+{
+"name": "cpjobqueue_internal_startup_queue_setup_PUT_201",
+"family": false
+},
+{
+"name": "db_transaction_duration_seconds_sum",
+"family": false
+},
+{
+"name": "django_cache_get_total",
+"family": false
+},
+{
+"name": "druid_broker_query_caffeine_cache_requests_count_total",
+"family": false
+},
+{
+"name": "druid_historical_segment_used_bytes",
+"family": false
+},
+{
+"name": "elasticsearch_clusterinfo_last_retrieval_failure_ts",
+"family": false
+},
+{
+"name": "envoy_http2_inbound_window_update_frames_flood",
+"family": false
+},
+{
+"name": "erlang_vm_dist_proc_stack_size_words",
+"family": false
+},
+{
+"name": "etcd_disk_wal_fsync_duration_seconds_count",
+"family": false
+},
+{
+"name": "etcd_mvcc_hash_rev_duration_seconds_count",
+"family": false
+},
+{
+"name": "flink_k8soperator_namespace_Lifecycle_State_FAILED_TimeSeconds_count",
+"family": false
+},
+{
+"name": "gitaly_backup_bundle_bytes_sum",
+"family": false
+},
+{
+"name": "gnmi_interfaces_interface_optics_lanediags_lane_lane_laser_output_power_high_alarm",
+"family": false
+},
+{
+"name": "gnmi_interfaces_interface_state_counters_in_unicast_pkts",
+"family": false
+},
+{
+"name": "gnmic_target_connection_state",
+"family": false
+},
+{
+"name": "go_godebug_non_default_behavior_zipinsecurepath_events_total",
+"family": false
+},
+{
+"name": "goldmane_aggr_flow_index_latency_ms_count",
+"family": false
+},
+{
+"name": "group_contains_any_of_count_SingleUserGroup_false",
+"family": false
+},
+{
+"name": "group_known_groups_count_InternalGroupBackend_34",
+"family": false
+},
+{
+"name": "http_request_code_2xx",
+"family": false
+},
+{
+"name": "http_request_size_bytes_sum",
+"family": false
+},
+{
+"name": "jaeger_index_create_latency_ok_count",
+"family": false
+},
+{
+"name": "java_lang_Compressed_Class_Space_CollectionUsageThresholdSupported",
+"family": true,
+"entity": "Compressed_Class_Space"
+},
+{
+"name": "javamelody_memory_max_bytes",
+"family": false
+},
+{
+"name": "javamelody_system_tmp_space_free_bytes",
+"family": false
+},
+{
+"name": "kafka_consumer_consumer_metrics_successful_reauthentication_rate",
+"family": false
+},
+{
+"name": "log_mediawiki_captchas_wiki_doc_count_error_upper_bound",
+"family": false
+},
+{
+"name": "log_w3c_networkerror_type_sum_other_doc_count",
+"family": false
+},
+{
+"name": "logstash_node_process_cpu_total_seconds_total",
+"family": false
+},
+{
+"name": "machinetranslation_mt_it_nso",
+"family": true,
+"entity": "it_nso"
+},
+{
+"name": "mcrouter_request_count",
+"family": false
+},
+{
+"name": "mediawiki_ve_performance_user_saveComplete_seconds_sum",
+"family": false
+},
+{
+"name": "metrics_com_datahub_graphql_GraphQLController_browse_75thPercentile",
+"family": true,
+"entity": "browse"
+},
+{
+"name": "metrics_com_linkedin_metadata_kafka_listener_mcl_MCLKafkaListener_IncidentsSummaryHook_latency_99thPercentile",
+"family": true,
+"entity": "IncidentsSummaryHook"
+},
+{
+"name": "mobileapps_cache_operations_total_status_hit_domain_fy_wikipedia_org_path__page_mobile_html__title__revision___tid__pregeneration_",
+"family": true,
+"entity": "fy_wikipedia_org"
+},
+{
+"name": "mysql_global_status_wsrep_thread_count",
+"family": false
+},
+{
+"name": "node_os_info",
+"family": false
+},
+{
+"name": "opensearch_indices_indexing_index_failed_count",
+"family": false
+},
+{
+"name": "org_eclipse_jetty_io_SSL_HTTP_1_1_35540333_maxDirectMemory",
+"family": true,
+"entity": "35540333"
+},
+{
+"name": "otelcol_process_cpu_seconds",
+"family": false
+},
+{
+"name": "pdns_auth_ring_remotes_unauth_capacity",
+"family": false
+},
+{
+"name": "pdns_recursor_cache_entries",
+"family": false
+},
+{
+"name": "pdu_measurementsOverCurrentProtectorSensorValue",
+"family": false
+},
+{
+"name": "plugins_reviewers_action_auto_retry_count_total",
+"family": false
+},
+{
+"name": "postfix_smtpd_forward_confirmed_reverse_dns_errors_total",
+"family": false
+},
+{
+"name": "postfix_smtpd_messages_processed_total",
+"family": false
+},
+{
+"name": "presto_QueryExecution_Executor_CorePoolSize",
+"family": false
+},
+{
+"name": "probe_http_version",
+"family": false
+},
+{
+"name": "prometheus_notifications_latency_seconds_sum",
+"family": false
+},
+{
+"name": "prometheus_tsdb_head_gc_duration_seconds_count",
+"family": false
+},
+{
+"name": "puppetlabs_puppetdb_http_pdb_query_404_Count",
+"family": false
+},
+{
+"name": "puppetlabs_puppetdb_storage_gc_fact_paths_999thPercentile",
+"family": false
+},
+{
+"name": "rdkafka_consumer_brokers_rtt_max",
+"family": false
+},
+{
+"name": "receivecommits_push_count_direct_mediawiki_extensions_PageTriage_DELETE",
+"family": true,
+"entity": "mediawiki_extensions_PageTriage"
+},
+{
+"name": "receivecommits_push_count_direct_mediawiki_extensions_cldr_DELETE",
+"family": true,
+"entity": "mediawiki_extensions_cldr"
+},
+{
+"name": "redioscope_rate_gateway_ratelimit_summary_count",
+"family": false
+},
+{
+"name": "redis_mem_clients_normal",
+"family": false
+},
+{
+"name": "rsyslog_dynafile_cache_evicted",
+"family": false
+},
+{
+"name": "scraper_analyze_plugin_duration_bucket",
+"family": false
+},
+{
+"name": "squid_info_Average_ICP_messages_per_minute_since_start",
+"family": false
+},
+{
+"name": "thanos_compact_downsample_duration_seconds_sum",
+"family": false
+},
+{
+"name": "thumbor_response_not_smart_latency_count",
+"family": false
+},
+{
+"name": "typha_connections_accepted",
+"family": false
+},
+{
+"name": "varnish_main_backend_recycle",
+"family": false
+},
+{
+"name": "varnish_main_n_objectcore",
+"family": false
+},
+{
+"name": "varnish_main_n_vampireobject",
+"family": false
+},
+{
+"name": "varnish_main_s_bgfetch",
+"family": false
+},
+{
+"name": "wdqs_proxy_http_client_queue_size",
+"family": false
+},
+{
+"name": "webperf_cpubenchmark_seconds_bucket",
+"family": false
+}
+]

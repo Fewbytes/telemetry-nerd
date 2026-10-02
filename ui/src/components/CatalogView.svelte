@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getContext, untrack } from "svelte";
   import {
-    fetchCatalog, fetchCatalogMetric, fetchSources,
+    decideFamily, fetchCatalog, fetchCatalogMetric, fetchSources,
     type CardMetric, type CatalogPage, type CatalogRow, type SourceInfo,
   } from "../lib/api";
   import { originLabel, fmtValue } from "../lib/card";
@@ -65,6 +65,11 @@
   });
   const toggle = (r: CatalogRow) => { openMetric = openMetric === r.metric ? null : r.metric; detail = null; };
   const set = <K extends keyof CatalogFilters>(k: K, v: CatalogFilters[K]) => { f[k] = v; if (k !== "page") f.page = 0; };
+  const decide = (r: CatalogRow, action: "confirm" | "split") =>
+    decideFamily(f.source, r.metric, action)
+      .then(() => { if (action === "split") openMetric = null; load(); })
+      .catch((e) => (error = String(e)));
+  const showMembers = (r: CatalogRow) => { f.family = r.metric; f.page = 0; openMetric = null; };
   const clear = () => { const s = f.source; f = defaults(s); qDraft = ""; };
   const pg = $derived(pageInfo(data?.total ?? 0, f.page));
   const cells = ["type", "unit", "role", "bounds"] as const;
@@ -84,6 +89,9 @@
         {data.summary.reviewed} reviewed ·
         <button type="button" class="linklike" onclick={() => set("conflicts", !f.conflicts)}>{data.summary.conflicts} with conflicts</button> ·
         <button type="button" class="linklike" onclick={() => set("findings", !f.findings)}>{data.summary.findings} with findings</button>
+        {#if data.summary.families}
+          · <span data-catalog-families title="Names that encode a dimension are grouped; members are hidden behind their family">{data.summary.families} families covering {data.summary.family_members.toLocaleString("en-US")} metrics</span>
+        {/if}
       </span>
     {/if}
   </header>
@@ -102,6 +110,7 @@
     <label><input type="checkbox" checked={f.conflicts} onchange={(e) => set("conflicts", e.currentTarget.checked)} /> conflicts</label>
     <label><input type="checkbox" checked={f.findings} onchange={(e) => set("findings", e.currentTarget.checked)} /> findings</label>
     <label><input type="checkbox" checked={f.removed} onchange={(e) => set("removed", e.currentTarget.checked)} /> removed</label>
+    <label title="Show the metrics inside each name family too"><input type="checkbox" checked={f.members} onchange={(e) => set("members", e.currentTarget.checked)} /> family members</label>
     <select aria-label="Sort" value={f.sort} onchange={(e) => set("sort", e.currentTarget.value as CatalogFilters["sort"])}>
       <option value="name">by name</option><option value="weakest">weakest first</option><option value="conflicts">most conflicts first</option>
     </select>
@@ -109,6 +118,12 @@
   </div>
 
   {#if error}<div class="error">{error}</div>{/if}
+  {#if f.family}
+    <p class="family-crumb" data-family-crumb>
+      Members of <code>{f.family}</code> —
+      <button type="button" class="linklike" onclick={() => set("family", "")}>back to all metrics</button>
+    </p>
+  {/if}
   {#if data && data.summary.metrics === 0 && !activeFilters(f)}
     <p class="none">This source has no catalog entries yet. Ask Claude to run <code>source_learn</code> on it.</p>
   {:else if data}
@@ -117,7 +132,19 @@
       <tbody>
         {#each data.rows as r (r.metric)}
           <tr class="catalog-row" class:open={openMetric === r.metric} class:conflict={r.conflicts.length > 0} data-catalog-row={r.metric}>
-            <td><button type="button" class="linklike metric" aria-expanded={openMetric === r.metric} onclick={() => toggle(r)}><code>{r.metric}</code></button></td>
+            <td>
+              <button type="button" class="linklike metric" aria-expanded={openMetric === r.metric} onclick={() => toggle(r)}><code>{r.metric}</code></button>
+              {#if r.dimension}<div class="dimension" data-dimension title="the part of the name that varies">dimension: <code>{r.dimension}</code></div>{/if}
+              {#if r.is_family}
+                <div class="family-actions">
+                  <button type="button" data-family-members={r.metric} onclick={() => showMembers(r)}>show members</button>
+                  {#if r.family_info?.status !== "confirmed"}
+                    <button type="button" data-family-confirm={r.metric} title="These really are one metric with a dimension in its name" onclick={() => decide(r, "confirm")}>confirm</button>
+                  {/if}
+                  <button type="button" data-family-split={r.metric} title="These are unrelated metrics: dissolve the family for good" onclick={() => decide(r, "split")}>split</button>
+                </div>
+              {/if}
+            </td>
             {#each cells as c (c)}
               <td data-cell={c}>
                 {#if r[c] !== null}

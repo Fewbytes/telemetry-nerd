@@ -257,3 +257,10 @@ ul.gaps { list-style: none; margin: 0; padding: 0; }
 .panel .rug { display: block; position: absolute; left: 0; z-index: 3; }
 .panel .rug-tip { position: absolute; white-space: pre; font-size: 11px; background: var(--fg); color: var(--bg); padding: 4px 6px; border-radius: 4px; pointer-events: none; z-index: 5; }
 .panel .rug-more { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* Name families in the catalog view (bead 2as.16) */
+.catalog-view .dimension { color: var(--muted); font-size: 11px; max-width: 520px; overflow-wrap: anywhere; }
+.catalog-view .family-actions { display: flex; gap: 6px; margin-top: 3px; }
+.catalog-view .family-actions button { font: inherit; font-size: 11px; background: none; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; cursor: pointer; }
+.catalog-view .family-actions button:hover { color: var(--fg); border-color: var(--fg); }
+.catalog-view .family-crumb { margin: 6px 0; color: var(--muted); }

@@ -23,6 +23,11 @@
 
       <section class="card-metric" data-card-metric={m.metric}>
         <h4><code>{m.metric}</code>{#if !m.present} <span class="chip">no longer in the source</span>{/if}</h4>
+        {#if m.family?.role === "family"}
+          <p class="card-rel" data-card-family>A <strong>name family</strong>: {m.family.members.toLocaleString("en-US")} metrics whose names differ only where <code>*</code> stands ({m.family.status}). Claims here apply to all of them.</p>
+        {:else if m.family?.role === "member"}
+          <p class="card-rel" data-card-family>Member of the name family <code>{m.family.template}</code>{#if m.family.dimension}, dimension <code>{m.family.dimension}</code>{/if}.{#if m.family.inherited} Claims shown are the family's; setting one here overrides them for this metric.{/if}</p>
+        {/if}
         <table class="card-fields">
           <tbody>
             {#each m.fields as f (f.field)}

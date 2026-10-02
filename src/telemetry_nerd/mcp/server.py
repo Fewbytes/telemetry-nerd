@@ -523,6 +523,23 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise _fail(e) from e
 
     @mcp.tool()
+    def catalog_family(source: str, template: str, action: str, basis: str | None = None) -> str:
+        """Decide a name-template family: `confirm` (its members really do share a metric with a
+        dimension encoded in the name) or `split` (they are unrelated metrics: dissolve it for good).
+        Families look like airflow_ti_finish_*_removed; list them with catalog_search (members are
+        hidden behind their family). Needs a `basis`. You cannot change a family the user confirmed."""
+        try:
+            if not basis or not basis.strip():
+                raise ValueError("basis is required: one line saying what you checked")
+            return _dump(
+                service.ws.catalog_family_decide(
+                    source, template, action, "claude", "claude", basis=basis.strip()
+                )
+            )
+        except (NotFound, ValueError) as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
     def catalog_get(source: str, metric: str) -> str:
         """One metric's full catalog entry: resolved fields and every competing claim with its
         origin, confidence and basis, plus the fields where claims disagree."""

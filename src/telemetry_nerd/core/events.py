@@ -29,6 +29,8 @@ INTENTIONAL_TYPES = frozenset(
         "catalog.claimed",  # a user's catalog edit is a correction Claude must know about
         "relation.claimed",
         "binding.claimed",
+        "catalog.family_confirmed",
+        "catalog.family_split",
     }
 )
 AMBIENT_TYPES = frozenset(

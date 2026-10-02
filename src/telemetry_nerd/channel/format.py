@@ -61,6 +61,10 @@ def describe_event(e: Event) -> str:
                 f"{who} set {p['field']} of {p['metric']} on {p['source']} "
                 f"to {json.dumps(p['value'], ensure_ascii=False)}"
             )
+        case "catalog.family_confirmed":
+            return f"{who} confirmed the name family {p['template']} ({p['members']} metrics)"
+        case "catalog.family_split":
+            return f"{who} split the name family {p['template']}: {p['released']} metrics are ordinary again"
         case "relation.claimed":
             verb = "retracted" if p.get("retracted") else "asserted"
             return f"{who} {verb} {p['subject']} {p['kind']} {p['object']}"

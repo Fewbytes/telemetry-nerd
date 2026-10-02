@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import inspect
 import json
+from collections import Counter
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from typing import Any
@@ -12,6 +13,7 @@ from typing import Any
 from telemetry_nerd.analysis.samples import SampleStats
 from telemetry_nerd.catalog.browse import Browse
 from telemetry_nerd.catalog.browse import browse as browse_catalog
+from telemetry_nerd.catalog.families import detect as detect_families
 from telemetry_nerd.catalog.models import (
     ORIGIN_RANK,
     CatalogEntry,
@@ -37,11 +39,17 @@ from telemetry_nerd.catalog.relations import (
     validate_binding,
     validate_relation,
 )
-from telemetry_nerd.catalog.rules import Facts, derive_claims, facts_from_claims, facts_from_name
+from telemetry_nerd.catalog.rules import (
+    Facts,
+    derive_claims,
+    facts_from_claims,
+    facts_from_name,
+    normalize_unit,
+)
 from telemetry_nerd.catalog.sample_store import SampleObservation, SampleStore
 from telemetry_nerd.catalog.search import overview as family_overview
 from telemetry_nerd.catalog.search import search as search_entries
-from telemetry_nerd.catalog.store import CatalogStore
+from telemetry_nerd.catalog.store import CatalogStore, FamilyStore
 from telemetry_nerd.channel.format import describe_event
 from telemetry_nerd.charts.dataview import SignalViews
 from telemetry_nerd.charts.indexed import check_index, shifted
@@ -134,6 +142,7 @@ class WorkspaceService:
     catalog: CatalogStore
     relations: RelationStore
     samples: SampleStore
+    families: FamilyStore
     clock: Callable[[], int] = now_ms
     packs: PackIndex = field(default_factory=builtin_packs)
 
@@ -602,14 +611,21 @@ class WorkspaceService:
         complete = not any(c.startswith("metrics_truncated") for c in discovery.caveats)
         diff = self.catalog.relearn(source, names, self.clock(), complete=complete)
         ts = self.clock()
+        # names that encode a dimension (airflow_ti_finish_<dag>_<task>) collapse into families
+        detection = detect_families(names)
+        rejected = self.families.rejected(source)
+        assignment = {n: ta for n, ta in detection.assignment.items() if ta[0] not in rejected}
+        fam = self.families.apply(source, detection, ts)
         rows = [
             (m.name, spec.to_claim(ts))
             for m in discovery.metrics
+            if m.name not in assignment  # a family speaks for its members
             for spec in [
                 *derive_claims(m.name, m, discovery.histograms),
                 *self.packs.claims_for(m.name),
             ]
         ]
+        rows += family_claims(discovery.metrics, assignment, detection, rejected, ts)
         changed = self.catalog.put_claims_bulk(source, rows)
         name_set = set(names)
         pack_relations = [
@@ -636,6 +652,8 @@ class WorkspaceService:
             "returned": len(diff.returned),
             "claims_changed": changed,
             "relations_changed": relations_changed,
+            "families": fam["families"],
+            "family_members": fam["members"],
             "complete": complete,
             "caveats": list(discovery.caveats),
         }
@@ -925,15 +943,78 @@ class WorkspaceService:
         total, names, summary = browse_catalog(self.catalog.connection, source, b)
         findings = self.samples.findings_for(source, names)
         verdicts = self.samples.verdicts_for(source, names)
-        rows = [
-            browse_row(self.catalog.entry(source, n), findings[n], verdicts.get(n)) for n in names
-        ]
+        rows = []
+        for n in names:
+            row = browse_row(self.catalog.entry(source, n), findings[n], verdicts.get(n))
+            if row["is_family"]:
+                row["family_info"] = self.families.info(source, n)
+            rows.append(row)
         return {
             "source": source,
             "total": total,
             "offset": b.offset,
             "rows": rows,
             "summary": summary,
+        }
+
+    @atomic
+    def catalog_family_decide(
+        self,
+        source: str,
+        template: str,
+        action: str,
+        origin: Origin,
+        actor: Actor,
+        *,
+        basis: str | None = None,
+    ) -> dict[str, Any]:
+        """Confirm or split a name-template family. Confirming pins it against re-detection;
+        splitting dissolves it for good. Anyone may decide, but nobody overrides the user."""
+        if action not in ("confirm", "split"):
+            raise ValueError("action must be 'confirm' or 'split'")
+        if (origin == "user") != (actor == "user"):
+            raise ValueError(
+                "origin 'user' is reserved for the user's own decisions (and vice versa)"
+            )
+        info = self.families.info(source, template)
+        if info is None:
+            raise NotFound(f"no family {template!r} on {source!r}")
+        if info["status"] == "confirmed" and info["decided_by"] == "user" and actor != "user":
+            raise ValueError("the user confirmed this family; only the user can change that")
+        now = self.clock()
+        if action == "confirm":
+            self.families.confirm(source, template, origin, basis, now)
+            released = 0
+        else:
+            released = self.families.split(source, template, origin, now)
+        self.log.append(
+            actor,
+            "catalog.family_confirmed" if action == "confirm" else "catalog.family_split",
+            None,
+            {
+                "source": source,
+                "template": template,
+                "origin": origin,
+                "members": info["members"],
+                "released": released,
+            },
+        )
+        return {
+            "template": template,
+            "action": action,
+            "members": info["members"],
+            "released": released,
+        }
+
+    def family_members(self, source: str, template: str, offset: int = 0, limit: int = 50) -> dict:
+        info = self.families.info(source, template)
+        if info is None:
+            raise NotFound(f"no family {template!r} on {source!r}")
+        rows = self.families.members(source, template, offset, min(limit, 200))
+        return {
+            **info,
+            "offset": offset,
+            "members_page": [{"metric": m, "dimension": d} for m, d in rows],
         }
 
     def metric_section(self, source: str, metric: str) -> dict:
@@ -945,9 +1026,16 @@ class WorkspaceService:
         for b in rels["bindings"]:
             for role, gid in self.relations.binding_gaps("catalog", source, b.kind, b.key).items():
                 gaps.append({"id": gid, "binding": f"{b.kind}/{b.key}", "role": role})
+        family = None
+        if entry.is_family:
+            family = {"role": "family", **(self.families.info(source, metric) or {})}
+        elif entry.family:
+            family = {"role": "member", "template": entry.family, "dimension": entry.dimension,
+                      "inherited": entry.inherited_from is not None}  # fmt: skip
         return {
             "metric": metric,
             "present": entry.present,
+            "family": family,
             "fields": field_rows(entry),
             "relations": [relation_row(r) for r in rels["relations"]],
             "bindings": [binding_row(b) for b in rels["bindings"]],
@@ -1357,3 +1445,50 @@ class WorkspaceService:
             "next_since": next_since,
             "truncated": next_since < last,
         }
+
+
+def family_claims(infos, assignment, detection, rejected, ts: int) -> list[tuple[str, Claim]]:
+    """T0 claims for family pseudo-metrics: what the cluster is, and the type/unit its members
+    agree on (declared by at least 95% of them)."""
+    by_family: dict[str, list] = {}
+    for m in infos:
+        if m.name in assignment:
+            by_family.setdefault(assignment[m.name][0], []).append(m)
+    out: list[tuple[str, Claim]] = []
+    for f in detection.families:
+        if f.template in rejected or f.template not in by_family:
+            continue
+        members = by_family[f.template]
+        example = assignment[members[0].name][1]
+        out.append(
+            (
+                f.template,
+                Claim(
+                    field="description",
+                    value=(
+                        f"{f.members} metrics share this name template; the part where * stands is a "
+                        f"dimension encoded in the metric name (for example {example!r})."
+                    ),
+                    origin="rule",
+                    confidence=0.5,
+                    citation="name-template clustering",
+                    ts_ms=ts,
+                ),
+            )
+        )
+        for field_, values in (
+            ("type", [m.type for m in members]),
+            ("unit", [normalize_unit(m.unit) for m in members]),
+        ):
+            top, n = Counter(values).most_common(1)[0]
+            if top is not None and n >= 0.95 * len(members):
+                out.append(
+                    (
+                        f.template,
+                        Claim(
+                            field=field_, value=top, origin="metadata", confidence=0.9,
+                            citation=f"declared by {n} of {len(members)} members", ts_ms=ts,
+                        ),
+                    )
+                )  # fmt: skip
+    return out

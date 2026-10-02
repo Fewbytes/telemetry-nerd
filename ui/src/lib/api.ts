@@ -291,7 +291,8 @@ export interface CardField {
 export interface CardRelation { subject: string; kind: string; object: string; origin: string; confidence: number; contested: boolean; basis: string | null }
 export interface CardBinding { kind: string; key: string; roles: Record<string, string | null>; join_on: string[]; origin: string; confidence: number; contested: boolean }
 export interface CardMetric {
-  metric: string; present: boolean; fields: CardField[]; relations: CardRelation[]; bindings: CardBinding[];
+  metric: string; present: boolean;
+  family?: { role: "family"; members: number; status: string } | { role: "member"; template: string; dimension: string | null; inherited: boolean } | null; fields: CardField[]; relations: CardRelation[]; bindings: CardBinding[];
   gaps: { id: string; binding: string; role: string }[];
 }
 export interface MetricCard {
@@ -318,10 +319,13 @@ export interface CatalogRow {
   type: string | null; unit: string | null; role: string | null; bounds: string | null;
   origins: Record<string, string>; confidences: Record<string, number>;
   conflicts: string[]; findings: { kind: string; id: string }[]; verdict: string | null; reviewed: boolean;
+  /** name-template families (bead 2as.16): this row IS a family / belongs to one */
+  is_family: boolean; family: string | null; dimension: string | null; family_members: number | null;
+  family_info?: { template: string; members: number; distinct: number; status: "detected" | "confirmed"; decided_by: string | null } | null;
 }
 export interface CatalogPage {
   source: string; total: number; offset: number; rows: CatalogRow[];
-  summary: { metrics: number; reviewed: number; conflicts: number; findings: number };
+  summary: { metrics: number; reviewed: number; conflicts: number; findings: number; families: number; family_members: number };
 }
 export const fetchCatalog = (params: URLSearchParams) =>
   fetch(`/api/catalog?${params}`).then((r) => json<CatalogPage>(r));
@@ -329,4 +333,14 @@ export const fetchCatalogMetric = (source: string, metric: string) =>
   fetch(`/api/catalog/${encodeURIComponent(source)}/${encodeURIComponent(metric)}`).then((r) => json<CardMetric>(r));
 export interface SourceInfo { name: string; url?: string; live?: boolean }
 export const fetchSources = () => fetch("/api/sources").then((r) => json<{ sources: SourceInfo[] }>(r));
+
+export interface FamilyMembers {
+  template: string; members: number; distinct: number; status: string; offset: number;
+  members_page: { metric: string; dimension: string }[];
+}
+export const fetchFamilyMembers = (source: string, template: string, offset = 0) =>
+  fetch(`/api/catalog/${encodeURIComponent(source)}/families/${encodeURIComponent(template)}/members?offset=${offset}`).then((r) => json<FamilyMembers>(r));
+/** The user confirms a name family, or splits it into ordinary metrics for good. */
+export const decideFamily = (source: string, template: string, action: "confirm" | "split") =>
+  postJSON<unknown>("/api/catalog/families", { source, template, action });
 

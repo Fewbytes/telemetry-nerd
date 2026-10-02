@@ -49,7 +49,10 @@ def field_rows(entry: CatalogEntry) -> list[dict]:
 
 def browse_row(entry: CatalogEntry, findings: list[dict], verdict: str | None) -> dict:
     """One catalog-view row: the winners of the key fields with their provenance."""
-    out: dict = {"metric": entry.metric, "present": entry.present}
+    out: dict = {
+        "metric": entry.metric, "present": entry.present, "is_family": entry.is_family,
+        "family": entry.family, "dimension": entry.dimension, "family_members": entry.family_members,
+    }  # fmt: skip
     for f in KEY_FIELDS:
         w = entry.fields.get(f)
         out[f] = w.value if w else None

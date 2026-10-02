@@ -62,6 +62,8 @@ def test_default_listing_is_alphabetical_and_counts_everything(con, filled):
         "reviewed": 1,
         "conflicts": 1,
         "findings": 0,
+        "families": 0,
+        "family_members": 0,
     }  # b_two reviewed; a_one conflicts
 
 
@@ -141,7 +143,14 @@ def test_sources_are_separate_and_bad_arguments_are_refused(con, cat):
     assert browse(con, "nope", Browse()) == (
         0,
         [],
-        {"metrics": 0, "reviewed": 0, "conflicts": 0, "findings": 0},
+        {
+            "metrics": 0,
+            "reviewed": 0,
+            "conflicts": 0,
+            "findings": 0,
+            "families": 0,
+            "family_members": 0,
+        },
     )
     with pytest.raises(ValueError, match="unknown sort"):
         browse(con, "vm", Browse(sort="chaos"))
@@ -191,7 +200,8 @@ def test_a_large_catalog_pages_without_loading_every_claim(tmp_path):
     n = 20_000
     con.execute("BEGIN")
     con.executemany(
-        "INSERT INTO catalog_metrics VALUES ('vm', ?, 1, 1, 1)",
+        "INSERT INTO catalog_metrics (source, metric, first_seen_ms, last_seen_ms, present) "
+        "VALUES ('vm', ?, 1, 1, 1)",
         [(f"metric_{i:06d}",) for i in range(n)],
     )
     con.executemany(
@@ -217,7 +227,14 @@ def test_a_large_catalog_pages_without_loading_every_claim(tmp_path):
     con.set_trace_callback(None)
     assert total == n and len(page) == 50 and page[0] == "metric_010000"
     # both unit claims say "x": no disagreement; every metric has a pack role: all reviewed
-    assert summary == {"metrics": n, "reviewed": n, "conflicts": 0, "findings": 0}
+    assert summary == {
+        "metrics": n,
+        "reviewed": n,
+        "conflicts": 0,
+        "findings": 0,
+        "families": 0,
+        "family_members": 0,
+    }
     assert len(statements) <= 5  # count, page, summary: no per-metric queries
     assert elapsed < 5.0
     assert cat.has_metric("vm", "metric_000001")

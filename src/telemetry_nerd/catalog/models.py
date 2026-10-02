@@ -106,6 +106,14 @@ class CatalogEntry(BaseModel):
     fields: dict[str, Claim]
     #: every claim per field, winner first
     claims: dict[str, list[Claim]]
+    #: name-template family this metric belongs to (and the dimension its name encodes)
+    family: str | None = None
+    dimension: str | None = None
+    #: this entry IS a family: its template, with the number of member metrics
+    is_family: bool = False
+    family_members: int | None = None
+    #: claims shown are the family's (the member has none of its own)
+    inherited_from: str | None = None
 
     def conflicts(self) -> dict[str, list[Claim]]:
         """Fields where a lower-ranked claim disagrees with the winner.

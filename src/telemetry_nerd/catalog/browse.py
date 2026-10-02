@@ -54,6 +54,10 @@ class Browse:
     findings: bool = False
     reviewed: bool | None = None
     removed: bool = False
+    #: list family members too (default: a family stands for its members)
+    members: bool = False
+    #: only the members of this family
+    family: str | None = None
     sort: str = "name"
     offset: int = 0
     limit: int = 50
@@ -70,6 +74,11 @@ def browse(
     limit = max(1, min(b.limit, MAX_PAGE))
     params: dict[str, object] = {"source": source}
     conds = ["m.source = :source"] + ([] if b.removed else ["m.present = 1"])
+    if b.family:
+        conds.append("m.family = :family")
+        params["family"] = b.family
+    elif not b.members:
+        conds.append("m.family IS NULL")
     if b.prefix:
         conds.append("m.metric LIKE :prefix ESCAPE '\\'")
         params["prefix"] = like(b.prefix) + "%"
@@ -118,17 +127,26 @@ def browse(
             {**params, "limit": limit, "offset": max(0, b.offset)},
         )
     ]
-    live = "m.source = :source AND m.present = 1"
+    live = "m.source = :source AND m.present = 1 AND m.family IS NULL"
     counts = con.execute(
         f"""{_CTE} SELECT
           COUNT(*),
           SUM(CASE WHEN {done} THEN 1 ELSE 0 END),
           SUM(CASE WHEN m.metric IN (SELECT metric FROM disagree) THEN 1 ELSE 0 END),
-          SUM(CASE WHEN m.metric IN (SELECT metric FROM found) THEN 1 ELSE 0 END)
+          SUM(CASE WHEN m.metric IN (SELECT metric FROM found) THEN 1 ELSE 0 END),
+          SUM(m.is_family)
         FROM catalog_metrics m WHERE {live}""",
         {"source": source},
     ).fetchone()
     summary = dict(
-        zip(("metrics", "reviewed", "conflicts", "findings"), (c or 0 for c in counts), strict=True)
+        zip(
+            ("metrics", "reviewed", "conflicts", "findings", "families"),
+            (c or 0 for c in counts),
+            strict=True,
+        )
     )
+    summary["family_members"] = con.execute(
+        "SELECT COUNT(*) FROM catalog_metrics WHERE source = ? AND present = 1 AND family IS NOT NULL",
+        (source,),
+    ).fetchone()[0]
     return total, page, summary
