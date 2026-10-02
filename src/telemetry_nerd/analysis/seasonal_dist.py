@@ -111,7 +111,7 @@ def pct(v: float) -> str:
     return f"{100 * v:.3g}%"
 
 
-def _expit(v: float) -> float:
+def expit(v: float) -> float:
     return 1 / (1 + math.exp(-v))
 
 
@@ -124,7 +124,7 @@ def distance(a: Hist, b_counts: tuple[np.ndarray, np.ndarray, np.ndarray], edges
     return float(np.max(np.abs(a.cdf(edges) - b.cdf(edges))))
 
 
-def _pool(hists: list[Hist]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def pool(hists: list[Hist]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Sum counts per bucket (additive)."""
     acc: dict[tuple[float, float], float] = {}
     for h in hists:
@@ -227,16 +227,16 @@ def compare_tail(
     h99 = t_quantile(1 - ALPHA / 2, k - 1) * sd
     flagged = not m - h99 <= l0 <= m + h99
     out.share = Share(
-        now.over(x) / now.n, _expit(m), (_expit(m - h90), _expit(m + h90)),
-        (_expit(m - h99), _expit(m + h99)), [h.over(x) / h.n for h in kept], flagged,
+        now.over(x) / now.n, expit(m), (expit(m - h90), expit(m + h90)),
+        (expit(m - h99), expit(m + h99)), [h.over(x) / h.n for h in kept], flagged,
     )  # fmt: skip
     if min(h.over(x) for h in kept) < MIN_OVER:
         out.caveats.append("few_over_threshold")
 
     edges = common_edges([now, *kept])
-    pooled = _pool(kept)
+    pooled = pool(kept)
     out.shape = distance(now, pooled, edges)
-    out.shape_previous = [distance(h, _pool([g for g in kept if g is not h]), edges) for h in kept]
+    out.shape_previous = [distance(h, pool([g for g in kept if g is not h]), edges) for h in kept]
 
     sh = out.share
     if flagged:

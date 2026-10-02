@@ -122,10 +122,12 @@ def evidence_problem(meta: DatasetMeta, statistic: dict | None) -> str | None:
         return f"{meta.id} has no fit parameter {name!r} (parameters: {', '.join(params)})"
     value, interval, exact = _as_cited(params[name])
     if _as_cited(statistic) != (value, interval, exact):
-        stored = (
-            f"interval={interval}" if interval is not None else
-            "exact=true" if exact else "no interval (cite it with uncertainty_unknown=true)"
-        )  # fmt: skip
+        if interval is not None:
+            stored = f"interval={interval}"
+        elif exact:
+            stored = "exact=true"
+        else:
+            stored = "no interval (cite it with uncertainty_unknown=true)"
         return f"fit parameter {name!r} of {meta.id} is value={value}, {stored}: cite it as stored"
     return None
 

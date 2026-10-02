@@ -87,10 +87,6 @@ class GroupResult:
     growing: dict | None = None  # trend of L - lambda W over windows (leak / backlog)
 
 
-def _t(p: float, df: float) -> float:
-    return t_quantile(p, max(df, 1.0))
-
-
 def _systematic(dt_s: float, w_s: float) -> float:
     """Error variance of a time average sampled every dt, relative to (variance / samples), for
     exponentially correlated fluctuations with correlation time w: coth(x/2) - 2/x, x = dt/w.
@@ -191,8 +187,8 @@ def judge(
     blk.bias = {"edge": edge, "alignment": align}
     bias = edge + align
     df = max(n - 1, 1)
-    q95 = _t(1 - alpha / 2, df)
-    qt = q95 if q_test is None else _t(q_test, df)
+    q95 = t_quantile(1 - alpha / 2, df)
+    qt = q95 if q_test is None else t_quantile(q_test, df)
     blk.ci95 = (max(0.0, R - q95 * sd - bias), R + q95 * sd + bias)
     blk.ci_test = (max(0.0, R - qt * sd - bias), R + qt * sd + bias)
     if blk.ci_test[0] > 1:

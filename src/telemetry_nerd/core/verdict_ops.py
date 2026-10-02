@@ -20,7 +20,7 @@ import polars as pl
 
 from telemetry_nerd.analysis.exprkind import rate_interval_ms
 from telemetry_nerd.analysis.seasonal import DEFAULT_K, cycle_shifts
-from telemetry_nerd.analysis.seasonal_dist import Hist, common_edges, distance
+from telemetry_nerd.analysis.seasonal_dist import Hist, common_edges, distance, expit, pool
 from telemetry_nerd.analysis.verdicts import (
     SLOW_SHARE,
     Onset,
@@ -485,7 +485,7 @@ class VerdictOps:
             else:
                 name = "odds_ratio_vs_reference" if lv.scale == "logit" else "ratio_vs_reference"
                 val, iv = math.exp(lv.effect), [math.exp(lo), math.exp(hi)]
-                conv = _expit if lv.scale == "logit" else math.exp
+                conv = expit if lv.scale == "logit" else math.exp
                 normal = [conv(n90[0]), conv(n90[1])]
                 ref_value = conv(lv.centre)
             d["level"] = {
@@ -635,14 +635,8 @@ def _utilization_bound(p: RolePlan, members: dict) -> float | None:
     return natural_bound(vals.min(), vals.max(), p.expr or "")
 
 
-def _expit(v: float) -> float:
-    return 1 / (1 + math.exp(-v))
-
-
 def _shape(now: Hist, refs: list[Hist], edges: np.ndarray) -> float:
-    from telemetry_nerd.analysis.seasonal_dist import _pool
-
-    return distance(now, _pool(refs), edges) if refs else math.nan
+    return distance(now, pool(refs), edges) if refs else math.nan
 
 
 def _member_text(m: str) -> str:

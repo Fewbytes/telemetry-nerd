@@ -32,7 +32,7 @@ from telemetry_nerd.analysis.seasonal_dist import logit_share
 from telemetry_nerd.analysis.spc import CONSERVATIVE_Z, MEDIAN_SE, cusum_arl
 from telemetry_nerd.analysis.stability import ALPHA as CP_ALPHA
 from telemetry_nerd.analysis.stability import changepoints
-from telemetry_nerd.analysis.stats import MAD_SCALE, MAD_VAR, t_quantile, t_sf, z_of
+from telemetry_nerd.analysis.stats import MAD_VAR, robust_sigma, t_quantile, t_sf, z_of
 
 CUSUM_K = 0.5
 H_MAX = 30.0  # the Brook-Evans chain loses precision beyond (ARL ~ 1e13 at h = 30)
@@ -228,7 +228,7 @@ def _scale(x: np.ndarray, robust: bool) -> float:
     x = x[~np.isnan(x)]
     if x.size < 3:
         return math.nan
-    s = MAD_SCALE * float(np.median(np.abs(x - np.median(x)))) if robust else 0.0
+    s = robust_sigma(x) if robust else 0.0
     return s if s > 0 else float(np.std(x, ddof=1))
 
 
