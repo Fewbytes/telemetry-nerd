@@ -51,6 +51,24 @@ def test_merge_counts_alive_reporting_and_silent():
     assert row["state"] == State.PARTIAL and row["expected"] == 8.0
 
 
+def test_all_ok_jitter_members_merge_to_ok():
+    t = table([(STEP, k, 3, 4, State.OK, 0) for k in "abc"])
+    [row] = merge(t, {k: "g" for k in "abc"}).to_pylist()
+    assert row["state"] == State.OK and row["observed"] == 9.0 and row["expected"] == 12.0
+
+
+def test_all_ok_jitter_subbuckets_coarsen_to_ok():
+    t = table([(i * STEP, "a", 3, 4, State.OK, 0) for i in range(1, 5)])
+    [row] = as_rows(coarsen(t, 4 * STEP))
+    assert row[4] == State.OK
+
+
+def test_coarsen_ok_plus_partial_is_partial():
+    t = table([(STEP, "a", 4, 4, State.OK, 0), (2 * STEP, "a", 2, 4, State.PARTIAL, 0)])
+    [row] = as_rows(coarsen(t, 2 * STEP))
+    assert row[4] == State.PARTIAL
+
+
 states_st = st.sampled_from([State.OK, State.PARTIAL, State.EMPTY, State.ABSENT, State.UNKNOWN])
 
 

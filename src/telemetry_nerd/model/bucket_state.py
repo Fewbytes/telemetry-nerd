@@ -132,15 +132,18 @@ GROUP_SCHEMA = pa.schema(
 _ALIVE = pl.col("state") != int(State.ABSENT)
 
 
-def _classify(any_alive: pl.Expr, any_unknown: pl.Expr, partial: pl.Expr) -> pl.Expr:
+def _classify(
+    any_alive: pl.Expr, any_unknown: pl.Expr, nothing_seen: pl.Expr, any_gap: pl.Expr
+) -> pl.Expr:
+    """Shared by coarsen and merge; works from states, never re-applies jitter to sums."""
     return (
         pl.when(~any_alive)
         .then(int(State.ABSENT))
         .when(any_unknown)
         .then(int(State.UNKNOWN))
-        .when(pl.col("observed") == 0)
+        .when(nothing_seen)
         .then(int(State.EMPTY))
-        .when(partial | short(pl.col("observed"), pl.col("expected")))
+        .when(any_gap)
         .then(int(State.PARTIAL))
         .otherwise(int(State.OK))
         .cast(pl.UInt8)
@@ -161,9 +164,14 @@ def coarsen(states: pa.Table, new_step_ms: int) -> pa.Table:
             pl.col("expected").filter(_ALIVE).sum().alias("expected"),
             _ALIVE.any().alias("_alive"),
             (pl.col("state") == int(State.UNKNOWN)).any().alias("_unknown"),
+            pl.col("state").is_in([int(State.PARTIAL), int(State.EMPTY)]).any().alias("_gap"),
             pl.col("flags").bitwise_or().alias("flags"),
         )
-        .with_columns(_classify(pl.col("_alive"), pl.col("_unknown"), pl.lit(False)).alias("state"))
+        .with_columns(
+            _classify(
+                pl.col("_alive"), pl.col("_unknown"), pl.col("observed") == 0, pl.col("_gap")
+            ).alias("state")
+        )
         .sort("series_id", "ts_ms")
         .select(STATE_SCHEMA.names)
     )
@@ -193,7 +201,10 @@ def merge(states: pa.Table, group_of: Mapping[str, str]) -> pa.Table:
         )
         .with_columns(
             _classify(
-                pl.col("alive") > 0, pl.col("_unknown"), pl.col("reporting") < pl.col("alive")
+                pl.col("alive") > 0,
+                pl.col("_unknown"),
+                pl.col("reporting") == 0,
+                pl.col("reporting") < pl.col("alive"),
             ).alias("state")
         )
         .sort("group", "ts_ms")

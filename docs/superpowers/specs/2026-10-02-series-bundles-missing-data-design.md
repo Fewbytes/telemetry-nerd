@@ -157,10 +157,11 @@ Dataset level: failed spans with error text (never cached; retried on next read)
 
 ### 5.3 Coarsen across time
 
-Sum `observed`, `expected`; OR flags. State is re-classified from the summed observed/expected (same
-rule as §5.1), except: `unknown` if any sub-bucket is `unknown`, and `absent` only if every sub-bucket
-is absent (absent sub-buckets add nothing to the sums). This keeps coarsening associative and
-consistent with §5.2.
+Sum `observed`, `expected`; OR flags. State is re-classified from the sub-bucket states, not from
+the sums (re-applying jitter tolerance to sums would turn all-`ok` data `partial`): `unknown` if any
+sub-bucket is `unknown`; `absent` only if every sub-bucket is absent (absent sub-buckets add nothing
+to the sums); `empty` if nothing was observed; `partial` if any alive sub-bucket was `partial` or
+`empty`; else `ok`. This keeps coarsening associative and consistent with §5.2.
 
 ### 5.4 Fetch failures
 
