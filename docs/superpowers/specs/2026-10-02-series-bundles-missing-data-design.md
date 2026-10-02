@@ -163,8 +163,8 @@ silence likewise), else `ok`. Elsewhere every 0 bucket is `empty`, except at abo
 bucket (step / I in [0.8, 1.2]): a scrape near a bucket boundary lands in the neighbouring bucket,
 so a lone 0 bucket paired with a 2 bucket (either order, only 1s between, each 2 pairing one 0) is
 `ok`; an unpaired 0 is a lost scrape. A 2 opening a run (window start, after a hole or `unknown`
-span) pairs with a 0 out of sight and gives no credit to a later 0, except after a run of exactly
-two 0s (one lost scrape next to one that spilled), whose 0 it pairs. A 0 still waiting for its 2
+span) pairs with a 0 out of sight and gives no credit to a later 0, except right after a run of
+exactly two 0s (one lost scrape next to one that spilled), whose second 0 it pairs. A 0 still waiting for its 2
 at the window end, or before a hole or `unknown` span, is `ok` if the series was seen spilling.
 There `expected` is the series' samples per bucket over its at-or-faster-than-step gaps, robust
 to loss: holes and `empty` buckets' time are left out, and it is re-estimated twice without the
@@ -193,8 +193,9 @@ Limits: a series scraped between 1 and 1.25 × the step reads as a step-rate one
 now and then (its skipped buckets `empty`), and a step-rate series losing more than about a fifth of
 its samples (or a slower one showing fewer than 2 gaps over the step) reads the other way; bucket counts cannot
 tell the two apart. Sustained heavy loss (more than about a fifth of the samples over a stretch)
-in a series scraped near or slower than the step can likewise surface as `interval_change` (the
-stretch read as a slower rate) rather than `partial`/`empty`; at several samples per bucket it
+in a series scraped near or slower than the step can likewise surface as a slower rate rather
+than `partial`/`empty`: as `interval_change` when it covers part of the window, as
+`interval_differs` when it covers most of it; at several samples per bucket it
 reads `partial`, with coverage showing the loss.
 
 Dataset level: failed spans with error text (never cached; retried on next read).

@@ -212,7 +212,7 @@ def _cadence(df: pl.DataFrame, step_ms: int) -> pl.DataFrame:
     two = lambda k: run0.shift(k).over(_S).fill_null(False)
     # the end of a run of exactly two 0 buckets: one lost scrape next to one that spilled
     df = df.with_columns((run0 & two(1) & ~two(2) & ~two(-1) & near_one).alias("_ev00"))
-    spilled = _spilled(df.filter(pl.col("_ev0") | pl.col("_ev2") | pl.col("_evx")))
+    spilled = _spilled(df.filter(pl.col("_ev0") | pl.col("_ev2") | pl.col("_evx")), step_ms)
     df = df.join(spilled, on=[_S, "ts_ms"], how="left").sort(_S, "ts_ms")
     df = df.with_columns(
         pl.when(pl.col("_slow"))
@@ -352,7 +352,7 @@ def _spread(df: pl.DataFrame, est: pl.DataFrame, step_ms: int) -> pl.DataFrame:
     ).drop("_sl", "_It", "_slt")
 
 
-def _spilled(events: pl.DataFrame) -> pl.DataFrame:
+def _spilled(events: pl.DataFrame, step_ms: int) -> pl.DataFrame:
     """At about one sample per bucket a scrape near a bucket boundary lands in the next or previous
     bucket: a 0 bucket and a 2 bucket, in either order with only 1s between (`_ev0`/`_ev2`; rows
     sorted by series, ts). Pairs each 0 with an adjacent 2; a 0 left unpaired is a lost scrape,
@@ -360,7 +360,7 @@ def _spilled(events: pl.DataFrame) -> pl.DataFrame:
     window end or inside a hole or UNKNOWN span, `_evx`, which also restarts the pairing). A 2
     opening a run (window start, after a reset) pairs with a 0 before it, out of sight: it is
     evidence of spilling but no credit for a later 0, unless the reset was a run of exactly two 0s
-    (`_ev00`): a lost scrape next to a spilled one, whose 0 it pairs. Returns the paired 0 buckets with `_spill`
+    (`_ev00`) right before it: a lost scrape next to a spilled one, whose 0 it pairs. Returns the paired 0 buckets with `_spill`
     = True."""
     ok_s: list[str] = []
     ok_t: list[int] = []
@@ -388,7 +388,7 @@ def _spilled(events: pl.DataFrame) -> pl.DataFrame:
                 ok_t.append(pending)
                 pending, paired = None, True
             elif fresh:
-                if run_end is not None:  # its 0 is the spilled one of the two
+                if run_end is not None and t - run_end == step_ms:  # the spilled one of the two
                     ok_s.append(sid)
                     ok_t.append(run_end)
                 paired = True

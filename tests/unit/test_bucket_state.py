@@ -576,3 +576,14 @@ def test_a_leading_spill_gives_no_credit_to_a_later_lost_scrape():
     by_ts = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
     assert by_ts[120 * S15] == State.EMPTY
     assert states(out).count(State.EMPTY) == 1
+
+
+def test_two_lost_scrapes_not_followed_at_once_by_a_spill_are_both_empty():
+    # scrapes late until 123, early from 124 (bucket 124 holds 2, its 0 before the window); two
+    # lost at 119-120: counts ...1 1 0 0 1 1 2..., the 2 not next to the run: both read empty
+    ts = [15_000 * k + (1_000 if k <= 123 else -1_000) for k in range(1, 241)]
+    kept = [t for k, t in enumerate(ts, start=1) if k not in (119, 120)]
+    out = _compute_rows(_count_rows(kept, S15), step=S15, res=S15)
+    by_ts = dict(zip(out["ts_ms"].to_pylist(), out["observed"].to_pylist()))
+    assert [by_ts[k * S15] for k in range(116, 126)] == [1, 1, 1, 1, 0, 0, 1, 1, 2, 1]
+    assert states(out).count(State.EMPTY) == 2
