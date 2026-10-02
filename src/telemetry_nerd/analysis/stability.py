@@ -1,9 +1,8 @@
 """Is a series stable? Trend, level shifts, stationarity, variance, shape (bead lkn.1).
 
 Pure numpy. Every interval uses the effective sample size (autocorr.tau_int), never raw n;
-gaps contribute no pairs and are never interpolated. Closed forms instead of scipy:
-Student-t quantiles by the Cornish-Fisher expansion (Abramowitz & Stegun 26.7.5), the
-Kolmogorov distribution as its alternating series, KPSS critical values from the paper's table.
+gaps contribute no pairs and are never interpolated. Closed forms instead of scipy (stats.py);
+KPSS critical values from the paper's table.
 Design: docs/superpowers/specs/2026-10-02-series-diagnostics-design.md.
 """
 
@@ -11,51 +10,21 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from statistics import NormalDist
 
 import numpy as np
 
 from telemetry_nerd.analysis.autocorr import ar1, n_eff, tau_int
 from telemetry_nerd.analysis.fraction import wilson
+from telemetry_nerd.analysis.spectrum import lomb_scargle
+from telemetry_nerd.analysis.stats import MAD_VAR, kolmogorov_sf, robust_sigma, t_ppf, z_of
 
 ALPHA = 0.01
 MIN_SEGMENT = 8
 MAX_CHANGEPOINTS = 3
 PHI_CAP = 0.99  # long-run variance sigma_e / (1 - phi) explodes near a random walk
-MAD_SCALE = 1.4826  # MAD -> sigma for a normal
-MAD_VAR = 1.3605  # n * var(sigma_MAD) / sigma^2 for a normal (MAD's 37% efficiency)
 KPSS_LEVEL = ((0.10, 0.347), (0.05, 0.463), (0.025, 0.574), (0.01, 0.739))
 BIMODAL_BC = 5 / 9
 HOUR_MS = 3_600_000
-
-
-def z_of(p: float) -> float:
-    return NormalDist().inv_cdf(p)
-
-
-def t_ppf(p: float, df: float) -> float:
-    """Student-t quantile; Cornish-Fisher in 1/df (A&S 26.7.5), within ~1e-3 for df >= 3."""
-    z = z_of(p)
-    if df > 1e6:
-        return z
-    df = max(df, 1.0)
-    g1 = (z**3 + z) / 4
-    g2 = (5 * z**5 + 16 * z**3 + 3 * z) / 96
-    g3 = (3 * z**7 + 19 * z**5 + 17 * z**3 - 15 * z) / 384
-    g4 = (79 * z**9 + 776 * z**7 + 1482 * z**5 - 1920 * z**3 - 945 * z) / 92160
-    return z + g1 / df + g2 / df**2 + g3 / df**3 + g4 / df**4
-
-
-def kolmogorov_sf(x: float) -> float:
-    """P(sup |Brownian bridge| > x) = 2 Σ (−1)^(k−1) exp(−2 k² x²)."""
-    if x <= 0.2:
-        return 1.0
-    k = np.arange(1, 101)
-    return float(np.clip(2 * np.sum((-1.0) ** (k - 1) * np.exp(-2 * k * k * x * x)), 0.0, 1.0))
-
-
-def robust_sigma(x: np.ndarray) -> float:
-    return MAD_SCALE * float(np.median(np.abs(x - np.median(x))))
 
 
 # seasonal ---------------------------------------------------------------------
@@ -339,9 +308,6 @@ def red_noise_test(
     passed (fap < ALPHA), so sidelobes of one sinusoid are not counted as more periods.
     Normalised GLS power p at f has p N / (2 S(f)) ~ Exp(1) under the background;
     FAP = 1 - (1 - e^-z)^M (Schulz & Mudelsee's REDFIT idea, closed form)."""
-    from telemetry_nerd.analysis.autocorr import ar1
-    from telemetry_nerd.analysis.spectrum import lomb_scargle
-
     if not candidates_s:
         return []
     bg = candidates_s if background_s is None else background_s

@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import numpy as np
 
 from telemetry_nerd.analysis.autocorr import tau_int
-from telemetry_nerd.analysis.stability import MAD_SCALE, t_ppf
+from telemetry_nerd.analysis.stats import MAD_SCALE, binom_sf, t_quantile
 
 SCHEMES = ("previous", "1d", "1w")  # preference order: a later scheme must win by CHOICE_GAIN
 DEFAULT_K = {"previous": 4, "1d": 7, "1w": 4}
@@ -37,15 +37,6 @@ DF_SHARE = 0.2
 FORWARD_P = {4: 0.00248, 5: 0.00182, 6: 0.00095, 7: 0.000937, 8: 0.000865}
 #: variance of the median of n iid N(0, 1) samples (simulated, 2e6 reps); pi / 2n beyond
 _MEDIAN_VAR = {1: 1.0, 2: 0.5, 3: 0.4487, 4: 0.2982, 5: 0.2868, 6: 0.2147, 7: 0.2104, 8: 0.1682}
-
-
-def t_quantile(p: float, df: float) -> float:
-    """Student t quantile: exact for df 1 and 2, Cornish-Fisher beyond (stability.t_ppf)."""
-    if df <= 1:
-        return math.tan(math.pi * (p - 0.5))
-    if df <= 2:
-        return (2 * p - 1) / math.sqrt(2 * p * (1 - p))
-    return t_ppf(p, df)
 
 
 def _median_var(n: int) -> float:
@@ -328,17 +319,6 @@ def _block_n(R: np.ndarray, blocks: list[slice]) -> list[int]:
     return [int(np.sum(~np.isnan(R[:, b]))) for b in blocks]
 
 
-def _binom_sf(x: int, n: int, p: float) -> float:
-    """P(Bin(n, p) >= x)."""
-    if x <= 0:
-        return 1.0
-    if x > n:
-        return 0.0
-    return float(
-        min(1.0, sum(math.comb(n, i) * p**i * (1 - p) ** (n - i) for i in range(x, n + 1)))
-    )
-
-
 def compare(
     now: np.ndarray,
     cycles: list[Cycle],
@@ -456,7 +436,7 @@ def compare(
         ok = ~np.isnan(r) & ~np.isnan(w_lo)
         prev_share.append(float(np.mean((r[ok] < w_lo[ok]) | (r[ok] > w_hi[ok]))) if ok.any() else 0.0)  # fmt: skip
     ne = max(1, round(out.n_eff))
-    p = _binom_sf(round(share * ne), ne, 1 - (BAND[1] - BAND[0]))
+    p = binom_sf(round(share * ne), ne, 1 - (BAND[1] - BAND[0]))
     outside = OutsideBand(share, prev_share, p, p < ALPHA and share > max(prev_share))
 
     out.level, out.extremes, out.outside = level, extremes, outside

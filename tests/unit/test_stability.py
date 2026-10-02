@@ -4,13 +4,12 @@ import pytest
 from telemetry_nerd.analysis.stability import (
     changepoints,
     fit_harmonics,
-    kolmogorov_sf,
     kpss,
     shape,
-    t_ppf,
     trend,
     variance_ratio,
 )
+from telemetry_nerd.analysis.stats import kolmogorov_sf, t_ppf
 from tests.unit.test_autocorr import ar1_series
 
 M = 60_000

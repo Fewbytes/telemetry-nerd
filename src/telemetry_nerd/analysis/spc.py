@@ -24,14 +24,8 @@ import numpy as np
 
 from telemetry_nerd.analysis.autocorr import ar1, ar1_residuals, n_eff, tau_int
 from telemetry_nerd.analysis.fraction import wilson
-from telemetry_nerd.analysis.stability import (
-    ALPHA,
-    MAD_VAR,
-    Harmonics,
-    fit_harmonics,
-    robust_sigma,
-    z_of,
-)
+from telemetry_nerd.analysis.stability import ALPHA, Harmonics, fit_harmonics
+from telemetry_nerd.analysis.stats import MAD_VAR, poisson_sf, robust_sigma, z_of
 
 MIN_BASELINE = 30
 MIN_BASELINE_EFF = 10
@@ -186,17 +180,6 @@ def cusum_arl(
 
 def beyond_rate(mu: float = 0.0, r: float = 1.0, limit: float = 3.0) -> float:
     return _N.cdf((-limit - mu) / r) + 1 - _N.cdf((limit - mu) / r)
-
-
-def poisson_sf(k: int, lam: float) -> float:
-    """P(X >= k), X ~ Poisson(lam)."""
-    if k <= 0:
-        return 1.0
-    term = total = math.exp(-lam)
-    for i in range(1, k):
-        term *= lam / i
-        total += term
-    return max(0.0, 1.0 - total)
 
 
 # chart ----------------------------------------------------------------------------

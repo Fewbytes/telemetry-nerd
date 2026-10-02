@@ -13,8 +13,8 @@ from telemetry_nerd.analysis.seasonal import (
     crosses_dst,
     cycle_shifts,
     point_shifts,
-    t_quantile,
 )
+from telemetry_nerd.analysis.stats import t_quantile
 
 H, M, DAY = 3_600_000, 60_000, 86_400_000
 WEEK = 7 * DAY

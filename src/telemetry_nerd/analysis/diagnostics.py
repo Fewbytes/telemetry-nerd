@@ -28,11 +28,11 @@ from telemetry_nerd.analysis.stability import (
     confirm_periods,
     fit_harmonics,
     kpss,
-    robust_sigma,
     shape,
     trend,
     variance_ratio,
 )
+from telemetry_nerd.analysis.stats import robust_sigma
 
 MATERIAL = 0.25  # below this (in sigma) a significant shift / change is only noted as minor
 SMALL = 1.0  # below this it is called small

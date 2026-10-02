@@ -10,11 +10,11 @@ from telemetry_nerd.analysis.spc import (
     cusum_signals,
     ewma_arl,
     ewma_signals,
-    poisson_sf,
     run_rules,
     windows_available,
 )
 from telemetry_nerd.analysis.stability import fit_harmonics
+from telemetry_nerd.analysis.stats import poisson_sf
 from tests.unit.test_autocorr import ar1_series
 
 

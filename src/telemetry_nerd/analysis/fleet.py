@@ -15,12 +15,12 @@ from __future__ import annotations
 import math
 import warnings
 from dataclasses import dataclass, field
-from functools import lru_cache
 from typing import Literal
 
 import numpy as np
 
 from telemetry_nerd.analysis.autocorr import n_eff, tau_int
+from telemetry_nerd.analysis.stats import MAD_SCALE, poisson_sf, t_isf
 
 MIN_MEMBERS = 5  # fewer: draw the members as lines / small multiples
 MIN_TESTED = 10  # members with enough data for the outlier tests
@@ -40,7 +40,6 @@ MIN_EXCEEDING = 5
 ALPHA = 0.01  # family-wise, over members x tests (x steps)
 N_TESTS = 3
 DF_FACTOR = 0.3675  # MAD -> t df: 1 / (2 * 1.3605), MAD's 37% efficiency (calibrated in tests)
-MAD_SCALE = 1.4826
 MEANAD_SCALE = 1.2533  # mean absolute deviation -> sigma for a normal
 SINCE_Z = 2.0
 MANY_OUTLIERS = 0.10
@@ -51,73 +50,6 @@ _MAD_SMALL = {2: 1.196, 3: 1.495, 4: 1.363, 5: 1.206, 6: 1.200, 7: 1.140, 8: 1.1
 Scale = Literal["log", "linear"]
 Normalise = Literal["none", "member"]
 Kind = Literal["persistent", "drifting", "shifted", "transient"]
-
-
-# Student t without scipy -----------------------------------------------------------------
-def _betacf(a: float, b: float, x: float) -> float:
-    """Continued fraction for the regularized incomplete beta (modified Lentz)."""
-    tiny = 1e-300
-    qab, qap, qam = a + b, a + 1.0, a - 1.0
-    c, d = 1.0, 1.0 - qab * x / qap
-    d = 1.0 / (d if abs(d) > tiny else tiny)
-    h = d
-    for m in range(1, 400):
-        m2 = 2 * m
-        aa = m * (b - m) * x / ((qam + m2) * (a + m2))
-        d = 1.0 + aa * d
-        d = 1.0 / (d if abs(d) > tiny else tiny)
-        c = 1.0 + aa / c
-        c = c if abs(c) > tiny else tiny
-        h *= d * c
-        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
-        d = 1.0 + aa * d
-        d = 1.0 / (d if abs(d) > tiny else tiny)
-        c = 1.0 + aa / c
-        c = c if abs(c) > tiny else tiny
-        delta = d * c
-        h *= delta
-        if abs(delta - 1.0) < 1e-14:
-            break
-    return h
-
-
-def _betainc(a: float, b: float, x: float) -> float:
-    if x <= 0:
-        return 0.0
-    if x >= 1:
-        return 1.0
-    lbt = math.lgamma(a + b) - math.lgamma(a) - math.lgamma(b) + a * math.log(x)
-    lbt += b * math.log1p(-x)
-    if x < (a + 1) / (a + b + 2):
-        return math.exp(lbt) * _betacf(a, b, x) / a
-    return 1.0 - math.exp(lbt) * _betacf(b, a, 1 - x) / b
-
-
-def t_sf(x: float, df: float) -> float:
-    """P(T > x) for Student t with df degrees of freedom (df may be fractional)."""
-    if x == 0:
-        return 0.5
-    tail = 0.5 * _betainc(df / 2, 0.5, df / (df + x * x))
-    return tail if x > 0 else 1 - tail
-
-
-@lru_cache(maxsize=4096)
-def t_isf(p: float, df: float) -> float:
-    """x with P(T > x) = p (0 < p < 0.5), by bisection on t_sf: accurate in the far tail."""
-    lo, hi = 0.0, 1.0
-    while t_sf(hi, df) > p:
-        hi *= 2
-        if hi > 1e12:
-            return math.inf
-    for _ in range(200):
-        mid = 0.5 * (lo + hi)
-        if t_sf(mid, df) > p:
-            lo = mid
-        else:
-            hi = mid
-        if hi - lo < 1e-10 * hi:
-            break
-    return hi
 
 
 def mad_factor(n: int | np.ndarray) -> np.ndarray:
@@ -553,18 +485,6 @@ def rolling_median(x: np.ndarray, w: int) -> np.ndarray:
         warnings.simplefilter("ignore", RuntimeWarning)
         med = np.nanmedian(win, axis=-1)
     return np.where(np.sum(np.isfinite(win), axis=-1) >= math.ceil(w / 2), med, np.nan)
-
-
-def poisson_sf(x: int, lam: float) -> float:
-    """P(X >= x) for X ~ Poisson(lam)."""
-    if x <= 0:
-        return 1.0
-    term = math.exp(-lam)
-    cdf = term
-    for k in range(1, x):
-        term *= lam / k
-        cdf += term
-    return max(0.0, 1.0 - cdf)
 
 
 def heavy_tailed(z: np.ndarray, pool_rows: np.ndarray, df: float, tau_hat: float) -> bool:

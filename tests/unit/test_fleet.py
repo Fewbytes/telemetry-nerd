@@ -3,7 +3,8 @@
 import numpy as np
 import pytest
 
-from telemetry_nerd.analysis.fleet import analyse, spread, t_isf, t_sf
+from telemetry_nerd.analysis.fleet import analyse, spread
+from telemetry_nerd.analysis.stats import t_isf, t_sf
 from tests.unit.fleet_sim import fleet
 
 

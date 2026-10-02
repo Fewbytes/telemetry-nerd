@@ -23,8 +23,8 @@ from telemetry_nerd.analysis.seasonal import (
     MIN_CYCLES,
     SCHEMES,
     atypical_levels,
-    t_quantile,
 )
+from telemetry_nerd.analysis.stats import t_quantile
 
 TARGET_SHARE = 0.01  # default threshold: the reference's ~p99 bucket edge
 MIN_OVER = 20  # expected observations above the threshold per cycle for a stable share
