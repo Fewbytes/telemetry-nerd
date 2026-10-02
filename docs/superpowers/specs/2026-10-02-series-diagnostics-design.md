@@ -163,6 +163,13 @@ not "noisy". Reasons are short strings with the numbers.
 - UI `SpcPlot.svelte`: series line (null rows at gaps), centre line, 3σ band, shaded baseline
   window, violations (filled: deciding rules, hollow: supplementary run rules), legend stating
   baseline, mode (individuals | AR(1) residuals), n, n_eff.
+  lkn.6: the payload carries `level`, `centre_interval`, `sigma_interval` (99%, from the
+  baseline's n_eff) and `seasonal`; the panel draws darker strips for the centre interval and
+  each limit's interval (level and σ intervals combined: upper limit
+  [c + Δlo + 3σlo, c + Δhi + 3σhi], lower [c + Δlo − 3σhi, c + Δhi − 3σlo]). Hovering a
+  flagged point shows its time, value and every rule it broke with what the rule means; a
+  checkbox hides the supplementary run rules (2 of 3, 4 of 5, 8 in a row). A reference baseline
+  is not shaded (not in range); the legend names it and says every point is judged.
 
 ## Validation
 

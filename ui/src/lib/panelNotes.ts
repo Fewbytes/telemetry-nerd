@@ -57,6 +57,9 @@ const CAVEATS: Record<string, Describe> = {
   members_skipped: () => "Some members had too little data to be tested; they are in the band but not judged.",
   too_few_members_for_outliers: () => "Fewer than 10 members had enough data: the band is shown, no member is judged.",
   members_missing: () => "Some members did not report at some steps: the band is over the members that did (n per step), never imputed; the strip at the bottom marks those steps.",
+  short_baseline: () => "The SPC baseline is short (n_eff < 100): its limits are rough; the darker strips show how rough, and p-values allow for it.",
+  near_random_walk: () => "The series is close to a random walk (lag-1 φ > 0.9): the residual chart is slow to see sustained shifts.",
+  seasonal_not_in_baseline: () => "A cycle in the series is longer than half the SPC baseline and no operating profile models it: the centre line ignores it.",
   overflow: () => "Some observations are above the largest bucket edge; their values are unknown (top strip).",
 };
 
@@ -164,7 +167,7 @@ export function describeShown(
   mark = "",
 ): string {
   if (kind === "spectrum") return "Periodogram (Lomb-Scargle): the share of variance a sinusoid of each period explains, with the 1% false-alarm level; peaks carry intervals.";
-  if (kind === "spc") return "Control chart: the series against a centre line and 3σ band computed from the shaded baseline only; flagged points break SPC rules.";
+  if (kind === "spc") return "Control chart: the series against a centre line and 3σ band computed from the baseline only (shaded, or an earlier window named below); flagged points break SPC rules.";
   if (kind === "fleet") return "Fleet: every member of the group, shaded by how many members lie there (min–max, 10–90%, 25–75% at each step, over the members that reported), the median, and only the outlying members drawn as lines.";
   if (kind === "seasonal") return "Seasonal comparison: now against the same window in previous cycles (faint), their median (dashed) and a 90% band from the spread across those cycles; dots are points too extreme for any previous cycle.";
   if (kind === "spectrogram") return "Spectrogram: how the periodicity changes over time, one window per column; the window sets the period resolution.";
