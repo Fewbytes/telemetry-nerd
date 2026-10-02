@@ -100,6 +100,10 @@ class SeriesCache:
                 failed=tuple(failed),
             )
 
+    def peek(self, source_identity: str, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
+        """What the cache holds for the range, without fetching (may be incomplete)."""
+        return self._read(self.query_key(source_identity, expr, step_ms), rng)
+
     def _fresh(self, state: tuple[int, bool] | None, now: int) -> bool:
         if state is None:
             return False

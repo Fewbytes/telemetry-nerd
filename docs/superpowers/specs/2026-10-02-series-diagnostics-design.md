@@ -91,6 +91,47 @@ run rules and EWMA/CUSUM on per-series deviations.
   with a Wilson interval on n_eff (they cluster under autocorrelation).
 - Minimum baseline: 30 points and n_eff ≥ 10, else the SPC section is `insufficient_data`.
 
+## Reference baselines, seasonal residual charts, gaps (lkn.5)
+
+- **`baseline="previous" | "day" | "week"`** (`baseline_cycles` 1..4 / 1..7 / 1..4): the limits
+  come from a **separate fetch** of earlier windows (same expr, step, source, through the cache),
+  aligned exactly as `compare_seasonal` does (`analysis/seasonal.cycle_shifts`: `previous` = the
+  preceding windows of the same length, `day` / `week` = the same window on previous local
+  calendar days / weeks in `tz`, 23 h / 25 h across DST). Every point of the dataset is judged.
+  The reference is prepended to the series for the chart (positions on the common step grid, so
+  pairs, AR(1) residuals and run windows never span the gap between them) and the chart is then
+  cut back to the dataset (`ControlChart.tail`). Output states the windows and their datasets;
+  `show(mark="spc")` after such an `analyze` uses that reference (stored on the layer as `spc`).
+- **Seasonal centre from the operating profile** (2as.7). A baseline that holds fewer than 2
+  cycles cannot fit a daily / weekly cycle; then, if the cached operating profile of the
+  expression is seasonal (`hour_of_day` / `hour_of_week`), the centre is
+  `level + shape(t)`: the profile's per-bucket medians at their hour midpoints, joined linearly
+  around the cycle (sparse buckets bridged), minus their median. Level and σ still come from
+  the baseline only (median / MAD of y − shape), so the chart is a seasonal residual chart.
+  "Holds 2 cycles" uses the time the baseline actually observed (several 6 h same-phase windows
+  span days but observe hours). **The shape never sees the judged data**: the profile's seasonal
+  model is re-fitted (`seasonal_profile`, model re-chosen) from its hourly history in the series
+  cache with every hour that overlaps the dataset removed (`ProfileService.seasonal_excluding`,
+  sync, never fetches; reported as `judged_hours_excluded`). Without a cached profile nothing
+  changes (`seasonal_not_in_baseline` as before). Dataset harmonics (short periods the baseline
+  holds twice) are fitted on y − shape on top; dropped periods the profile's cycle or one of its
+  harmonics (≥ 2 h) explains no longer raise `seasonal_not_in_baseline`. The shape's own error
+  (bucket medians of ~30 hourly values) is not in the centre interval; it is small next to σ
+  for hourly-or-finer data (≈ 1.25 σ_hour / √30).
+- **Gaps in the sequence detectors.** Across g missing steps (a gap, or a baseline stretch
+  between judged parts) the EWMA decays by (1 − λ)^g, the time-aware EWMA with missing points
+  given zero weight, and each CUSUM side drains by g·k, its in-control drift per step; nothing is
+  imputed. No gap = the classic recursion, a long gap (≈ 20 steps for the EWMA, h/k = 10 for the
+  CUSUM) = a restart. Both only shrink the statistic, so the in-control ARL can only grow
+  (conservative); expected episodes stay n_judged / ARL₀.
+- **Calibration** (seeded, in `tests/unit/test_spc.py`): 10% of judged points missing in runs of
+  1–30: EWMA ARL ≈ 537 / 490 (white / AR(1) 0.7; theory 558), CUSUM ≈ 469 / 423 (465), run-rule
+  rates 0.96–1.07× theory, 0/150 decided out of control. 6 h of 1-min data on a daily cycle
+  (amplitude 3σ) against the preceding 6 h or the same 6 h last week, shape from 30 noisy days:
+  rule-1 rate 1.25–1.3× nominal (limits estimated from 360 points), run rules 1.05–1.2×, EWMA /
+  CUSUM ARL ≈ 450 / 350, 0% decided out of control; the flat centre is unusable there (baseline
+  n_eff < 10 in most seeds, ~40% of points outside the band in the rest).
+
 ## Verdict (per series)
 
 Primary label, in priority order, with every other label that applies in `also`:

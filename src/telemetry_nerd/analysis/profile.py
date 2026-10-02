@@ -129,6 +129,29 @@ def band_at(seasonal: Seasonal, ts_ms: int) -> SeasonalBucket:
     return seasonal.buckets[i]
 
 
+def seasonal_shape(seasonal: Seasonal, instant_ms: np.ndarray) -> np.ndarray:
+    """The profile's seasonal curve at given instants, relative to its median level.
+
+    Bucket levels (medians of hourly means) sit at their hour's midpoint and are joined
+    linearly around the cycle; sparse buckets (no level) are bridged by their neighbours.
+    NaN everywhere when no bucket has a level, zero for the `none` model."""
+    x = np.asarray(instant_ms, np.int64)
+    if seasonal.period == "none":
+        return np.zeros(x.size)
+    size = _PERIOD_LEN[seasonal.period]
+    lv = np.array([np.nan if b.level is None else b.level for b in seasonal.buckets], float)
+    ok = ~np.isnan(lv)
+    if not ok.any():
+        return np.full(x.size, np.nan)
+    centres = np.flatnonzero(ok) + 0.5
+    hours = x / HOUR_MS
+    if seasonal.period == "hour_of_week":
+        hours = hours + _EPOCH_HOW_OFFSET
+    phase = np.mod(hours, size)
+    out = np.interp(phase, centres, lv[ok], period=size)
+    return out - float(np.median(lv[ok]))
+
+
 # ---------------------------------------------------------------------------
 def _q(x: np.ndarray, q: float) -> float:
     return float(np.quantile(x, q))

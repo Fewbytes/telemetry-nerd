@@ -55,6 +55,7 @@ class Layer(BaseModel):
     min_period_ms: int | None = None
     max_period_ms: int | None = None
     seasonal: dict | None = None  # compare_seasonal config: tz, exclude, reference datasets
+    spc: dict | None = None  # analyze reference baseline: scheme, tz, reference datasets
     fleet: dict | None = None  # fleet config: by, scale, normalise
 
 

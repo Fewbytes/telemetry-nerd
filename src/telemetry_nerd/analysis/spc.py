@@ -16,7 +16,8 @@ Design: docs/superpowers/specs/2026-10-02-series-diagnostics-design.md.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from statistics import NormalDist
 
 import numpy as np
@@ -96,11 +97,23 @@ def windows_available(pos: np.ndarray, ok: np.ndarray, w: int) -> int:
     return int(np.lib.stride_tricks.sliding_window_view(d, w).all(1).sum())
 
 
-def ewma_signals(z: np.ndarray, lam: float = EWMA_LAMBDA, L: float = EWMA_L) -> list[int]:
-    """Indices where |EWMA| crosses the asymptotic limit; the statistic restarts after each."""
+def ewma_signals(
+    z: np.ndarray,
+    lam: float = EWMA_LAMBDA,
+    L: float = EWMA_L,
+    gaps: np.ndarray | None = None,
+) -> list[int]:
+    """Indices where |EWMA| crosses the asymptotic limit; the statistic restarts after each.
+
+    `gaps[i]`: steps missing between z[i-1] and z[i]. Across g missing steps the statistic
+    decays by (1 - lam)^g, i.e. the time-aware EWMA with the missing points given zero weight
+    (never imputed): a long gap is a restart, none is the classic recursion. Its variance only
+    shrinks, so the in-control ARL can only grow (conservative)."""
     lim = L * math.sqrt(lam / (2 - lam))
     e, out = 0.0, []
     for i, v in enumerate(z):
+        if gaps is not None and gaps[i] > 0:
+            e *= (1 - lam) ** int(gaps[i])
         e = (1 - lam) * e + lam * v
         if abs(e) > lim:
             out.append(i)
@@ -108,11 +121,18 @@ def ewma_signals(z: np.ndarray, lam: float = EWMA_LAMBDA, L: float = EWMA_L) -> 
     return out
 
 
-def cusum_signals(z: np.ndarray, k: float = CUSUM_K, h: float = CUSUM_H) -> list[int]:
-    """Two-sided tabular CUSUM; both sides restart after a signal."""
+def cusum_signals(
+    z: np.ndarray, k: float = CUSUM_K, h: float = CUSUM_H, gaps: np.ndarray | None = None
+) -> list[int]:
+    """Two-sided tabular CUSUM; both sides restart after a signal.
+
+    Across g missing steps each side drains by g k (its expected in-control drift per step,
+    without imputing values): a gap of h / k steps or more is a restart. Conservative."""
     hi = lo = 0.0
     out = []
     for i, v in enumerate(z):
+        if gaps is not None and gaps[i] > 0:
+            hi, lo = max(0.0, hi - gaps[i] * k), max(0.0, lo - gaps[i] * k)
         hi, lo = max(0.0, hi + v - k), max(0.0, lo - v - k)
         if hi > h or lo > h:
             out.append(i)
@@ -126,6 +146,7 @@ def _arl(transition: np.ndarray, start: int) -> float:
     return float(arl[start])
 
 
+@lru_cache(maxsize=256)
 def ewma_arl(
     lam: float = EWMA_LAMBDA, L: float = EWMA_L, mu: float = 0.0, r: float = 1.0, n: int = 100
 ) -> float:
@@ -153,6 +174,7 @@ def _cusum_one_sided(k: float, h: float, mu: float, r: float, n: int) -> float:
     return _arl(p, 0)
 
 
+@lru_cache(maxsize=256)
 def cusum_arl(
     k: float = CUSUM_K, h: float = CUSUM_H, mu: float = 0.0, r: float = 1.0, n: int = 200
 ) -> float:
@@ -209,6 +231,30 @@ class ControlChart:
     arl_1sigma: dict[str, float] = field(default_factory=dict)  # points to detect a 1-sigma shift
     seasonal_periods_s: list[float] = field(default_factory=list)
     caveats: list[str] = field(default_factory=list)
+    level: float = math.nan  # baseline median of y - seasonal curve
+    #: seasonal part of the centre: none | harmonics (fitted on the baseline) | profile (the
+    #: operating profile's shape) | harmonics+profile
+    seasonal: str = "none"
+
+    def tail(self, k: int) -> ControlChart:
+        """The chart restricted to samples k.. (drops a separately fetched baseline that was
+        prepended to the judged series); detector indices shift by -k."""
+        if k == 0:
+            return self
+
+        def det(d: Detector | None) -> Detector | None:
+            if d is None:
+                return None
+            return replace(d, indices=[i - k for i in d.indices if i >= k])
+
+        return replace(
+            self,
+            baseline=self.baseline[k:],
+            judged=self.judged[k:],
+            centre=self.centre[k:],
+            outside=det(self.outside),
+            detectors={n: det(d) for n, d in self.detectors.items()},  # type: ignore[misc]
+        )
 
     @property
     def in_control(self) -> bool | None:
@@ -228,6 +274,15 @@ class ControlChart:
         return dict(sorted(out.items()))
 
 
+def covered_by(period_s: float, cycle_s: float) -> bool:
+    """A period the profile's cycle models: the cycle or one of its harmonics, >= 2 h (the
+    profile has hourly buckets)."""
+    if period_s < 2 * 3600:
+        return False
+    r = cycle_s / period_s
+    return abs(r - round(r)) <= 0.05 * r
+
+
 def _insufficient(baseline, judged, y, reason, caveats=()) -> ControlChart:
     return ControlChart(
         "insufficient_data", reason, baseline, judged, np.full(y.size, np.nan), math.nan,
@@ -241,8 +296,15 @@ def control_chart(
     y: np.ndarray,
     baseline: np.ndarray,
     harmonics: Harmonics | None = None,
+    profile: np.ndarray | None = None,
+    profile_cycle_s: float | None = None,
 ) -> ControlChart:
-    """`baseline`: bool per sample. `harmonics`: periods to model, re-fitted on the baseline."""
+    """`baseline`: bool per sample. `harmonics`: periods to model, re-fitted on the baseline.
+
+    `profile`: a seasonal shape per sample from the operating profile (estimated WITHOUT the
+    judged data), whose cycle is `profile_cycle_s`. It is the seasonal centre whenever the
+    baseline cannot fit that cycle itself (fewer than 2 cycles): the chart is then a seasonal
+    residual chart (y - shape), with level and sigma still from the baseline only."""
     judged = ~baseline
     nb = int(baseline.sum())
     if nb < MIN_BASELINE:
@@ -251,15 +313,34 @@ def control_chart(
         )
     caveats: list[str] = []
     periods = list(harmonics.periods_s) if harmonics else []
+    # how much of a cycle the baseline can fit: its span, but no more than the time it
+    # actually observed (several short same-phase windows span days and cover a few hours)
+    tb = t_s[baseline]
+    step_s = float(np.median(np.diff(t_s))) if t_s.size > 1 else 0.0
+    cover_b = min(float(tb.max() - tb.min()) + step_s, nb * step_s)
+    if profile is not None and (not profile_cycle_s or cover_b >= 2 * profile_cycle_s):
+        profile = None  # the baseline holds 2 cycles: it fits the cycle itself (harmonics)
     if periods:
-        tb = t_s[baseline]
-        span_b = float(tb.max() - tb.min() + np.median(np.diff(tb)))  # whole steps
-        kept = [p for p in periods if span_b >= 2 * p]
-        if len(kept) < len(periods):
+        kept = [p for p in periods if cover_b >= 2 * p]
+        dropped = [p for p in periods if p not in kept]
+        if profile is not None and profile_cycle_s:
+            dropped = [p for p in dropped if not covered_by(p, profile_cycle_s)]
+        if dropped:
             caveats.append("seasonal_not_in_baseline")
         periods = kept
-    seas = fit_harmonics(t_s[baseline], y[baseline], periods)
-    curve = seas.curve(t_s)
+    shape_ = np.zeros(y.size) if profile is None else np.asarray(profile, float)
+    if np.isnan(shape_).any():
+        shape_ = np.nan_to_num(shape_)  # unmodelled phases: no seasonal adjustment there
+    seas = fit_harmonics(t_s[baseline], y[baseline] - shape_[baseline], periods)
+    curve = seas.curve(t_s) + shape_
+    seasonal = (
+        "+".join(
+            name
+            for name, on in (("harmonics", bool(periods)), ("profile", profile is not None))
+            if on
+        )
+        or "none"
+    )
     yb = y[baseline] - curve[baseline]
     level = float(np.median(yb))
     sigma = robust_sigma(yb)
@@ -283,6 +364,7 @@ def control_chart(
         (level - za * c_se, level + za * c_se),
         (sigma * math.exp(-za * s_se), sigma * math.exp(za * s_se)),
         nb, ne, fit.phi, fit.significant, seasonal_periods_s=periods, caveats=caveats,
+        level=level, seasonal=seasonal,
     )  # fmt: skip
     if ne < 100:
         caveats.append("short_baseline")
@@ -333,11 +415,13 @@ def control_chart(
         )  # fmt: skip
     idx = np.flatnonzero(jz)
     zs = z[idx]
+    # steps missing before each judged z (gaps, or a baseline stretch between judged parts)
+    gaps = np.r_[0, np.diff(pos[idx]) - 1] if idx.size else np.zeros(0, np.int64)
     chart.arl0 = {"ewma": ewma_arl(), "cusum": cusum_arl()}
     chart.arl_1sigma = {"ewma": ewma_arl(mu=1.0), "cusum": cusum_arl(mu=1.0)}
     for name, sig, arl_c in (
-        ("ewma", ewma_signals(zs), ewma_arl(mu=mu_c, r=r_c)),
-        ("cusum", cusum_signals(zs), cusum_arl(mu=mu_c, r=r_c)),
+        ("ewma", ewma_signals(zs, gaps=gaps), ewma_arl(mu=mu_c, r=r_c)),
+        ("cusum", cusum_signals(zs, gaps=gaps), cusum_arl(mu=mu_c, r=r_c)),
     ):
         chart.detectors[name] = Detector(
             len(sig), int(idx.size), idx.size / chart.arl0[name], None,

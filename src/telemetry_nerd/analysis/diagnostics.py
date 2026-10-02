@@ -103,6 +103,32 @@ def structure(pos, ts_ms, t_s, y, span_ms) -> Structure:
     return Structure(model, tr, shifts, fits[model], y - fits[model])
 
 
+def _chart(ts_ms, y, step_ms, pos, t_s, baseline, harm, reference, profile) -> ControlChart:
+    shape, cycle = profile if profile is not None else (None, None)
+    if reference is None:
+        return control_chart(pos, t_s, y, baseline, harm, shape, cycle)
+    rts, ry = np.asarray(reference[0], np.int64), np.asarray(reference[1], float)
+    k = rts.size
+    if k == 0:
+        return _no_reference(y)
+    ts_all = np.r_[rts, ts_ms]
+    if np.any(np.diff(ts_all) <= 0):
+        raise ValueError("the reference baseline must lie before the series")
+    base = np.r_[np.ones(k, bool), np.zeros(y.size, bool)]
+    chart = control_chart(
+        positions(ts_all, step_ms), (ts_all - ts_all[0]) / 1000.0, np.r_[ry, y], base, harm,
+        shape, cycle,
+    )  # fmt: skip
+    return chart.tail(k)
+
+
+def _no_reference(y) -> ControlChart:
+    return ControlChart(
+        "insufficient_data", "no data in the reference baseline", np.zeros(y.size, bool),
+        np.ones(y.size, bool), np.full(y.size, np.nan), math.nan,
+    )  # fmt: skip
+
+
 def diagnose(
     ts_ms: np.ndarray,
     y: np.ndarray,
@@ -111,9 +137,16 @@ def diagnose(
     sp: Spectrum | None,
     fmt=lambda v: f"{v:.3g}",
     fmt_ts=str,
+    reference: tuple[np.ndarray, np.ndarray] | None = None,
+    profile: tuple[np.ndarray, float] | None = None,
 ) -> Diagnosis:
     """`baseline`: bool per sample (SPC limits come only from these). `sp`: the series'
     spectrum, or None when the range is too short to resolve any period.
+
+    `reference` (ts_ms, y): a separately fetched baseline (an earlier window, e.g. the same
+    hours last week); when given, SPC limits come only from it and every point of the series
+    is judged (`baseline` is ignored). `profile` (shape, cycle_s): the operating profile's
+    seasonal shape per sample of [reference..., series...], estimated without the series.
 
     Periods and structure confound each other (a step has 1/f^2 power; a slow cycle looks like
     a shift), so: structure on the raw series -> periods confirmed against red noise on what
@@ -147,7 +180,7 @@ def diagnose(
     st = kpss(yd)
     vr = variance_ratio(pos, resid)
     sh = shape(y, tau_raw)
-    chart = control_chart(pos, t_s, y, baseline, harm if peaks else None)
+    chart = _chart(ts_ms, y, step_ms, pos, t_s, baseline, harm if peaks else None, reference, profile)  # fmt: skip
     if sp is not None:
         caveats += [c for c in sp.caveats if c not in caveats]
     caveats += [c for c in chart.caveats if c not in caveats]

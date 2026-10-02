@@ -8,10 +8,13 @@ Design notes: docs/superpowers/specs/2026-10-01-operating-profile-design.md.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+
+import polars as pl
 
 from telemetry_nerd.analysis.exprkind import (
     RATE_INTERVAL,
@@ -19,7 +22,16 @@ from telemetry_nerd.analysis.exprkind import (
     looks_like_histogram,
     rate_interval_ms,
 )
-from telemetry_nerd.analysis.profile import HOUR_MS, Kind, ProfileStats, compute_profile
+from telemetry_nerd.analysis.profile import (
+    DAY_HOURS,
+    HOUR_MS,
+    WEEK_HOURS,
+    Kind,
+    ProfileStats,
+    Seasonal,
+    compute_profile,
+    seasonal_profile,
+)
 from telemetry_nerd.catalog.profiles import ProfileStore, profile_id
 from telemetry_nerd.catalog.rules import Facts
 from telemetry_nerd.charts.units import raw_counters
@@ -180,6 +192,30 @@ class OperatingProfile(ProfileStats):
         return out
 
 
+@dataclass(frozen=True)
+class SeasonalShapes:
+    """Per-series seasonal profiles re-estimated from the profile's hourly history with an
+    excluded span (the data about to be judged) removed: never judge data with a centre
+    computed from it."""
+
+    profile_id: str
+    computed_at_ms: int
+    expr: str
+    history_ms: int
+    excluded_hours: int
+    series: list[tuple[dict, Seasonal]]  # (labels, seasonal), period != none
+
+    def for_labels(self, labels: dict) -> Seasonal | None:
+        for lb, s in self.series:
+            if lb == labels:
+                return s
+        return self.series[0][1] if len(self.series) == 1 else None
+
+    @staticmethod
+    def cycle_s(s: Seasonal) -> float:
+        return {"hour_of_day": DAY_HOURS, "hour_of_week": WEEK_HOURS}.get(s.period, 0) * 3600.0
+
+
 @dataclass
 class ProfileService:
     sources: SourceRegistry
@@ -193,6 +229,7 @@ class ProfileService:
     retry_ms: int = FAILURE_RETRY_MS
     _inflight: dict[tuple[str, str], asyncio.Future] = field(default_factory=dict)
     _background: set[asyncio.Future] = field(default_factory=set)  # keep tasks referenced
+    _shapes: dict[tuple, SeasonalShapes | None] = field(default_factory=dict)
 
     # resolution ---------------------------------------------------------
     def _profile_source(self, name: str) -> tuple[Source, list[str]]:
@@ -240,6 +277,62 @@ class ProfileService:
         p = OperatingProfile.model_validate_json(row.data)
         p.stale = self.clock() - p.computed_at_ms >= self.ttl_ms
         return p
+
+    def seasonal_excluding(
+        self, source: str, expr: str, start_ms: int, end_ms: int
+    ) -> SeasonalShapes | None:
+        """The cached profile's seasonal models re-fitted without the hours that overlap
+        [start_ms, end_ms]. Sync: reads the profile's hourly history from the series cache,
+        never fetches. None when there is no seasonal profile or its history is not cached."""
+        p = self.cached(source, expr)
+        if p is None or not any(s.seasonal and s.seasonal.period != "none" for s in p.series):
+            return None
+        key = (p.id, p.computed_at_ms, start_ms // HOUR_MS, end_ms // HOUR_MS)
+        if key in self._shapes:
+            return self._shapes[key]
+        psrc = self.sources.get(p.profiled_from)
+        if psrc is None:
+            return None
+        qexpr = p.expr if is_selector(p.expr) else f"values|{p.expr}"
+        got = self.cache.peek(psrc.identity, qexpr, TimeRange(p.start_ms, p.end_ms), p.step_ms)
+        df = pl.from_arrow(got.buckets)
+        assert isinstance(df, pl.DataFrame)
+        if df.height == 0:
+            return None
+        df = df.filter(pl.col("count") > 0).with_columns(pl.col("avg").fill_nan(None))
+        df = df.drop_nulls("avg")
+        # bucket ts = END of its hour: the hour (ts - step, ts] overlaps (start, end]
+        keep = (pl.col("ts_ms") <= start_ms) | (pl.col("ts_ms") - p.step_ms >= end_ms)
+        excluded = df.filter(~keep)["ts_ms"].n_unique()
+        df = df.filter(keep)
+        labels = {
+            sid: json.loads(lab)
+            for sid, lab in zip(
+                got.series.column("series_id").to_pylist(),
+                got.series.column("labels").to_pylist(),
+                strict=True,
+            )
+        }
+        wanted = {s.series_id for s in p.series if s.seasonal and s.seasonal.period != "none"}
+        out = []
+        for (sid,), g in df.sort("ts_ms").group_by("series_id", maintain_order=True):
+            if sid not in wanted:
+                continue
+            ts = g["ts_ms"].to_numpy()
+            seas = seasonal_profile(ts - p.step_ms, g["avg"].to_numpy())
+            if seas is not None and seas.period != "none":
+                out.append((labels.get(sid, {}), seas))
+        res = (
+            SeasonalShapes(
+                p.id, p.computed_at_ms, p.expr, p.end_ms - p.start_ms + p.step_ms, excluded, out
+            )
+            if out
+            else None
+        )
+        self._shapes[key] = res
+        if len(self._shapes) > 32:
+            self._shapes.pop(next(iter(self._shapes)))
+        return res
 
     # compute ------------------------------------------------------------
     async def ensure(self, source: str, expr: str, *, force: bool = False) -> OperatingProfile:

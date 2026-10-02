@@ -189,7 +189,9 @@ class TelemetryService:
 
     def __post_init__(self) -> None:
         self.signal = SignalOps(self.datasets, self.ws.catalog_facts)
-        self.diagnostics = SeriesDiagnostics(self.signal)
+        self.diagnostics = SeriesDiagnostics(
+            self.signal, lambda *a: self.profiles.seasonal_excluding(*a), self.query
+        )
         self.profiles = ProfileService(
             self.sources, self.cache, ProfileStore(self.workspace.connection), self.ws, self.clock
         )
@@ -887,6 +889,24 @@ class TelemetryService:
             parse_time(baseline_start, now) if baseline_start else None,
             parse_time(baseline_end, now) if baseline_end else None,
         )
+        self.diagnostics.remember(dataset_id, None)
+        return self._analyze_hint(dataset_id, out)
+
+    async def analyze_reference(
+        self,
+        dataset_id: str,
+        baseline: str,
+        cycles: int = 1,
+        tz: str = "UTC",
+        actor: Actor = "claude",
+    ) -> dict:
+        """analyze with SPC limits from a separately fetched earlier window (lkn.5)."""
+        ref = await self.diagnostics.fetch_reference(dataset_id, baseline, cycles, tz, actor)
+        out = self.diagnostics.summary(dataset_id, ref=ref)
+        self.diagnostics.remember(dataset_id, ref)
+        return self._analyze_hint(dataset_id, out)
+
+    def _analyze_hint(self, dataset_id: str, out: dict) -> dict:
         found = [
             (p["period_s"], *p["interval_s"])
             for s in out["series"]
@@ -1048,7 +1068,8 @@ class TelemetryService:
             if w is not None:
                 resolve_baseline(meta, w.start_ms, w.end_ms)  # validates; the label is fixed
                 w = Window(start_ms=w.start_ms, end_ms=w.end_ms, label="baseline")
-            spec.layers = [Layer(mark="spc", data=dataset_id, windows=[w] if w else [])]
+            ref = None if w else self.diagnostics.last_reference(dataset_id)
+            spec.layers = [Layer(mark="spc", data=dataset_id, windows=[w] if w else [], spc=ref)]
         elif mark == "seasonal":
             cfg = self.seasonal.last_config(dataset_id)
             spec.layers = [Layer(mark="seasonal", data=dataset_id, seasonal=cfg)]
@@ -1173,7 +1194,10 @@ class TelemetryService:
         if layer0["mark"] == "spc":
             w = (layer0.get("windows") or [None])[0]
             out = self.diagnostics.panel(
-                dataset_id, w["start_ms"] if w else None, w["end_ms"] if w else None
+                dataset_id,
+                w["start_ms"] if w else None,
+                w["end_ms"] if w else None,
+                layer0.get("spc"),
             )
             return {
                 "panel": panel.to_dict(),

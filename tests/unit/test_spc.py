@@ -130,3 +130,137 @@ def test_seasonal_centre_is_fitted_on_baseline_only():
     assert np.ptp(c.centre) == pytest.approx(10, rel=0.1)
     c_short = chart(y, 200, h, t)  # 200 x 5 min < 2 days: cannot model a daily cycle
     assert "seasonal_not_in_baseline" in c_short.caveats
+
+
+# gaps (lkn.5) ----------------------------------------------------------------------
+def test_ewma_and_cusum_decay_across_gaps_a_long_gap_is_a_restart():
+    z = np.r_[np.full(4, 1.2), [1.2]]
+    # without gaps the run of 1.2s pushes the CUSUM to 5 x 0.7 = 3.5; one more high point
+    # after a long gap must start from scratch, after no gap it continues
+    no_gap, long_gap = np.zeros(5, int), np.r_[0, 0, 0, 0, 50]
+    assert cusum_signals(np.r_[z, 2.5], gaps=np.r_[no_gap, 0]) == [5]
+    assert cusum_signals(np.r_[z, 2.5], gaps=np.r_[long_gap, 0]) == []
+    # EWMA: the gap-aware recursion equals the classic one when there are no gaps
+    w = np.random.default_rng(1).normal(size=5000)
+    assert ewma_signals(w, gaps=np.zeros(w.size, int)) == ewma_signals(w)
+    assert cusum_signals(w, gaps=np.zeros(w.size, int)) == cusum_signals(w)
+    # a big EWMA excursion is forgotten across a gap of 40 steps ((0.8)^40 ~ 1e-4)
+    e = np.full(4, 2.0)
+    assert ewma_signals(e) == [3]
+    assert ewma_signals(e, gaps=np.r_[0, 0, 0, 40]) == []
+
+
+def gappy(n, seed, frac=0.1, judged_from=0):
+    """Runs of 1..30 missing steps covering ~frac of [judged_from, n)."""
+    rng = np.random.default_rng(seed + 10_000)
+    keep = np.ones(n, bool)
+    while (~keep[judged_from:]).mean() < frac:
+        a = int(rng.integers(judged_from, n))
+        keep[a : a + int(rng.integers(1, 30))] = False
+    return keep
+
+
+@pytest.mark.parametrize("phi", [0.0, 0.7])
+def test_false_alarm_rates_with_gaps_match_theory(phi):
+    """10% of the judged points missing in runs: the gap-aware EWMA/CUSUM keep their ARL,
+    the run rules (broken at gaps) and the drawn band their rates. 100 seeds."""
+    episodes = {"ewma": 0, "cusum": 0}
+    judged_z = out = n = out_of_control = 0
+    rule_counts = dict.fromkeys(RULE_RATES, 0)
+    windows = dict.fromkeys(RULE_RATES, 0)
+    for s in range(100):
+        keep = gappy(2000, s, judged_from=1000)
+        pos = np.flatnonzero(keep)
+        c = control_chart(pos, pos * 60.0, ar1_series(2000, phi, 100 + s)[keep], pos < 1000)
+        for d in episodes:
+            episodes[d] += c.detectors[d].count
+        judged_z += c.detectors["ewma"].opportunities
+        out += c.outside.count
+        n += c.outside.opportunities
+        out_of_control += not c.in_control
+        for r in RULE_RATES:
+            rule_counts[r] += c.detectors[r].count
+            windows[r] += c.detectors[r].opportunities
+    # measured (seeds 100..199): ARL ewma ~537 / 490 (theory 558), cusum ~469 / 423 (465)
+    assert judged_z / max(episodes["ewma"], 1) > 0.75 * ewma_arl()
+    assert judged_z / max(episodes["cusum"], 1) > 0.75 * cusum_arl()
+    assert 0.0018 < out / n < 0.0045
+    for r, rate in RULE_RATES.items():
+        assert rule_counts[r] / windows[r] == pytest.approx(rate, rel=0.3), r
+    assert out_of_control / 100 <= 0.04
+
+
+# separate reference baselines and the seasonal residual chart (lkn.5) ----------------
+M_MS, HOUR, DAY_MS = 60_000, 3_600_000, 86_400_000
+
+
+def _daily(ms):
+    return 50 + 3 * np.sin(2 * np.pi * (ms % DAY_MS) / DAY_MS)
+
+
+def _reference_case(seed, phi, shift_ms, use_profile):
+    """6 h of 1-min data on a daily cycle (amplitude 3 sigma), judged against a separately
+    fetched 6 h window `shift_ms` earlier; the profile shape (if used) comes from 30 days of
+    noisy hourly means BEFORE the judged window."""
+    from telemetry_nerd.analysis.autocorr import positions
+    from telemetry_nerd.analysis.diagnostics import _chart
+    from telemetry_nerd.analysis.profile import seasonal_profile, seasonal_shape
+
+    rng = np.random.default_rng(seed)
+    start = 40 * DAY_MS + int(rng.integers(0, 24)) * HOUR
+    ts = np.arange(start, start + 6 * HOUR, M_MS) + M_MS
+    rts = ts - shift_ms
+    noise = ar1_series(2 * ts.size, phi, 500 + seed) * np.sqrt(1 - phi * phi)
+    y, ry = _daily(ts - M_MS // 2) + noise[ts.size :], _daily(rts - M_MS // 2) + noise[: ts.size]
+    prof = None
+    if use_profile:
+        h = np.arange(start - 30 * DAY_MS, start, HOUR)  # hour starts
+        seas = seasonal_profile(h, _daily(h + HOUR // 2) + rng.normal(0, 0.3, h.size))
+        prof = (seasonal_shape(seas, np.r_[rts, ts] - M_MS // 2), 86_400.0)
+    pos = positions(ts, M_MS)
+    return _chart(ts, y, M_MS, pos, (ts - ts[0]) / 1000, np.zeros(ts.size, bool), None, (rts, ry), prof)  # fmt: skip
+
+
+@pytest.mark.parametrize(("phi", "shift"), [(0.0, 6 * HOUR), (0.7, 6 * HOUR), (0.7, 7 * DAY_MS)])
+def test_seasonal_residual_chart_from_the_profile_keeps_the_false_alarm_rate(phi, shift):
+    """baseline=previous|week on a daily cycle the 6 h baseline cannot fit (< 2 cycles).
+    Measured (150 seeds): a flat centre is unusable (n_eff < 10 for most baselines, the rest
+    alarm ~40% of points); the profile's shape gives rule-1 rate 1.25-1.3x nominal (estimated
+    limits from 360 points), run rules 1.05-1.2x, EWMA/CUSUM ARL ~450 / ~350, 0% decided out
+    of control."""
+    flat_bad = out = n = out_of_control = 0
+    episodes = {"ewma": 0, "cusum": 0}
+    judged_z = 0
+    seeds = 60
+    for s in range(seeds):
+        f = _reference_case(s, phi, shift, False)
+        flat_bad += f.mode == "insufficient_data" or not f.in_control or f.outside.count > 5
+        c = _reference_case(s, phi, shift, True)
+        assert c.seasonal == "profile" and c.mode != "insufficient_data"
+        assert c.baseline.size == c.judged.size == 360 and c.judged.all()  # all judged
+        out += c.outside.count
+        n += c.outside.opportunities
+        out_of_control += not c.in_control
+        for d in episodes:
+            episodes[d] += c.detectors[d].count
+        judged_z += c.detectors["ewma"].opportunities
+    if shift < DAY_MS:  # the preceding window sits elsewhere on the cycle
+        assert flat_bad / seeds > 0.8
+    assert 0.0015 < out / n < 0.0055
+    assert out_of_control / seeds <= 0.05
+    assert judged_z / max(episodes["ewma"], 1) > 0.6 * ewma_arl()
+    assert judged_z / max(episodes["cusum"], 1) > 0.5 * cusum_arl()
+
+
+def test_profile_is_not_used_when_the_baseline_fits_the_cycle_itself():
+    t = np.arange(0, 4 * 86400, 300.0)
+    rng = np.random.default_rng(2)
+    y = 10 + 5 * np.sin(2 * np.pi * t / 86400) + rng.normal(size=t.size)
+    h = fit_harmonics(t, y, [86400.0])
+    shape = 5 * np.sin(2 * np.pi * t / 86400)
+    pos = np.arange(t.size)
+    c = control_chart(pos, t, y, pos < t.size // 2, h, shape, 86400.0)
+    assert c.seasonal == "harmonics" and c.in_control
+    c_short = control_chart(pos, t, y, pos < 200, h, shape, 86400.0)
+    assert c_short.seasonal == "profile" and "seasonal_not_in_baseline" not in c_short.caveats
+    assert c_short.in_control

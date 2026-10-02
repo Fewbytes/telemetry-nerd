@@ -41,7 +41,8 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   more significant than they are.
 - "Is this metric stable / drifting / shifted / periodic / in control?": `analyze(dataset)`, then
   `show(dataset, question, mark="spc")`. State the verdict with its reasons and numbers, the
-  baseline window the control limits came from, n_eff, and caveats; cite `evidence`.
+  baseline window the control limits came from, n_eff, and caveats; cite `evidence`. "Has it
+  changed since yesterday / last week?" as SPC: `analyze(dataset, baseline="day"|"week"|"previous")`.
 - "Is now unusual for this time of day / week?": `compare_seasonal(dataset)` (also when
   analyze/spectrum/show `suggest` it), then `show(dataset, question, mark="seasonal")`. State the
   reference it chose (cycles, alignment/timezone, excluded cycles), the ratio with the normal
@@ -177,8 +178,13 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise ToolError(str(e)) from e
 
     @mcp.tool()
-    def analyze(
-        dataset: str, baseline_start: str | None = None, baseline_end: str | None = None
+    async def analyze(
+        dataset: str,
+        baseline_start: str | None = None,
+        baseline_end: str | None = None,
+        baseline: str = "window",
+        baseline_cycles: int = 1,
+        tz: str = "UTC",
     ) -> str:
         """Diagnose a time series in one call: is it stable, drifting, level-shifted, periodic,
         noisy, or is there too little data to say?
@@ -190,14 +196,33 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         baseline window (default: first half of the range; or baseline_start/baseline_end, e.g.
         a calm day before an incident), never from the data being judged; with autocorrelation
         the run rules/EWMA/CUSUM use AR(1) residuals. Intervals use the effective sample size
-        n_eff, not n. Gaps are never interpolated.
+        n_eff, not n. Gaps are never interpolated (EWMA/CUSUM decay across a gap; a long gap
+        restarts them).
+        baseline: "window" (default: inside the dataset, as above) or a separately fetched
+        earlier window, judged against with every point of the dataset: "previous" (the
+        preceding window of the same length), "day" / "week" (the same window on the previous
+        day / week, aligned by `tz` like compare_seasonal); baseline_cycles takes several
+        (previous <= 4, day <= 7, week <= 4) for a longer baseline. When the baseline spans
+        fewer than 2 daily/weekly cycles and the operating profile is seasonal, the centre line
+        follows the profile's seasonal shape (re-fitted without the judged hours): a seasonal
+        residual chart (spc.centre.seasonal = "profile").
         Returns per series: verdict, also, reasons (with numbers), and the sections; headline
         numbers carry an `evidence` statistic for finding_create. Caveats: coarsened, gaps,
         red_noise, short_baseline, near_random_walk, seasonal_not_in_baseline.
         Refused with a hint on percentile series, distributions and raw counters (use a rate).
         Draw it with show(dataset, question, mark="spc", windows=[{start, end}] = the baseline)."""
         try:
+            if baseline != "window":
+                if baseline_start or baseline_end:
+                    raise ValueError(
+                        f"baseline={baseline!r} is fetched separately: drop baseline_start/end"
+                    )
+                return _dump(
+                    await service.analyze_reference(dataset, baseline, baseline_cycles, tz)
+                )
             return _dump(service.analyze(dataset, baseline_start, baseline_end))
+        except SourceError as e:
+            raise ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e)) from e
         except (NotFound, ValueError) as e:
             raise ToolError(str(e)) from e
 
