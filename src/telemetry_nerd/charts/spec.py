@@ -27,6 +27,7 @@ Mark = Literal[
     "spc",
     "seasonal",
     "fleet",
+    "littles",
 ]
 SPECTRAL_MARKS = {"spectrum", "spectrogram"}
 WINDOW_MARKS = {"histogram", "ecdf", "quantile_curve", "ccdf"}
@@ -57,6 +58,7 @@ class Layer(BaseModel):
     seasonal: dict | None = None  # compare_seasonal config: tz, exclude, reference datasets
     spc: dict | None = None  # analyze reference baseline: scheme, tz, reference datasets
     fleet: dict | None = None  # fleet config: by, scale, normalise
+    littles: dict | None = None  # check_littles_law config: datasets per role, grid, windows
 
 
 class YLimit(BaseModel):

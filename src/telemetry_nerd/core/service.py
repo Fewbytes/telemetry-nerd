@@ -90,6 +90,7 @@ from telemetry_nerd.core.code_outputs import (
 )
 from telemetry_nerd.core.events import Actor, EventLog
 from telemetry_nerd.core.fleet_ops import FleetOps
+from telemetry_nerd.core.littles_ops import LittlesOps
 from telemetry_nerd.core.panel_payloads import (
     ghost_payload,
     heatmap_panel_data,
@@ -231,6 +232,7 @@ class TelemetryService:
     profiles: ProfileService = field(init=False)
     seasonal: SeasonalOps = field(init=False)
     fleets: FleetOps = field(init=False)
+    littles: LittlesOps = field(init=False)
     _scrape_cache: dict = field(default_factory=dict, init=False, repr=False)
     #: compute a T1 operating profile in the background when a time-series panel is shown
     auto_profile: bool = False
@@ -251,10 +253,23 @@ class TelemetryService:
         self.seasonal = SeasonalOps(self.datasets, self.signal, self.query, self._profile_periods)
         self.seasonal_dist = SeasonalDistOps(self.datasets, self.query_distribution)
         self.fleets = FleetOps(self.datasets, self.signal, self.ws.catalog_facts)
+        self.littles = LittlesOps(
+            self.datasets, self.query, lambda s: self._source(s).resolution_ms,
+            self.ws.catalog_facts, self.ws.catalog.has_metric,
+            lambda s: bool(self.ws.catalog.names(s, None, 1)), self._littles_binding, self.clock,
+        )  # fmt: skip
         self.code = CodeOps(
             self.datasets, self.ws, self.log, self.kernels,
             build_runs(self.datasets, self.ws, self.runs_root), self.clock,
         )  # fmt: skip
+
+    def _littles_binding(self, source: str, key: str):
+        found = self.ws.relations.bindings("catalog", source, kind="littles_law", key=key)
+        return found[0] if found else None
+
+    async def check_littles_law(self, actor: Actor = "claude", **kw) -> dict:
+        """L vs lambda W per window and group, with a propagated interval (czt.2)."""
+        return await self.littles.check(actor=actor, **kw)
 
     def _profile_periods(self, source: str, expr: str) -> list[str]:
         p = self.profiles.cached(source, expr)
@@ -1560,6 +1575,11 @@ class TelemetryService:
         elif mark == "seasonal":
             cfg = self.seasonal.last_config(dataset_id)
             spec.layers = [Layer(mark="seasonal", data=dataset_id, seasonal=cfg)]
+        elif mark == "littles":
+            cfg = self.littles.last_config(dataset_id)
+            spec.layers = [Layer(mark="littles", data=dataset_id, littles=cfg)]
+            spec.y.unit = spec.y.unit or "requests"
+            panel_datasets = list(dict.fromkeys([dataset_id, *cfg["datasets"].values()]))
         elif mark == "fleet":
             cfg = self.fleets.last_config(dataset_id)
             self.fleets.panel(dataset_id, cfg)  # validates (percentiles, units, members) now
@@ -1716,6 +1736,8 @@ class TelemetryService:
             analysis["heat"] = fleet_payloads.heat(self.fleets, dataset_id, cfg)
         elif mark == "seasonal":
             analysis = self.seasonal.panel(dataset_id, layer0["seasonal"])
+        elif mark == "littles":
+            analysis = self.littles.panel(layer0["littles"])
         elif mark == "spectrogram":
             analysis = self.signal.spectrogram_panel(
                 dataset_id, layer0["segment_ms"], layer0["overlap"], FACET_HEIGHT_SINGLE

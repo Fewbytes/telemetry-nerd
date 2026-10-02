@@ -19,6 +19,7 @@
   import SpectrumPlot from "./components/SpectrumPlot.svelte";
   import SpectrogramPlot from "./components/SpectrogramPlot.svelte";
   import SpcPlot from "./components/SpcPlot.svelte";
+  import LittlesPlot from "./components/LittlesPlot.svelte";
   import SeasonalPlot from "./components/SeasonalPlot.svelte";
   import FleetPlot from "./components/FleetPlot.svelte";
   import { fleetStats, fleetY } from "./chart/fleet";
@@ -605,6 +606,17 @@
         <SpcPlot data={sc} series={s} width={fetchWidth}
           onRendered={(ms, pts) => onFacetRendered(i, sc.series.length, ms, pts, 220)} />
       {/each}
+    {/if}
+    {#if data && data.kind === "littles"}
+      {@const lt = data}
+      {#each lt.series as s, i (s.id)}
+        <LittlesPlot data={lt} series={s} width={fetchWidth}
+          onRendered={(ms, pts) => onFacetRendered(i, lt.series.length, ms, pts, 300)} />
+      {/each}
+      {#if lt.unmatched.length}
+        <div class="legend" data-littles-unmatched>Not judged — missing from some signals: {lt.unmatched.map((u) => `${Object.entries(u.labels).map(([k, v]) => `${k}=${v}`).join(", ") || "total"} (no ${u.missing_in.join(", ")})`).join("; ")}</div>
+      {/if}
+      {#if lt.more_groups}<div class="legend">{lt.more_groups} more groups not drawn (see the check's summary)</div>{/if}
     {/if}
     {#if data && data.kind === "seasonal"}
       {@const sz = data}

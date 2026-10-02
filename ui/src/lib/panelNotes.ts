@@ -230,6 +230,7 @@ export function describeShown(
   if (kind === "fleet" && fleetView === "heat") return "Member × time: one row per member, one column per step; colour is the member's deviation from the fleet median in robust σ (orange above, purple below, capped), dots where a live member was silent.";
   if (kind === "fleet" && fleetView === "multiples") return "Small multiples: one panel per outlying member on the same y range, its line against the fleet's shaded spread (min–max, 10–90%, 25–75%) and median.";
   if (kind === "fleet") return "Fleet: every member of the group, shaded by how many members lie there (min–max, 10–90%, 25–75% at each step, over the members that reported), the median, and only the outlying members drawn as lines.";
+  if (kind === "littles") return "Little's law check: per window, mean concurrency L (gauge) against throughput × mean latency λ·W, each with a 95% band, and their ratio below (1 = consistent); shaded windows break the law.";
   if (kind === "seasonal") return "Seasonal comparison: now against the same window in previous cycles (faint), their median (dashed) and a 90% band from the spread across those cycles; dots are points too extreme for any previous cycle.";
   if (kind === "spectrogram") return "Spectrogram: how the periodicity changes over time, one window per column; the window sets the period resolution.";
   if (mark === "percentiles") {

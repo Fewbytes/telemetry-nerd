@@ -82,7 +82,11 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
 - Write $__rate_interval as the rate window for quantiles so each value covers one display step.
 - Never look at latency alone: show it with throughput, and with concurrency when relevant
   (Little's law: mean concurrency L = throughput λ x mean latency W; W from
-  histogram_sum/histogram_count, not from a percentile).
+  histogram_sum/histogram_count, not from a percentile). "Do concurrency, throughput and latency
+  agree?" is `check_littles_law(binding=... | arrival_rate, latency, concurrency)`, then
+  `show(<its concurrency dataset>, question, mark="littles")`. State the verdict with the ratio
+  and interval, where it breaks (windows, groups), every assumption marked flagged/assumed, and
+  the hints for the direction; cite `evidence`.
 - Scope every claim: source, selector, time range, step. Do not generalize beyond it.
 - `workspace_get` shows open threads (user questions awaiting you), hypotheses, findings.
   `reply` answers a thread. `hypothesis_create`/`hypothesis_update` track explanations.
@@ -302,6 +306,56 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             return _dump(
                 await service.compare_seasonal(dataset, cycles, tz, exclude, threshold=threshold)
             )
+        except SourceError as e:
+            raise _source_error(e) from e
+        except (NotFound, ValueError) as e:
+            raise ToolError(str(e)) from e
+
+    @mcp.tool()
+    async def check_littles_law(
+        binding: str | None = None,
+        arrival_rate: str | None = None,
+        latency: str | None = None,
+        concurrency: str | None = None,
+        by: list[str] | None = None,
+        start: str = "now-6h",
+        end: str = "now",
+        window: str = "auto",
+        warmup: str | None = None,
+        latency_unit: str | None = None,
+        arrivals: str = "auto",
+        source: str = "default",
+    ) -> str:
+        """Is measured mean concurrency L consistent with throughput x mean latency (L = λ·W)?
+
+        Signals: `binding` = the key of a littles_law binding (catalog_bind / catalog_relations;
+        its join_on is the default `by`), or the roles directly (they override the binding):
+        arrival_rate = a request counter (or a histogram's _count); latency = the histogram or
+        summary base name with _sum/_count (W = rate(_sum)/rate(_count), a MEAN; a percentile-only
+        latency is refused with a hint); concurrency = the in-flight gauge. Metric names or
+        selectors `name{job="api"}`; the check writes the rates and `sum by (by)`.
+        window: judged span (default ~range/12); warmup: excluded from the start (e.g. "10m");
+        latency_unit: s|ms|us|ns when the catalog does not know it (else ASSUMED s, flagged);
+        arrivals: auto|arrivals|completions — what the counter counts (stated in assumptions).
+        Per window and pooled: L, λ·W and ratio L/(λW) with a 95% interval (delta method: L's
+        scrape-sampling error, floored by a Poisson-occupancy process, with the counts' Poisson
+        errors; edge and alignment bias bounds). Verdict per window and group: consistent |
+        L_high (time outside the latency timer: queueing before it starts, stuck/leaked requests,
+        latency on a subset) | L_low (concurrency missing instances, gauge missing bursts,
+        latency on a superset) | inconsistent_in_windows; ≤5% false alarms overall. `total` is the
+        ungrouped view; `groups` per `by` value; `unmatched` = groups missing from a signal
+        (localises a missing instance). `assumptions` (steady state, arrivals vs completions,
+        label sets, units, alignment, warm-up, gauge sampling) each ok/assumed/flagged. Each
+        group's `evidence` statistics go to finding_create as is. Draw: show(<datasets.concurrency>,
+        question, mark="littles")."""
+        try:
+            return _dump(
+                await service.check_littles_law(
+                    source=source, binding=binding, arrival_rate=arrival_rate, latency=latency,
+                    concurrency=concurrency, by=by, start=start, end=end, window=window,
+                    warmup=warmup, latency_unit=latency_unit, arrivals=arrivals,
+                )
+            )  # fmt: skip
         except SourceError as e:
             raise _source_error(e) from e
         except (NotFound, ValueError) as e:
@@ -870,6 +924,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         median and 90% band, flagged points; the user can switch to the ratio view.
         fleet (many series of one metric, after fleet or directly): spread band across members
         (min-max, 10-90, 25-75 shaded), median, outlying members drawn and labelled, n per step.
+        littles (the concurrency dataset of check_littles_law): per group, L and λ·W per window
+        with 95% bands and a ratio strip (1 = consistent) coloured by verdict.
         spectrum / spectrogram (time series): periodicity panels; spectrogram needs `segment`
         (e.g. "30m", state it in your answer) and takes `overlap` (default 0.5). view: for a panel
         drawn from filter(): the default view (overlay | filtered | removed | raw).
