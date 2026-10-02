@@ -2,6 +2,7 @@ name: CI
 
 # Tests, lint and UI checks run on every push and pull request. The container image is built
 # and pushed to GHCR ONLY for version tags (v*); regular pushes never build or publish it.
+# Two variants: slim (X.Y.Z, X.Y, latest) and full with the `analysis` extra (…-full).
 # Integration tests (-m integration: Docker / public network) are excluded from CI.
 on:
   push:
@@ -75,6 +76,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      # Slim variant: X.Y.Z, X.Y, latest.
       - id: meta
         uses: docker/metadata-action@v6
         with:
@@ -90,5 +92,28 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=slim
+          cache-to: type=gha,mode=max,scope=slim
+      # Full variant (analysis extra: scipy, statsmodels, scikit-learn, ...): X.Y.Z-full,
+      # X.Y-full, latest-full. Same buildx builder; the ui/build-stage layers are shared.
+      - id: meta-full
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: |
+            latest=false
+            suffix=-full,onlatest=true
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          build-args: EXTRAS=analysis
+          push: true
+          tags: ${{ steps.meta-full.outputs.tags }}
+          labels: ${{ steps.meta-full.outputs.labels }}
+          cache-from: type=gha,scope=full
+          cache-to: type=gha,mode=max,scope=full

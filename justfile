@@ -65,6 +65,11 @@ docker-build:
     c="${CONTAINER:-podman}"; fmt=""; [ "$c" = podman ] && fmt="--format docker"; \
         $c build $fmt -t {{image}} .
 
+# Build the -full variant (adds the `analysis` extra: scipy, statsmodels, scikit-learn, ...).
+docker-build-full:
+    c="${CONTAINER:-podman}"; fmt=""; [ "$c" = podman ] && fmt="--format docker"; \
+        $c build $fmt --build-arg EXTRAS=analysis -t {{image}}-full .
+
 # Run the daemon image: UI at http://127.0.0.1:7070, data in the named volume tn-data.
 # Set TN_SOURCE_URL to a source reachable from the container (host: host.containers.internal).
 docker-run *args:

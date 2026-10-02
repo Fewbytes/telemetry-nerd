@@ -13,6 +13,20 @@ uv tool install git+https://github.com/<owner>/telemetry-nerd   # or a local pat
 telemetry-nerd serve        # UI + API + MCP at http://127.0.0.1:7070
 ```
 
+### Optional `analysis` extra
+
+Tier-2 code (`run_code`, an IPython kernel subprocess) always has numpy, polars, duckdb and
+pyarrow. The `analysis` extra adds scipy, statsmodels, scikit-learn, ruptures and pywavelets
+(about 170 MB installed, plus pandas as a statsmodels dependency):
+
+```bash
+uv tool install 'telemetry-nerd[analysis]'      # or 'git+https://...#egg=telemetry-nerd[analysis]'
+```
+
+Skip it if you only use the built-in analysis tools; add it for statistical tests, regression,
+clustering, change-point detection (ruptures) or wavelets in kernel code. ruptures has no
+Python 3.14 wheel yet, so installing the extra on 3.14 compiles it (needs a C compiler).
+
 Data lives in `$TN_DATA_DIR` (default `~/.local/share/telemetry-nerd`). Point it at a
 metrics source with `TN_SOURCE_URL` (default `http://127.0.0.1:8428`) and `TN_SOURCE_FLAVOR`
 (`victoriametrics` | `prometheus`).
@@ -24,6 +38,17 @@ contains the UI and no dev-only deps, installs it into throwaway dirs and smoke-
 ## Container (podman or docker)
 
 ### Run the published image
+
+Tags (`ghcr.io/fewbytes/telemetry-nerd`):
+
+| Variant | Tags | Contents |
+| --- | --- | --- |
+| slim | `X.Y.Z`, `X.Y`, `latest` | daemon + IPython kernel deps (~560 MB) |
+| full | `X.Y.Z-full`, `X.Y-full`, `latest-full` | slim + the `analysis` extra (~800 MB) |
+
+Use slim unless kernel code needs scipy / statsmodels / scikit-learn / ruptures / pywt; use
+full when it does (nothing can be pip-installed at runtime: the kernel has no network policy
+and the image runs as an unprivileged user).
 
 ```bash
 podman volume create tn-data            # once; holds all state (see below)
@@ -65,6 +90,7 @@ one, state lives in the container's writable layer and is lost with `--rm` or on
 
 ```bash
 just docker-build                      # CONTAINER=docker just docker-build for docker
+just docker-build-full                 # + analysis extra, tagged telemetry-nerd:dev-full
 TN_SOURCE_URL=http://host.containers.internal:8428 just docker-run   # uses the tn-data volume
 ```
 
