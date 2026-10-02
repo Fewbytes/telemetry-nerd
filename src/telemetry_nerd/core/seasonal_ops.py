@@ -30,7 +30,7 @@ from telemetry_nerd.analysis.seasonal import (
 )
 from telemetry_nerd.core.signal_ops import SERIES_BUDGET, SignalOps, human_period
 from telemetry_nerd.core.wire import Memo, add_caveats, sig, sig_list, sig_pair, statistic
-from telemetry_nerd.datasets.store import DatasetStore
+from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
 from telemetry_nerd.model.time import format_duration, iso
 
 MAX_POINTS = 2000
@@ -51,6 +51,36 @@ def _moved(c: Cycle, nominal: int) -> bool:
         return c.shift_ms != nominal
     s = c.shifts_ms[~np.isnan(c.shifts_ms)]
     return bool(np.any(s != nominal))
+
+
+def requested_schemes(cycles: list[str] | None) -> list[str]:
+    """The requested cycle schemes in SCHEMES order (default: all); unknown ones are refused."""
+    cycles = list(cycles or SCHEMES)
+    bad = [c for c in cycles if c not in SCHEMES]
+    if bad:
+        raise ValueError(f"unknown cycles {bad}: use {', '.join(SCHEMES)}")
+    return [s for s in SCHEMES if s in cycles]
+
+
+def scheme_shifts(
+    meta: DatasetMeta, n: int, schemes: list[str], tz: str
+) -> tuple[dict[str, np.ndarray], dict[str, str]]:
+    """Per scheme that applies, the (k, n) per-point shifts of its DEFAULT_K previous cycles;
+    per scheme that does not, why. An unknown timezone, or no scheme applying, is refused."""
+    shifts: dict[str, np.ndarray] = {}
+    unavailable: dict[str, str] = {}
+    for scheme in schemes:
+        try:
+            shifts[scheme] = point_shifts(
+                meta.start_ms, n, meta.step_ms, scheme, DEFAULT_K[scheme], tz
+            )
+        except ValueError as e:
+            if "timezone" in str(e):
+                raise
+            unavailable[scheme] = str(e)
+    if not shifts:
+        raise ValueError("no cycle applies: " + "; ".join(unavailable.values()))
+    return shifts, unavailable
 
 
 def seasonal_hint(dataset_id: str, periods: list[tuple[float, float, float]]) -> str | None:
@@ -113,10 +143,7 @@ class SeasonalOps:
         actor: str,
     ) -> dict:
         meta = self.check(dataset_id)
-        cycles = list(cycles or SCHEMES)
-        bad = [c for c in cycles if c not in SCHEMES]
-        if bad:
-            raise ValueError(f"unknown cycles {bad}: use {', '.join(SCHEMES)}")
+        wanted = requested_schemes(cycles)
         days = []
         for d in exclude or []:
             if not _DATE.match(d.strip()):
@@ -125,15 +152,8 @@ class SeasonalOps:
         n = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
         grid = meta.start_ms + np.arange(n, dtype=np.int64) * meta.step_ms
         refs: dict[str, list[dict]] = {}
-        unavailable: dict[str, str] = {}
-        for scheme in [s for s in SCHEMES if s in cycles]:
-            try:
-                shifts = point_shifts(meta.start_ms, n, meta.step_ms, scheme, DEFAULT_K[scheme], tz)
-            except ValueError as e:
-                if "timezone" in str(e):
-                    raise
-                unavailable[scheme] = str(e)
-                continue
+        all_shifts, unavailable = scheme_shifts(meta, n, wanted, tz)
+        for scheme, shifts in all_shifts.items():
             refs[scheme] = []
             for j, row in enumerate(shifts, 1):
                 ok = ~np.isnan(row)
@@ -153,8 +173,6 @@ class SeasonalOps:
                     {"j": j, "shift_ms": int(row[ok][0]), "start_ms": a, "end_ms": b,
                      "dataset": out["dataset"]}
                 )  # fmt: skip
-        if not refs:
-            raise ValueError("no cycle applies: " + "; ".join(unavailable.values()))
         cfg = {"tz": tz, "exclude": days, "refs": refs, "unavailable": unavailable}
         self._last[dataset_id] = cfg
         return cfg

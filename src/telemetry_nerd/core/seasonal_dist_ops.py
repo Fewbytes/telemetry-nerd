@@ -19,7 +19,7 @@ import numpy as np
 import polars as pl
 
 from telemetry_nerd.analysis.distlod import window_histogram
-from telemetry_nerd.analysis.seasonal import DEFAULT_K, SCHEMES, crosses_dst, point_shifts
+from telemetry_nerd.analysis.seasonal import crosses_dst
 from telemetry_nerd.analysis.seasonal_dist import (
     Hist,
     TailComparison,
@@ -29,6 +29,7 @@ from telemetry_nerd.analysis.seasonal_dist import (
     default_threshold,
     snap,
 )
+from telemetry_nerd.core.seasonal_ops import requested_schemes, scheme_shifts
 from telemetry_nerd.core.signal_ops import SERIES_BUDGET
 from telemetry_nerd.core.wire import add_caveats, sig, statistic
 from telemetry_nerd.datasets.store import DatasetStore
@@ -96,10 +97,7 @@ class SeasonalDistOps:
             raise ValueError(
                 f"{n} steps (max {MAX_POINTS}) (hint: re-query the window at a coarser step)"
             )
-        cycles = list(cycles or SCHEMES)
-        bad = [c for c in cycles if c not in SCHEMES]
-        if bad:
-            raise ValueError(f"unknown cycles {bad}: use {', '.join(SCHEMES)}")
+        wanted = requested_schemes(cycles)
         try:
             days = sorted({date.fromisoformat(d.strip()) for d in exclude or []})
         except ValueError as e:
@@ -120,18 +118,11 @@ class SeasonalDistOps:
         now_ds = dataset_id if meta.representation == "distribution" else await fetch(w0, w1)
         now = self._hists(now_ds, w0, w1, 0)
         refs: dict[str, list[dict[str, Hist]]] = {}
-        unavailable: dict[str, str] = {}
         dst = False
         excl: dict[str, set[int]] = {}
         zone = ZoneInfo(tz) if tz != "UTC" else UTC
-        for scheme in [s for s in SCHEMES if s in cycles]:
-            try:
-                sh = point_shifts(meta.start_ms, n, meta.step_ms, scheme, DEFAULT_K[scheme], tz)
-            except ValueError as e:
-                if "timezone" in str(e):
-                    raise
-                unavailable[scheme] = str(e)
-                continue
+        all_shifts, unavailable = scheme_shifts(meta, n, wanted, tz)
+        for scheme, sh in all_shifts.items():
             dst |= tz != "UTC" and crosses_dst(sh)
             refs[scheme], excl[scheme] = [], set()
             for j, row in enumerate(sh, 1):
@@ -144,8 +135,6 @@ class SeasonalDistOps:
                 d1 = datetime.fromtimestamp((b - 1) / 1000, UTC).astimezone(zone).date()
                 if any(d0 <= d <= d1 for d in days):
                     excl[scheme].add(j)
-        if not refs:
-            raise ValueError("no cycle applies: " + "; ".join(unavailable.values()))
 
         series, caveats = [], (["dst_wall_clock"] if dst else [])
         for key, h_now in list(now.items())[:SERIES_BUDGET]:

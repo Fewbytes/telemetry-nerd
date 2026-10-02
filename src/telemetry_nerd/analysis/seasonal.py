@@ -487,14 +487,20 @@ def choose(
     scheme must beat the current pick by >= 5%. Returns (scheme or None, scores)."""
     scale = scale_of(now, [c for cs in schemes.values() for c in cs])
     scores: dict[str, float] = {}
-    pick = None
     for s in SCHEMES:
         if s not in schemes or not schemes[s]:
             continue
         cmp_ = compare(now, schemes[s], step_ms, (exclude or {}).get(s, frozenset()), scale)
-        if cmp_.verdict == "insufficient_history" or not math.isfinite(cmp_.score):
-            continue
-        scores[s] = cmp_.score
-        if pick is None or cmp_.score < CHOICE_GAIN * scores[pick]:
+        if cmp_.verdict != "insufficient_history" and math.isfinite(cmp_.score):
+            scores[s] = cmp_.score
+    return pick_scheme(scores), scores
+
+
+def pick_scheme(scores: dict[str, float]) -> str | None:
+    """The reference among the scored schemes, in SCHEMES order: a more specific scheme must beat
+    the current pick by >= 5% (CHOICE_GAIN)."""
+    pick = None
+    for s in SCHEMES:
+        if s in scores and (pick is None or scores[s] < CHOICE_GAIN * scores[pick]):
             pick = s
-    return pick, scores
+    return pick

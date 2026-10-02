@@ -18,11 +18,11 @@ import numpy as np
 
 from telemetry_nerd.analysis.seasonal import (
     ALPHA,
-    CHOICE_GAIN,
     MIN_COVERAGE,
     MIN_CYCLES,
     SCHEMES,
     atypical_levels,
+    pick_scheme,
 )
 from telemetry_nerd.analysis.stats import t_quantile
 
@@ -265,14 +265,10 @@ def choose_tail(
     """Pick the reference by leave-one-cycle-out error of the logit share (before exclusion), in
     SCHEMES order: a more specific scheme must beat the current pick by >= 5%."""
     scores: dict[str, float] = {}
-    pick = None
     for s in SCHEMES:
         if not schemes.get(s):
             continue
         c = compare_tail(now, schemes[s], x, s, (exclude or {}).get(s, frozenset()))
-        if c.verdict == "insufficient_history" or not math.isfinite(c.score):
-            continue
-        scores[s] = c.score
-        if pick is None or c.score < CHOICE_GAIN * scores[pick]:
-            pick = s
-    return pick, scores
+        if c.verdict != "insufficient_history" and math.isfinite(c.score):
+            scores[s] = c.score
+    return pick_scheme(scores), scores
