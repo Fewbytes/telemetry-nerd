@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { coverageGaps, fleetLegend, outlierText, toFleetUplot, type FleetData } from "./fleet";
+import { fleetY, coverageGaps, fleetLegend, outlierText, toFleetUplot, type FleetData } from "./fleet";
 
 const d: FleetData = {
   ts: [0, 300_000, 600_000], members: 100, normalise: "none", scale: "log",
@@ -40,4 +40,16 @@ test("outlier text says kind, direction and since; coverage gaps are shares of a
   expect(gaps.map((g) => g.x)).toEqual([300, 600]);
   expect(gaps[0].share).toBeCloseTo(0.03);
   expect(gaps[1].share).toBeCloseTo(0.98);
+});
+
+test("a fleet of a bounded metric defaults to its natural bounds, with provenance in the badge (hnt)", async () => {
+  const { badgeText } = await import("./yview");
+  const u: FleetData = { ...d, scale: "linear", band: { ...d.band, lo: [0.0015, 0.002, 0.002], hi: [0.004, 0.003, 0.004] }, outliers: [] };
+  const ctx = { natural_lo: 0, natural_hi: 1, bounds: "[0,1]", bounds_origin: "rule", bounds_basis: "1 − (rate of node_cpu_seconds_total is a fraction of time per series)", bounds_confidence: 0.7, limit: null, profile: null, notes: [] };
+  const r = fleetY(u, ctx);
+  expect(r.range).toEqual([0, 1]);
+  expect(badgeText(r.effective!, r, null, undefined, ctx)).toMatch(/bounds: rule \(confidence 0\.70\)/);
+  expect(fleetY(u, null).range).toBeNull(); // unbounded: unchanged
+  expect(fleetY({ ...u, normalise: "member" }, ctx).range).toBeNull(); // x own median: not in metric units
+  expect(fleetY(u, ctx, { mode: "data", label: "data range" } as never).zoomed).toBe(true);
 });

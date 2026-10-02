@@ -21,6 +21,7 @@
   import SpcPlot from "./components/SpcPlot.svelte";
   import SeasonalPlot from "./components/SeasonalPlot.svelte";
   import FleetPlot from "./components/FleetPlot.svelte";
+  import { fleetStats, fleetY } from "./chart/fleet";
   import { fmtRatio, indexSeries, ratioTicks } from "./chart/indexed";
   import { drawMarginal, marginalHeader } from "./chart/marginal";
   import { overlayChips, overlayDraw } from "./chart/overlays";
@@ -133,12 +134,12 @@
   const yst = $derived(
     data?.kind === "time"
       ? yStats(drawn, { quantile: data.dataset.representation === "quantile", nMin: data.dataset.n_min ?? null })
-      : null,
+      : data?.kind === "fleet" ? fleetStats(data) : null,
   );
   // catalog-derived y inputs (2as.10): natural bounds, physical limit, normal range
   const yctx = $derived(panel.spec.y.context ?? null);
   const yres = $derived(
-    yst ? (ix?.refused ? { ...resolveY(null, yst, yctx), refused: `${chosen?.label}: ${ix.refused}` } : resolveY(chosen, yst, yctx)) : null,
+    data?.kind === "fleet" ? fleetY(data, yctx, chosen) : yst ? (ix?.refused ? { ...resolveY(null, yst, yctx), refused: `${chosen?.label}: ${ix.refused}` } : resolveY(chosen, yst, yctx)) : null,
   );
   // the operating profile is computed on first view: look again a few times until it lands
   $effect(() => {
@@ -610,7 +611,7 @@
       {/each}
     {/if}
     {#if data && data.kind === "fleet"}
-      <FleetPlot data={data} width={fetchWidth} onRendered={(ms, pts, h) => onFacetRendered(0, 1, ms, pts, h ?? 260, true)} />
+      <FleetPlot data={data} width={fetchWidth} range={yres?.range ?? null} onRendered={(ms, pts, h) => onFacetRendered(0, 1, ms, pts, h ?? 260, true)} />
     {/if}
     {#if data && data.kind === "spectrogram"}
       {@const sg = data}
@@ -632,12 +633,12 @@
         />
       {/each}
     {/if}
-    {#if data?.kind === "time" && yres && yres.effective && (yres.zoomed || yres.log || yres.effective.mode === "semantic" || (yres.reference && chosen?.mode === "reference"))}
-      <span class="y-badge" data-y-badge>{badgeText(yres.effective, yres, panel.spec.y.unit, data.index?.label, yctx)}</span>
+    {#if (data?.kind === "time" || data?.kind === "fleet") && yres && yres.effective && (yres.zoomed || yres.log || yres.effective.mode === "semantic" || (yres.reference && chosen?.mode === "reference"))}
+      <span class="y-badge" data-y-badge>{badgeText(yres.effective, yres, panel.spec.y.unit, data.kind === "time" ? data.index?.label : undefined, yctx)}</span>
     {/if}
-    {#if data?.kind === "time" && yres?.zoomed && yres.range && yst?.all}
+    {#if (data?.kind === "time" || data?.kind === "fleet") && yres?.zoomed && yres.range && yst?.all}
       {@const cs = contextStrip(stripExtent(yst.all, yctx), yres.range)}
-      <span class="y-strip" style="bottom:{32 + rugAxisExtra(data.bucket_state?.length ?? 0)}px" title="where this view sits within the full data range"><i style="bottom:{cs.bottomPct}%;height:{cs.heightPct}%"></i></span>
+      <span class="y-strip" style="bottom:{32 + (data.kind === "time" ? rugAxisExtra(data.bucket_state?.length ?? 0) : 0)}px" title="where this view sits within the full data range"><i style="bottom:{cs.bottomPct}%;height:{cs.heightPct}%"></i></span>
     {/if}
     {#if data?.kind === "time" && originOff}<span class="y-origin" data-y-origin>y ≠ 0</span>{/if}
     {#if selection}
@@ -690,10 +691,10 @@
       {/each}
     </div>
   {/if}
-  {#if data?.kind === "time" && yst}
+  {#if (data?.kind === "time" || data?.kind === "fleet") && yst}
     <div class="legend y-views" role="group" aria-label="Y-axis view">
       y:
-      {#each offeredViews(yst, yctx) as o (o.mode + (o.baseline ?? ""))}
+      {#each offeredViews(yst, yctx).filter((o) => data?.kind === "time" || !["indexed", "meaningful"].includes(o.mode)) as o (o.mode + (o.baseline ?? ""))}
         <button
           type="button" disabled={!o.enabled} title={o.title} class:suggest={o.suggest}
           class:on={o.mode === "band" ? bandPick || (chosen?.mode === "band" && !chosen?.id) : (chosen?.mode ?? "auto") === o.mode && !chosen?.id && (o.baseline ?? null) === (chosen?.baseline ?? null)}

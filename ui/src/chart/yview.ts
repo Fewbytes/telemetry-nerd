@@ -7,6 +7,7 @@ import { provenance } from "./overlays";
 export interface Extent { lo: number; hi: number }
 export interface YStats {
   all: Extent | null; meaningful: Extent | null; quantile: boolean; lowN: number; values: number[];
+  points?: number[]; // one value per drawn point (the mean), for counting points
 }
 export interface YResolved {
   range: [number, number] | null; // null = uPlot auto (today's behaviour)
@@ -17,6 +18,7 @@ export interface YResolved {
   refused: string | null; // view cannot apply: drawn as auto, reason shown as a caveat
   effective: YView | null; // the view actually applied (a synthetic one when auto resolved to log/reference)
   reference: boolean; // the range includes the normal range / physical limit
+  outside: number; // drawn points outside the metric's natural bounds (a contradiction, never hidden)
 }
 export interface Offer { mode: YView["mode"]; label: string; enabled: boolean; suggest: boolean; title: string; baseline?: "window" | "previous" | "week" }
 
@@ -25,17 +27,18 @@ const ext = (vs: number[]): Extent | null =>
   vs.length ? { lo: Math.min(...vs), hi: Math.max(...vs) } : null;
 
 export function yStats(series: SeriesData[], o: { quantile: boolean; nMin: number | null }): YStats {
-  const values: number[] = [], good: number[] = [];
+  const values: number[] = [], good: number[] = [], points: number[] = [];
   let lowN = 0;
   for (const s of series)
     s.avg.forEach((v, i) => {
+      if (ok(v)) points.push(v);
       if (o.quantile) {
         if (!ok(v)) return;
         values.push(v);
         if (o.nMin === null || (s.count[i] ?? 0) >= o.nMin) good.push(v); else lowN++;
       } else for (const x of [v, s.min[i], s.max[i]]) if (ok(x)) values.push(x);
     });
-  return { all: ext(values), meaningful: o.quantile ? ext(good) : null, quantile: o.quantile, lowN, values };
+  return { all: ext(values), meaningful: o.quantile ? ext(good) : null, quantile: o.quantile, lowN, values, points };
 }
 
 export const hasReference = (c: YContext | null | undefined): boolean => !!c && (!!c.profile || !!c.limit);
@@ -64,7 +67,7 @@ function pad(e: Extent, c?: YContext | null): [number, number] {
 const decades = (e: Extent | null) => (e && e.lo > 0 ? Math.log10(e.hi / e.lo) : 0);
 const AUTO: YResolved = {
   range: null, log: false, zoomed: false, clipped: { above: 0, below: 0, maxAbove: null }, spanPct: null,
-  refused: null, effective: null, reference: false,
+  refused: null, effective: null, reference: false, outside: 0,
 };
 
 function refusal(v: YView, st: YStats, ctx: YContext | null): string | null {
@@ -82,12 +85,12 @@ export const closedBounds = (c: YContext | null | undefined): boolean =>
   !!c && c.natural_lo !== null && c.natural_hi !== null;
 
 /** What "auto" means: the metric's fixed natural axis when the catalog bounds it on both sides and
- *  the data fits (data outside its bounds is a contradiction to show, not to hide); else log when
+ *  (data outside them stretches the range to show it, and is badged: never autoscaled away); else log when
  *  positive data spans more than two decades; else the reference range when the catalog knows a
  *  normal range or limit; else uPlot's own range. */
 function autoView(st: YStats, ctx: YContext | null): YView | null {
   const a = st.all;
-  if (a && closedBounds(ctx) && a.lo >= ctx!.natural_lo! && a.hi <= ctx!.natural_hi!) {
+  if (a && closedBounds(ctx)) {
     return { mode: "semantic", label: `natural bounds ${ctx!.bounds ?? ""} (auto)`.trim() };
   }
   if (a && a.lo > 0 && decades(a) > 2) return { mode: "log", label: `log (auto: ${decades(a).toFixed(1)} decades)` };
@@ -111,6 +114,10 @@ export function resolveY(chosen: YView | null, st: YStats, ctx: YContext | null 
     case "semantic": {
       const fit = pad(a, ctx);
       range = [ctx!.natural_lo ?? fit[0], ctx!.natural_hi ?? fit[1]];
+      // data beyond a bound is a contradiction: the range reaches it (a hair more, so it is not on the frame)
+      const room = (range[1] - range[0]) * 0.005;
+      if (ctx!.natural_lo !== null && a.lo < ctx!.natural_lo) range[0] = a.lo - room;
+      if (ctx!.natural_hi !== null && a.hi > ctx!.natural_hi) range[1] = a.hi + room;
       break;
     }
     case "meaningful": range = pad(st.meaningful!, ctx); break;
@@ -121,6 +128,9 @@ export function resolveY(chosen: YView | null, st: YStats, ctx: YContext | null 
   }
   const above = st.values.filter((x) => x > range[1]);
   const below = st.values.filter((x) => x < range[0]).length;
+  const outside = v.mode === "semantic"
+    ? (st.points ?? st.values).filter((x) => (ctx!.natural_lo !== null && x < ctx!.natural_lo) || (ctx!.natural_hi !== null && x > ctx!.natural_hi)).length
+    : 0;
   // reference is "zoomed" only when it has nothing beyond the data to show (then it is just a fit)
   const zoomed =
     v.mode === "data" || v.mode === "meaningful" || v.mode === "band" || (v.mode === "reference" && !ref) ||
@@ -129,7 +139,7 @@ export function resolveY(chosen: YView | null, st: YStats, ctx: YContext | null 
   return {
     range, log: v.mode === "log" || v.mode === "indexed", zoomed, refused: null, spanPct: zoomed ? spanPct : null,
     clipped: { above: above.length, below, maxAbove: above.length ? Math.max(...above) : null },
-    effective: v, reference: v.mode === "reference" && ref,
+    effective: v, reference: v.mode === "reference" && ref, outside,
   };
 }
 
@@ -189,6 +199,7 @@ export function badgeText(v: YView, r: YResolved, unit: string | null, indexLabe
     const why = ctx.bounds_basis ? `; ${ctx.bounds_basis}` : "";
     parts.push(`bounds: ${provenance(ctx.bounds_origin, ctx.bounds_confidence)}${why}`);
   }
+  if (r.outside && ctx?.bounds) parts.push(`values outside the physical bounds ${ctx.bounds}: ${r.outside} point${r.outside > 1 ? "s" : ""}`);
   const { above, below, maxAbove } = r.clipped;
   if (above) parts.push(`${above} point${above > 1 ? "s" : ""} above view (max ${fmtValue(maxAbove!, unit)})`);
   if (below) parts.push(`${below} below view`);

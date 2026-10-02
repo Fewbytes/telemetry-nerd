@@ -9,8 +9,8 @@
   import FleetHeat from "./FleetHeat.svelte";
   import FleetSmallMultiples from "./FleetSmallMultiples.svelte";
 
-  let { data, width, height = 260, onRendered }: {
-    data: FleetPanelData; width: number; height?: number;
+  let { data, width, height = 260, range = null, onRendered }: {
+    data: FleetPanelData; width: number; height?: number; range?: [number, number] | null;
     onRendered: (ms: number, points: number, heightPx?: number) => void;
   } = $props();
 
@@ -47,6 +47,7 @@
         bands: m.bands.map((b, i) => ({ ...b, fill: fills[i] })),
         axes: plotAxes(stroke, grid, { label: data.normalise === "member" ? "× own median" : undefined }),
         legend: { show: false },
+        ...(range ? { scales: { y: { range: (): [number, number] => range } } } : {}),
         cursor: { drag: { x: false, y: false } },
         hooks: {
           draw: [
@@ -96,7 +97,7 @@
   {#if view === "heat"}
     <FleetHeat {data} {width} {onRendered} />
   {:else if view === "multiples"}
-    <FleetSmallMultiples {data} {width} {onRendered} />
+    <FleetSmallMultiples {data} {width} {range} {onRendered} />
   {:else}
     <div class="legend">{fleetLegend(data)}</div>
     {#if data.outliers.length}

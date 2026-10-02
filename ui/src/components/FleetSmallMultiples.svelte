@@ -7,8 +7,8 @@
   import { fmtTimeZ } from "../lib/format";
   import { plotColors, theme } from "../lib/theme.svelte";
 
-  let { data, width, k = 6, onRendered }: {
-    data: FleetData; width: number; k?: number;
+  let { data, width, k = 6, range: given = null, onRendered }: {
+    data: FleetData; width: number; k?: number; range?: [number, number] | null;
     onRendered: (ms: number, points: number, heightPx: number) => void;
   } = $props();
 
@@ -25,7 +25,7 @@
     const mode = theme.effective;
     const { stroke, grid } = plotColors(root, mode);
     const fills = bandFills(mode === "dark");
-    const range = sharedRange(data, shown.length); // identical y in every panel
+    const range = given ?? sharedRange(data, shown.length); // identical y in every panel (the bounded range when known)
     const plots: uPlot[] = [];
     let points = 0;
     shown.forEach((o, i) => {

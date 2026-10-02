@@ -163,9 +163,13 @@ describe("auto picks the natural axis for bounded metrics (2as.14)", () => {
   it("a percentage is drawn on [0,100]", () => {
     expect(resolveY(null, stats([10, 20]), ctx({ natural_hi: 100, bounds: "[0,100]" })).range).toEqual([0, 100]);
   });
-  it("data outside the bounds is not hidden: the axis falls back", () => {
+  it("data outside the bounds is not hidden: the range is the union, and the contradiction is badged (I2)", () => {
     const r = resolveY(null, stats([0.5, 1.4]), ctx());
-    expect(r.effective?.mode).not.toBe("semantic");
+    expect(r.effective?.mode).toBe("semantic");
+    expect(r.range![0]).toBe(0);
+    expect(r.range![1]).toBeGreaterThanOrEqual(1.4);
+    expect(r.outside).toBe(1);
+    expect(badgeText(r.effective!, r, null, undefined, ctx())).toMatch(/values outside the physical bounds \[0,1\]: 1 point$/);
   });
   it("beats auto-log for a bounded metric spanning decades", () => {
     expect(resolveY(null, stats([0.0005, 0.9]), ctx()).range).toEqual([0, 1]);
@@ -211,5 +215,23 @@ describe("bounded derived expressions default to their physical bounds (hnt, f2z
     expect(t).toMatch(/fraction of time/);
     const c = bounded({ bounds_origin: "claude", bounds_basis: "asserted by claude", bounds_confidence: null });
     expect(badgeText(resolveY(null, util, c).effective!, resolveY(null, util, c), null, undefined, c)).toMatch(/bounds: claude; asserted by claude/);
+  });
+});
+
+describe("jitter below a physical lower bound (I2)", () => {
+  const c: YContext = { natural_lo: 0, natural_hi: 1, bounds: "[0,1]", bounds_origin: "rule", limit: null, profile: null, notes: [] };
+  const vals = [-0.0002, 0.001, 0.004];
+  const st = yStats([{ id: "c0", labels: {}, ts: [0, 1, 2], avg: vals, min: vals, max: vals, count: [1, 1, 1] }], { quantile: false, nMin: null });
+  it("keeps [~data low, 1] instead of autoscaling to the data", () => {
+    const r = resolveY(null, st, c);
+    expect(r.range![0]).toBeCloseTo(-0.0002, 1);
+    expect(r.range![0]).toBeLessThanOrEqual(-0.0002);
+    expect(r.range![1]).toBe(1);
+    expect(r.outside).toBe(1);
+    expect(r.zoomed).toBe(false);
+    expect(badgeText(r.effective!, r, null, undefined, c)).toMatch(/values outside the physical bounds \[0,1\]: 1 point/);
+  });
+  it("no contradiction when everything is inside", () => {
+    expect(resolveY(null, yStats([q([0.1, 0.2], [1, 1])], { quantile: false, nMin: null }), c).outside).toBe(0);
   });
 });

@@ -1,4 +1,6 @@
 import type uPlot from "uplot";
+import type { YContext, YView } from "../lib/api";
+import { resolveY, yStats, type YResolved } from "./yview";
 
 /** Fleet panel (bead lkn.3): many series of one metric as a group band + outlying members. */
 export interface FleetOutlier {
@@ -65,3 +67,20 @@ export const bandFills = (dark: boolean): string[] =>
   dark
     ? ["rgba(150,150,150,0.14)", "rgba(150,150,150,0.20)", "rgba(150,150,150,0.30)"]
     : ["rgba(110,110,110,0.10)", "rgba(110,110,110,0.16)", "rgba(110,110,110,0.26)"];
+
+/** The fleet's drawn values as y stats: the spread's min-max and every drawn outlier. */
+export function fleetStats(d: FleetData) {
+  const vals = (a: (number | null)[]) => a;
+  const mk = (id: string, avg: (number | null)[]) => ({ id, labels: {}, ts: d.ts, avg, min: avg, max: avg, count: avg.map(() => 1) });
+  const series = [mk("lo", vals(d.band.lo)), mk("hi", vals(d.band.hi)), ...d.outliers.map((o) => mk(o.id, o.values))];
+  return yStats(series, { quantile: false, nMin: null });
+}
+
+/** The y range of a fleet panel: its metric's natural bounds by default, like a time-series panel.
+ *  Natural bounds are in the metric's own units: they do not apply once members are normalised to
+ *  their own median or the axis is log. */
+export function fleetY(d: FleetData, ctx: YContext | null, chosen: YView | null = null): YResolved & { stats: ReturnType<typeof fleetStats> } {
+  const st = fleetStats(d);
+  const usable = d.normalise === "member" || d.scale === "log" ? null : ctx;
+  return { ...resolveY(chosen, st, usable), stats: st };
+}

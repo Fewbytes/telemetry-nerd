@@ -882,7 +882,9 @@ class TelemetryService:
         metric. A source failure degrades to a note: the panel still renders."""
         p = self.workspace.get_panel(panel_id)
         spec = ChartSpec.model_validate(p.spec)
-        if any(layer.mark != "line+envelope" for layer in spec.layers) or spec.signal:
+        marks = {layer.mark for layer in spec.layers}
+        fleet = marks == {"fleet"}
+        if not (fleet or marks == {"line+envelope"}) or spec.signal:
             return None
         meta = self.datasets.meta(p.dataset_ids[0])
         if meta.code_node:
@@ -911,6 +913,15 @@ class TelemetryService:
             ctx.natural_lo, ctx.bounds, ctx.bounds_origin = 0.0, "≥0", "counter rate"
         if ctx.bounds is None and metric is None:
             ctx.notes.append("natural_bounds_unknown: the expression is not a single metric")
+        if fleet:
+            # the spread band shares the members' value axis: bounds apply (unless the fleet is
+            # normalised to each member's median, or log-scaled); limits and profiles are per series
+            cfg = spec.layers[0].fleet or {}
+            if cfg.get("normalise") == "member" and ctx.bounds is not None:
+                ctx = YContext(notes=["natural_bounds_unknown: the fleet is normalised per member"])
+                unit = None
+            self.ws.set_y_context(p.id, ctx, actor, unit=unit)
+            return ctx
         specs = self.ws.catalog_context_specs(meta.source, metric) if metric else []
         level = parts is not None  # a plain selector; otherwise a rate of a counter (or nothing)
         rate_parts = counter_rate_parts(meta.expr)
@@ -1591,6 +1602,21 @@ class TelemetryService:
                     message=(
                         f"{', '.join(counters)} is a counter, so this draws a running total that "
                         "only grows; chart rate(...[$__rate_interval]) to see what happens"
+                    ),
+                )
+            )
+        if spec.y.asserted_bounds is not None and (
+            spec.signal
+            or any(layer.mark not in ("line+envelope", "fleet") for layer in spec.layers)
+        ):
+            spec.y.asserted_bounds = None
+            issues.append(
+                ValidationIssue(
+                    rule="bounds_not_applied",
+                    severity="warning",
+                    message=(
+                        "bounds_lo/bounds_hi were not stored: this panel has no plain value axis "
+                        "(heatmap, histogram, spc, spectrum, filter views)"
                     ),
                 )
             )

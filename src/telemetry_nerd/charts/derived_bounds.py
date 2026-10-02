@@ -25,7 +25,7 @@ FRACTION_OF_TIME = {"node_cpu_seconds_total", "node_disk_io_time_seconds_total"}
 CONF_TIME, CONF_PART, CONF_NAME = 0.7, 0.6, 0.5
 
 _ERRORISH = re.compile(r"(?:^|_)(?:errors?|failures?|failed|fail|timeouts?)(?:_|$)")
-_RATE = re.compile(r"(rate|irate|increase)\(\s*(.+?)\s*\[[^\]]+\]\s*\)", re.DOTALL)
+_RATE = re.compile(r"(rate|irate|increase)\(\s*(.+?)\s*\[([^\]]+)\]\s*\)", re.DOTALL)
 _AGG_HEAD = re.compile(r"(sum|avg|min|max)(?:\s+(?:by|without)\s*\([^()]*\))?\s*\(", re.IGNORECASE)
 _AGG_TAIL = re.compile(r"\)\s*((?:by|without)\s*\([^()]*\))$", re.IGNORECASE)
 _NUMBER = re.compile(r"\d+(?:\.\d+)?")
@@ -122,6 +122,14 @@ def _matchers(m: str) -> frozenset[str]:
     return frozenset(re.sub(r"\s+", "", p) for p in parts if p.strip())
 
 
+def _family(name: str) -> str:
+    """The metric's name without its error token, request token and `_total` suffix."""
+    name = _ERRORISH.sub("_", name)
+    name = re.sub(r"(?:^|_)requests?(?=_|$)", "_", name)
+    name = re.sub(r"_total$", "", name)
+    return re.sub(r"_+", "_", name).strip("_")
+
+
 class _Rules:
     def __init__(self, bounds_of, nonneg, unit_of, bounded_by):
         self.bounds_of, self.nonneg, self.unit_of, self.bounded_by = (
@@ -156,7 +164,7 @@ class _Rules:
         if m := _RATE.fullmatch(e):
             parts = selector_parts(m.group(2))
             if m.group(1) != "increase" and parts and parts[0] in FRACTION_OF_TIME:
-                return f"rate of {parts[0]} is a fraction of time per series", CONF_TIME
+                return f"{m.group(1)} of {parts[0]} is a fraction of time per series", CONF_TIME
             return None
         if (p := selector_parts(e)) and self.bounds_of(p[0]) == "[0,1]":
             return f"{p[0]} is a catalog [0,1] ratio", CONF_PART
@@ -167,7 +175,7 @@ class _Rules:
         head, inner = ((agg[0], agg[1]), agg[2]) if agg else (None, e)
         if m := _RATE.fullmatch(_strip(inner)):
             parts = selector_parts(m.group(2))
-            return (head, m.group(1)), parts
+            return (head, (m.group(1), "".join(m.group(3).split()))), parts
         return (head, None), selector_parts(inner)
 
     def part_of(self, a: str, b: str) -> tuple[str, float] | None:
@@ -178,7 +186,7 @@ class _Rules:
         if not (self.nonneg(ma) and self.nonneg(mb)):
             return None
         ua, ub = self.unit_of(ma), self.unit_of(mb)
-        if ua and ub and ua != ub:
+        if ua != ub:  # different, or only one known: nothing says they measure the same thing
             return None
         if ma == mb:
             sa, sb = _matchers(xa), _matchers(xb)
@@ -187,11 +195,7 @@ class _Rules:
             return None
         if ha[1] is None and self.bounded_by(ma, mb):
             return f"{ma} is bounded by {mb} (catalog bounded_by)", CONF_PART
-        if (
-            _ERRORISH.search(ma)
-            and not _ERRORISH.search(mb)
-            and ma.split("_", 1)[0] == mb.split("_", 1)[0]
-        ):
+        if _ERRORISH.search(ma) and not _ERRORISH.search(mb) and _family(ma) == _family(mb):
             return f"{ma} (errors) is a part of {mb} (same family, by name)", CONF_NAME
         return None
 

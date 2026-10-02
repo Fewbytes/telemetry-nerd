@@ -808,7 +808,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         derived expression the catalog cannot bound (a ratio of your own making, an
         error rate, a utilisation). Like unit, they are recorded as "asserted by claude" and
         shown in the badge, so only assert what physically holds (e.g. 0 and 1 for a fraction
-        of a whole). Closed bounds become the default y axis (zoom stays available, badged).
+        of a whole). They OVERRIDE the catalog's and any derived bounds for this panel. Not
+        stored (a warning says so) on heatmap, histogram, spc, spectrum or filter panels. Closed bounds become the default y axis (zoom stays available, badged).
         Known derivations (1 - rate(idle), errors/total, used/limit, 100 * ratio) are bounded
         automatically; pass these only when no rule applies or the rule is wrong.
         mark: auto (heatmap for distributions, lines otherwise). For distributions also:
@@ -947,7 +948,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         replace: bool = False,
         baseline: str | None = None,
     ) -> str:
-        """Offer the user another y-axis view of a time-series panel; the USER picks.
+        """Offer the user another y-axis view of a time-series or fleet panel; the USER picks.
+        (A fleet panel takes zero, data, reference, natural-bounds, band, log; not indexed or meaningful.)
 
         mode: zero (include 0), data (fit the data), meaningful (percentile panels: range
         only over buckets with n >= n_min, so a faded low-n outlier does not squash the

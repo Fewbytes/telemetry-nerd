@@ -294,3 +294,59 @@ async def test_mcp_fleet_tool_and_refusal(tmp_path):
         assert bad.is_error and "percentile" in text_of(bad)
         shown = await client.call_tool("show", {"dataset": d, "question": "Pods?", "mark": "fleet"})
         assert not shown.is_error
+
+
+def _util_fleet(svc, m=6, **kw):
+    rng = np.random.default_rng(3)
+    y = 0.002 + 0.0015 * rng.random((m, 60))
+    expr = '1 - rate(node_cpu_seconds_total{mode="idle"}[5m])'
+    d = put(svc, y, labels=[{"cpu": str(i), "instance": "n1"} for i in range(m)], expr=expr, **kw)
+    return d
+
+
+async def test_fleet_panel_of_a_bounded_derived_expression_gets_natural_bounds(tmp_path):
+    from telemetry_nerd.charts.spec import ChartSpec
+
+    svc = make_service(tmp_path)
+    shown = svc.show(_util_fleet(svc), "per-core utilisation?", mark="fleet")
+    ctx = await svc.y_context(shown.panel.id)
+    assert (ctx.natural_lo, ctx.natural_hi, ctx.bounds, ctx.bounds_origin) == (
+        0.0,
+        1.0,
+        "[0,1]",
+        "rule",
+    )
+    y = ChartSpec.model_validate(svc.workspace.get_panel(shown.panel.id).spec).y
+    assert y.context == ctx and y.unit == "ratio"
+    assert ctx.lines == [] and ctx.profile is None  # per-series context does not apply
+
+
+async def test_fleet_accepts_y_view_suggestions_and_selection(tmp_path):
+    from telemetry_nerd.charts.yview import YView
+
+    svc = make_service(tmp_path)
+    pid = svc.show(_util_fleet(svc), "per-core utilisation?", mark="fleet").panel.id
+    await svc.y_context(pid)
+    v = YView(mode="data", label="data range", reason="show the spread itself", author="claude")
+    saved, _ = svc.ws.suggest_y_view(pid, v, "claude")
+    assert saved.id == "v1"
+    svc.ws.select_y_view(pid, "user", mode="semantic")
+    with pytest.raises(ValueError, match="fleet"):
+        svc.ws.select_y_view(pid, "user", mode="indexed", baseline="window")
+
+
+async def test_normalised_fleet_has_no_natural_bounds(tmp_path):
+    svc = make_service(tmp_path)
+    d = _util_fleet(svc)
+    svc.fleet(d, normalise="member")
+    pid = svc.show(d, "who is off?", mark="fleet").panel.id
+    ctx = await svc.y_context(pid)
+    assert ctx.natural_lo is None and ctx.bounds is None
+
+
+async def test_asserted_bounds_where_they_cannot_apply_warn_instead_of_storing(tmp_path):
+    svc = make_service(tmp_path)
+    d = _util_fleet(svc, m=1)
+    res = svc.show(d, "spectrum?", mark="spectrum", bounds_lo=0, bounds_hi=1)
+    assert "bounds_not_applied" in [i.rule for i in res.issues]
+    assert res.panel.spec["y"]["asserted_bounds"] is None

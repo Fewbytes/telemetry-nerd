@@ -6,8 +6,19 @@ from telemetry_nerd.charts.derived_bounds import derive_bounds
 
 BOUNDS = {"app_cache_hit_ratio": "[0,1]", "app_odd": None}
 NONNEG = {"node_cpu_seconds_total", "app_errors_total", "app_requests_total", "mem_used_bytes",
-          "mem_limit_bytes", "a_total", "b_seconds"}  # fmt: skip
-UNITS = {"mem_used_bytes": "B", "mem_limit_bytes": "B", "a_total": "count", "b_seconds": "s"}
+          "mem_limit_bytes", "a_total", "b_seconds", "node_disk_read_errors_total",
+          "node_network_receive_bytes_total", "api_errors_total",
+          "api_request_duration_seconds_sum", "foo_errors_total", "foo_total",
+          "foo_requests_total", "foo_bar_total"}  # fmt: skip
+UNITS = {
+    "node_cpu_seconds_total": "s",
+    "node_network_receive_bytes_total": "B",
+    "api_request_duration_seconds_sum": "s",
+    "mem_used_bytes": "B",
+    "mem_limit_bytes": "B",
+    "a_total": "count",
+    "b_seconds": "s",
+}
 BOUNDED_BY = {("mem_used_bytes", "mem_limit_bytes")}
 
 
@@ -91,3 +102,31 @@ def test_one_minus_catalog_ratio():
 )
 def test_everything_else_has_no_bounds(expr):
     assert d(expr) is None
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "rate(node_disk_read_errors_total[5m]) / rate(node_cpu_seconds_total[5m])",
+        "rate(node_disk_read_errors_total[5m]) / rate(node_network_receive_bytes_total[5m])",
+        "rate(api_errors_total[5m]) / rate(api_request_duration_seconds_sum[5m])",
+        "rate(foo_errors_total[5m]) / rate(foo_bar_total[5m])",
+    ],
+)
+def test_error_name_rule_needs_the_same_family_and_unit(expr):
+    assert d(expr) is None
+
+
+def test_error_name_rule_accepts_equal_families():
+    assert d("rate(foo_errors_total[5m]) / rate(foo_total[5m])").bounds == "[0,1]"
+    assert d("rate(foo_errors_total[5m]) / rate(foo_requests_total[5m])").bounds == "[0,1]"
+
+
+def test_part_of_needs_the_same_range_window():
+    assert d('rate(a_total{code="500"}[1m]) / rate(a_total[1h])') is None
+    assert d('rate(a_total{code="500"}[5m]) / rate(a_total[5m])').bounds == "[0,1]"
+    assert d('rate(a_total{code="500"}[5m]) / irate(a_total[5m])') is None
+
+
+def test_irate_basis_says_irate():
+    assert "irate of" in d('1 - irate(node_cpu_seconds_total{mode="idle"}[5m])').basis

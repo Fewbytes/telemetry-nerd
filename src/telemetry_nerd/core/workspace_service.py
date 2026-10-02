@@ -1340,7 +1340,7 @@ class WorkspaceService:
     ) -> Panel:
         """Record the catalog inputs to a time panel's y range (bead 2as.10). `unit` is
         (unit, provenance) implied by a bounds rule; a unit someone stated explicitly stays."""
-        p, spec = self._time_spec(panel_id)
+        p, spec = self._time_spec(panel_id, fleet=True)
         spec.y.context = ctx
         if unit and not (spec.y.unit_provenance or "").startswith("provided by"):
             spec.y.unit, spec.y.unit_provenance = unit
@@ -1420,10 +1420,13 @@ class WorkspaceService:
         return threads
 
     # y-views (spec §6.2, bead 2as.17) ----------------------------------
-    def _time_spec(self, panel_id: str) -> tuple[Panel, ChartSpec]:
+    def _time_spec(self, panel_id: str, fleet: bool = False) -> tuple[Panel, ChartSpec]:
+        """The panel and its spec, for panels whose y axis is a value axis: time-series panels,
+        and fleet panels when `fleet` (a fleet's spread band has one too)."""
         p = self.workspace.get_panel(panel_id)
         spec = ChartSpec.model_validate(p.spec)
-        if any(layer.mark != "line+envelope" for layer in spec.layers):
+        marks = ("line+envelope", "fleet") if fleet else ("line+envelope",)
+        if any(layer.mark not in marks for layer in spec.layers):
             raise ValueError(
                 f"y-views apply to time-series panels; {p.id} is a heatmap/histogram "
                 "with its own value-axis controls"
@@ -1432,6 +1435,8 @@ class WorkspaceService:
 
     def _check(self, p: Panel, view: YView, spec: ChartSpec | None = None) -> list[str]:
         meta, result = self.datasets.get(p.dataset_ids[0])
+        if spec and spec.layers[0].mark == "fleet" and view.mode in ("indexed", "meaningful"):
+            raise ValueError(f"{view.mode} views do not apply to a fleet panel's spread band")
         if view.mode == "indexed":
             assert view.baseline is not None
             ref = (
@@ -1461,7 +1466,7 @@ class WorkspaceService:
         replace: bool = False,
         reference: Reference | None = None,
     ) -> tuple[YView, list[str]]:
-        p, spec = self._time_spec(panel_id)
+        p, spec = self._time_spec(panel_id, fleet=True)
         if reference is not None:
             spec.references[reference.mode] = reference
         warnings = self._check(p, view, spec)
@@ -1495,7 +1500,7 @@ class WorkspaceService:
         baseline: str | None = None,
         reference: Reference | None = None,
     ) -> Panel:
-        p, spec = self._time_spec(panel_id)
+        p, spec = self._time_spec(panel_id, fleet=True)
         if reference is not None:
             spec.references[reference.mode] = reference
         if suggestion is not None:
