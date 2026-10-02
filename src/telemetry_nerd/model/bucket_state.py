@@ -32,6 +32,8 @@ PARTIAL_RATIO = 0.9
 CHANGE_RATIO = 2.0  # a series' sample rate halves or doubles within the window
 CHANGE_MIN_BUCKETS = 3  # non-zero buckets each half needs before it can be judged
 SLOW_MIN_BUCKETS = 3  # non-zero buckets needed to estimate an interval from their spacing
+SLOW_FRACTIONAL_MIN = 8  # non-zero buckets before a spacing between step and 2 steps counts as slow
+SLOW_MARGIN = 1.25  # mean spacing this far above the step: slower than the step, not just holes
 SLOW_MISS_RATIO = 1.5  # a slower-than-step series misses its cadence after this many intervals
 
 STATE_SCHEMA = pa.schema(
@@ -101,7 +103,6 @@ def compute(
             pl.lit(1.0).alias("expected"),
             pl.lit(False).alias("_slow"),
             pl.lit(None, dtype=pl.Float64).alias("_i"),
-            pl.lit(None, dtype=pl.Int64).alias("_last_nz"),
         )
     first = (
         df.filter(pl.col("observed") > 0)
@@ -109,17 +110,18 @@ def compute(
         .agg(pl.col("ts_ms").min().alias("first_seen"))
     )
     df = df.join(first, on="series_id", how="left")
-    # a slower-than-step series is empty only once the time since its last sample exceeds its
-    # cadence; faster series (and any series with no interval estimate) miss with every 0 bucket
-    since = pl.col("ts_ms") - pl.col("_last_nz")
-    df = df.with_columns(
-        (~pl.col("_slow") | (since > SLOW_MISS_RATIO * pl.col("_i").fill_null(0.0))).alias(
-            "_missed"
-        )
-    )
     unknown = pl.lit(source_filled)
     for a, b, _reason in failed:
         unknown = unknown | pl.col("ts_ms").is_between(a, b)
+    # a slower-than-step series is empty only once the time since its last sample exceeds its
+    # cadence; faster series (and any series with no interval estimate) miss with every 0 bucket.
+    # An UNKNOWN bucket resets the cadence reference: what happened inside it is not known.
+    ref = pl.when((pl.col("observed") > 0) | unknown).then(pl.col("ts_ms")).forward_fill()
+    interval = pl.col("_i").fill_null(0.0)
+    miss_after = pl.max_horizontal(SLOW_MISS_RATIO * interval, interval + step_ms)
+    df = df.with_columns(
+        (~pl.col("_slow") | (pl.col("ts_ms") - ref.over("series_id") > miss_after)).alias("_missed")
+    )
     state = (
         pl.when(unknown)
         .then(int(State.UNKNOWN))
@@ -159,24 +161,35 @@ def compute(
 
 
 def _with_expected(df: pl.DataFrame, step_ms: int) -> pl.DataFrame:
-    """Adds `expected` (samples per bucket), `_slow`, `_i` (the series' sample interval in ms, null
-    when unknown) and `_last_nz` (ts of the series' latest non-zero bucket so far). df is sorted.
+    """Adds `expected` (samples per bucket), `_slow` and `_i` (the series' sample interval in ms).
+    df is sorted.
 
     The series' own interval, not the source's configured one (a source may scrape slower than its
     preset says). Normally the typical count of a bucket that has samples: interval = step / that.
     When that count is 1 and the non-zero buckets are spaced wider than the step, the series is
-    scraped slower than the step: interval = the median spacing, expected = step / interval < 1.
+    scraped slower than the step: interval = the trimmed mean spacing (gaps up to twice the median;
+    a median would snap to whole steps), expected = step / interval < 1. The spacing must exceed
+    the step: median gap > step, or (with SLOW_FRACTIONAL_MIN buckets) mean > SLOW_MARGIN x step, so
+    a step-rate series with a few holes is not mistaken for slow.
     `expected` carries the estimate (interval = step / expected): caveats reads it from there."""
-    nz = df.filter(pl.col("observed") > 0)
-    per = nz.group_by("series_id").agg(
-        pl.col("observed").median().alias("_typical"),
-        pl.col("ts_ms").diff().median().alias("_gap"),
-        pl.len().alias("_n"),
+    gaps = pl.col("ts_ms").diff().drop_nulls()
+    per = (
+        df.filter(pl.col("observed") > 0)
+        .group_by("series_id")
+        .agg(
+            pl.col("observed").median().alias("_typical"),
+            gaps.median().alias("_med"),
+            gaps.filter(gaps <= 2 * gaps.median()).mean().alias("_gap"),
+            pl.len().alias("_n"),
+        )
     )
     slow = (
         (pl.col("_typical") <= 1.0)
         & (pl.col("_n") >= SLOW_MIN_BUCKETS)
-        & (pl.col("_gap") > step_ms)
+        & (
+            (pl.col("_med") > step_ms)
+            | ((pl.col("_n") >= SLOW_FRACTIONAL_MIN) & (pl.col("_gap") > SLOW_MARGIN * step_ms))
+        )
     ).fill_null(False)
     per = per.with_columns(
         slow.alias("_slow"),
@@ -188,8 +201,7 @@ def _with_expected(df: pl.DataFrame, step_ms: int) -> pl.DataFrame:
     df = df.join(per, on="series_id", how="left").with_columns(
         pl.col("_slow").fill_null(False), pl.col("_i").fill_null(float(step_ms))
     )
-    last_nz = pl.when(pl.col("observed") > 0).then(pl.col("ts_ms")).forward_fill().over("series_id")
-    return df.with_columns((step_ms / pl.col("_i")).alias("expected"), last_nz.alias("_last_nz"))
+    return df.with_columns((step_ms / pl.col("_i")).alias("expected"))
 
 
 def _interval_change(df: pl.DataFrame) -> tuple[pl.DataFrame, pl.Expr]:
@@ -297,12 +309,15 @@ def coarsen(states: pa.Table, new_step_ms: int) -> pa.Table:
             _ALIVE.any().alias("_alive"),
             (pl.col("state") == int(State.UNKNOWN)).any().alias("_unknown"),
             pl.col("state").is_in([int(State.PARTIAL), int(State.EMPTY)]).any().alias("_gap"),
+            # state-based, not observed == 0: a slower-than-step series' fine buckets are OK with
+            # no samples inside their cadence
+            pl.col("state").is_in([int(State.OK), int(State.PARTIAL)]).any().alias("_seen"),
             pl.col("flags").bitwise_or().alias("flags"),
         )
         .with_columns(
-            _classify(
-                pl.col("_alive"), pl.col("_unknown"), pl.col("observed") == 0, pl.col("_gap")
-            ).alias("state")
+            _classify(pl.col("_alive"), pl.col("_unknown"), ~pl.col("_seen"), pl.col("_gap")).alias(
+                "state"
+            )
         )
         .sort("series_id", "ts_ms")
         .select(STATE_SCHEMA.names)

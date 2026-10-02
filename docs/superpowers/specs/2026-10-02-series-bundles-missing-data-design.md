@@ -152,6 +152,14 @@ a bucket with samples is `ok` (never `partial`), and a bucket without is `empty`
 1.5 × I has passed since the series' last sample (cadence missed; trailing silence likewise), else
 `ok` (within its normal cadence). Buckets before the first sample stay `absent`. `interval_change`
 is not judged for these series. `interval_differs` reports `I`.
+Because bucketed gaps snap to whole steps, `I` is the trimmed mean of the non-zero-bucket gaps (those
+up to 2 × the median gap), which also catches series between 1 and 2 × the step: with at least 8
+non-zero buckets a mean gap above 1.25 × step counts as slower than the step (fewer buckets cannot
+tell such a series from a step-rate one with a hole). The cadence is missed after
+max(1.5 × I, I + step). An `unknown` bucket resets the cadence reference (what happened inside it
+is not known), so no `empty` follows a failed span. Coarsening (§5.3) judges `empty` from states:
+a coarse bucket is `empty` only if none of its sub-buckets is `ok` or `partial`, never from
+observed = 0, so a slower-than-step series' within-cadence buckets stay `ok`.
 
 Dataset level: failed spans with error text (never cached; retried on next read).
 

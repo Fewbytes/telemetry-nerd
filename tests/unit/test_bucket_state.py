@@ -280,3 +280,79 @@ def test_slow_cadence_feeds_summary_coverage_and_claim_share():
 
     out = _slow_run(_cadence(60_000, 60_000, HOUR), end=HOUR)
     assert claim_coverage(out, 10 * 60_000, 50 * 60_000, S15) == []
+
+
+def _scrape_rows(interval_ms, step, end=HOUR, first=None):
+    """Samples every interval_ms, counted into the step grid's buckets (a bucket ends at its ts)."""
+    counts: dict[int, int] = {}
+    t = interval_ms if first is None else first
+    while t <= end:
+        b = -(-t // step) * step
+        counts[b] = counts.get(b, 0) + 1
+        t += interval_ms
+    return [(b, "a", 1.0, c) for b, c in sorted(counts.items())]
+
+
+def _compute_rows(rows, *, step, end=HOUR, failed=(), res=None):
+    return compute(
+        buckets(rows),
+        ("a",),
+        start_ms=step,
+        end_ms=end,
+        step_ms=step,
+        resolution_ms=res or step,
+        mode="samples",
+        failed=failed,
+    )
+
+
+@pytest.mark.parametrize(
+    ("interval", "step"), [(20_000, 15_000), (25_000, 15_000), (40_000, 30_000), (40_000, 15_000)]
+)
+def test_fractionally_slow_series_has_no_empty_and_coverage_near_one(interval, step):
+    from telemetry_nerd.model.caveats import differing_intervals
+
+    out = _compute_rows(_scrape_rows(interval, step), step=step)
+    st = states(out)
+    assert State.EMPTY not in st and State.PARTIAL not in st
+    alive = [
+        (o, e)
+        for o, e, s in zip(out["observed"].to_pylist(), out["expected"].to_pylist(), st)
+        if s != State.ABSENT
+    ]
+    cov = sum(o for o, _ in alive) / sum(e for _, e in alive)
+    assert 0.9 <= cov <= 1.1
+    [secs] = differing_intervals(out, step, step // 4).values()
+    assert abs(secs * 1000 - interval) <= step
+
+
+def test_fractionally_slow_series_with_a_real_hole_is_empty():
+    rows = [r for r in _scrape_rows(20_000, 15_000) if not 1_200_000 < r[0] <= 1_800_000]
+    st = states(_compute_rows(rows, step=15_000))
+    assert st.count(State.EMPTY) > 20
+
+
+def test_coarsen_keeps_a_healthy_slow_series_ok():
+    from telemetry_nerd.model.bucket_state import coarsen
+
+    out = _slow_run(_cadence(60_000, 60_000, HOUR), end=HOUR)
+    for k in (2, 3):
+        assert State.EMPTY not in coarsen(out, k * S15)["state"].to_pylist()
+
+
+def test_coarsen_over_a_real_hole_is_empty_where_fine_buckets_were():
+    from telemetry_nerd.model.bucket_state import coarsen
+
+    ts = _cadence(60_000, 60_000, 20 * 60_000) + _cadence(60_000, 30 * 60_000, HOUR)
+    out = _slow_run(ts, end=HOUR)
+    coarse = coarsen(out, 3 * S15)
+    by_ts = dict(zip(coarse["ts_ms"].to_pylist(), coarse["state"].to_pylist()))
+    assert by_ts[1_485_000] == State.EMPTY and by_ts[585_000] == State.OK
+
+
+def test_slow_series_does_not_go_empty_right_after_an_unknown_span():
+    ts = _cadence(60_000, 60_000, HOUR)
+    rows = [(t, "a", 1.0, 1) for t in ts if not 20 * 60_000 <= t <= 30 * 60_000]
+    out = _compute_rows(rows, step=S15, failed=[(20 * 60_000, 30 * 60_000, "boom")], res=S15)
+    st = states(out)
+    assert State.EMPTY not in st and State.UNKNOWN in st
