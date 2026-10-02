@@ -390,9 +390,6 @@ def _is_str(t: str) -> bool:
     return t in ("string", "large_string", "string_view")
 
 
-TS_VALUE_COLUMNS = ("avg", "min", "max", "count", "lo", "hi")
-
-
 def check_columns(table: str, columns: Mapping[str, str], meta: Mapping) -> None:
     """Column names -> Arrow type strings, against the contract for `table` of an output.
 

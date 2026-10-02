@@ -29,7 +29,7 @@ import pyarrow.compute as pc
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore, Lineage
 from telemetry_nerd.exchange import fmt
 from telemetry_nerd.exchange.fmt import ExchangeError
-from telemetry_nerd.exchange.tables import duplicates, normalize_output, read_ipc, write_ipc
+from telemetry_nerd.exchange.tables import duplicates, normalize_output, read_ipc, write_tables
 from telemetry_nerd.model.distribution import COLUMN_SCHEMA, DIST_SCHEMA, BucketScheme, DistResult
 from telemetry_nerd.model.series import (
     BUCKET_SCHEMA,
@@ -136,7 +136,7 @@ class RunExchange:
             raise
         return run
 
-    def _export(self, dir: Path, handle: str) -> None:
+    def _export(self, inputs_dir: Path, handle: str) -> None:
         meta = self.store.meta(handle)
         rep = meta.representation
         tables: dict[str, pa.Table] = {}
@@ -156,10 +156,7 @@ class RunExchange:
             raise ExchangeError(
                 f"{handle} is a {rep} dataset; tier-2 inputs can be {', '.join(fmt.EXPORTABLE)}"
             )
-        files = {}
-        for t, table in tables.items():
-            files[t] = fmt.table_file(handle, t)
-            write_ipc(dir / files[t], table)
+        files, _ = write_tables(inputs_dir, handle, tables)
         doc = {k: v for k, v in meta.to_dict().items() if k != "id"}
         doc |= {
             "version": fmt.VERSION,
@@ -169,7 +166,7 @@ class RunExchange:
             "tables": files,
             "rows": tables["rows"].num_rows if tables else 0,
         }
-        fmt.write_json_atomic(dir / fmt.meta_file(handle), doc)
+        fmt.write_json_atomic(inputs_dir / fmt.meta_file(handle), doc)
 
     # --- ingest -------------------------------------------------------------------------
 

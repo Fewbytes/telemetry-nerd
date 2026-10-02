@@ -16,6 +16,7 @@ from telemetry_nerd.exchange.fmt import (
     TIME_SERIES,
     ExchangeError,
     check_columns,
+    table_file,
     write_atomic,
 )
 
@@ -29,6 +30,16 @@ def write_ipc(path: Path, table: pa.Table) -> int:
 
     write_atomic(path, _write)
     return path.stat().st_size
+
+
+def write_tables(directory: Path, handle: str, tables: Mapping[str, pa.Table]) -> tuple[dict, int]:
+    """Write each table as `fmt.table_file(handle, table)` in `directory`; returns the
+    {table: file name} map and the total bytes written."""
+    files, size = {}, 0
+    for t, table in tables.items():
+        files[t] = table_file(handle, t)
+        size += write_ipc(directory / files[t], table)
+    return files, size
 
 
 def read_ipc(path: Path) -> pa.Table:

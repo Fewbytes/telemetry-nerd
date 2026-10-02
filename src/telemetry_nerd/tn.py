@@ -31,8 +31,8 @@ class _FileTransport:
 
     def __init__(self, run_dir: Path) -> None:
         self.run_dir = run_dir
-        self.manifest = fmt.read_manifest(run_dir)
-        self.inputs: tuple[str, ...] = tuple(self.manifest.get("inputs") or ())
+        manifest = fmt.read_manifest(run_dir)
+        self.inputs: tuple[str, ...] = tuple(manifest.get("inputs") or ())
 
     def input_meta(self, handle: str) -> dict:
         if handle not in self.inputs:
@@ -56,14 +56,11 @@ class _FileTransport:
         )
 
     def write_output(self, name: str, tables: Mapping[str, Any], meta: dict) -> None:
-        from telemetry_nerd.exchange.tables import write_ipc
+        from telemetry_nerd.exchange.tables import write_tables
 
         out = self.run_dir / fmt.OUTPUTS
         out.mkdir(exist_ok=True)
-        files, size = {}, 0
-        for t, table in tables.items():
-            files[t] = fmt.table_file(name, t)
-            size += write_ipc(out / files[t], table)
+        files, size = write_tables(out, name, tables)
         rows = tables["rows"].num_rows if "rows" in tables else 0
         # the meta file commits the output: written last, atomically
         fmt.write_json_atomic(
