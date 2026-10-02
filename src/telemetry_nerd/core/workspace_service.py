@@ -1335,10 +1335,15 @@ class WorkspaceService:
         return created
 
     @atomic
-    def set_y_context(self, panel_id: str, ctx: YContext, actor: Actor) -> Panel:
-        """Record the catalog inputs to a time panel's y range (bead 2as.10)."""
+    def set_y_context(
+        self, panel_id: str, ctx: YContext, actor: Actor, unit: tuple[str, str] | None = None
+    ) -> Panel:
+        """Record the catalog inputs to a time panel's y range (bead 2as.10). `unit` is
+        (unit, provenance) implied by a bounds rule; a unit someone stated explicitly stays."""
         p, spec = self._time_spec(panel_id)
         spec.y.context = ctx
+        if unit and not (spec.y.unit_provenance or "").startswith("provided by"):
+            spec.y.unit, spec.y.unit_provenance = unit
         spec.y.range_mode = "reference" if ctx.has_reference else "data"
         p = self.workspace.set_spec(p.id, spec.model_dump())
         self.log.append(
@@ -1347,6 +1352,7 @@ class WorkspaceService:
             p.id,
             {
                 "bounds": ctx.bounds,
+                "bounds_origin": ctx.bounds_origin,
                 "limit": ctx.limit.metric if ctx.limit else None,
                 "lines": [f"{ln.kind}:{ln.metric}" for ln in ctx.lines],
                 "reframes": [r.title for r in ctx.reframes],

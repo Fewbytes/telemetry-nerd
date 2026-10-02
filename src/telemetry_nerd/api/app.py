@@ -290,6 +290,12 @@ def create_app(
         unit = body.get("unit")
         if unit is not None and not isinstance(unit, str):
             return _error(400, "unit must be a string", hint='e.g. "s", "B", "req/s"')
+        bounds: dict[str, float] = {}
+        for k in ("bounds_lo", "bounds_hi"):
+            if body.get(k) is not None:
+                if isinstance(body[k], bool) or not isinstance(body[k], int | float):
+                    return _error(400, f"{k} must be a number")
+                bounds[k] = float(body[k])
         mark = body.get("mark", "auto")
         if not isinstance(mark, str):
             return _error(
@@ -303,6 +309,7 @@ def create_app(
                 unit=unit,
                 raw=body.get("raw") is True,
                 mark=mark,
+                **bounds,
             )
         except ChartRejected as e:
             return _error(422, "chart rejected", issues=[i.model_dump() for i in e.issues])

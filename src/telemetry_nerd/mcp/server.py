@@ -792,6 +792,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         segment: str | None = None,
         overlap: float | None = None,
         raw: bool = False,
+        bounds_lo: float | None = None,
+        bounds_hi: float | None = None,
     ) -> str:
         """Draw a dataset as a panel (mean line + min/max envelope) in the shared workspace.
 
@@ -802,6 +804,13 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         the emitting code, or you know the generating tool's conventions. Your unit
         overrides suffix inference and is persisted with provenance ("provided by
         claude"), so only pass a unit you can actually vouch for.
+        bounds_lo / bounds_hi: optional natural bounds of what the expression measures, for a
+        derived expression the catalog cannot bound (a ratio of your own making, an
+        error rate, a utilisation). Like unit, they are recorded as "asserted by claude" and
+        shown in the badge, so only assert what physically holds (e.g. 0 and 1 for a fraction
+        of a whole). Closed bounds become the default y axis (zoom stays available, badged).
+        Known derivations (1 - rate(idle), errors/total, used/limit, 100 * ratio) are bounded
+        automatically; pass these only when no rule applies or the rule is wrong.
         mark: auto (heatmap for distributions, lines otherwise). For distributions also:
         percentiles (per step, the SOURCE bucket holding each of `quantiles`, 1-4 of 0.5, 0.9,
         0.95, 0.99, 0.999, drawn only where n >= 10/(1-q); never interpolated), histogram,
@@ -847,6 +856,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                 view=view,
                 segment=segment,
                 overlap=overlap,
+                bounds_lo=bounds_lo,
+                bounds_hi=bounds_hi,
             )
         except ChartRejected as e:
             raise ToolError(f"chart rejected: {e}") from e

@@ -24,7 +24,7 @@
   import { fmtRatio, indexSeries, ratioTicks } from "./chart/indexed";
   import { drawMarginal, marginalHeader } from "./chart/marginal";
   import { overlayChips, overlayDraw } from "./chart/overlays";
-  import { badgeText, contextStrip, hasReference, nonZeroOrigin, offeredViews, refExtent, resolveY, yStats } from "./chart/yview";
+  import { badgeText, contextStrip, nonZeroOrigin, offeredViews, resolveY, stripExtent, yStats } from "./chart/yview";
   import { measureFirstDraw } from "./chart/measureDraw";
   import { drawAnnotations, drawOps, readAnnotationColors } from "./chart/annotations";
   import { plotColors, theme } from "./lib/theme.svelte";
@@ -632,11 +632,11 @@
         />
       {/each}
     {/if}
-    {#if data?.kind === "time" && yres && yres.effective && (yres.zoomed || yres.log || (yres.reference && chosen?.mode === "reference"))}
+    {#if data?.kind === "time" && yres && yres.effective && (yres.zoomed || yres.log || yres.effective.mode === "semantic" || (yres.reference && chosen?.mode === "reference"))}
       <span class="y-badge" data-y-badge>{badgeText(yres.effective, yres, panel.spec.y.unit, data.index?.label, yctx)}</span>
     {/if}
     {#if data?.kind === "time" && yres?.zoomed && yres.range && yst?.all}
-      {@const cs = contextStrip(hasReference(yctx) ? refExtent(yst.all, yctx) : yst.all, yres.range)}
+      {@const cs = contextStrip(stripExtent(yst.all, yctx), yres.range)}
       <span class="y-strip" style="bottom:{32 + rugAxisExtra(data.bucket_state?.length ?? 0)}px" title="where this view sits within the full data range"><i style="bottom:{cs.bottomPct}%;height:{cs.heightPct}%"></i></span>
     {/if}
     {#if data?.kind === "time" && originOff}<span class="y-origin" data-y-origin>y ≠ 0</span>{/if}

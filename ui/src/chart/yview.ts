@@ -2,6 +2,7 @@
 import type { SeriesData, YContext, YView } from "../lib/api";
 import { fmtValue } from "./axis";
 import { ratioRange } from "./indexed";
+import { provenance } from "./overlays";
 
 export interface Extent { lo: number; hi: number }
 export interface YStats {
@@ -162,6 +163,13 @@ export function offeredViews(st: YStats, ctx: YContext | null = null): Offer[] {
 
 export const nonZeroOrigin = (min: number, max: number, log: boolean): boolean => !log && (min > 0 || max < 0);
 
+/** What the context strip is drawn against: the metric's closed natural bounds (a zoom shows where
+ *  it sits within them), else the reference extent, else the data. */
+export function stripExtent(all: Extent, c: YContext | null | undefined): Extent {
+  const base = hasReference(c) ? refExtent(all, c) : all;
+  return closedBounds(c) ? { lo: Math.min(base.lo, c!.natural_lo!), hi: Math.max(base.hi, c!.natural_hi!) } : base;
+}
+
 export const contextStrip = (all: Extent, r: [number, number]) => {
   const span = all.hi - all.lo || 1, clamp = (x: number) => Math.min(100, Math.max(0, x));
   const b = clamp(((r[0] - all.lo) / span) * 100), t = clamp(((r[1] - all.lo) / span) * 100);
@@ -176,6 +184,10 @@ export function badgeText(v: YView, r: YResolved, unit: string | null, indexLabe
     const limits = (ctx.lines ?? []).filter((l) => (l.kind ?? "limit") === "limit");
     for (const l of limits.length ? limits : ctx.limit ? [ctx.limit] : []) inc.push(`limit ${l.metric} ${fmtValue(l.hi, unit)}`);
     parts.push(`includes ${inc.join(", ")}`);
+  }
+  if (ctx && v.mode === "semantic" && ctx.bounds_origin) {
+    const why = ctx.bounds_basis ? `; ${ctx.bounds_basis}` : "";
+    parts.push(`bounds: ${provenance(ctx.bounds_origin, ctx.bounds_confidence)}${why}`);
   }
   const { above, below, maxAbove } = r.clipped;
   if (above) parts.push(`${above} point${above > 1 ? "s" : ""} above view (max ${fmtValue(maxAbove!, unit)})`);

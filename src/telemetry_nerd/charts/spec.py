@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from telemetry_nerd.catalog.rules import facts_from_name
 from telemetry_nerd.charts.dataview import SignalViews
@@ -104,7 +104,9 @@ class YContext(BaseModel):
     natural_lo: float | None = None
     natural_hi: float | None = None
     bounds: str | None = None  # the catalog claim the natural bounds came from
-    bounds_origin: str | None = None
+    bounds_origin: str | None = None  # catalog origin, "rule" (derived), or "claude" (asserted)
+    bounds_basis: str | None = None  # one line: why the bounds hold (derivation rule, assertion)
+    bounds_confidence: float | None = None  # of a derived bound; None = the catalog's own claim
     lines: list[YLimit] = Field(
         default_factory=list
     )  # every context line: limits, thresholds, references
@@ -133,6 +135,23 @@ class YContext(BaseModel):
         return self.limit is not None or self.profile is not None
 
 
+class AssertedBounds(BaseModel):
+    """Natural bounds Claude vouches for on a derived expression (bead f2z). None = open side."""
+
+    model_config = ConfigDict(extra="forbid")
+    lo: float | None = Field(default=None, allow_inf_nan=False)
+    hi: float | None = Field(default=None, allow_inf_nan=False)
+    by: str = "claude"
+
+    @model_validator(mode="after")
+    def _shape(self) -> AssertedBounds:
+        if self.lo is None and self.hi is None:
+            raise ValueError("bounds need bounds_lo, bounds_hi or both")
+        if self.lo is not None and self.hi is not None and not self.lo < self.hi:
+            raise ValueError("bounds need bounds_lo < bounds_hi")
+        return self
+
+
 class YAxis(BaseModel):
     range_mode: Literal["data", "reference", "semantic"] = "data"
     unit: str | None = None
@@ -145,6 +164,7 @@ class YAxis(BaseModel):
     )  # Claude's suggestions
     selected: YView | None = None  # the user's pick; None = auto
     context: YContext | None = None
+    asserted_bounds: AssertedBounds | None = None  # kept so a refreshed context re-applies it
 
 
 class Reference(BaseModel):

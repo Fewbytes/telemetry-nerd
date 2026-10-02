@@ -68,6 +68,9 @@ NAMES = [
     "app_cache_hit_ratio",
     "app_requests_total",
     "app_odd",
+    "node_cpu_seconds_total",
+    "app_errors_total",
+    "unrelated_widgets",
 ]
 
 
@@ -301,3 +304,77 @@ async def test_reference_and_semantic_views_can_be_selected(svc):
     odd = await panel(svc, "app_odd")
     with pytest.raises(ValueError, match="no natural bounds"):
         svc.ws.select_y_view(odd, "user", mode="semantic")  # app_odd has no bounds claim
+
+
+IDLE = 'rate(node_cpu_seconds_total{mode="idle"}[5m])'
+
+
+async def test_derived_utilisation_carries_bounds_from_a_rule(svc):
+    ctx, y = await ctx_of(svc, f"1 - {IDLE}")
+    assert (ctx.natural_lo, ctx.natural_hi, ctx.bounds, ctx.bounds_origin) == (
+        0.0,
+        1.0,
+        "[0,1]",
+        "rule",
+    )
+    assert ctx.bounds_basis and ctx.bounds_confidence is not None and ctx.bounds_confidence < 0.8
+    assert (y.unit, y.unit_provenance) == ("ratio", f"rule: {ctx.bounds_basis}")
+
+
+async def test_error_ratio_carries_bounds(svc):
+    ctx, _ = await ctx_of(
+        svc, "sum(rate(app_errors_total[5m])) / sum(rate(app_requests_total[5m]))"
+    )
+    assert (ctx.natural_lo, ctx.natural_hi, ctx.bounds_origin) == (0.0, 1.0, "rule")
+
+
+async def test_percent_of_utilisation_is_0_100_in_percent(svc):
+    ctx, y = await ctx_of(svc, f"100 * (1 - {IDLE})")
+    assert (ctx.natural_lo, ctx.natural_hi, y.unit) == (0.0, 100.0, "%")
+
+
+async def test_unrelated_division_gets_no_bounds(svc):
+    ctx, _ = await ctx_of(svc, "app_odd / unrelated_widgets")
+    assert (ctx.natural_lo, ctx.natural_hi, ctx.bounds, ctx.bounds_origin) == (
+        None,
+        None,
+        None,
+        None,
+    )
+
+
+async def test_a_claude_unit_is_not_overridden_by_a_rule(svc):
+    pid = await panel(svc, f"1 - {IDLE}", unit="cores")
+    await svc.y_context(pid)
+    y = ChartSpec.model_validate(svc.workspace.get_panel(pid).spec).y
+    assert y.unit == "cores"
+
+
+async def test_claude_asserted_bounds_are_stored_with_origin_claude(svc):
+    pid = await panel(svc, "app_odd / unrelated_widgets", bounds_lo=0, bounds_hi=1)
+    ctx = await svc.y_context(pid)
+    assert (ctx.natural_lo, ctx.natural_hi, ctx.bounds, ctx.bounds_origin) == (
+        0.0,
+        1.0,
+        "[0,1]",
+        "claude",
+    )
+    assert ctx.bounds_basis == "asserted by claude"
+    y = ChartSpec.model_validate(svc.workspace.get_panel(pid).spec).y
+    assert y.asserted_bounds is not None and y.context == ctx
+
+
+async def test_asserted_bounds_beat_a_rule_and_survive_refresh(svc):
+    pid = await panel(svc, f"1 - {IDLE}", bounds_lo=0, bounds_hi=0.5)
+    for _ in range(2):
+        ctx = await svc.y_context(pid)
+        assert (ctx.natural_hi, ctx.bounds_origin) == (0.5, "claude")
+
+
+async def test_one_sided_assertion_and_validation(svc):
+    pid = await panel(svc, "app_odd", bounds_lo=0)
+    ctx = await svc.y_context(pid)
+    assert (ctx.natural_lo, ctx.natural_hi, ctx.bounds) == (0.0, None, "≥0")
+    ds = (await svc.query("app_odd", start="now-2h", end="now-1h"))["dataset"]
+    with pytest.raises(ValueError, match="bounds"):
+        svc.show(ds, "q?", bounds_lo=1, bounds_hi=0)

@@ -48,9 +48,11 @@ from telemetry_nerd.charts.context_lines import (
     swap_metric,
 )
 from telemetry_nerd.charts.dataview import SignalViews, offered_views
+from telemetry_nerd.charts.derived_bounds import derive_bounds
 from telemetry_nerd.charts.spec import (
     SPECTRAL_MARKS,
     WINDOW_MARKS,
+    AssertedBounds,
     AutoForm,
     ChartSpec,
     Layer,
@@ -67,6 +69,7 @@ from telemetry_nerd.charts.spec import (
 )
 from telemetry_nerd.charts.units import metric_names, nonmergeable_uses, raw_counters
 from telemetry_nerd.charts.ycontext import (
+    NATURAL,
     counter_rate_metric,
     counter_rate_parts,
     natural_range,
@@ -203,6 +206,14 @@ class ChartRejected(Exception):
 class ShowResult:
     panel: Panel
     issues: list[ValidationIssue]
+
+
+def _bounds_text(lo: float | None, hi: float | None) -> str:
+    """The catalog's notation where it has one, else an interval."""
+    for text, rng in NATURAL.items():
+        if rng == (lo, hi) and text != "none":
+            return text
+    return f"[{'-∞' if lo is None else f'{lo:g}'}, {'∞' if hi is None else f'{hi:g}'}]"
 
 
 @dataclass
@@ -879,15 +890,27 @@ class TelemetryService:
         ctx = YContext()
         parts = selector_parts(meta.expr)
         metric = parts[0] if parts else counter_rate_metric(meta.expr)
-        if metric is None:
-            ctx.notes.append("natural_bounds_unknown: the expression is not a single metric")
-        elif parts is not None:
+        unit: tuple[str, str] | None = None  # a unit the bounds rule implies (never over Claude's)
+        derived = None if parts else self._derived_bounds(meta)
+        if spec.y.asserted_bounds is not None:
+            ab = spec.y.asserted_bounds
+            ctx.natural_lo, ctx.natural_hi = ab.lo, ab.hi
+            ctx.bounds = _bounds_text(ab.lo, ab.hi)
+            ctx.bounds_origin, ctx.bounds_basis = ab.by, f"asserted by {ab.by}"
+        elif metric is not None and parts is not None:
             if found := self.ws.catalog_bounds(meta.source, metric):
                 ctx.bounds, ctx.bounds_origin = found
                 ctx.natural_lo, ctx.natural_hi = natural_range(found[0])
-        elif self.ws.catalog_facts(meta.source, metric).type == "counter":
+        elif derived is not None:
+            ctx.natural_lo, ctx.natural_hi, ctx.bounds = derived.lo, derived.hi, derived.bounds
+            ctx.bounds_origin, ctx.bounds_basis = "rule", derived.basis
+            ctx.bounds_confidence = derived.confidence
+            unit = (derived.unit, f"rule: {derived.basis}")
+        elif metric is not None and self.ws.catalog_facts(meta.source, metric).type == "counter":
             # a rate of a counter is never negative, whatever the counter's own bounds say
             ctx.natural_lo, ctx.bounds, ctx.bounds_origin = 0.0, "≥0", "counter rate"
+        if ctx.bounds is None and metric is None:
+            ctx.notes.append("natural_bounds_unknown: the expression is not a single metric")
         specs = self.ws.catalog_context_specs(meta.source, metric) if metric else []
         level = parts is not None  # a plain selector; otherwise a rate of a counter (or nothing)
         rate_parts = counter_rate_parts(meta.expr)
@@ -908,8 +931,26 @@ class TelemetryService:
             self.ws.raise_context_gaps(meta.source, metric, "system")
             ctx.reframes = self._reframes(meta, metric, panel_matchers, specs, ctx.lines)
         ctx.profile = await self._fetch_profile(meta, ctx.notes)
-        self.ws.set_y_context(p.id, ctx, actor)
+        self.ws.set_y_context(p.id, ctx, actor, unit=unit)
         return ctx
+
+    def _derived_bounds(self, meta: DatasetMeta):
+        """Bounds the rule library carries for a derived expression, from catalog facts."""
+        src = meta.source
+
+        def nonneg(m: str) -> bool:
+            if self.ws.catalog_facts(src, m).type == "counter":
+                return True
+            b = self.ws.catalog_bounds(src, m)
+            return b is not None and natural_range(b[0])[0] == 0.0
+
+        return derive_bounds(
+            meta.expr,
+            bounds_of=lambda m: (self.ws.catalog_bounds(src, m) or (None,))[0],
+            nonneg=nonneg,
+            unit_of=lambda m: self.ws.catalog_facts(src, m).unit,
+            bounded_by=lambda a, b: b in self.ws.catalog_bounded_by(src, a),
+        )
 
     async def _fetch_profile(self, meta: DatasetMeta, notes: list[str]) -> YProfile | None:
         """The operating range of what the panel shows, if it is (or soon will be) known.
@@ -1451,6 +1492,8 @@ class TelemetryService:
         overlap: float | None = None,
         auto: AutoForm | None = None,
         raw_ok: bool = False,
+        bounds_lo: float | None = None,
+        bounds_hi: float | None = None,
     ) -> ShowResult:
         meta = self.datasets.meta(dataset_id)
         refuse_estimate(self.datasets, meta)
@@ -1469,6 +1512,9 @@ class TelemetryService:
             lookup=lambda metric: self.ws.catalog_facts(meta.source, metric),
         )
         spec.auto = auto
+        if bounds_lo is not None or bounds_hi is not None:
+            # the caller vouches for natural bounds, like an asserted unit (bead f2z)
+            spec.y.asserted_bounds = AssertedBounds(lo=bounds_lo, hi=bounds_hi, by=actor)
         panel_datasets = [dataset_id]
         if mark in SPECTRAL_MARKS:
             self.signal.check(dataset_id, mark)

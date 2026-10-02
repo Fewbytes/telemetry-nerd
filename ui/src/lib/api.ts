@@ -28,6 +28,7 @@ export interface ContextLine {
 export interface Reframing { title: string; reason: string; basis: string; expr: string; kind: "substitute" | "percent_of_limit"; unit?: string | null }
 export interface YContext {
   natural_lo: number | null; natural_hi: number | null; bounds: string | null; bounds_origin: string | null;
+  bounds_basis?: string | null; bounds_confidence?: number | null; // why a derived/asserted bound holds
   limit: ContextLine | null;
   lines?: ContextLine[];
   reframes?: Reframing[];

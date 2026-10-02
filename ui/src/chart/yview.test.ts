@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SeriesData, YContext, YView } from "../lib/api";
-import { badgeText, contextStrip, nonZeroOrigin, offeredViews, refExtent, resolveY, yStats } from "./yview";
+import { badgeText, contextStrip, stripExtent, nonZeroOrigin, offeredViews, refExtent, resolveY, yStats } from "./yview";
 
 const q = (avg: (number | null)[], count: (number | null)[]): SeriesData => ({
   id: "s", labels: {}, ts: avg.map((_, i) => i * 1000), avg, min: avg, max: avg, count,
@@ -176,5 +176,40 @@ describe("auto picks the natural axis for bounded metrics (2as.14)", () => {
   it("an explicit choice still wins", () => {
     const r = resolveY({ mode: "data", label: "data" } as YView, stats([0.4, 0.5]), ctx());
     expect(r.range![1]).toBeLessThan(1);
+  });
+});
+
+describe("bounded derived expressions default to their physical bounds (hnt, f2z)", () => {
+  const util = yStats([{ id: "c0", labels: {}, ts: [0, 1, 2], avg: [0.0015, 0.003, 0.004], min: [0.0015, 0.003, 0.004], max: [0.0015, 0.003, 0.004], count: [1, 1, 1] }], { quantile: false, nMin: null });
+  const bounded = (o: Partial<YContext> = {}): YContext => ({
+    natural_lo: 0, natural_hi: 1, bounds: "[0,1]", bounds_origin: "rule", bounds_basis: "1 − (rate of node_cpu_seconds_total is a fraction of time per series)",
+    bounds_confidence: 0.7, limit: null, profile: null, notes: [], ...o,
+  });
+  it("near-zero utilisation is drawn against [0,1], not stretched to its own extent", () => {
+    const r = resolveY(null, util, bounded());
+    expect(r.range).toEqual([0, 1]);
+    expect(r.zoomed).toBe(false);
+  });
+  it("without bounds the same data keeps uPlot's range (unbounded unchanged)", () => {
+    expect(resolveY(null, util, null).range).toBeNull();
+  });
+  it("the data zoom stays offered, is badged, and the strip places it within the bounds", () => {
+    expect(offeredViews(util, bounded()).find((o) => o.mode === "data")).toMatchObject({ enabled: true });
+    const chosen = view("data");
+    const r = resolveY(chosen, util, bounded());
+    expect(r.zoomed).toBe(true);
+    expect(badgeText(chosen, r, null, undefined, bounded())).toMatch(/^y zoomed · data/);
+    const base = stripExtent(util.all!, bounded());
+    expect(base).toEqual({ lo: 0, hi: 1 });
+    expect(contextStrip(base, r.range!).heightPct).toBeLessThan(2);
+  });
+  it("the auto badge says where the bounds came from (rule, claude, catalog)", () => {
+    const r = resolveY(null, util, bounded());
+    const t = badgeText(r.effective!, r, null, undefined, bounded());
+    expect(t).toMatch(/natural bounds \[0,1\]/);
+    expect(t).toMatch(/bounds: rule \(confidence 0\.70\)/);
+    expect(t).toMatch(/fraction of time/);
+    const c = bounded({ bounds_origin: "claude", bounds_basis: "asserted by claude", bounds_confidence: null });
+    expect(badgeText(resolveY(null, util, c).effective!, resolveY(null, util, c), null, undefined, c)).toMatch(/bounds: claude; asserted by claude/);
   });
 });
