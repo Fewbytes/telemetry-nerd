@@ -29,14 +29,13 @@ from telemetry_nerd.analysis.verdicts import (
     judge_roles,
     share_threshold,
 )
-from telemetry_nerd.core.binding_ops import BindingViews
-from telemetry_nerd.core.binding_view import RolePlan, sel
+from telemetry_nerd.catalog.relations import BINDING_ROLES
+from telemetry_nerd.core.binding_ops import ROLE_FAILURES, BindingViews, parse_range
+from telemetry_nerd.core.binding_view import RolePlan, littles_selectors, natural_bound
 from telemetry_nerd.core.events import Actor
 from telemetry_nerd.core.uncertainty import mark_statistics
 from telemetry_nerd.core.wire import add_caveats, sig, sig_pair, statistic
-from telemetry_nerd.model.errors import NotFound
-from telemetry_nerd.model.time import TimeRange, format_duration, iso, parse_time
-from telemetry_nerd.sources.base import SourceError
+from telemetry_nerd.model.time import TimeRange, format_duration, iso
 from telemetry_nerd.workspace.models import PanelGroup
 
 if TYPE_CHECKING:
@@ -49,7 +48,6 @@ SCHEME_LABEL = {"previous": "previous windows", "1d": "same window, previous day
 #: forms judged per member (not additive across members); the rest on the total
 PER_MEMBER = ("utilization", "saturation", "mean", "value")
 MEMBERS_MAX = 20
-_FAILS = (SourceError, ValueError, NotFound, LookupError)
 
 METHOD = {
     "share": (
@@ -221,11 +219,8 @@ class VerdictOps:
         if g is not None:
             rng, step_ms = TimeRange(g.start_ms, g.end_ms), g.step_ms
         else:
-            now_ms = svc.clock()
-            rng = TimeRange(parse_time(start, now_ms), parse_time(end, now_ms))
-            if rng.end_ms <= rng.start_ms:
-                raise ValueError("the range must end after it starts")
-            step_ms = BindingViews._step(rng, step, res_ms, plans.values())
+            rng = parse_range(start, end, svc.clock())
+            step_ms = BindingViews.grid_step(rng, step, res_ms, plans.values())
         scheme, basis = self._scheme(reference, source, plans)
         k = DEFAULT_K[scheme]
         when = {
@@ -239,14 +234,14 @@ class VerdictOps:
         async def now_ds(role: str, p: RolePlan) -> str:
             if pid := panels.get(role):
                 return svc.workspace.get_panel(pid).dataset_ids[0]
-            return (await svc.bindings._fetch(source, p, when, actor))["dataset"]
+            return (await svc.bindings.fetch(source, p, when, actor))["dataset"]
 
         got = await asyncio.gather(
             *(now_ds(r, p) for r, p in plans.items()), return_exceptions=True
         )
         for (r, st), x in zip(roles.items(), got, strict=True):
             if isinstance(x, BaseException):
-                if not isinstance(x, _FAILS):
+                if not isinstance(x, ROLE_FAILURES):
                     raise x
                 st.error = str(x)
             else:
@@ -270,8 +265,8 @@ class VerdictOps:
                 "step": format_duration(m0.step_ms),
             }
             try:
-                return (await svc.bindings._fetch(source, p, w, actor))["dataset"]
-            except _FAILS:
+                return (await svc.bindings.fetch(source, p, w, actor))["dataset"]
+            except ROLE_FAILURES:
                 return None
 
         live = [r for r, st in roles.items() if st.now]
@@ -287,12 +282,12 @@ class VerdictOps:
             st = roles[r]
             try:
                 inputs[r] = self._input(st, grid, shifts, step_s, m0.step_ms, res_ms, scheme)
-            except _FAILS as e:
+            except ROLE_FAILURES as e:
                 st.error = str(e)
         results, fam, order = judge_roles(inputs, grid, m0.step_ms, alpha)
 
         model = None
-        if b.kind == "littles_law" and {"arrival_rate", "latency", "concurrency"} <= infos.keys():
+        if b.kind == "littles_law" and set(BINDING_ROLES["littles_law"]) <= infos.keys():
             model = await self._littles(source, b, infos, mt, rng, actor)
 
         out_roles: dict[str, dict] = {}
@@ -416,7 +411,7 @@ class VerdictOps:
                 m: (self._arr(mem_now[m], grid), [self._arr(mr.get(m, {}), grid) for mr in mem_refs])
                 for m in keys
             }  # fmt: skip
-            bound = self._bound(p, members) if p.form == "utilization" else None
+            bound = _utilization_bound(p, members) if p.form == "utilization" else None
             if "throttl" in p.metric:
                 st.notes.append("saturation as throttling: time or periods throttled")
             if len(members) == 1:
@@ -432,26 +427,13 @@ class VerdictOps:
             lookback_ms=look, phase_aligned=phase,
         )  # fmt: skip
 
-    @staticmethod
-    def _bound(p: RolePlan, members: dict) -> float | None:
-        vals = np.concatenate([np.r_[now, *refs] for now, refs in members.values()])
-        vals = vals[~np.isnan(vals)]
-        if vals.size == 0 or vals.min() < -0.01:
-            return None
-        if vals.max() <= 1.05:
-            return 1.0
-        if vals.max() <= 105 and ("percent" in (p.expr or "") or "100" in (p.expr or "")):
-            return 100.0
-        return None
-
     async def _littles(self, source, b, infos, mt, rng: TimeRange, actor: Actor) -> dict:
-        roles = {r: sel(infos[r].name, mt) for r in ("arrival_rate", "latency", "concurrency")}
         try:
             out = await self.svc.check_littles_law(
                 actor=actor, source=source, by=list(b.join_on),
-                start=str(rng.start_ms), end=str(rng.end_ms), **roles,
+                start=str(rng.start_ms), end=str(rng.end_ms), **littles_selectors(infos, mt),
             )  # fmt: skip
-        except _FAILS as e:
+        except ROLE_FAILURES as e:
             return {"error": str(e)}
         t = out["total"]
         return {
@@ -645,6 +627,14 @@ class VerdictOps:
 
 
 # helpers ---------------------------------------------------------------------------------------
+def _utilization_bound(p: RolePlan, members: dict) -> float | None:
+    vals = np.concatenate([np.r_[now, *refs] for now, refs in members.values()])
+    vals = vals[~np.isnan(vals)]
+    if vals.size == 0:
+        return None
+    return natural_bound(vals.min(), vals.max(), p.expr or "")
+
+
 def _expit(v: float) -> float:
     return 1 / (1 + math.exp(-v))
 

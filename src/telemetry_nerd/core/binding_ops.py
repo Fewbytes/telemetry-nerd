@@ -9,7 +9,7 @@ instrumentation that would fill it. The group is a workspace object; its panels 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +25,8 @@ from telemetry_nerd.core.binding_view import (
     MetricInfo,
     RolePlan,
     error_ratio,
+    littles_selectors,
+    natural_bound,
     plan_role,
 )
 from telemetry_nerd.core.events import Actor
@@ -49,6 +51,17 @@ FORM_LABELS = {
     "saturation": "work waiting",
     "concurrency": "requests in flight",
 }
+
+
+#: what fetching or drawing one role may fail with: the role shows the error, the rest still draw
+ROLE_FAILURES = (SourceError, ValueError, NotFound, LookupError)
+
+
+def parse_range(start: str, end: str, now_ms: int) -> TimeRange:
+    rng = TimeRange(parse_time(start, now_ms), parse_time(end, now_ms))
+    if rng.end_ms <= rng.start_ms:
+        raise ValueError("the range must end after it starts")
+    return rng
 
 
 @dataclass(frozen=True)
@@ -202,13 +215,10 @@ class BindingViews:
         svc = self.svc
         b = self.resolve(source, kind, key, suggestion)
         src = svc._source(source)
-        now = svc.clock()
-        rng = TimeRange(parse_time(start, now), parse_time(end, now))
-        if rng.end_ms <= rng.start_ms:
-            raise ValueError("the range must end after it starts")
+        rng = parse_range(start, end, svc.clock())
         mt = dict(matchers or {})
         infos, plans = self.plans(source, b, mt, error_matcher)
-        step_ms = self._step(rng, step, src.resolution_ms, plans.values())
+        step_ms = self.grid_step(rng, step, src.resolution_ms, plans.values())
         group = svc.ws.group_create(
             actor, kind=b.kind, key=b.key, source=source, start_ms=rng.start_ms,
             end_ms=rng.end_ms, step_ms=step_ms, basis=b.basis, binding_origin=b.origin,
@@ -221,7 +231,7 @@ class BindingViews:
             "step": format_duration(step_ms),
         }
         fetched = await asyncio.gather(
-            *(self._fetch(source, p, when, actor) for p in plans.values()), return_exceptions=True
+            *(self.fetch(source, p, when, actor) for p in plans.values()), return_exceptions=True
         )
         by_role = dict(zip(plans, fetched, strict=True))
         roles: list[GroupRole] = []
@@ -269,27 +279,25 @@ class BindingViews:
     ) -> GroupRole:
         """The model panel of a Little's law group: check_littles_law's L vs λ·W (czt.2) over
         the group's window, drawn with its own mark. The check is czt.2's; this only shows it."""
-        from telemetry_nerd.core.binding_view import sel
-
         svc = self.svc
-        roles = {r: sel(infos[r].name, mt) for r in BINDING_ROLES["littles_law"]}
         base: dict[str, Any] = {"role": "check", "form": "littles"}
         try:
             out = await svc.check_littles_law(
                 actor=actor, source=group.source, by=list(b.join_on),
-                start=str(rng.start_ms), end=str(rng.end_ms), **roles,
+                start=str(rng.start_ms), end=str(rng.end_ms), **littles_selectors(infos, mt),
             )  # fmt: skip
             res = svc.show(
                 out["datasets"]["concurrency"], f"Is {b.key}'s L consistent with λ·W?", actor,
                 mark="littles", group=GroupRef(id=group.id, role="check"),
             )  # fmt: skip
-        except (SourceError, ValueError, NotFound, LookupError) as e:
+        except ROLE_FAILURES as e:
             return GroupRole(**base, view="error", error=str(e))
         notes = [f"verdict: {out['verdict']} (check_littles_law, window {out['window']})"]
         return GroupRole(**base, panel=res.panel.id, view="model", notes=notes)
 
     @staticmethod
-    def _step(rng: TimeRange, step: str, res_ms: int, plans) -> int:
+    def grid_step(rng: TimeRange, step: str, res_ms: int, plans: Iterable[RolePlan]) -> int:
+        """One step for every role of a group (show_binding and binding_verdict)."""
         from telemetry_nerd.core.service import DIST_TARGET_COLUMNS, auto_step
 
         dist = any(p.form == "distribution" for p in plans)
@@ -303,7 +311,8 @@ class BindingViews:
         # is one, since increase() per column needs two scrapes
         return max(line, auto_step(rng, 2 * res_ms, DIST_TARGET_COLUMNS)) if dist else line
 
-    async def _fetch(self, source: str, p: RolePlan, when: dict, actor: Actor) -> dict:
+    async def fetch(self, source: str, p: RolePlan, when: dict, actor: Actor) -> dict:
+        """One role's dataset, as planned, over `when` (start, end, step)."""
         svc = self.svc
         if p.unresolved:
             raise ValueError(p.unresolved)
@@ -358,7 +367,7 @@ class BindingViews:
         svc = self.svc
         base: dict[str, Any] = {"role": p.role, "metric": p.metric, "form": p.form}
         if isinstance(got, BaseException):
-            if not isinstance(got, SourceError | ValueError | NotFound | LookupError):
+            if not isinstance(got, ROLE_FAILURES):
                 raise got
             return GroupRole(**base, view="error", error=str(got), notes=list(p.notes))
         ds = got["dataset"]
@@ -408,15 +417,10 @@ class BindingViews:
         if svc._derived_bounds(meta) is not None:
             return {}
         st = value_stats(result.buckets, meta.representation, meta.n_min)
-        if st.lo is None or st.hi is None or st.lo < -0.01:
+        if st.lo is None or st.hi is None:
+            return {}
+        bound = natural_bound(st.lo, st.hi, meta.expr)
+        if bound is None:
             return {}
         by = "the USE utilization role (a share of capacity)"
-        if st.hi <= 1.05:
-            return {"bounds_lo": 0.0, "bounds_hi": 1.0, "bounds_by": by}
-        if st.hi <= 105 and _percentish(meta.expr):
-            return {"bounds_lo": 0.0, "bounds_hi": 100.0, "bounds_by": by}
-        return {}
-
-
-def _percentish(expr: str) -> bool:
-    return "percent" in expr or "100" in expr
+        return {"bounds_lo": 0.0, "bounds_hi": bound, "bounds_by": by}

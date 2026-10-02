@@ -29,6 +29,7 @@ from dataclasses import dataclass
 import pyarrow as pa
 
 from telemetry_nerd.analysis.fraction import wilson
+from telemetry_nerd.catalog.relations import BINDING_ROLES
 from telemetry_nerd.model.series import BUCKET_SCHEMA, FetchResult
 
 RI = "$__rate_interval"
@@ -276,6 +277,25 @@ def plan_role(
         inner = f"rate({sel(m.name, mt)}[{RI}])" if m.type != "gauge" else sel(m.name, mt)
         hexpr = summed(inner, J) if J else inner
     return RolePlan(role, m.name, "errors", q, expr=hexpr, notes=tuple(notes))
+
+
+def natural_bound(lo: float, hi: float, expr: str) -> float | None:
+    """The natural upper bound of a utilization whose values span [lo, hi]: 1 for a share, 100
+    for a percentage (by its expression), None when the data do not agree with either."""
+    if lo < -0.01:
+        return None
+    if hi <= 1.05:
+        return 1.0
+    if hi <= 105 and ("percent" in expr or "100" in expr):
+        return 100.0
+    return None
+
+
+def littles_selectors(
+    infos: Mapping[str, MetricInfo], matchers: Mapping[str, str]
+) -> dict[str, str]:
+    """check_littles_law's role arguments for a Little's law binding's metrics."""
+    return {r: sel(infos[r].name, matchers) for r in BINDING_ROLES["littles_law"]}
 
 
 def _assumed(role: str) -> str:
