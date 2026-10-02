@@ -17,6 +17,7 @@ import polars as pl
 
 from telemetry_nerd.analysis.exprkind import rate_interval_ms
 from telemetry_nerd.analysis.littles import Block, GroupResult, Substeps, check, combine
+from telemetry_nerd.catalog.models import native_family
 from telemetry_nerd.catalog.relations import SUGGESTIONS, metric_slug
 from telemetry_nerd.core.uncertainty import mark_statistics
 from telemetry_nerd.core.wire import Memo, sig, sig_pair, statistic
@@ -165,14 +166,18 @@ class LittlesOps:
         facts = self._facts(source, name)
         if getattr(facts, "statistic", None) == "quantile":
             raise ValueError(refusal)
-        return {"base": base, "selector": sel, "native": self._native(source, base, refusal)}
+        return {
+            "base": base,
+            "selector": sel,
+            "native": self.native_histogram(source, base, refusal),
+        }
 
-    def _native(self, source: str, base: str, refusal: str | None = None) -> bool:
+    def native_histogram(self, source: str, base: str, refusal: str | None = None) -> bool:
         """True for a native histogram (no _bucket/_sum/_count series). With a catalog, a base
         name without _sum/_count there is refused when `refusal` is given (percentile-only)."""
         members = self._family(source, base)
         if members:
-            return not any(m.endswith("_bucket") for m in members)
+            return native_family(members)
         if not self._catalog_any(source):
             return False  # nothing known: classic; the queries come back empty if wrong
         if self._has(source, f"{base}_sum") and self._has(source, f"{base}_count"):
@@ -287,7 +292,7 @@ class LittlesOps:
         # a histogram named as the arrival signal: its count (classic _count, native
         # histogram_count) counts completions
         arr_hist = arr_type == "histogram" or arr_name == lat["base"]
-        arr_native = arr_hist and self._native(source, arr_name)
+        arr_native = arr_hist and self.native_histogram(source, arr_name)
         if arr_is_rate:
             arr_q = f"{agg} ({arr_name}{arr_sel})"
         elif arr_native:

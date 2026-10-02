@@ -21,7 +21,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from telemetry_nerd.catalog.models import CatalogEntry
+from telemetry_nerd.catalog.models import CatalogEntry, native_family
 from telemetry_nerd.catalog.relations import (
     BINDING_ROLES,
     SUGGESTIONS,
@@ -802,12 +802,11 @@ def _metas(entries: Iterable[CatalogEntry]) -> dict[str, _Meta]:
         if e.is_family:
             continue
         t, r, h = e.fields.get("type"), e.fields.get("role"), e.fields.get("histogram_family")
-        members = h.value if h is not None else []
         out[e.metric] = _Meta(
             e.metric,
             t.value if t else None,
             r.value if r else None,
-            bool(h) and not any(m.endswith("_bucket") for m in members),
+            h is not None and native_family(h.value),
         )
     return out
 

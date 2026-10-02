@@ -176,9 +176,10 @@ class BindingViews:
             ):  # fmt: skip
                 return MetricInfo(base, "histogram", False, bounded)
         mtype = ws.catalog_facts(source, metric).type
-        is_native = metric in native
-        if mtype == "histogram" and not is_native:
-            is_native = self.svc.littles._native(source, metric)  # czt.2: family, then _sum/_count
+        # the suggestion's word, else czt.2's: the catalog family, then _sum/_count
+        is_native = metric in native or (
+            mtype == "histogram" and self.svc.littles.native_histogram(source, metric)
+        )
         return MetricInfo(metric, mtype, is_native, bounded)
 
     def plans(

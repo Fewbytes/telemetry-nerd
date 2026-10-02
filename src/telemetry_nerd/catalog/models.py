@@ -145,6 +145,11 @@ def validate_value(field: str, value: Any) -> Any:
     return value
 
 
+def native_family(members: Iterable[str]) -> bool:
+    """A `histogram_family` claim's members describe a native histogram: no `_bucket` series."""
+    return not any(m.endswith("_bucket") for m in members)
+
+
 class Claim(BaseModel):
     field: FieldName
     value: Any
