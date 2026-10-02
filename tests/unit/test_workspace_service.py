@@ -203,6 +203,7 @@ def test_snapshot_keys_and_exclusions(svc, panel):
         "hypotheses",
         "findings",
         "gaps",
+        "code",
         "threads",
         "last_seq",
     }

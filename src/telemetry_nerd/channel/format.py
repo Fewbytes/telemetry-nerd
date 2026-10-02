@@ -75,6 +75,15 @@ def describe_event(e: Event) -> str:
         case "object.highlighted":
             note = p.get("note")
             return f"{who} highlighted {e.object_id}" + (f': "{note}"' if note else "")
+        case "code.started":
+            inputs = ", ".join(p.get("inputs") or []) or "no inputs"
+            again = f" (re-run of {p['rerun_of']})" if p.get("rerun_of") else ""
+            return f"{who} ran code {e.object_id} on {inputs}{again}"
+        case "code.finished":
+            outs = ", ".join(p.get("outputs") or [])
+            tail = f" → {outs}" if outs else ""
+            err = f": {p['error']}" if p.get("error") else ""
+            return f"code {e.object_id} {p.get('status')} in {p.get('duration_s')} s{tail}{err}"
         case "focus.changed":
             return f"{who} focused {_selection(p).strip()}"
         case _:

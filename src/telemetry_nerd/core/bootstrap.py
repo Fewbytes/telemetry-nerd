@@ -10,6 +10,7 @@ from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.db import open_duckdb
 from telemetry_nerd.datasets.store import DatasetStore
+from telemetry_nerd.exchange.run import runs_root
 from telemetry_nerd.kernels.manager import KernelConfig, KernelManager
 from telemetry_nerd.sources.promql import PromQLSource
 from telemetry_nerd.sources.registry import SourceRegistry
@@ -55,4 +56,5 @@ def build_service(settings: Settings) -> TelemetryService:
         ),
         auto_profile=True,
         kernels=KernelManager(KernelConfig.from_settings(settings)),
+        runs_root=runs_root(settings.data_dir),
     )

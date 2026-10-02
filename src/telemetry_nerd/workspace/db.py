@@ -5,6 +5,16 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+_EVENTS_DDL = """CREATE TABLE IF NOT EXISTS events (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts_ms INTEGER NOT NULL,
+    actor TEXT NOT NULL CHECK (actor IN ('claude', 'user', 'system', 'code')),
+    type TEXT NOT NULL,
+    object_id TEXT,
+    klass TEXT NOT NULL CHECK (klass IN ('intentional', 'ambient', 'internal')),
+    payload TEXT NOT NULL
+)"""
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS counters (prefix TEXT PRIMARY KEY, n INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS panels (
@@ -14,15 +24,6 @@ CREATE TABLE IF NOT EXISTS panels (
     spec TEXT NOT NULL,
     dataset_ids TEXT NOT NULL,
     created_at_ms INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS events (
-    seq INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts_ms INTEGER NOT NULL,
-    actor TEXT NOT NULL CHECK (actor IN ('claude', 'user', 'system')),
-    type TEXT NOT NULL,
-    object_id TEXT,
-    klass TEXT NOT NULL CHECK (klass IN ('intentional', 'ambient', 'internal')),
-    payload TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS consumers (
     name TEXT PRIMARY KEY,
@@ -177,10 +178,32 @@ _METRIC_COLUMNS = {
 }
 
 
+def _migrate_event_actors(con: sqlite3.Connection) -> None:
+    """Databases created before tier-2 runs reject actor 'code' (spec §2.3): SQLite cannot
+    alter a CHECK, so rebuild the table, keeping every row and its seq."""
+    (sql,) = con.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'events'"
+    ).fetchone()
+    if "'code'" in sql:
+        return
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        con.execute("ALTER TABLE events RENAME TO events_old")
+        con.execute(_EVENTS_DDL)
+        con.execute("INSERT INTO events SELECT * FROM events_old")
+        con.execute("DROP TABLE events_old")
+        con.execute("COMMIT")
+    except BaseException:
+        con.execute("ROLLBACK")
+        raise
+
+
 def open_workspace_db(path: str | Path) -> sqlite3.Connection:
     con = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
     con.execute("PRAGMA journal_mode=WAL")
     con.executescript(_SCHEMA)
+    con.execute(_EVENTS_DDL)
+    _migrate_event_actors(con)
     existing = {row[1] for row in con.execute("PRAGMA table_info(panels)")}
     for column, ddl in _PANEL_COLUMNS.items():
         if column not in existing:

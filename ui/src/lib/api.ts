@@ -145,7 +145,7 @@ export interface HistogramPanelData extends PanelDataBase {
 }
 export type PanelData = TimePanelData | HeatmapPanelData | HistogramPanelData | SpectrumPanelData | SpectrogramPanelData | SpcPanelData | SeasonalPanelData | FleetPanelData;
 export interface WorkspaceEvent {
-  seq: number; ts_ms: number; actor: "claude" | "user" | "system"; type: string;
+  seq: number; ts_ms: number; actor: "claude" | "user" | "system" | "code"; type: string;
   object_id: string | null; klass: "intentional" | "ambient" | "internal";
   payload: Record<string, unknown>;
 }

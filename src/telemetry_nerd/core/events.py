@@ -16,7 +16,7 @@ from telemetry_nerd.model.time import now_ms
 
 log = logging.getLogger(__name__)
 
-Actor = Literal["claude", "user", "system"]
+Actor = Literal["claude", "user", "system", "code"]  # code: a tier-2 run (spec §2.3)
 Klass = Literal["intentional", "ambient", "internal"]
 _ACTORS = frozenset(get_args(Actor))
 

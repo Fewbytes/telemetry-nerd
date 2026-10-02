@@ -8,6 +8,7 @@ import math
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import polars as pl
@@ -78,6 +79,7 @@ from telemetry_nerd.core.card_payload import (
     gap_pct,
     profile_card,
 )
+from telemetry_nerd.core.code_ops import CodeOps, build_runs
 from telemetry_nerd.core.code_outputs import (
     code_caveat,
     refuse_estimate,
@@ -223,6 +225,9 @@ class TelemetryService:
     auto_profile: bool = False
     #: tier-2 kernels (spec §5.2); None when tier-2 is not wired (tests, tools)
     kernels: KernelManager | None = None
+    #: tier-2 run directories (<data_dir>/runs); None when tier-2 is not wired
+    runs_root: Path | None = None
+    code: CodeOps = field(init=False)
 
     def __post_init__(self) -> None:
         self.signal = SignalOps(self.datasets, self.ws.catalog_facts)
@@ -235,6 +240,10 @@ class TelemetryService:
         self.seasonal = SeasonalOps(self.datasets, self.signal, self.query, self._profile_periods)
         self.seasonal_dist = SeasonalDistOps(self.datasets, self.query_distribution)
         self.fleets = FleetOps(self.datasets, self.signal, self.ws.catalog_facts)
+        self.code = CodeOps(
+            self.datasets, self.ws, self.log, self.kernels,
+            build_runs(self.datasets, self.ws, self.runs_root), self.clock,
+        )  # fmt: skip
 
     def _profile_periods(self, source: str, expr: str) -> list[str]:
         p = self.profiles.cached(source, expr)

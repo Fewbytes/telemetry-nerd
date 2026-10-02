@@ -147,7 +147,7 @@ def fake_factory(spec: SourceSpec) -> FakeSource:
 
 
 def make_service(
-    tmp_path, source=None, clock=lambda: NOW, factory=fake_factory
+    tmp_path, source=None, clock=lambda: NOW, factory=fake_factory, kernels=None, runs_root=None
 ) -> TelemetryService:
     source = source or FakeSource()
     con = open_duckdb(tmp_path / "series.duckdb")
@@ -178,4 +178,6 @@ def make_service(
             clock,
         ),
         clock=clock,
+        kernels=kernels,
+        runs_root=runs_root,
     )

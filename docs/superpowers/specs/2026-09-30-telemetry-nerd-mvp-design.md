@@ -384,6 +384,20 @@ thread cannot be reliably timed out.
   `show`.
 - **Code nodes:** each run becomes a `code` node with the stored code, its input and output
   dataset handles (lineage), duration and outcome; re-runnable.
+  **Settled 2026-10-02 (b98.4, `core/code_ops.py`):** ids `c1, c2, …` (object kind `code`);
+  fields: code, inputs, status `running → ok | failed`, exec_status (`ok|error|timeout|crashed`,
+  `interrupted` for runs a stopped daemon left running, `not_run` when export failed), duration,
+  bounded stdout/stderr, result, error + traceback, restarted, outputs (dataset, name,
+  representation, rows, caveats, evidence_ok) and ingest issues. Inputs are validated before a
+  node exists; after that every outcome is a finished node, never an exception. A finished
+  node is never changed: `rerun_code(code_node)` makes a new node with `rerun_of`. Events:
+  `code.started` (the caller's actor), then actor `code` for `dataset.created` per output and
+  `code.finished`. Run dirs are GC'd at daemon start and after each run, keeping running nodes,
+  the 20 newest, and nodes whose outputs a panel, a finding or another dataset's parents
+  reference. Evidence: `finding_create` rejects a statistic or panel backed by a code output
+  that `exchange.run.evidence_blocker` refuses (no declared uncertainty; fit params by name).
+  HTTP (read-only, for the UI): `GET /api/code`, `GET /api/code/{id}`; the workspace snapshot
+  and `workspace_get` list nodes without their code text.
 - **Evidence rule:** outputs must declare uncertainty or `exact`; otherwise they are tagged
   `no_uncertainty` and are ineligible as evidence.
 - **MCP:** `run_code(code, inputs)` returns stdout (truncated), the produced handles, a

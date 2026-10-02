@@ -245,3 +245,54 @@ class Thread(_Strict):
     author: str
     created_at_ms: int
     messages: list[Message] = Field(default_factory=list)
+
+
+CodeStatus = Literal["running", "ok", "failed"]
+
+
+class CodeOutput(_Strict):
+    """A dataset a run stored via tn.put / tn.put_fit (lineage: node -> dataset)."""
+
+    name: str  # output name in the run
+    dataset: str
+    representation: str
+    rows: int
+    caveats: list[str] = Field(default_factory=list)
+    evidence_ok: bool
+
+
+class CodeIssue(_Strict):
+    """An output the run left behind that was not ingested (see exchange.run.Issue)."""
+
+    name: str
+    code: str  # run_failed | uncommitted | partial_write | corrupt | invalid
+    message: str
+
+
+class CodeNode(_Strict):
+    """A tier-2 run (spec §5.2): stored code, declared inputs, outcome and outputs.
+
+    Created `running`; finished once (`ok` / `failed`) and never re-executed in place:
+    a re-run is a new node with `rerun_of` set (nodes are immutable, §3.3)."""
+
+    id: str
+    code: str = Field(min_length=1)
+    inputs: list[str] = Field(default_factory=list)
+    status: CodeStatus = "running"
+    author: str
+    created_at_ms: int
+    finished_at_ms: int | None = None
+    timeout_s: float | None = None
+    rerun_of: str | None = None
+    #: kernel outcome: ok | error | timeout | crashed | not_run (never reached the kernel)
+    exec_status: str | None = None
+    duration_s: float | None = None
+    stdout: str = ""
+    stderr: str = ""
+    result: str | None = None  # repr of the last expression, like a notebook's Out[]
+    error: str | None = None
+    traceback: str | None = None
+    restarted: bool = False  # the kernel restarted: in-memory state from earlier runs is gone
+    truncated: bool = False  # stdout/stderr were cut (head + tail kept)
+    outputs: list[CodeOutput] = Field(default_factory=list)
+    issues: list[CodeIssue] = Field(default_factory=list)

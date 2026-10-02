@@ -82,6 +82,7 @@ from telemetry_nerd.workspace.models import (
     AnnotationIn,
     AnnotationRef,
     ClaimRef,
+    CodeNode,
     Finding,
     FindingIn,
     Gap,
@@ -1399,6 +1400,7 @@ class WorkspaceService:
             "hypotheses": [h.model_dump() for h in self.objects.list_hypotheses()],
             "findings": [f.model_dump() for f in self.objects.list_findings()],
             "gaps": [g.model_dump() for g in self.objects.list_gaps()],
+            "code": [code_brief(c) for c in self.objects.list_code()],
             "threads": self._threads_with_seqs(),
             "last_seq": self.log.last_seq,
         }
@@ -1623,14 +1625,19 @@ class WorkspaceService:
             }
             for p in self.workspace.list_panels()
         ]
+        code = [
+            {"id": c.id, "status": c.status, "outputs": [o.dataset for o in c.outputs]}
+            for c in reversed(self.objects.list_code())
+        ]
         out: dict = {
             "panels": panels,
             "hypotheses": hyps,
             "findings": finds,
             "open_threads": open_threads,
+            "code": code,
             "last_seq": self.log.last_seq,
         }
-        cut = dict.fromkeys(("panels", "hypotheses", "findings", "open_threads"), 0)
+        cut = dict.fromkeys(("panels", "hypotheses", "findings", "open_threads", "code"), 0)
 
         def size() -> int:
             more = {f"more_{k}": n for k, n in cut.items() if n}
@@ -1666,6 +1673,24 @@ class WorkspaceService:
             "next_since": next_since,
             "truncated": next_since < last,
         }
+
+
+def code_brief(c: CodeNode) -> dict:
+    """A code node without its code text and output streams (GET /api/code/{id} has them)."""
+    return {
+        "id": c.id,
+        "status": c.status,
+        "exec_status": c.exec_status,
+        "inputs": c.inputs,
+        "outputs": [o.dataset for o in c.outputs],
+        "author": c.author,
+        "created_at_ms": c.created_at_ms,
+        "finished_at_ms": c.finished_at_ms,
+        "duration_s": c.duration_s,
+        "rerun_of": c.rerun_of,
+        "error": c.error,
+        "restarted": c.restarted,
+    }
 
 
 def family_claims(infos, assignment, detection, rejected, ts: int) -> list[tuple[str, Claim]]:

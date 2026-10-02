@@ -13,6 +13,7 @@ from telemetry_nerd.model.time import now_ms
 from telemetry_nerd.workspace.models import (
     Annotation,
     AnnotationIn,
+    CodeNode,
     Finding,
     FindingIn,
     Gap,
@@ -202,3 +203,41 @@ class ObjectStore:
 
     def list_threads(self, anchor: str | None = None) -> list[Thread]:
         return [self.get_thread(t.id) for t in self._list("thread", Thread, anchor)]
+
+    # code nodes (tier-2 runs) ------------------------------------------
+    def create_code(
+        self,
+        code: str,
+        inputs: list[str],
+        author: str,
+        timeout_s: float | None = None,
+        rerun_of: str | None = None,
+    ) -> CodeNode:
+        c = CodeNode(
+            id=self._new_id("c"),
+            code=code,
+            inputs=list(inputs),
+            author=author,
+            created_at_ms=self._clock(),
+            timeout_s=timeout_s,
+            rerun_of=rerun_of,
+        )
+        self._insert("code", c, None)
+        return c
+
+    def get_code(self, obj_id: str) -> CodeNode:
+        return self._get("code", CodeNode, obj_id)
+
+    def finish_code(self, obj_id: str, **fields) -> CodeNode:
+        """Record a run's outcome (the only update a code node gets)."""
+        c = self.get_code(obj_id)
+        if c.status != "running":
+            raise ValueError(f"code node {obj_id} already finished ({c.status})")
+        updated = CodeNode.model_validate(
+            {**c.model_dump(), **fields, "finished_at_ms": self._clock()}
+        )
+        self._update(updated)
+        return updated
+
+    def list_code(self) -> list[CodeNode]:
+        return self._list("code", CodeNode)

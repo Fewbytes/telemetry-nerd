@@ -10,6 +10,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from telemetry_nerd.charts.spec import Window
 from telemetry_nerd.charts.yview import YView
+from telemetry_nerd.core.code_ops import CodeDisabled
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.jsonsafe import dumps
@@ -106,6 +107,11 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   negatives) and files contradictions with declared types or bounds as system findings; a short
   window only suggests, so say so when you cite it.
 - `workspace_activity` lists what the user did since a sequence number.
+- Tier-2 `run_code` is for the long tail only: tier-1 tools first. Declare `inputs` (dataset
+  handles) up front; the code reads them with `tn.dataset(h)` and stores results with
+  `tn.put(df, like=h, uncertainty={method, level} + lo/hi columns | exact=True)`. Outputs
+  without declared uncertainty cannot be evidence. Print small aggregates, never bulk data;
+  `show` outputs to draw them. A failed/restarted run: read the traceback, fix, run again.
 """
 
 
@@ -1029,6 +1035,51 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             return _dump({"annotation": ws.annotate(data, "claude").model_dump()})
         except (ValidationError, NotFound, ValueError) as e:
             raise _fail(e) from e
+
+    @mcp.tool()
+    async def run_code(
+        code: str, inputs: list[str] | None = None, timeout_s: float | None = None
+    ) -> str:
+        """Tier-2: run Python in the workspace's persistent IPython kernel, for questions no
+        tier-1 tool answers (custom statistics, bootstrap CIs, models). Try query/analyze/
+        spectrum/fleet/fraction_over/... first.
+
+        inputs: the dataset handles the code reads, declared up front (e.g. ["d3", "d5"]);
+        they are exported before the run, the code cannot query sources. Not percentile
+        datasets (query the histogram). timeout_s: wall clock (default 120 s); a timeout or
+        crash fails the node and may restart the kernel (variables are lost, datasets kept).
+        In the code:
+            import telemetry_nerd.tn as tn
+            df = tn.dataset("d3")  # polars: ts_ms, series_id, avg, min, max, count
+            tn.meta("d3")          # unit, step_ms, representation, caveats, ...
+            tn.put(out, like="d3", uncertainty={"method": "bootstrap", "level": 0.95})
+              # out has lo/hi columns; or exact=True for exact counts. Without either the
+              # output is stored but tagged no_uncertainty and cannot back a finding.
+            tn.put_fit("linear", {"slope": {"value": b, "interval": [lo, hi]}},
+                       method="OLS", diagnostics={...})
+        Each run is a code node (c1, c2, ...) with lineage to its inputs and outputs.
+        Returns {code_node, status (ok|failed), exec_status, duration_s, stdout (short),
+        result, outputs: [{dataset, name, representation, rows, unit, uncertainty,
+        evidence_ok, caveats, series summary or fit params}], issues (outputs not ingested),
+        error + traceback on failure, restarted + note when kernel state was lost}. Never
+        bulk data: print small aggregates only; `show` an output to draw it."""
+        try:
+            node = await service.code.run(code, inputs or [], timeout_s=timeout_s)
+        except (NotFound, ValueError, CodeDisabled) as e:
+            raise _fail(e) from e
+        return _dump(service.code.result(node))
+
+    @mcp.tool()
+    async def rerun_code(code_node: str, timeout_s: float | None = None) -> str:
+        """Run a code node's stored code again on the same inputs (e.g. after a kernel
+        restart or a failed run). Creates a NEW node with rerun_of=<code_node>; finished
+        nodes are never changed. To change the code, call run_code. Returns what run_code
+        returns."""
+        try:
+            node = await service.code.rerun(code_node, timeout_s=timeout_s)
+        except (NotFound, ValueError, CodeDisabled) as e:
+            raise _fail(e) from e
+        return _dump(service.code.result(node))
 
     @mcp.tool()
     def hypothesis_create(statement: str) -> str:

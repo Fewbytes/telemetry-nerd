@@ -30,6 +30,7 @@ from telemetry_nerd.config import DEFAULT_ALLOWED_HOSTS
 from telemetry_nerd.core.consumer import kind_of
 from telemetry_nerd.core.presence import MODES
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
+from telemetry_nerd.core.workspace_service import code_brief
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.jsonsafe import finite
 from telemetry_nerd.sources.base import SourceError
@@ -174,6 +175,17 @@ def create_app(
 
     async def list_panels(request: Request) -> JSONResponse:
         return JSONResponse([p.to_dict() for p in service.ws.list_panels()])
+
+    async def code_list(request: Request) -> JSONResponse:
+        return JSONResponse([code_brief(c) for c in service.code.list()])
+
+    async def code_get(request: Request) -> JSONResponse:
+        """A code node in full (code, streams, traceback, outputs) for the UI; read-only."""
+        try:
+            node = service.code.get(request.path_params["id"])
+        except NotFound as e:
+            return _error(404, str(e))
+        return JSONResponse(node.model_dump())
 
     async def panel_data(request: Request) -> JSONResponse:
         try:
@@ -779,6 +791,8 @@ def create_app(
         Route("/api/channel/status", channel_status),
         Route("/api/channel/sessions", channel_sessions),
         Route("/api/panels", list_panels),
+        Route("/api/code", code_list),
+        Route("/api/code/{id}", code_get),
         Route("/api/panels/{id}/y-view", panel_y_view, methods=["POST"]),
         Route("/api/panels/{id}/y-context", panel_y_context, methods=["POST"]),
         Route("/api/panels/{id}/reframe", panel_reframe, methods=["POST"]),
@@ -813,6 +827,10 @@ def create_app(
 
     @contextlib.asynccontextmanager
     async def lifespan(app: Starlette):
+        try:
+            service.code.startup()  # fail runs a previous daemon left running; GC run dirs
+        except Exception:
+            log.warning("run_code startup housekeeping failed", exc_info=True)
         try:
             async with mcp.session_manager.run() if mcp is not None else contextlib.nullcontext():
                 yield

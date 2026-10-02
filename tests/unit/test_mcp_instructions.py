@@ -15,3 +15,9 @@ def test_instructions_prefer_distributions_for_latency():
 def test_instructions_point_to_percentile_bands_and_ccdf():
     text = " ".join(INSTRUCTIONS.split())
     assert 'mark="percentiles"' in text and "ccdf" in text
+
+
+def test_instructions_put_tier1_first_and_inputs_up_front_for_run_code():
+    text = " ".join(INSTRUCTIONS.split())
+    assert "run_code" in text and "tier-1 tools first" in text
+    assert "inputs" in text and "uncertainty" in text
