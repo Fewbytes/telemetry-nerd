@@ -78,6 +78,11 @@ from telemetry_nerd.core.card_payload import (
     gap_pct,
     profile_card,
 )
+from telemetry_nerd.core.code_outputs import (
+    code_caveat,
+    refuse_estimate,
+    refuse_requery,
+)
 from telemetry_nerd.core.events import Actor, EventLog
 from telemetry_nerd.core.fleet_ops import FleetOps
 from telemetry_nerd.core.panel_payloads import (
@@ -103,7 +108,8 @@ from telemetry_nerd.core.signal_ops import SignalOps
 from telemetry_nerd.core.summary import summarize, summarize_distribution
 from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
-from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
+from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore, Lineage, is_code_expr
+from telemetry_nerd.exchange.fmt import NO_UNCERTAINTY
 from telemetry_nerd.kernels.manager import KernelManager
 from telemetry_nerd.model.bucket_state import STATE_SCHEMA, coarsen, grid
 from telemetry_nerd.model.caveats import (
@@ -247,7 +253,14 @@ class TelemetryService:
     ) -> dict:
         """Now vs the same phase of previous cycles, band from their spread (lkn.2); latency
         (percentile series or distributions): the histogram per cycle (lkn.7)."""
-        if SeasonalDistOps.applies(self.datasets.meta(dataset_id)):
+        meta = self.datasets.meta(dataset_id)
+        refuse_estimate(self.datasets, meta, "compare_seasonal")
+        refuse_requery(
+            meta, "compare_seasonal (previous cycles of the same query)",
+            "give the code the previous cycles as inputs and compare there, or compare_seasonal "
+            "an input dataset",
+        )  # fmt: skip
+        if SeasonalDistOps.applies(meta):
             return await self.seasonal_dist.compare(
                 dataset_id, cycles, tz, exclude, threshold, actor
             )
@@ -267,7 +280,7 @@ class TelemetryService:
     def seasonal_suggestion(self, dataset_id: str, mark: str = "auto") -> str | None:
         """Hint for `show`: the cached operating profile has a daily/weekly seasonal model."""
         meta = self.datasets.meta(dataset_id)
-        if mark != "auto" or meta.representation != "bucket_agg" or meta.derived:
+        if mark != "auto" or meta.representation != "bucket_agg" or meta.derived or meta.code_node:
             return None
         periods = self._profile_periods(meta.source, meta.expr)
         if not {"hour_of_day", "hour_of_week"} & set(periods):
@@ -316,6 +329,11 @@ class TelemetryService:
         actor: Actor = "claude",
         allow_nonmergeable: bool = False,
     ) -> dict:
+        if is_code_expr(expr):
+            raise SourceError(
+                f"{expr.strip()} names a code output (fixed data), not a source query",
+                hint="pass the output's dataset handle to show or the op instead of its expr",
+            )
         src = self._source(source)
         expr = self._expand_families(expr, source, src)
         now = self.clock()
@@ -464,6 +482,7 @@ class TelemetryService:
         panel = self.workspace.get_panel(panel_id)
         meta = self.datasets.meta(panel.dataset_ids[0])
         if meta.representation != "distribution":
+            refuse_requery(meta, "a distribution of the selection")
             if not meta.histogram:
                 raise SourceError(
                     "no histogram behind this panel",
@@ -668,6 +687,8 @@ class TelemetryService:
         catalogued metric in the expression, the operating profile and measurable data quality."""
         p = self.workspace.get_panel(panel_id)
         meta, result = self.datasets.get(p.dataset_ids[0])
+        if meta.code_node:
+            return self._code_card(meta, result)
         parts = selector_parts(meta.expr)
         names = sorted(metric_names(meta.expr), key=lambda n: (parts is None or n != parts[0], n))
         known = [n for n in names if self.ws.catalog.has_metric(meta.source, n)][:MAX_METRICS]
@@ -679,6 +700,26 @@ class TelemetryService:
             "profile": await self._card_profile(meta),
             "quality": await self._card_quality(meta, result, known[0] if known else None, parts),
         }
+
+    def _code_card(self, meta: DatasetMeta, result: FetchResult) -> dict:
+        """Card of a code output: no catalog metrics, profile or scrape interval to look up (its
+        expression names an output, not metrics); what the dataset itself says."""
+        why = "code output: fixed data, not scraped from a source"
+        series = self.datasets.series_count(meta.id)
+        return {
+            "source": meta.source,
+            "metrics": [],
+            "learned": False,
+            "produced_by": {**(meta.producer or {}), "parents": list(meta.parents)},
+            "profile": {"available": False, "reason": f"{why}: no operating profile"},
+            "quality": {
+                "step_ms": meta.step_ms, "resolution_ms": meta.resolution_ms,
+                "scrape_interval_ms": None, "scrape_interval_reason": why, "series": series,
+                "gap_pct": gap_pct(result.buckets, meta.start_ms, meta.end_ms, meta.step_ms),
+                "resets": {"measured": False, "reason": why},
+                "cardinality": {"in_panel": series, "catalog": None},
+            },
+        }  # fmt: skip
 
     async def _card_profile(self, meta: DatasetMeta) -> dict:
         have = self.profiles.cached(meta.source, meta.expr)
@@ -750,6 +791,7 @@ class TelemetryService:
             and kw.get("mark", "auto") == "auto"
             and not meta.derived
             and meta.representation == "bucket_agg"
+            and meta.code_node is None  # fixed data: drawn as produced, never re-queried
             and selector_parts(meta.expr) is not None
         )
         if auto_ok:
@@ -789,6 +831,7 @@ class TelemetryService:
             )
         choice = options[index]
         meta = self.datasets.meta(p.dataset_ids[0])
+        refuse_requery(meta, "a reframing")
         ds = (
             await self.query(
                 choice.expr,
@@ -822,6 +865,8 @@ class TelemetryService:
         if any(layer.mark != "line+envelope" for layer in spec.layers) or spec.signal:
             return None
         meta = self.datasets.meta(p.dataset_ids[0])
+        if meta.code_node:
+            return None  # no catalog metric, limit or profile behind a code output
         ctx = YContext()
         parts = selector_parts(meta.expr)
         metric = parts[0] if parts else counter_rate_metric(meta.expr)
@@ -975,6 +1020,7 @@ class TelemetryService:
         (analysis/outcome.py); values it cannot classify (4xx, unknown words) are left out and
         reported. The original is untouched."""
         meta = self.datasets.meta(dataset_id)
+        refuse_requery(meta, "split_outcome (the histogram by outcome label)")
         h = meta.histogram
         if not h:
             raise ValueError(
@@ -1045,6 +1091,12 @@ class TelemetryService:
         if (ref := spec.references.get(mode)) is not None:
             return ref
         meta = self.datasets.meta(p.dataset_ids[0])
+        refuse_requery(
+            meta,
+            "the operating profile" if mode == "profile" else f"a {mode} reference window",
+            "give the code the reference window as an input and show both outputs, or use the "
+            "indexed view with baseline=window",
+        )  # fmt: skip
         if mode == "profile":
             return await self._profile_reference(meta, actor)
         rw = reference_window(meta.start_ms, meta.end_ms, meta.step_ms, mode)
@@ -1242,6 +1294,11 @@ class TelemetryService:
         actor: Actor = "claude",
     ) -> dict:
         """analyze with SPC limits from a separately fetched earlier window (lkn.5)."""
+        refuse_requery(
+            self.datasets.meta(dataset_id), f"analyze(baseline={baseline!r})",
+            "analyze it with a window baseline inside its range, or give the code the earlier "
+            "window as an input",
+        )  # fmt: skip
         ref = await self.diagnostics.fetch_reference(dataset_id, baseline, cycles, tz, actor)
         out = self.diagnostics.summary(dataset_id, ref=ref)
         self.diagnostics.remember(dataset_id, ref)
@@ -1275,6 +1332,17 @@ class TelemetryService:
             parse_duration(period_hi) if period_hi else None,
         )
         meta, result, extra = self.signal.filter(dataset_id, spec, reason)
+        lineage = None
+        if meta.code_node:
+            # still the code's output (fixed data, its unit), now filtered: a declared interval
+            # or exactness does not survive a filter, so it is no longer evidence
+            caveats = [*meta.source_caveats]
+            if NO_UNCERTAINTY not in caveats:
+                caveats.append(NO_UNCERTAINTY)
+            lineage = Lineage(
+                producer=dict(meta.producer or {}), parents=(meta.id,), unit=meta.unit,
+                caveats=tuple(caveats),
+            )  # fmt: skip
         new = self.datasets.put(
             source=meta.source,
             expr=meta.expr,
@@ -1287,6 +1355,7 @@ class TelemetryService:
             n_min=meta.n_min,
             histogram=meta.histogram,
             derived=extra["derived"],
+            lineage=lineage,
         )
         self.log.append(
             actor,
@@ -1375,13 +1444,18 @@ class TelemetryService:
         raw_ok: bool = False,
     ) -> ShowResult:
         meta = self.datasets.meta(dataset_id)
+        refuse_estimate(self.datasets, meta)
         # An agent-provided unit (Claude learned it from the source, the emitting
         # tool, etc.) wins over suffix inference and records who vouched for it.
+        # A code output's unit is what the code declared; its expr names no catalog metric.
+        provenance = f"provided by {actor}" if unit else None
+        if not unit and meta.code_node and meta.unit:
+            unit, provenance = meta.unit, f"declared by code node {meta.code_node}"
         spec = auto_spec(
             dataset_id,
-            expr=meta.expr,
+            expr=None if meta.code_node else meta.expr,
             unit=unit,
-            unit_provenance=f"provided by {actor}" if unit else None,
+            unit_provenance=provenance,
             representation=meta.representation,
             lookup=lambda metric: self.ws.catalog_facts(meta.source, metric),
         )
@@ -1451,7 +1525,7 @@ class TelemetryService:
         )
         counters = (
             raw_counters(meta.expr, lambda m: self.ws.catalog_facts(meta.source, m))
-            if spec.layers[0].mark == "line+envelope" and not meta.derived
+            if spec.layers[0].mark == "line+envelope" and not meta.derived and not meta.code_node
             else []
         )
         if counters and not (auto or raw_ok):
@@ -1471,7 +1545,12 @@ class TelemetryService:
         with self.log.transaction():
             panel = self.workspace.create_panel(question, spec.model_dump(), panel_datasets)
             self.log.append(actor, "panel.created", panel.id, {"question": panel.question})
-        if self.auto_profile and spec.layers[0].mark == "line+envelope" and not meta.derived:
+        if (
+            self.auto_profile
+            and spec.layers[0].mark == "line+envelope"
+            and not meta.derived
+            and not meta.code_node
+        ):
             self.profiles.request(meta.source, meta.expr)  # lazy T1 profile on first view
         return ShowResult(panel, [i for i in issues if i.severity == "warning"])
 
@@ -1489,6 +1568,13 @@ class TelemetryService:
         if any(layer.mark != "line+envelope" for layer in spec.layers) or spec.signal:
             return {}
         ov = spec.overlays
+        if meta.code_node:
+            why = "a code output is fixed data: no operating profile, limit or last-week window"
+            off = {"available": False, "reason": why}
+            return {
+                "flags": ov.model_dump(), "normal": off, "limit": off,
+                "ghost": {**off, "loaded": False, "label": "last week"},
+            }  # fmt: skip
         profile = self.profiles.cached(meta.source, meta.expr)
         window = format_duration(profile.window_ms) if profile else ""
         normal = normal_payload(profile, series, step_ms, window)
@@ -1556,19 +1642,23 @@ class TelemetryService:
         if self.datasets.meta(dataset_id).representation == "distribution":
             return self._distribution_panel_data(panel, dataset_id, width_px)
         meta, result = self.datasets.get(dataset_id)
-        if meta.representation == "quantile":
-            # never re-aggregate percentiles over time: serve at their own step
+        interval = self.datasets.interval(dataset_id)
+        if meta.representation == "quantile" or interval is not None:
+            # never re-aggregate percentiles over time, nor a declared interval (the interval of
+            # a coarser bucket is not the union of its parts): serve at their own step
             table, effective_step = result.buckets, meta.step_ms
         else:
             table, effective_step = lod(
                 result.buckets, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px
             )
         labels = series_labels(result.series)
-        series = series_payload(table, labels)
+        series = series_payload(table, labels, interval)
         bundle = dataset_bundle(self.datasets, meta, result)
         caveats = self._time_summary(meta, result, self.clock(), bundle)["caveats"]
         states = bundle.companions.get("bucket_state")
         located = list(bundle.caveats)
+        if meta.code_node:
+            located.append(code_caveat(meta))
         state_rows: list[dict] = []
         state_more = 0
         if states is not None:

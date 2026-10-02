@@ -260,7 +260,7 @@ class FleetOps:
 
     def _check_units(self, meta: DatasetMeta, labels: list[dict]) -> None:
         names = sorted({lb["__name__"] for lb in labels if "__name__" in lb})
-        if len(names) < 2:
+        if len(names) < 2 or meta.code_node:  # a code output has one declared unit
             return
         units = {n: self._facts(meta.source, n).unit for n in names}
         known = {u for u in units.values() if u is not None}

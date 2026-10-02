@@ -401,7 +401,10 @@ def _range(meta: dict, rows: pa.Table) -> TimeRange:
     if rows.num_rows == 0:
         raise ExchangeError("an empty output needs start_ms/end_ms (or like=<input>)")
     ts = rows.column("ts_ms")
-    return TimeRange(pc.min(ts).as_py() - meta["step_ms"], pc.max(ts).as_py())
+    lo, hi = pc.min(ts).as_py(), pc.max(ts).as_py()
+    # bucket grids are inclusive of both ends (as a query's): the first bucket ends at start_ms;
+    # a single bucket needs a range, so it reaches back one step
+    return TimeRange(lo if hi > lo else lo - meta["step_ms"], hi)
 
 
 def _bucket_rows(rows: pa.Table, uncertainty: dict | None) -> pa.Table:

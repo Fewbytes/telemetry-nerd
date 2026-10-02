@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 
@@ -49,6 +50,23 @@ class DatasetMeta:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    @property
+    def code_node(self) -> str | None:
+        """The code node that produced this dataset (directly, or through a filter of a code
+        output), or None for data fetched from a source. A code output is fixed data: its
+        `expr` names the output, not a query, so nothing may re-fetch it from `source`."""
+        if self.producer and self.producer.get("kind") == "code":
+            return self.producer.get("node")
+        return None
+
+
+# the expression of a code output as stored (exchange: f"code:{node}/{name}"); never PromQL
+CODE_EXPR = re.compile(r"^code:[A-Za-z0-9][A-Za-z0-9_-]{0,63}/[a-z][a-z0-9_]{0,63}$")
+
+
+def is_code_expr(expr: str) -> bool:
+    return bool(CODE_EXPR.match(expr.strip()))
 
 
 @dataclass(frozen=True)

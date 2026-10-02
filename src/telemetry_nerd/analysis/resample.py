@@ -20,17 +20,27 @@ def rebucket(buckets: pa.Table, new_step_ms: int) -> pa.Table:
     k = new_step_ms
     total = pl.col("count").sum()
     weight = pl.col("count").filter(pl.col("avg").is_not_null()).sum()  # null avg carries no mean
+    # a null count is unknown (code outputs), never zero: where any is unknown the merged bucket
+    # is the plain mean of its values and its count stays unknown
+    known = pl.col("count").is_not_null().all()
     out = (
         df.with_columns(((pl.col("ts_ms") + k - 1) // k * k).alias("ts_ms"))
         .group_by(["series_id", "ts_ms"])
         .agg(
-            pl.when(weight > 0)
+            pl.when(~known)
+            .then(pl.col("avg").mean())
+            .when(weight > 0)
             .then((pl.col("avg") * pl.col("count")).sum() / weight)
             .otherwise(None)
             .alias("avg"),
-            pl.col("min").min(),
-            pl.col("max").max(),
-            total.alias("count"),
+            *(  # a bucket with a value but no min/max (not given by code): the envelope is unknown
+                pl.when((pl.col(c).is_null() & pl.col("avg").is_not_null()).any())
+                .then(None)
+                .otherwise(getattr(pl.col(c), c)())
+                .alias(c)
+                for c in ("min", "max")
+            ),
+            pl.when(known).then(total).otherwise(None).alias("count"),
         )
         .sort(["series_id", "ts_ms"])
         .select(BUCKET_SCHEMA.names)

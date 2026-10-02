@@ -30,6 +30,11 @@ def time_op_problem(
             f"{op} needs a time series, this is a distribution "
             "(hint: query a rate or a threshold count over time)"
         )
+    if representation == "estimate":
+        return (
+            f"{op} needs a time series, this is a fit (parameters, no rows) "
+            "(hint: apply it to the fit's prediction dataset, or cite the fit's parameters)"
+        )
     if counters:
         return (
             f"{op} refused on raw counter {', '.join(counters)}: a running total has no periods "

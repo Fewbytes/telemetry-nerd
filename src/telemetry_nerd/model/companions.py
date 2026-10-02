@@ -122,7 +122,15 @@ def derive_states(meta, result: FetchResult) -> pa.Table:
 
 
 def dataset_bundle(store, meta, result: FetchResult) -> Bundle:
-    op = meta.derived["op"] if meta.derived else "query"
+    # a code output's counts are whatever the code gave (often unknown): coverage of its inputs
+    # is not carried through code, and judging it from those counts would invent it
+    op = (
+        meta.derived["op"]
+        if meta.derived
+        else "code"
+        if getattr(meta, "code_node", None)
+        else "query"
+    )
     caveats: list[Caveat] = []
     companions: dict[str, pa.Table] = {}
     p = policy(op, "bucket_state")

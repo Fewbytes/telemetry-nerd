@@ -100,10 +100,20 @@ def series_labels(series_table) -> dict[str, dict]:
     return out
 
 
-def series_payload(table, labels: dict[str, dict]) -> list[dict]:
+def series_payload(table, labels: dict[str, dict], interval=None) -> list[dict]:
+    """Per series: ts, avg, min, max, count; plus the declared lo/hi when `interval` (the
+    dataset's INTERVAL_SCHEMA rows, in the same order as `table`) is given."""
+    df = pl.DataFrame(table)
+    names = ["ts_ms", "avg", "min", "max", "count"]
+    if interval is not None:
+        iv = pl.DataFrame(interval)
+        if iv.select("series_id", "ts_ms").to_dicts() != df.select("series_id", "ts_ms").to_dicts():
+            raise ValueError("the declared interval does not line up with the dataset rows")
+        df = df.with_columns(lo=iv["lo"], hi=iv["hi"])
+        names += ["lo", "hi"]
     out = []
-    for (sid,), group in pl.DataFrame(table).group_by("series_id", maintain_order=True):
-        cols = {c: group[c].to_list() for c in ("ts_ms", "avg", "min", "max", "count")}
+    for (sid,), group in df.group_by("series_id", maintain_order=True):
+        cols = {c: group[c].to_list() for c in names}
         cols["ts"] = cols.pop("ts_ms")
         out.append({"id": sid, "labels": labels.get(sid, {}), **cols})
     return out

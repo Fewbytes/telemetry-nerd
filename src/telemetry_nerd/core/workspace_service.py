@@ -69,6 +69,7 @@ from telemetry_nerd.charts.yview import (
     value_stats,
 )
 from telemetry_nerd.core.card_payload import binding_row, browse_row, field_rows, relation_row
+from telemetry_nerd.core.code_outputs import evidence_problem
 from telemetry_nerd.core.coverage_check import claim_coverage
 from telemetry_nerd.core.events import Actor, Event, EventLog, check_actor
 from telemetry_nerd.datasets.store import DatasetStore
@@ -236,10 +237,16 @@ class WorkspaceService:
         for ref in data.evidence:
             match ref:
                 case PanelRef(panel=pid):
-                    self.workspace.get_panel(pid)
+                    p = self.workspace.get_panel(pid)
+                    if p.dataset_ids and (
+                        why := evidence_problem(self.datasets.meta(p.dataset_ids[0]), None)
+                    ):
+                        raise ValueError(f"panel {pid} is not evidence: {why}")
                 case StatisticRef(dataset=did):
                     if not self.datasets.exists(did):
                         raise NotFound(f"dataset {did} not found")
+                    if why := evidence_problem(self.datasets.meta(did), ref.model_dump()):
+                        raise ValueError(f"statistic {ref.name!r} is not evidence: {why}")
                 case AnnotationRef(annotation=aid):
                     self.objects.get_annotation(aid)
                 case ClaimRef(source=src, metric=m):
@@ -577,8 +584,8 @@ class WorkspaceService:
                 spec = ChartSpec.model_validate(p.spec)
             except (NotFound, ValueError):
                 continue
-            if meta.source != source or metric not in metric_names(meta.expr):
-                continue
+            if meta.code_node or meta.source != source or metric not in metric_names(meta.expr):
+                continue  # a code output's unit is the one its code declared
             if (spec.y.unit_provenance or "").startswith("provided by"):
                 continue
             unit, why = infer_unit_with_provenance(
@@ -1053,7 +1060,7 @@ class WorkspaceService:
         known = {e.metric for e in self.catalog.list_entries(source)}
         used: set[str] = set()
         for meta in self.datasets.list_metas():
-            if meta.source == source:
+            if meta.source == source and not meta.code_node:
                 used |= metric_names(meta.expr)
         return used & known
 

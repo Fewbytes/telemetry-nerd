@@ -38,6 +38,7 @@ from telemetry_nerd.catalog.rules import Facts
 from telemetry_nerd.charts.units import raw_counters
 from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
+from telemetry_nerd.datasets.store import is_code_expr
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.time import TimeRange, format_duration, now_ms, parse_duration
 from telemetry_nerd.sources.base import Source, SourceError, SourceUnavailable
@@ -248,6 +249,11 @@ class ProfileService:
         return psrc, []
 
     def target(self, source: str, expr: str) -> tuple[ProfileTarget, Source, list[str]]:
+        if is_code_expr(expr):
+            raise SourceError(
+                f"{expr.strip()} is a code output (fixed data): it has no operating profile",
+                hint="profile the code's input expression instead",
+            )
         psrc, caveats = self._profile_source(source)
         t = profile_target(
             expr, lambda m: self.ws.catalog_facts(source, m), psrc.resolution_ms, self.step_ms

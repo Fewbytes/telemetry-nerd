@@ -814,6 +814,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         spike vs the preceding baseline; each window sums whole steps, n is shown per window.
         A plain selector of a counter (a running total) is drawn as its rate, from a new dataset
         over the same window; the answer says so under `auto`. raw=true draws exactly the dataset.
+        Code outputs (expr code:<node>/<name>) are fixed data: drawn as produced, unit as the code
+        declared it, a declared interval as the band; ops that re-fetch (compare_seasonal,
+        reference windows, marginals, profiles) refuse them. A fit (estimate) is not drawn: show
+        its _prediction dataset or cite its parameters as statistics.
         Returns {panel, url, warnings, auto?, y_range_notes?}: the y range defaults to the reference
         range (data, normal range, physical limit); y_range_notes says what was not available.
         """

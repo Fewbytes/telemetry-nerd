@@ -11,7 +11,7 @@ import pyarrow as pa
 from telemetry_nerd.analysis.exprkind import min_samples
 from telemetry_nerd.analysis.quantiles import quantile_bucket
 from telemetry_nerd.datasets.store import DatasetMeta
-from telemetry_nerd.model.bucket_state import Flag, State, grid
+from telemetry_nerd.model.bucket_state import STATE_SCHEMA, Flag, State, grid
 from telemetry_nerd.model.caveats import differing_intervals, runs
 from telemetry_nerd.model.companions import derive_states
 from telemetry_nerd.model.distribution import DistResult
@@ -62,7 +62,7 @@ def _coverage(
     Everything comes from the bucket_state (the bundle's when given), never from re-judging
     summed counts."""
     if states is None:
-        states = derive_states(meta, result)
+        states = STATE_SCHEMA.empty_table() if meta.code_node else derive_states(meta, result)
     df = pl.from_arrow(states)
     bad = [int(State.EMPTY), int(State.PARTIAL), int(State.UNKNOWN)]
     out: dict[str, dict] = {}
@@ -103,6 +103,19 @@ def _coverage_caveats(
             caveats.append("interval_change")
 
 
+def produced_by(meta: DatasetMeta) -> dict:
+    """What a code output's summary adds: the producer, its inputs, declared unit/uncertainty."""
+    if meta.code_node is None:
+        return {}
+    p = meta.producer or {}
+    return {
+        "produced_by": {"code_node": p.get("node"), "output": p.get("output"),
+                        "parents": list(meta.parents)},
+        "unit": meta.unit,
+        "uncertainty": meta.uncertainty,
+    }  # fmt: skip
+
+
 def _base_caveats(meta: DatasetMeta, now_ms: int, settle_ms: int) -> list[str]:
     caveats: list[str] = []
     if meta.step_ms < meta.resolution_ms:
@@ -124,12 +137,14 @@ def summarize(
     caveats = _base_caveats(meta, now_ms, settle_ms)
     if meta.partial > 0:
         caveats.append("partial")
+    caveats += [c for c in meta.source_caveats if c not in caveats]
     base = {
         "dataset": meta.id,
         "expr": meta.expr,
         "range": [iso(meta.start_ms), iso(meta.end_ms)],
         "step": format_duration(meta.step_ms),
         "representation": meta.representation,
+        **produced_by(meta),
     }
     if meta.representation == "quantile":
         base |= {"quantile": meta.quantile, "n_min": meta.n_min}
@@ -147,21 +162,32 @@ def summarize(
     # Non-finite values (null, or NaN from a careless source) carry a count but no value.
     # They must not bias the mean: weight only buckets that have an avg.
     df = pl.from_arrow(result.buckets).with_columns(pl.col("avg", "min", "max").fill_nan(None))
-    if df.filter(
-        (pl.col("count") > 0) & pl.any_horizontal(pl.col("avg", "min", "max").is_null())
-    ).height:
+    # a null count is unknown (a code output that did not give it), never zero: such a bucket has
+    # data when it has a value, and a series with unknown counts has the plain mean of its buckets
+    known = pl.col("count").is_not_null()
+    # (a code output's min/max are optional: missing there means not given, not non-finite)
+    no_value = (
+        pl.col("avg").is_null()
+        if meta.code_node
+        else pl.any_horizontal(pl.col("avg", "min", "max").is_null())
+    )
+    if df.filter((pl.col("count") > 0) & no_value).height:
         caveats.append("non_finite")
     total = pl.col("count").filter(pl.col("avg").is_not_null()).sum()
+    weighted = (
+        pl.when(total > 0).then((pl.col("avg") * pl.col("count")).sum() / total).otherwise(None)
+    )
+    if df["count"].null_count() and "counts_unknown" not in caveats:
+        caveats.append("counts_unknown")
     per = (
         df.group_by("series_id")
         .agg(
             pl.col("min").min().alias("min"),
             pl.col("max").max().alias("max"),
-            pl.when(total > 0)
-            .then((pl.col("avg") * pl.col("count")).sum() / total)
-            .otherwise(None)
-            .alias("mean"),
-            (pl.col("count") > 0).sum().alias("with_data"),
+            pl.when(known.all()).then(weighted).otherwise(pl.col("avg").mean()).alias("mean"),
+            ((pl.col("count") > 0) | (~known & pl.col("avg").is_not_null()))
+            .sum()
+            .alias("with_data"),
         )
         .with_columns(
             pl.max_horizontal(pl.lit(expected) - pl.col("with_data"), pl.lit(0)).alias("gaps")
@@ -279,7 +305,12 @@ def summarize_distribution(
         "representation": meta.representation,
         "buckets": (meta.scheme or {}).get("description", "no buckets"),
         "n_min": meta.n_min,
-        "counts": "increase() per step; additive over time and adjacent buckets",
+        "counts": (
+            "as produced by the code; additive over time and adjacent buckets"
+            if meta.code_node
+            else "increase() per step; additive over time and adjacent buckets"
+        ),
+        **produced_by(meta),
     }
     if dist.columns.num_rows == 0:
         return _empty(base, caveats)

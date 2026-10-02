@@ -67,8 +67,10 @@ class SignalOps:
     # preconditions ------------------------------------------------------
     def check(self, dataset_id: str, op: str) -> DatasetMeta:
         meta = self._datasets.meta(dataset_id)
-        counters = raw_counters(meta.expr, lambda m: self._facts(meta.source, m))
-        flagged = nonaggregatable_metrics(meta.expr, lambda m: self._facts(meta.source, m))
+        # a code output's expr names an output, not catalog metrics
+        facts = lambda m: self._facts(meta.source, m)  # noqa: E731
+        counters = [] if meta.code_node else raw_counters(meta.expr, facts)
+        flagged = [] if meta.code_node else nonaggregatable_metrics(meta.expr, facts)
         problem = time_op_problem(op, meta.representation, counters, flagged)
         if problem:
             raise ValueError(problem)
