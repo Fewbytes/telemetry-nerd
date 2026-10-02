@@ -184,6 +184,12 @@ def derive_claims(
     if kind == "classic" and base is not None and base in families:
         counter = True
         out.append(ClaimSpec("type", "counter", "rule", 0.7, f"member of histogram {base}"))
+    if kind == "classic" and name in families:  # the base name is the histogram itself
+        out.append(
+            ClaimSpec(
+                "type", "histogram", "rule", 0.9, "classic histogram base: _bucket/_sum/_count"
+            )
+        )
     if kind is not None and fam_base is not None:
         members = [f"{fam_base}{m}" for m in _MEMBERS] if kind == "classic" else [fam_base]
         why = (

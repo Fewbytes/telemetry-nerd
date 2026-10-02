@@ -35,7 +35,8 @@ def svc(tmp_path):
 
 async def test_learn_writes_t0_claims_with_provenance(svc):
     out = await svc.learn("default")
-    assert out["metrics"] == 6 and out["new"] == 6 and out["claims_changed"] > 0
+    # 6 listed series + the classic histogram's base name lat_seconds (6gp)
+    assert out["metrics"] == 7 and out["new"] == 7 and out["claims_changed"] > 0
     e = svc.ws.catalog_entry("default", "reqs_total")
     assert e.fields["type"].value == "counter"
     assert e.fields["type"].origin == "metadata"  # declared beats the _total rule
@@ -72,7 +73,7 @@ async def test_relearn_diffs_and_keeps_claims_of_removed_metrics(svc):
         MetricInfo("reqs_total", "counter"), MetricInfo("new_total")
     )
     out = await svc.learn("default")
-    assert out["new"] == 1 and out["removed"] == 5
+    assert out["new"] == 1 and out["removed"] == 6
     gone = svc.ws.catalog_entry("default", "lat_seconds_bucket")
     assert not gone.present and "histogram_family" in gone.fields
 
@@ -114,3 +115,32 @@ async def test_declared_unit_beats_name_rule_on_charts(tmp_path):
     ds = (await svc.query("work_total", start="now-2h", end="now-1h"))["dataset"]
     y = svc.show(ds, "work?").panel.spec["y"]
     assert (y["unit"], y["unit_provenance"]) == ("s", "source metadata")
+
+
+async def test_classic_histogram_base_name_is_catalogued(svc):
+    """telemetry-nerd-6gp: listing __name__ yields only X_bucket/_sum/_count; the histogram X
+    gets its own entry so bindings and suggestions can name it."""
+    await svc.learn("default")
+    assert svc.ws.catalog.has_metric("default", "lat_seconds")
+    e = svc.ws.catalog_entry("default", "lat_seconds")
+    assert e.fields["type"].value == "histogram"
+    assert e.fields["histogram_family"].value == [
+        "lat_seconds_bucket", "lat_seconds_sum", "lat_seconds_count",
+    ]  # fmt: skip
+    assert e.fields["unit"].value == "s" and not e.is_family
+    assert svc.ws.catalog_facts("default", "lat_seconds").type == "histogram"
+
+
+async def test_histogram_base_listed_by_the_source_is_not_duplicated(tmp_path):
+    d = disc(
+        MetricInfo("lat_seconds", "histogram", "latency", "seconds"),
+        MetricInfo("lat_seconds_bucket"),
+        MetricInfo("lat_seconds_sum"),
+        MetricInfo("lat_seconds_count"),
+        histograms={"lat_seconds": "classic"},
+    )
+    svc = make_service(tmp_path, FakeSource(name="default", discovery=d))
+    out = await svc.learn("default")
+    assert out["metrics"] == 4
+    e = svc.ws.catalog_entry("default", "lat_seconds")
+    assert e.fields["type"].origin == "metadata" and e.fields["description"].value == "latency"

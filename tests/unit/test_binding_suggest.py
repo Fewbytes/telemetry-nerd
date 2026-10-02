@@ -353,3 +353,17 @@ async def test_accept_overrides_must_be_offered_alternatives(play):
         mcp, "binding_accept", {"source": "default", "id": "RED:nope", "basis": "b"}
     )
     assert "no suggestion" in missing
+
+
+async def test_a_classic_histogram_listed_only_by_its_members_is_suggested_by_base(tmp_path):
+    """6gp: Prometheus/VM list __name__ values only (X_bucket/_sum/_count, no X); learn
+    catalogues X so the RED duration role names the histogram, not a member series."""
+    names = ("shop_request_duration_seconds" + s for s in ("_bucket", "_sum", "_count"))
+    d = Discovery(
+        (MetricInfo("shop_requests_total", "counter"), *(MetricInfo(n) for n in names)),
+        (), {"shop_request_duration_seconds": "classic"}, None, 1.0, (), False,
+    )  # fmt: skip
+    svc, _ = await learned(tmp_path, d)
+    shop = by_id(svc.ws.binding_suggest("default", limit=100))["RED:app:shop"]
+    assert shop["roles"]["duration"] == "shop_request_duration_seconds"
+    assert shop["detail"]["duration"]["histogram"] == "classic"

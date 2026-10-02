@@ -613,6 +613,13 @@ class PromQLSource:
         else:
             caveats.append("cardinality_top_only")
 
+        histograms = _histogram_families(name_set, meta)
+        # a classic histogram's base name is not a series (no __name__ value) but is the
+        # metric: catalogue it too, with the metadata Prometheus keys by the base name
+        bases = [b for b, k in sorted(histograms.items()) if k == "classic" and b not in name_set]
+        for b in bases:  # some exporters key the metadata by X_bucket instead
+            if b not in meta and f"{b}_bucket" in meta:
+                meta[b] = meta[f"{b}_bucket"]
         metrics = tuple(
             MetricInfo(
                 n,
@@ -620,12 +627,12 @@ class PromQLSource:
                 meta[n]["help"] if n in meta else None,
                 meta[n]["unit"] if n in meta else None,
             )
-            for n in names
+            for n in [*names, *bases]
         )
         return Discovery(
             metrics=metrics,
             label_names=label_names,
-            histograms=_histogram_families(name_set, meta),
+            histograms=histograms,
             cardinality=cardinality,
             metadata_coverage=coverage,
             caveats=tuple(caveats),

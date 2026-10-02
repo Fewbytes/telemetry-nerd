@@ -695,6 +695,15 @@ class TelemetryService:
         t0 = time.monotonic()
         attempted, stopped, left = 0, None, 0
         for i, metric in enumerate(targets):
+            if self._classic_base(source, metric):
+                skipped.append(
+                    {
+                        "metric": metric,
+                        "reason": "classic histogram base name: not a series; scan its "
+                        f"{metric}_count or {metric}_sum (query_distribution for its buckets)",
+                    }
+                )
+                continue
             prev = self.ws.samples.get(source, metric)
             if prev is not None and not refresh and self.clock() - prev.scanned_ms < SCAN_FRESH_MS:
                 skipped.append(
@@ -743,6 +752,11 @@ class TelemetryService:
             "scanned": scanned, "skipped": skipped, "failed": failed,
             "stopped": stopped, "remaining": left,
         }  # fmt: skip
+
+    def _classic_base(self, source: str, metric: str) -> bool:
+        """X of a classic histogram (X_bucket/_sum/_count): catalogued, but no series is named X."""
+        h = self.ws.catalog_entry(source, metric).fields.get("histogram_family")
+        return h is not None and f"{metric}_bucket" in h.value
 
     async def panel_card(self, panel_id: str) -> dict:
         """The metric card for a panel (bead 2as.12): catalog claims with provenance for each

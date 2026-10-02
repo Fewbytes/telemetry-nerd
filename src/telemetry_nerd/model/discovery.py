@@ -6,7 +6,7 @@ Everything here is a claim from one origin, the source's own metadata/APIs. Othe
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 MetricType = Literal[
@@ -40,3 +40,16 @@ class Discovery:
     #: True when any step was cut short or failed (see caveats)
     partial: bool
     origin: str = ORIGIN
+
+
+def with_histogram_bases(d: Discovery) -> Discovery:
+    """`d` with an entry for every classic histogram base name it lacks (telemetry-nerd-6gp).
+
+    Listing `__name__` values only yields X_bucket/X_sum/X_count, so without this the
+    histogram X itself has no catalog entry and bindings, suggestions and catalog_bind cannot
+    name it. A source that knows the base's metadata already lists it (with that metadata)."""
+    have = {m.name for m in d.metrics}
+    missing = [b for b, k in sorted(d.histograms.items()) if k == "classic" and b not in have]
+    if not missing:
+        return d
+    return replace(d, metrics=(*d.metrics, *(MetricInfo(b) for b in missing)))

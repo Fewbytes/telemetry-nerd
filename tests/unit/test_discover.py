@@ -40,7 +40,8 @@ async def test_discover_collects_names_metadata_labels_and_cardinality():
     mock_all(tsdb={"seriesCountByMetricName": [{"name": "up", "value": 40}]})
     d = await PromQLSource("p", BASE, flavor="prometheus").discover()
     by = {m.name: m for m in d.metrics}
-    assert set(by) == set(NAMES)
+    assert set(by) == {*NAMES, "lat"}  # the classic histogram's base is catalogued (6gp)
+    assert (by["lat"].type, by["lat"].unit) == ("histogram", "seconds")
     assert (by["up"].type, by["up"].help, by["up"].unit) == ("gauge", "alive", None)
     assert by["lat_bucket"].unit == "seconds"
     assert by["mystery"].type is None  # no metadata is unknown, not "untyped"

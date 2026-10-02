@@ -255,3 +255,17 @@ async def test_mcp_catalog_scan(svc):
         assert bad.is_error
         nosrc = await c.call_tool("catalog_scan", {"source": "nope"})
         assert nosrc.is_error
+
+
+async def test_a_classic_histogram_base_is_skipped_not_scanned(tmp_path):
+    """6gp: the base name X is catalogued but has no series of its own."""
+    d = Discovery(
+        (MetricInfo("lat_seconds_bucket"), MetricInfo("lat_seconds_sum"),
+         MetricInfo("lat_seconds_count")),
+        (), {"lat_seconds": "classic"}, None, 1.0, (), False,
+    )  # fmt: skip
+    svc = make_service(tmp_path, Shapes({}, name="default", discovery=d))
+    await svc.learn("default")
+    out = await svc.scan_metrics("default", metrics=["lat_seconds"])
+    assert out["scanned"] == [] and "lat_seconds_count" in out["skipped"][0]["reason"]
+    assert svc.sources.get("default").queried == []

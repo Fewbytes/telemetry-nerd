@@ -76,7 +76,7 @@ from telemetry_nerd.core.events import Actor, Event, EventLog, check_actor
 from telemetry_nerd.core.uncertainty import evidence_flags
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.companions import dataset_bundle
-from telemetry_nerd.model.discovery import Discovery
+from telemetry_nerd.model.discovery import Discovery, with_histogram_bases
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.time import format_duration, now_ms
 from telemetry_nerd.workspace.models import (
@@ -663,12 +663,15 @@ class WorkspaceService:
     ) -> dict[str, Any]:
         """Re-learn a source from its discovery: reconcile the inventory, then write T0 claims
         (declared metadata + name rules) in bulk. One event, not one per claim."""
+        discovery = with_histogram_bases(discovery)
         names = [m.name for m in discovery.metrics]
         complete = not any(c.startswith("metrics_truncated") for c in discovery.caveats)
         diff = self.catalog.relearn(source, names, self.clock(), complete=complete)
         ts = self.clock()
-        # names that encode a dimension (airflow_ti_finish_<dag>_<task>) collapse into families
-        detection = detect_families(names)
+        # names that encode a dimension (airflow_ti_finish_<dag>_<task>) collapse into families;
+        # a histogram base is a metric, not a dimension value
+        bases = {b for b, k in discovery.histograms.items() if k == "classic"}
+        detection = detect_families([n for n in names if n not in bases])
         rejected = self.families.rejected(source)
         assignment = {n: ta for n, ta in detection.assignment.items() if ta[0] not in rejected}
         fam = self.families.apply(source, detection, ts)

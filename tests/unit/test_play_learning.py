@@ -36,7 +36,8 @@ def entry(ws, metric):
 
 async def test_discovery_and_learning_summary(learned):
     _, out = learned
-    assert out["metrics"] == 72 and out["new"] == 72 and out["complete"] is True
+    # 72 listed names + 7 classic histogram base names (6gp)
+    assert out["metrics"] == 79 and out["new"] == 79 and out["complete"] is True
     assert any(c.startswith("metadata_coverage") for c in out["caveats"])
     assert "cardinality_unavailable" in out["caveats"]  # Grafana's proxy hides tsdb status
 
