@@ -34,13 +34,13 @@ async def main() -> None:
     try:
         d = await src.fetch_histogram(NATIVE_SEL, ["cloud_region"], NATIVE_RANGE, 60_000)
         print(f"native: {d.scheme.describe()}; {d.series.num_rows} series, {d.rows.num_rows} cells")
-        count_expr = (
-            f"sum by (cloud_region) (histogram_count(increase({NATIVE_SEL}[1m])))"
-        )
+        count_expr = f"sum by (cloud_region) (histogram_count(increase({NATIVE_SEL}[1m])))"
         v = await src.fetch_values(count_expr, NATIVE_RANGE, 60_000)
         print(f"native n: {v.buckets.num_rows} points")
         d = await src.fetch_histogram(CLASSIC_SEL, [], CLASSIC_RANGE, 300_000)
-        print(f"classic: {d.scheme.describe()}; {d.series.num_rows} series, {d.rows.num_rows} cells")
+        print(
+            f"classic: {d.scheme.describe()}; {d.series.num_rows} series, {d.rows.num_rows} cells"
+        )
         v = await src.fetch_values(CLASSIC_INF, CLASSIC_RANGE, 300_000)
         print(f"classic n: {v.buckets.num_rows} points")
     finally:
