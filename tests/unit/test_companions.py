@@ -1,10 +1,13 @@
+import dataclasses
 from typing import get_args
 
 import pytest
 
 from telemetry_nerd.analysis.filters import Kind as FilterKind
-from telemetry_nerd.model.bucket_state import State
+from telemetry_nerd.devtools.synthetic import periodic_buckets
+from telemetry_nerd.model.bucket_state import STATE_SCHEMA, State
 from telemetry_nerd.model.companions import KINDS, OPS, SOURCE_AGGREGATED, dataset_bundle, policy
+from telemetry_nerd.model.time import TimeRange
 from tests.unit.fakes import make_service
 
 DATASET_OPS = {"query", "query_distribution", "lod", "dist_rebucket", *get_args(FilterKind)}
@@ -25,12 +28,18 @@ def test_undeclared_op_drops():
     [
         ("sum by (job) (rate(x[5m]))", True),
         ("avg(up)", True),
+        ("histogram_quantile(0.9, sum by (le) (rate(x[5m])))", True),
+        ("sum(a) / sum(b)", True),
+        ("(sum(x))", True),
+        ('label_replace(sum(x), "a", "b", "c", "d")', True),
         ("rate(x[5m])", False),
         ("up", False),
+        ("count_over_time(x[5m])", False),
+        ("max_over_time(x[5m])", False),
     ],
 )
 def test_source_aggregation_detection(expr, agg):
-    assert bool(SOURCE_AGGREGATED.match(expr)) is agg
+    assert bool(SOURCE_AGGREGATED.search(expr)) is agg
 
 
 async def test_query_dataset_derives_bucket_state(tmp_path):
@@ -50,3 +59,45 @@ async def test_aggregated_query_carries_member_caveat(tmp_path):
     meta, result = svc.datasets.get(ds)
     codes = [c.code for c in dataset_bundle(svc.datasets, meta, result).caveats]
     assert codes == ["member_coverage_unknown"]
+
+
+M, DAY = 60_000, 86_400_000
+
+
+def _filtered(svc):
+    r = periodic_buckets(0, 4 * DAY, M, [(5 * M, 3, None), (DAY, 5, None)], noise=1, seed=1)
+    d = svc.datasets.put(
+        source="default", expr="queue_depth", rng=TimeRange(0, 4 * DAY), step_ms=M,
+        resolution_ms=15_000, result=r, representation="bucket_agg",
+    ).id  # fmt: skip
+    return d, svc.filter(d, "lowpass", "1h", "trend")["dataset"]
+
+
+def test_filtered_dataset_carries_source_states(tmp_path):
+    svc = make_service(tmp_path)
+    _src, f = _filtered(svc)
+    meta, result = svc.datasets.get(f)
+    b = dataset_bundle(svc.datasets, meta, result)
+    states = b.companions["bucket_state"]
+    assert states.schema == STATE_SCHEMA
+    ids = set(result.series["series_id"].to_pylist())
+    assert states.num_rows > 0 and set(states["series_id"].to_pylist()) <= ids
+    assert b.caveats == []
+
+
+def test_unknown_op_drops_companion_with_caveat(tmp_path):
+    svc = make_service(tmp_path)
+    src, f = _filtered(svc)
+    meta, result = svc.datasets.get(f)
+    meta = dataclasses.replace(meta, derived={"op": "future_op", "from": src})
+    b = dataset_bundle(svc.datasets, meta, result)
+    assert b.companions == {} and [c.code for c in b.caveats] == ["companion_dropped"]
+
+
+def test_recompute_op_on_stored_dataset_raises(tmp_path):
+    svc = make_service(tmp_path)
+    src, f = _filtered(svc)
+    meta, result = svc.datasets.get(f)
+    meta = dataclasses.replace(meta, derived={"op": "lod", "from": src})
+    with pytest.raises(ValueError, match="render time"):
+        dataset_bundle(svc.datasets, meta, result)

@@ -17,7 +17,7 @@ from telemetry_nerd.model.series import FetchResult
 Policy = Literal["carry", "recompute", "derive", "drop"]
 
 SOURCE_AGGREGATED = re.compile(
-    r"^\s*(sum|avg|min|max|count|group|stddev|stdvar|topk|bottomk|quantile|count_values)\b\s*"
+    r"\b(sum|avg|min|max|count|group|stddev|stdvar|topk|bottomk|quantile|count_values)\b\s*"
     r"(by|without)?\s*(\([^)]*\))?\s*\(",
     re.IGNORECASE,
 )
@@ -79,12 +79,15 @@ def dataset_bundle(store, meta, result: FetchResult) -> Bundle:
     caveats: list[Caveat] = []
     companions: dict[str, pa.Table] = {}
     p = policy(op, "bucket_state")
+    dropped = False
     if p == "derive":
         companions["bucket_state"] = _derive_states(meta, result)
     elif p == "carry":
         src_meta, src_result = store.get(meta.derived["from"])
         src = dataset_bundle(store, src_meta, src_result).companions.get("bucket_state")
-        if src is not None:
+        if src is None:
+            dropped = True
+        else:
             ids = result.series["series_id"].to_pylist()
             companions["bucket_state"] = (
                 pl.from_arrow(src)
@@ -92,7 +95,13 @@ def dataset_bundle(store, meta, result: FetchResult) -> Bundle:
                 .to_arrow()
                 .cast(STATE_SCHEMA)
             )
+    elif p == "recompute":
+        raise ValueError(
+            f"{op} recomputes bucket_state at render time (coarsen), not on stored datasets"
+        )
     else:
+        dropped = True
+    if dropped:
         caveats.append(
             Caveat(
                 code="companion_dropped",
@@ -101,7 +110,7 @@ def dataset_bundle(store, meta, result: FetchResult) -> Bundle:
                 source=f"op:{op}",
             )
         )
-    if SOURCE_AGGREGATED.match(meta.expr):
+    if SOURCE_AGGREGATED.search(meta.expr):
         caveats.append(
             Caveat(
                 code="member_coverage_unknown",
