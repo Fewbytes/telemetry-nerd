@@ -99,6 +99,17 @@ def demo_text(start_ms: int, end_ms: int, interval_ms: int = 15_000, seed: int =
         parts.append(
             histogram_text("tn_demo_request_duration_seconds", {"instance": instance}, scrapes)
         )
+    hole_start = start_ms + (end_ms - start_ms) // 3
+    hole_start -= hole_start % interval_ms
+    hole_end = hole_start + 15 * 60_000
+    born = start_ms + (end_ms - start_ms) // 2
+    born -= born % interval_ms
+    gappy_d = [
+        (ts, 0.05) for ts in range(start_ms, end_ms, interval_ms) if not hole_start <= ts < hole_end
+    ]
+    gappy_e = [(ts, 0.07) for ts in range(born, end_ms, interval_ms)]
+    parts.append(exposition("tn_demo_gappy_seconds", {"instance": "d"}, gappy_d))
+    parts.append(exposition("tn_demo_gappy_seconds", {"instance": "e"}, gappy_e))
     return "".join(parts)
 
 

@@ -49,3 +49,15 @@ def test_periodic_buckets_known_components_gaps_and_onset():
     avg = dict(zip(ts, r.buckets.column("avg").to_pylist()))
     assert abs(avg[0] - 10.0) < 1e-9  # sin(0)=0, onset not reached
     assert r.buckets.column("min").to_pylist() == r.buckets.column("avg").to_pylist()
+
+
+def test_demo_text_has_gappy_and_late_series():
+    start, end = 0, 6 * 3_600_000
+    lines = [
+        ln for ln in demo_text(start, end).splitlines() if ln.startswith("tn_demo_gappy_seconds")
+    ]
+    d = [int(ln.rsplit(" ", 1)[1]) for ln in lines if 'instance="d"' in ln]
+    e = [int(ln.rsplit(" ", 1)[1]) for ln in lines if 'instance="e"' in ln]
+    hole = (end - start) // 3
+    assert not any(hole <= t < hole + 15 * 60_000 for t in d) and d
+    assert min(e) >= (end - start) // 2

@@ -461,7 +461,7 @@ Tracked as beads (`bd show <id>`).
 | 14 | Quantile estimator in provenance footer [SfE] | `4ok.18` |
 | 15 | Spectrum Nyquist cut at 2×step [SfE] | note on `4ok.7` |
 | 16 | Multi-threshold banded counts + survival-curve overlays [SfE] | note on `4ok.11` |
-| 17 | Missing data: `bucket_state`, rug, heatmap textures, stepped paths, localized caveats, failed-chunk `unknown` spans | spec 2026-10-02 (plan pending) |
+| 17 | Missing data: `bucket_state`, rug, heatmap textures, stepped paths, localized caveats, failed-chunk `unknown` spans | spec 2026-10-02; phases 1–4 done (plan 2026-10-02-missing-data-bucket-state) |
 | 18 | Per-backend missing-data semantics (lookback, staleness, rate edges, tiers, partial responses) | `1h9.10` |
 | 19 | Group density cloud mark with silent members | spec 2026-10-02 §7.1; visual design to brainstorm |
 
