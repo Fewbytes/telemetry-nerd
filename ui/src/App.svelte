@@ -12,6 +12,7 @@
   import CatalogView from "./components/CatalogView.svelte";
   import { setContext } from "svelte";
   import { refTargets } from "./lib/refs";
+  import CodeView from "./components/CodeView.svelte";
   import HighlightStrip from "./components/HighlightStrip.svelte";
   import { scrollIfOffscreen, syncHighlightClasses } from "./lib/refHighlight";
   import type { Highlight } from "./lib/highlights";
@@ -23,6 +24,9 @@
   setContext("refs", () => (ws.snapshot ? refTargets(ws.snapshot) : new Map()));
   setContext("highlights", () => ws.highlights);
   setContext("catalogSeq", () => ws.catalogSeq);
+  // the read-only code view (tier-2 nodes): opened from panel provenance, the run list and c-id chips
+  let codeOpen = $state<string | null>(null);
+  setContext("openCode", (id: string) => (codeOpen = id));
   $effect(() => ws.start());
 
   // accent every highlighted target; re-runs on snapshot change so re-rendered DOM keeps it
@@ -98,6 +102,12 @@
         <PanelView {panel} annotations={ws.snapshot?.annotations ?? []} {threads} />
       {/each}
     </div>
-    <Sidebar snapshot={ws.snapshot} />
+    <Sidebar snapshot={ws.snapshot} onopencode={(id) => (codeOpen = id)} />
   </div>
+  {#if codeOpen}
+    <CodeView
+      id={codeOpen} runs={ws.snapshot?.code ?? []} panels={ws.snapshot?.panels ?? []}
+      onclose={() => (codeOpen = null)} onopen={(id) => (codeOpen = id)}
+    />
+  {/if}
 </main>

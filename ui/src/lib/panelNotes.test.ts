@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { YContext } from "./api";
-import { caveatText, contextNotes, describeShown, intervalLegend, panelNotes, provenanceText } from "./panelNotes";
+import { caveatText, contextNotes, describeShown, intervalLegend, panelNotes, provenanceParts, provenanceText } from "./panelNotes";
 
 describe("panelNotes", () => {
   it("turns caveat keys into sentences and keeps unknown keys visible", () => {
@@ -159,5 +159,16 @@ describe("code outputs (tier-2)", () => {
   it("explains no_uncertainty and unknown counts", () => {
     expect(caveatText("no_uncertainty")).toContain("not usable as evidence");
     expect(caveatText("counts_unknown")).toContain("unknown (not zero)");
+  });
+});
+
+describe("provenanceParts", () => {
+  it("splits around the code node id and is null for a source", () => {
+    const d = { source: "default", producer: { kind: "code" as const, node: "c3", output: "x" }, parents: ["d1", "d2"] };
+    const [a, node, b] = provenanceParts(d)!;
+    expect(a + node + b).toBe(provenanceText(d));
+    expect(node).toBe("c3");
+    expect(a).toBe("produced by code node ");
+    expect(provenanceParts({ source: "default", producer: null, parents: [] })).toBeNull();
   });
 });

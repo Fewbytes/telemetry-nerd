@@ -5,6 +5,7 @@
 
   let { text }: { text: string } = $props();
   const targets = getContext<(() => Map<string, RefTarget>) | undefined>("refs") ?? (() => new Map());
+  const openCode = getContext<((id: string) => void) | undefined>("openCode");
   const segments = $derived(splitRefs(text, targets()));
 </script>
 
@@ -20,7 +21,7 @@
       onmouseleave={() => hoverOff(seg.domId)}
       onfocus={() => hoverOn(seg.domId)}
       onblur={() => hoverOff(seg.domId)}
-      onclick={() => flash(seg.domId)}>{seg.ref}</button
+      onclick={() => (seg.kind === "code" ? openCode?.(seg.id) : flash(seg.domId))}>{seg.ref}</button
     >
   {:else}{seg.text}{/if}
 {/each}

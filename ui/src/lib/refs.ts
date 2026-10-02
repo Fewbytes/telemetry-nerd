@@ -1,6 +1,6 @@
 import type { Snapshot, Thread } from "./api";
 
-export type RefKind = "panel" | "annotation" | "hypothesis" | "finding" | "gap" | "thread";
+export type RefKind = "panel" | "annotation" | "hypothesis" | "finding" | "gap" | "thread" | "code";
 
 export interface RefTarget {
   id: string;
@@ -14,7 +14,7 @@ export interface RefTarget {
 
 export type Segment = { text: string } | ({ ref: string } & RefTarget);
 
-const REF = /(?<![\w])([pafhgt]\d+)(?![\w])/g;
+const REF = /(?<![\w])([pafhgtc]\d+)(?![\w])/g;
 const MAX_LABEL = 80;
 
 const short = (s: string) => (s.length > MAX_LABEL ? `${s.slice(0, MAX_LABEL - 1)}…` : s);
@@ -43,6 +43,9 @@ export function refTargets(snap: Snapshot): Map<string, RefTarget> {
   }
   for (const t of snap.threads) {
     add({ id: t.id, kind: "thread", domId: `thread-${t.id}`, label: t.anchor ? `thread about ${t.anchor}` : "chat", closed: false });
+  }
+  for (const c of snap.code ?? []) {
+    add({ id: c.id, kind: "code", domId: null, label: `code run: ${c.status}${c.rerun_of ? `, re-run of ${c.rerun_of}` : ""}`, closed: false });
   }
   return out;
 }

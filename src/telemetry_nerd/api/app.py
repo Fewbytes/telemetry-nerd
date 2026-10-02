@@ -27,6 +27,7 @@ from telemetry_nerd.analysis.distlod import PX_PER_CELL
 from telemetry_nerd.catalog.browse import Browse
 from telemetry_nerd.channel.dispatch import ChannelDispatcher
 from telemetry_nerd.config import DEFAULT_ALLOWED_HOSTS
+from telemetry_nerd.core.code_ops import CodeDisabled
 from telemetry_nerd.core.consumer import kind_of
 from telemetry_nerd.core.presence import MODES
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
@@ -186,6 +187,19 @@ def create_app(
         except NotFound as e:
             return _error(404, str(e))
         return JSONResponse(node.model_dump())
+
+    @_api
+    async def code_rerun(request: Request) -> object:
+        """Run a finished node's code again on the same inputs: a NEW node (rerun_of). Blocks
+        until the run ends (bounded by the node's timeout); the answer is the full new node."""
+        await _body(request)
+        try:
+            node = await service.code.rerun(request.path_params["id"], actor="user")
+        except CodeDisabled as e:
+            raise _BadRequest(
+                str(e), "start the daemon with tier-2 execution enabled", status=409
+            ) from e
+        return node.model_dump()
 
     async def panel_data(request: Request) -> JSONResponse:
         try:
@@ -793,6 +807,7 @@ def create_app(
         Route("/api/panels", list_panels),
         Route("/api/code", code_list),
         Route("/api/code/{id}", code_get),
+        Route("/api/code/{id}/rerun", code_rerun, methods=["POST"]),
         Route("/api/panels/{id}/y-view", panel_y_view, methods=["POST"]),
         Route("/api/panels/{id}/y-context", panel_y_context, methods=["POST"]),
         Route("/api/panels/{id}/reframe", panel_reframe, methods=["POST"]),

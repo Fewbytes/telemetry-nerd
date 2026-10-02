@@ -8,7 +8,8 @@
   } from "./lib/api";
   import { rgba, seriesName, toUplot } from "./chart/toUplot";
   import { drawRug, facetTop, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, rugMoreLabel, type RugCell } from "./chart/rug";
-  import { describeShown, intervalLegend, panelNotes, provenanceText } from "./lib/panelNotes";
+  import { describeShown, intervalLegend, panelNotes, provenanceParts, provenanceText } from "./lib/panelNotes";
+  import { getContext } from "svelte";
   import { windowBadge } from "./lib/coverage";
   import { focusRects, notesAt } from "./chart/focus";
   import { fmtSI, fmtStep } from "./lib/format";
@@ -43,6 +44,8 @@
     panel: Panel; annotations?: Annotation[]; threads?: Thread[];
   } = $props();
 
+  // opens the read-only code view of the node that produced this panel's data (provided by App)
+  const openCode = getContext<((id: string) => void) | undefined>("openCode");
   const panelAnns = $derived(
     annotations.filter((a) => !a.deleted && (a.panel === null || a.panel === panel.id)),
   );
@@ -740,7 +743,7 @@
     <div class="shown">
       <p class="what">{describeShown(data.dataset, fmtStep(data.effective_step_ms), data.kind, "mark" in data ? (data.kind === "heatmap" ? heatView === "percentiles" ? "percentiles" : "" : data.mark) : "")}</p>
       <p class="where">
-        <span data-provenance>{provenanceText(data.dataset)}</span> · {fmtTime(data.dataset.start_ms)} – {fmtTime(data.dataset.end_ms)} · step
+        <span data-provenance>{#if provenanceParts(data.dataset)}{@const [pre, node, post] = provenanceParts(data.dataset)!}{pre}<button type="button" class="ref-chip obj-id code-link" data-code-link={node} title="View the code of {node}" onclick={() => openCode?.(node)}>{node}</button>{post}{:else}{provenanceText(data.dataset)}{/if}</span> · {fmtTime(data.dataset.start_ms)} – {fmtTime(data.dataset.end_ms)} · step
         {fmtStep(data.effective_step_ms)}
       </p>
     </div>

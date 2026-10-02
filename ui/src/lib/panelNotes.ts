@@ -205,6 +205,15 @@ export function provenanceText(d: Pick<DatasetMeta, "source" | "producer" | "par
   return `produced by code node ${p.node} (output ${p.output})${from}`;
 }
 
+/** provenanceText split around the code node id so the UI can make it a button; null for a source. */
+export function provenanceParts(d: Pick<DatasetMeta, "source" | "producer" | "parents">): [string, string, string] | null {
+  const p = d.producer;
+  if (!p || p.kind !== "code") return null;
+  const text = provenanceText(d);
+  const at = text.indexOf(p.node);
+  return [text.slice(0, at), p.node, text.slice(at + p.node.length)];
+}
+
 /** One sentence on what the plotted lines are. */
 export function describeShown(
   d: Pick<DatasetMeta, "representation" | "quantile"> & {

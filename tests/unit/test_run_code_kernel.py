@@ -94,8 +94,21 @@ async def test_bootstrap_ci_output_has_lineage_and_shows(env):
     assert panel.dataset_ids == ["d2"]
     # provenance: panel -> dataset -> code node
     assert svc.datasets.meta(panel.dataset_ids[0]).producer["node"] == node.id
-    # TODO(telemetry-nerd-acb): once acb lands assert the panel payload itself: unit from
-    # meta.unit, lo/hi drawn as a band, a provenance entry linking to c1.
+    # the panel payload itself: unit from meta, lo/hi as the band, provenance to c1 and d1
+    data = svc.panel_data(panel.id, width_px=400)
+    (series,) = data["series"][:1]
+    assert series["lo"] and series["hi"]
+    pairs = [
+        (lo, a, hi) for lo, a, hi in zip(series["lo"], series["avg"], series["hi"]) if a is not None
+    ]
+    assert pairs and all(lo <= a <= hi for lo, a, hi in pairs)
+    dmeta = data["dataset"]
+    assert dmeta["producer"] == {
+        "kind": "code", "node": "c1", "output": "out1", "description": "rolling mean, 95% bootstrap CI",
+    }  # fmt: skip
+    assert dmeta["parents"] == ["d1"]
+    assert dmeta["uncertainty"]["method"] == "bootstrap" and dmeta["uncertainty"]["level"] == 0.95
+    assert panel.spec["y"].get("unit") == meta.unit  # declared by the code, or inferred from d1
 
 
 @module_loop

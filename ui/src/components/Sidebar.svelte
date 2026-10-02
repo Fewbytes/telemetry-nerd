@@ -3,11 +3,13 @@
   import FindingCard from "./FindingCard.svelte";
   import GapList from "./GapList.svelte";
   import HypothesisList from "./HypothesisList.svelte";
+  import CodeRuns from "./CodeRuns.svelte";
   import ChatThread from "./ChatThread.svelte";
   import { orphanedAnnotations } from "../lib/orphans";
   import { chatThread } from "../lib/refs";
 
-  let { snapshot }: { snapshot: Snapshot | null } = $props();
+  let { snapshot, onopencode }: { snapshot: Snapshot | null; onopencode: (id: string) => void } = $props();
+  const runs = $derived(snapshot?.code ?? []);
 
   const hypotheses = $derived(snapshot?.hypotheses ?? []);
   const findings = $derived(snapshot?.findings ?? []);
@@ -74,6 +76,13 @@
           </li>
         {/each}
       </ul>
+    </section>
+  {/if}
+
+  {#if runs.length > 0}
+    <section aria-label="Code runs">
+      <h2>Code runs</h2>
+      <CodeRuns {runs} onopen={onopencode} />
     </section>
   {/if}
 

@@ -206,9 +206,26 @@ export interface Thread {
   id: string; anchor: string | null; selection: TimeSpan | null; author: string;
   created_at_ms: number; messages: Message[];
 }
+/** A tier-2 run in the snapshot (no code text, no streams: GET /api/code/{id} has them). */
+export interface CodeBrief {
+  id: string; status: "running" | "ok" | "failed"; exec_status: string | null;
+  inputs: string[]; outputs: string[]; author: string; created_at_ms: number;
+  finished_at_ms: number | null; duration_s: number | null; rerun_of: string | null;
+  error: string | null; restarted: boolean;
+}
+export interface CodeOutput {
+  name: string; dataset: string; representation: string; rows: number; caveats: string[]; evidence_ok: boolean;
+}
+export interface CodeIssue { name: string; code: string; message: string }
+/** A tier-2 run in full (spec §5.2). Finished nodes are immutable; a re-run is a new node. */
+export interface CodeNode extends Omit<CodeBrief, "outputs"> {
+  code: string; timeout_s: number | null; stdout: string; stderr: string; result: string | null;
+  traceback: string | null; truncated: boolean; outputs: CodeOutput[]; issues: CodeIssue[];
+}
 export interface Snapshot {
   panels: Panel[]; annotations: Annotation[]; hypotheses: Hypothesis[];
   findings: Finding[]; gaps: Gap[]; threads: Thread[]; last_seq: number;
+  code?: CodeBrief[];
 }
 
 export class ApiError extends Error {
@@ -243,6 +260,10 @@ export const postJSON = <T>(path: string, body: unknown = {}) =>
 
 export const fetchWorkspace = () => fetch("/api/workspace").then((r) => json<Snapshot>(r));
 export const closePanel = (id: string) => postJSON<unknown>(`/api/panels/${id}/close`);
+
+export const fetchCode = (id: string) => fetch(`/api/code/${encodeURIComponent(id)}`).then((r) => json<CodeNode>(r));
+/** Run a node's code again on the same inputs: answers with the NEW node once it has finished. */
+export const rerunCode = (id: string) => postJSON<CodeNode>(`/api/code/${encodeURIComponent(id)}/rerun`);
 
 export const fetchPanelData = (id: string, width: number) =>
   fetch(`/api/panels/${id}/data?width=${width}`).then((r) => json<PanelData>(r));

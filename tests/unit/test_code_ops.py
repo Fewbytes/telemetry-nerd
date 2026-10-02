@@ -311,6 +311,29 @@ def _http_checks(client) -> None:
     assert client.post("/api/code/c1").status_code == 405
 
 
+async def test_http_rerun_makes_a_new_node_as_user(svc):
+    await svc.code.run("1/0")
+    with TestClient(create_app(svc, allowed_hosts=["testserver"])) as client:
+        r = client.post("/api/code/c1/rerun", json={})
+        assert r.status_code == 200
+        body = r.json()
+        assert (body["id"], body["rerun_of"], body["author"]) == ("c2", "c1", "user")
+        assert body["status"] == "failed" and "ZeroDivisionError" in body["traceback"]
+        assert client.get("/api/code/c1").json()["status"] == "failed"  # c1 stays as it was
+        assert client.post("/api/code/c9/rerun", json={}).status_code == 404
+        assert client.post("/api/code/c1/rerun", content="x").status_code == 415
+    assert svc.ws.activity(0)["events"][-1]["summary"].startswith("code c2 failed")
+
+
+async def test_http_rerun_without_kernels_is_409(tmp_path):
+    from tests.unit.fakes import make_service
+
+    svc = make_service(tmp_path)
+    svc.ws.objects.create_code("x = 1", [], "claude")
+    with TestClient(create_app(svc, allowed_hosts=["testserver"])) as client:
+        assert client.post("/api/code/c1/rerun", json={}).status_code == 409
+
+
 async def test_mcp_run_and_rerun(svc):
     mcp = build_mcp(svc, "http://x")
     r = await call(mcp, "run_code", {"code": PUT_CI, "inputs": ["d1"]})

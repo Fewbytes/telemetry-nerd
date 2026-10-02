@@ -2,6 +2,8 @@
   --bg: #ffffff; --fg: #1a1a1a; --muted: #666; --border: #ddd; --badge: #fff4d6; --error: #b00020; --grid: #e8e8e8;
   --ann-claude: #8250df; --ann-user: #e69f00;
   --ok: #1a7f37; --warn: #9a6700; --off: #6e7781;
+  /* code view: syntax colours, each >= 4.5:1 on --code-bg */
+  --code-bg: #f6f8fa; --syn-kw: #cf222e; --syn-str: #0a3069; --syn-com: #57606a; --syn-num: #0550ae; --syn-builtin: #8250df; --syn-deco: #953800;
   font-family: system-ui, sans-serif; color: var(--fg); background: var(--bg);
 }
 /* Explicit user choice wins over the OS preference (theme store sets
@@ -10,12 +12,14 @@
   --bg: #16181d; --fg: #e6e6e6; --muted: #9aa0a6; --border: #333; --badge: #3a3220; --error: #ff6b6b; --grid: #2a2d33;
   --ann-claude: #a371f7; --ann-user: #f0a232;
   --ok: #3fb950; --warn: #d29922; --off: #8b949e;
+  --code-bg: #0d1117; --syn-kw: #ff7b72; --syn-str: #a5d6ff; --syn-com: #8b949e; --syn-num: #79c0ff; --syn-builtin: #d2a8ff; --syn-deco: #ffa657;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #16181d; --fg: #e6e6e6; --muted: #9aa0a6; --border: #333; --badge: #3a3220; --error: #ff6b6b; --grid: #2a2d33;
     --ann-claude: #a371f7; --ann-user: #f0a232;
     --ok: #3fb950; --warn: #d29922; --off: #8b949e;
+    --code-bg: #0d1117; --syn-kw: #ff7b72; --syn-str: #a5d6ff; --syn-com: #8b949e; --syn-num: #79c0ff; --syn-builtin: #d2a8ff; --syn-deco: #ffa657;
   }
 }
 body { margin: 0; background: var(--bg); }
@@ -266,3 +270,13 @@ ul.gaps { list-style: none; margin: 0; padding: 0; }
 .catalog-view .family-actions button { font: inherit; font-size: 11px; background: none; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0 6px; cursor: pointer; }
 .catalog-view .family-actions button:hover { color: var(--fg); border-color: var(--fg); }
 .catalog-view .family-crumb { margin: 6px 0; color: var(--muted); }
+
+/* code view tokens (rendered inside the dialog; global because the spans are in {#each} output) */
+.code-view .tok-kw { color: var(--syn-kw); font-weight: 600; }
+.code-view .tok-str { color: var(--syn-str); }
+.code-view .tok-com { color: var(--syn-com); font-style: italic; }
+.code-view .tok-num { color: var(--syn-num); }
+.code-view .tok-builtin { color: var(--syn-builtin); }
+.code-view .tok-deco { color: var(--syn-deco); }
+.code-link { cursor: pointer; border: 0; font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; font-weight: 600; color: var(--fg); }
+.code-link:hover, .code-link:focus-visible { outline: 2px solid var(--ann-claude); }

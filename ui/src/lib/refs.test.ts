@@ -23,6 +23,15 @@ const snap = (over: Partial<Snapshot> = {}): Snapshot => ({
   ...over,
 } as unknown as Snapshot);
 
+describe("code node refs", () => {
+  const targets = refTargets(snap({ code: [{ id: "c3", status: "failed", rerun_of: "c1" }] as unknown as Snapshot["code"] }));
+  it("makes c-ids chips only for runs that exist", () => {
+    expect(targets.get("c3")).toMatchObject({ kind: "code", domId: null, label: "code run: failed, re-run of c1" });
+    const segs = splitRefs("see c3 and c9", targets);
+    expect(segs.filter((x) => "ref" in x).map((x) => ("ref" in x ? x.ref : ""))).toEqual(["c3"]);
+  });
+});
+
 describe("refTargets", () => {
   const t = refTargets(snap());
   it("indexes every live object by id with a DOM target", () => {
