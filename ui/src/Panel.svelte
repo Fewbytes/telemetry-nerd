@@ -165,10 +165,11 @@
   let margEl = $state<HTMLCanvasElement | null>(null);
   let rugEl = $state<HTMLCanvasElement | null>(null);
   let rugCellsNow: RugCell[] = [];
+  let rugBounds: [number, number] = [0, 0];
   let rugTip = $state<{ x: number; y: number; text: string } | null>(null);
   function onRugMove(e: MouseEvent) {
     if (data?.kind !== "time" || !data.bucket_state) return;
-    const c = hitRug(rugCellsNow, e.offsetX, e.offsetY);
+    const c = e.offsetX < rugBounds[0] || e.offsetX > rugBounds[1] ? null : hitRug(rugCellsNow, e.offsetX, e.offsetY);
     if (!c) { rugTip = null; return; }
     const s = data.bucket_state[c.row];
     const sd = data.series.find((x) => x.id === s.id);
@@ -365,12 +366,15 @@
                       const order = new Map(drawnNow.map((s, k) => [s.id, k]));
                       const grey = getComputedStyle(el).getPropertyValue("--muted").trim();
                       rugCellsNow = rugCells(bs, d.effective_step_ms, (ms) => left + u.valToPos(ms / 1000, "x"));
+                      rugBounds = [left, left + u.bbox.width / dpr];
+                      const fg = getComputedStyle(el).getPropertyValue("--fg").trim();
                       rctx.save();
                       rctx.beginPath(); rctx.rect(left, 0, u.bbox.width / dpr, rugHeight(bs.length)); rctx.clip();
                       drawRug(rctx, rugCellsNow, {
                         tint: (row) => {
                           const k = order.get(bs[row].id);
-                          return k === undefined ? grey : rgba(PALETTE[k % PALETTE.length], 0.2);
+                          // not drawn as a line: faint neutral, never the solid EMPTY grey
+                          return k === undefined ? rgba(fg, 0.12) : rgba(PALETTE[k % PALETTE.length], 0.2);
                         },
                         grey, line: grey,
                       });
