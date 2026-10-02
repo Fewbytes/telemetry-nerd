@@ -18,6 +18,7 @@
   import SpectrogramPlot from "./components/SpectrogramPlot.svelte";
   import SpcPlot from "./components/SpcPlot.svelte";
   import SeasonalPlot from "./components/SeasonalPlot.svelte";
+  import FleetPlot from "./components/FleetPlot.svelte";
   import { fmtRatio, indexSeries, ratioTicks } from "./chart/indexed";
   import { drawMarginal, marginalHeader } from "./chart/marginal";
   import { overlayChips, overlayDraw } from "./chart/overlays";
@@ -566,6 +567,9 @@
         <SeasonalPlot data={sz} series={s} width={fetchWidth}
           onRendered={(ms, pts) => onFacetRendered(i, sz.series.length, ms, pts, 220)} />
       {/each}
+    {/if}
+    {#if data && data.kind === "fleet"}
+      <FleetPlot data={data} width={fetchWidth} onRendered={(ms, pts) => onFacetRendered(0, 1, ms, pts, 260)} />
     {/if}
     {#if data && data.kind === "spectrogram"}
       {@const sg = data}
