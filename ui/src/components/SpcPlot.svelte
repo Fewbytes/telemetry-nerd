@@ -2,10 +2,11 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import { baselineSpan, DECIDING, markTip, nearestMark, spcLegend, toSpcUplot, violationMarks, type SpcMark } from "../chart/spc";
-  import { drawDots, HIDDEN_SERIES, plotAxes } from "../chart/plotKit";
+  import { drawDots, HIDDEN_SERIES, plotAxes, tipAt, type HoverTip } from "../chart/plotKit";
   import { seriesName } from "../chart/toUplot";
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { SpcPanelData } from "../lib/api";
+  import ChartTip from "./ChartTip.svelte";
 
   let { data, series, width, height = 220, onRendered }: {
     data: SpcPanelData; series: SpcPanelData["series"][number]; width: number; height?: number;
@@ -16,7 +17,7 @@
   let wrap = $state<HTMLDivElement | null>(null);
   /** supplementary run rules (2 of 3, 4 of 5, 8 in a row): drawn hollow, can be hidden */
   let supplementary = $state(true);
-  let tip = $state<{ x: number; y: number; text: string; flip: boolean } | null>(null);
+  let tip = $state<HoverTip | null>(null);
   const VIOLATION = "#D55E00";
   const marks = $derived(violationMarks(series, supplementary));
   const hasSupplementary = $derived((series.violations ?? []).some((v) => !v.rules.some((r) => DECIDING.has(r))));
@@ -84,10 +85,7 @@
               if (left == null || top == null || left < 0 || !box) { tip = null; return; }
               const hit = nearestMark(drawn, left, top, (mk) => [p.valToPos(mk.x, "x"), p.valToPos(mk.y, "y")]);
               if (!hit) { tip = null; return; }
-              const o = p.over.getBoundingClientRect(), w = box.getBoundingClientRect();
-              const x = o.left - w.left + left, y = o.top - w.top + top;
-              const flip = x > w.width / 2;
-              tip = { x: flip ? x - 12 : x + 12, y: y + 12, text: markTip(hit, step), flip };
+              tip = tipAt(p, box, left, top, markTip(hit, step));
             },
           ],
         },
@@ -105,7 +103,7 @@
   <div class="plot" bind:this={wrap} role="presentation" onmouseleave={() => (tip = null)}>
     <div bind:this={el}></div>
     {#if tip}
-      <div class="spc-tip" class:flip={tip.flip} data-spc-tip style="left:{tip.x}px;top:{tip.y}px">{tip.text}</div>
+      <ChartTip {tip} data-spc-tip />
     {/if}
   </div>
   <div class="legend">
@@ -119,10 +117,5 @@
 <style>
   .verdict { font-size: 0.85em; margin: 2px 0; }
   .plot { position: relative; }
-  .spc-tip {
-    position: absolute; white-space: pre; font-size: 11px; background: var(--fg); color: var(--bg);
-    padding: 4px 6px; border-radius: 4px; pointer-events: none; z-index: 5;
-  }
-  .spc-tip.flip { transform: translateX(-100%); }
   .supp { margin-left: 6px; white-space: nowrap; }
 </style>

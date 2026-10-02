@@ -47,3 +47,17 @@ export function drawDots<M extends { x: number; y: number }>(
   }
   c.restore();
 }
+
+/** A tooltip's position inside its wrapper (CSS px); `flip` means it sits left of the pointer. */
+export interface HoverTip { x: number; y: number; text: string; flip: boolean }
+
+/**
+ * Place a tooltip 12px below-right of the cursor (below-left on the wrapper's right half) from a
+ * uPlot cursor position (`left`/`top`, relative to the plot area).
+ */
+export function tipAt(p: uPlot, wrap: HTMLElement, left: number, top: number, text: string): HoverTip {
+  const o = p.over.getBoundingClientRect(), w = wrap.getBoundingClientRect();
+  const x = o.left - w.left + left, y = o.top - w.top + top;
+  const flip = x > w.width / 2;
+  return { x: flip ? x - 12 : x + 12, y: y + 12, text, flip };
+}

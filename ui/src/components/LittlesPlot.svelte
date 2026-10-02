@@ -3,9 +3,10 @@
   import "uplot/dist/uPlot.min.css";
   import { flaggedSpans, littlesLegend, ratioRange, seriesTitle, toLittlesUplot, toRatioUplot, verdictText, windowTip } from "../chart/littles";
   import { fmtRatio } from "../chart/indexed";
-  import { HIDDEN_SERIES, plotAxes, axisGutterSize } from "../chart/plotKit";
+  import { HIDDEN_SERIES, plotAxes, axisGutterSize, tipAt, type HoverTip } from "../chart/plotKit";
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { LittlesPanelData } from "../lib/api";
+  import ChartTip from "./ChartTip.svelte";
 
   let { data, series, width, height = 200, onRendered }: {
     data: LittlesPanelData; series: LittlesPanelData["series"][number]; width: number; height?: number;
@@ -17,7 +18,7 @@
   let top = $state<HTMLDivElement | null>(null);
   let strip = $state<HTMLDivElement | null>(null);
   let wrap = $state<HTMLDivElement | null>(null);
-  let tip = $state<{ x: number; y: number; text: string; flip: boolean } | null>(null);
+  let tip = $state<HoverTip | null>(null);
   const spans = $derived(flaggedSpans(series));
 
   function shade(p: uPlot, mode: string) {
@@ -39,10 +40,7 @@
     if (left == null || y == null || left < 0 || !box) { tip = null; return; }
     const text = windowTip(series, p.posToVal(left, "x"));
     if (!text) { tip = null; return; }
-    const o = p.over.getBoundingClientRect(), w = box.getBoundingClientRect();
-    const x = o.left - w.left + left, yy = o.top - w.top + y;
-    const flip = x > w.width / 2;
-    tip = { x: flip ? x - 12 : x + 12, y: yy + 12, text, flip };
+    tip = tipAt(p, box, left, y, text);
   }
 
   $effect(() => {
@@ -117,7 +115,7 @@
     <div bind:this={top}></div>
     <div bind:this={strip}></div>
     {#if tip}
-      <div class="littles-tip" class:flip={tip.flip} data-littles-tip style="left:{tip.x}px;top:{tip.y}px">{tip.text}</div>
+      <ChartTip {tip} data-littles-tip />
     {/if}
   </div>
   <div class="legend">{littlesLegend(series, data.window_ms)}</div>
@@ -129,9 +127,4 @@
   .key i { display: inline-block; width: 14px; height: 2px; }
   .key i.dash { height: 0; border-top: 2px dashed; }
   .plot { position: relative; }
-  .littles-tip {
-    position: absolute; white-space: pre; font-size: 11px; background: var(--fg); color: var(--bg);
-    padding: 4px 6px; border-radius: 4px; pointer-events: none; z-index: 5;
-  }
-  .littles-tip.flip { transform: translateX(-100%); }
 </style>
