@@ -111,10 +111,13 @@ interface PanelDataBase { panel: Panel; dataset: DatasetMeta; caveats: string[];
 export interface OverlayFlags { normal: boolean; limit: boolean; ghost: boolean }
 export interface BandSeries { ts: number[]; lo: (number | null)[]; hi: (number | null)[] }
 export interface GhostSeries { id: string; ts: number[]; avg: (number | null)[]; count: (number | null)[] }
+/** A transform that would carry a resolved bound with it (e.g. headroom, % of limit) instead of
+ *  a separate limit line (bead 2as.15). Always a suggestion: never applied for you. */
+export interface Reframing { transform: "headroom" | "percent_of_limit"; expr: string; label: string; reason: string; origin: string }
 export interface OverlaysPayload {
   flags: OverlayFlags;
   normal: { available: boolean; reason?: string; label?: string; stale?: boolean; series?: Record<string, BandSeries>; unmatched?: string[] };
-  limit: { available: boolean; reason?: string; label?: string; metric?: string; hi?: number; series?: SeriesData[] };
+  limit: { available: boolean; reason?: string; label?: string; metric?: string; hi?: number; origin?: string; confidence?: number; basis?: string; series?: SeriesData[]; reframings?: Reframing[] };
   ghost: { available: boolean; loaded: boolean; label?: string; series?: GhostSeries[] };
 }
 export interface TimePanelData extends PanelDataBase { kind: "time"; bucket_state?: BucketStatePayload[]; bucket_state_more?: number; overlays?: OverlaysPayload; effective_step_ms: number; series: SeriesData[]; marginal?: MarginalData | null; index?: IndexPayload | null; raw?: SeriesData[]; removed?: SeriesData[]; filter?: FilterInfo }

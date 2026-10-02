@@ -241,8 +241,8 @@ bounds = "≥0"
 additivity_series = "additive"
 additivity_time = "intensive"
 role = "memory"
-bounded_by = ["container_memory_usage_bytes"]
-description = "Usage minus inactive file cache: what the kubelet uses for eviction and what the OOM killer compares with the limit."
+bounded_by = ["container_spec_memory_limit_bytes"]
+description = "Usage minus inactive file cache: what the kubelet uses for eviction and what the OOM killer compares with the limit (container_spec_memory_limit_bytes; 0 there means unlimited, so no line is drawn)."
 
 [[metric]]
 names = ["container_memory_rss", "container_memory_cache"]

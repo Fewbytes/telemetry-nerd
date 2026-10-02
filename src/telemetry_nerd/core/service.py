@@ -39,6 +39,7 @@ from telemetry_nerd.charts.spec import (
     Layer,
     Marginal,
     Reference,
+    Reframing,
     ValidationIssue,
     Window,
     YContext,
@@ -49,9 +50,12 @@ from telemetry_nerd.charts.spec import (
 )
 from telemetry_nerd.charts.units import metric_names, raw_counters
 from telemetry_nerd.charts.ycontext import (
-    counter_rate_metric,
+    RATE_BOUND_CONFIDENCE,
+    counter_rate_parts,
     limit_expr,
     natural_range,
+    rate_bound,
+    reframing_specs,
     selector_parts,
 )
 from telemetry_nerd.charts.yview import value_stats
@@ -721,7 +725,8 @@ class TelemetryService:
         meta = self.datasets.meta(p.dataset_ids[0])
         ctx = YContext()
         parts = selector_parts(meta.expr)
-        metric = parts[0] if parts else counter_rate_metric(meta.expr)
+        rate_parts = None if parts is not None else counter_rate_parts(meta.expr)
+        metric = parts[0] if parts else (rate_parts[0] if rate_parts else None)
         if metric is None:
             ctx.notes.append("natural_bounds_unknown: the expression is not a single metric")
         elif parts is not None:
@@ -731,13 +736,39 @@ class TelemetryService:
         elif self.ws.catalog_facts(meta.source, metric).type == "counter":
             # a rate of a counter is never negative, whatever the counter's own bounds say
             ctx.natural_lo, ctx.bounds, ctx.bounds_origin = 0.0, "≥0", "counter rate"
+        limit_fetch_expr: str | None = None
         if parts is not None:
-            if targets := self.ws.catalog_bounded_by(meta.source, parts[0]):
-                ctx.limit = await self._fetch_limit(meta, parts[1], targets[0], ctx.notes)
-        elif metric is not None and self.ws.catalog_bounded_by(meta.source, metric):
-            ctx.notes.append(
-                "limit_unavailable: the physical limit bounds the metric itself, not its rate"
-            )
+            if rels := self.ws.catalog_bound_relations(meta.source, parts[0]):
+                r = rels[0]
+                limit_fetch_expr = limit_expr(parts[1], r.object)
+                ctx.limit = await self._fetch_limit(
+                    meta,
+                    limit_fetch_expr,
+                    r.object,
+                    r.winner.origin,
+                    r.winner.confidence,
+                    r.winner.basis or "bounded_by",
+                    ctx.notes,
+                )
+        elif metric is not None:
+            matchers = rate_parts[1] if rate_parts else ""
+            if found := rate_bound(metric, matchers):
+                label, limit_fetch_expr, basis = found
+                ctx.limit = await self._fetch_limit(
+                    meta, limit_fetch_expr, label, "rule", RATE_BOUND_CONFIDENCE, basis, ctx.notes
+                )
+                if ctx.limit is None:
+                    limit_fetch_expr = None
+            elif self.ws.catalog_bounded_by(meta.source, metric):
+                ctx.notes.append(
+                    "limit_unavailable: the physical limit bounds the metric itself, not its rate"
+                )
+        if ctx.limit is not None and limit_fetch_expr is not None:
+            # a transform that would carry the bound with it, offered but never applied silently
+            ctx.reframings = [
+                Reframing(transform=t, expr=e, label=lbl, reason=why)
+                for t, e, lbl, why in reframing_specs(meta.expr, limit_fetch_expr, ctx.limit.metric)
+            ]
         ctx.profile = await self._fetch_profile(meta, ctx.notes)
         self.ws.set_y_context(p.id, ctx, actor)
         return ctx
@@ -765,9 +796,15 @@ class TelemetryService:
         return YProfile(lo=lo, hi=hi, label=f"normal range ({format_duration(prof.window_ms)})")
 
     async def _fetch_limit(
-        self, meta: DatasetMeta, matchers: str, target: str, notes: list[str]
+        self,
+        meta: DatasetMeta,
+        expr: str,
+        target: str,
+        origin: str,
+        confidence: float,
+        basis: str,
+        notes: list[str],
     ) -> YLimit | None:
-        expr = limit_expr(matchers, target)
         try:
             ds = (
                 await self.query(
@@ -787,7 +824,14 @@ class TelemetryService:
         if hi is None:
             notes.append(f"limit_unavailable: {target} has no data under these labels")
             return None
-        return YLimit(metric=target, dataset=ds, hi=hi)
+        if hi <= 0:
+            # 0 commonly means "unlimited" (e.g. container_spec_memory_limit_bytes); a zero or
+            # negative ceiling is never a usable axis bound regardless of the convention
+            notes.append(f"limit_unavailable: {target} is {hi:g} (0 commonly means unlimited)")
+            return None
+        return YLimit(
+            metric=target, dataset=ds, hi=hi, basis=basis, origin=origin, confidence=confidence
+        )
 
     async def ensure_reference(self, panel_id: str, mode: str, actor: Actor) -> Reference:
         p = self.workspace.get_panel(panel_id)

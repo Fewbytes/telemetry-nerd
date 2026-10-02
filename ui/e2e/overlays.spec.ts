@@ -38,6 +38,12 @@ test("reference layers: limit line and normal band on by default, last week on d
   // the limit line is on and drawn from the first paint; the band joins once the profile exists
   await expect(layers.locator('[data-overlay="limit"]')).toHaveAttribute("aria-pressed", "true");
   await expect(el).toHaveAttribute("data-overlays", /limit/);
+  // provenance (bead 2as.15): the limit's origin and confidence are on the chip, not a magic number
+  await expect(layers.locator('[data-overlay="limit"]')).toHaveAttribute("title", /origin: claude \(confidence 0\.80\)/);
+  // a resolved bound always comes with a reframing suggestion, offered but never applied
+  const reframe = el.getByRole("group", { name: "Reframing suggestions" });
+  await expect(reframe.locator('[data-reframing="headroom"]')).toBeVisible();
+  await expect(reframe.locator('[data-reframing="percent_of_limit"]')).toBeVisible();
   await expect(layers.locator('[data-overlay="normal"]')).toBeEnabled({ timeout: 20_000 });
   await expect(el).toHaveAttribute("data-overlays", /normal/, { timeout: 20_000 });
   await expect(layers.locator('[data-overlay="ghost"]')).toHaveAttribute("aria-pressed", "false");

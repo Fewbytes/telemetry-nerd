@@ -1,5 +1,5 @@
-// ui/src/chart/overlays.ts — reference layers on time panels (bead 2as.11). Pure.
-import type { GhostSeries, BandSeries, OverlayFlags, OverlaysPayload, SeriesData } from "../lib/api";
+// ui/src/chart/overlays.ts — reference layers on time panels (bead 2as.11, 2as.15). Pure.
+import type { GhostSeries, BandSeries, OverlayFlags, OverlaysPayload, Reframing, SeriesData } from "../lib/api";
 
 export interface Chip {
   key: keyof OverlayFlags;
@@ -7,6 +7,14 @@ export interface Chip {
   on: boolean;
   enabled: boolean;
   title: string;
+}
+
+/** "pack (confidence 0.85)" etc.: shown on hover and in the metric card, never a bare number
+ *  (bead 2as.15 provenance rule). */
+export function provenance(origin?: string, confidence?: number): string {
+  if (!origin) return "";
+  const pct = confidence !== undefined ? ` (confidence ${confidence.toFixed(2)})` : "";
+  return `${origin}${pct}`;
 }
 
 /** One chip per layer: why it is unavailable is the tooltip, never silence. */
@@ -22,7 +30,9 @@ export function overlayChips(ov: OverlaysPayload): Chip[] {
     },
     {
       key: "limit", label: "limit line", on: ov.flags.limit && l.available, enabled: l.available,
-      title: l.available ? `${l.label}, from the bounded_by relation in the catalog` : `limit line unavailable: ${l.reason ?? "no bounded_by relation"}`,
+      title: l.available
+        ? `${l.label} — origin: ${provenance(l.origin, l.confidence)}${l.basis ? `; ${l.basis}` : ""}`
+        : `limit line unavailable: ${l.reason ?? "no bounded_by relation"}`,
     },
     {
       key: "ghost", label: "last week", on: ov.flags.ghost && g.available, enabled: g.available,
@@ -33,6 +43,24 @@ export function overlayChips(ov: OverlaysPayload): Chip[] {
           : "the same window one week earlier, dashed",
     },
   ];
+}
+
+export interface ReframingChip {
+  transform: Reframing["transform"];
+  label: string;
+  title: string;
+  expr: string;
+}
+
+/** The reframing suggestions attached to a resolved limit, if any (bead 2as.15): always offered
+ *  alongside the limit line, never applied in its place. Empty when there is no resolved bound. */
+export function reframingChips(ov: OverlaysPayload): ReframingChip[] {
+  return (ov.limit.reframings ?? []).map((r) => ({
+    transform: r.transform,
+    label: r.label,
+    title: `${r.reason} — origin: ${provenance(r.origin)} — ${r.expr}`,
+    expr: r.expr,
+  }));
 }
 
 export interface OverlayDraw {

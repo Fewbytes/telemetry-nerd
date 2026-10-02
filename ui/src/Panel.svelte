@@ -22,7 +22,7 @@
   import FleetPlot from "./components/FleetPlot.svelte";
   import { fmtRatio, indexSeries, ratioTicks } from "./chart/indexed";
   import { drawMarginal, marginalHeader } from "./chart/marginal";
-  import { overlayChips, overlayDraw } from "./chart/overlays";
+  import { overlayChips, overlayDraw, reframingChips } from "./chart/overlays";
   import { badgeText, contextStrip, hasReference, nonZeroOrigin, offeredViews, refExtent, resolveY, yStats } from "./chart/yview";
   import { measureFirstDraw } from "./chart/measureDraw";
   import { drawAnnotations, drawOps, readAnnotationColors } from "./chart/annotations";
@@ -644,6 +644,14 @@
           disabled={!c.enabled || overlayBusy} aria-pressed={c.on}
           onclick={() => toggleOverlay(c.key, !c.on)}
         >{c.label}</button>
+      {/each}
+    </div>
+  {/if}
+  {#if data?.kind === "time" && data.overlays?.limit.available && reframingChips(data.overlays).length}
+    <div class="legend reframings" role="group" aria-label="Reframing suggestions">
+      reframe (suggested, not applied):
+      {#each reframingChips(data.overlays) as r (r.transform)}
+        <span class="reframe-chip" data-reframing={r.transform} title={r.title}>{r.label}</span>
       {/each}
     </div>
   {/if}

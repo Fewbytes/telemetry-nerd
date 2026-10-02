@@ -194,6 +194,7 @@ ul.gaps { list-style: none; margin: 0; padding: 0; }
 .panel .y-views button.on, .panel .overlays button.on { color: var(--fg); border-color: var(--fg); }
 .panel .overlays button:disabled { opacity: 0.45; cursor: not-allowed; }
 .panel .y-views button.suggest, .panel .y-views button.suggested { border-style: dashed; }
+.panel .reframe-chip { display: inline-block; font-size: 11px; padding: 0 6px; margin-left: 4px; border: 1px dashed var(--border); border-radius: 4px; color: var(--muted); cursor: help; }
 .panel .y-views button:disabled { opacity: 0.4; cursor: not-allowed; }
 .panel .y-badge { position: absolute; top: 4px; right: 8px; z-index: 2; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--badge); border-left: 3px solid var(--warn); }
 .panel .y-strip { position: absolute; top: 8px; bottom: 32px; /* + rug band, set inline */ right: 0; width: 4px; background: var(--border); }

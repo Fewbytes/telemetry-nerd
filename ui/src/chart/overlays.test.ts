@@ -1,12 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type { OverlaysPayload, SeriesData } from "../lib/api";
-import { overlayChips, overlayDraw } from "./overlays";
+import { overlayChips, overlayDraw, provenance, reframingChips } from "./overlays";
 import { LIMIT_COLOR, toUplot } from "./toUplot";
 
 const ov = (o: Partial<OverlaysPayload> = {}): OverlaysPayload => ({
   flags: { normal: true, limit: true, ghost: false },
   normal: { available: true, label: "normal range (30d, same hour of week)", series: { a: { ts: [1000, 2000], lo: [1, 2], hi: [5, 6] } }, unmatched: [] },
-  limit: { available: true, label: "limit size_bytes", metric: "size_bytes", hi: 9, series: [{ id: "l", labels: { __name__: "size_bytes" }, ts: [1000, 2000], avg: [9, 9], min: [9, 9], max: [9, 9], count: [1, 1] }] },
+  limit: {
+    available: true, label: "limit size_bytes", metric: "size_bytes", hi: 9, origin: "pack", confidence: 0.85, basis: "pack node_exporter@1.x: cite",
+    series: [{ id: "l", labels: { __name__: "size_bytes" }, ts: [1000, 2000], avg: [9, 9], min: [9, 9], max: [9, 9], count: [1, 1] }],
+    reframings: [
+      { transform: "headroom", expr: "(size_bytes) - (used_bytes)", label: "headroom (limit − value)", reason: "carries the bound with it", origin: "rule" },
+      { transform: "percent_of_limit", expr: "100 * (used_bytes) / (size_bytes)", label: "% of limit", reason: "same risk at any scale", origin: "rule" },
+    ],
+  },
   ghost: { available: true, loaded: false, label: "last week" },
   ...o,
 });
@@ -17,7 +24,7 @@ describe("overlayChips", () => {
     const chips = overlayChips(ov());
     expect(chips.map((c) => [c.key, c.on, c.enabled])).toEqual([["normal", true, true], ["limit", true, true], ["ghost", false, true]]);
     expect(chips[0].title).toMatch(/operating profile/);
-    expect(chips[1].title).toMatch(/bounded_by/);
+    expect(chips[1].title).toMatch(/origin: pack \(confidence 0\.85\)/);
   });
   it("an unavailable layer is disabled and says why", () => {
     const chips = overlayChips(ov({ normal: { available: false, reason: "the operating profile is not computed yet" }, limit: { available: false, reason: "the catalog has no bounded_by relation for this metric" } }));
@@ -36,6 +43,26 @@ describe("overlayChips", () => {
   it("ghost: fetched-on-switch-on until loaded", () => {
     expect(overlayChips(ov())[2].title).toMatch(/fetched when switched on/);
     expect(overlayChips(ov({ ghost: { available: true, loaded: true } }))[2].title).toMatch(/one week earlier, dashed/);
+  });
+});
+
+describe("provenance", () => {
+  it("formats origin and confidence; no unexplained magic numbers", () => {
+    expect(provenance("pack", 0.85)).toBe("pack (confidence 0.85)");
+    expect(provenance("rule")).toBe("rule");
+    expect(provenance(undefined)).toBe("");
+  });
+});
+
+describe("reframingChips", () => {
+  it("surfaces every reframing suggestion attached to the limit, with its expr and reason", () => {
+    const chips = reframingChips(ov());
+    expect(chips.map((c) => c.transform)).toEqual(["headroom", "percent_of_limit"]);
+    expect(chips[0].title).toMatch(/carries the bound with it/);
+    expect(chips[0].title).toContain(chips[0].expr);
+  });
+  it("is empty when there is no resolved limit", () => {
+    expect(reframingChips(ov({ limit: { available: false, reason: "x" } }))).toEqual([]);
   });
 });
 

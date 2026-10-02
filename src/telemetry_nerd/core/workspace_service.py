@@ -1326,12 +1326,17 @@ class WorkspaceService:
         win = resolve(c for c in claims if c.field == "bounds")
         return (win.value, win.origin) if win else None
 
-    def catalog_bounded_by(self, source: str, metric: str) -> list[str]:
-        """Metrics `metric` never exceeds (at the same labels), strongest claim first."""
+    def catalog_bound_relations(self, source: str, metric: str) -> list[ResolvedRelation]:
+        """`bounded_by` relations from `metric` (at the same labels), strongest claim first; each
+        carries the winning claim's origin, confidence and basis (bead 2as.15 provenance)."""
         rels = self.relations.relations("catalog", source, metric=metric, kind="bounded_by")
         rels = [r for r in rels if r.subject == metric]
         rels.sort(key=lambda r: (-r.winner.confidence, r.object))
-        return [r.object for r in rels]
+        return rels
+
+    def catalog_bounded_by(self, source: str, metric: str) -> list[str]:
+        """Metrics `metric` never exceeds (at the same labels), strongest claim first."""
+        return [r.object for r in self.catalog_bound_relations(source, metric)]
 
     @atomic
     def set_y_context(self, panel_id: str, ctx: YContext, actor: Actor) -> Panel:

@@ -412,7 +412,11 @@ def limit_payload(datasets, ctx, meta, labels, width_px: int) -> dict:
         "label": f"limit {ctx.limit.metric}",
         "metric": ctx.limit.metric,
         "hi": ctx.limit.hi,
+        "origin": ctx.limit.origin,
+        "confidence": ctx.limit.confidence,
+        "basis": ctx.limit.basis,
         "series": series_payload(table, series_labels(res.series)),
+        "reframings": [r.model_dump() for r in ctx.reframings],
     }
 
 
