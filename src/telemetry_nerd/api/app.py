@@ -264,6 +264,19 @@ def create_app(
         )
 
     @_api
+    async def panel_overlays(request: Request) -> object:
+        body = await _body(request)
+        flags = {}
+        for name in ("normal", "limit", "ghost"):
+            if name in body:
+                if not isinstance(body[name], bool):
+                    raise _BadRequest(f"invalid field {name!r}", f"{name!r} must be true or false")
+                flags[name] = body[name]
+        if not flags:
+            raise _BadRequest("nothing to set", "give normal, limit and/or ghost as booleans")
+        return await service.set_overlays(request.path_params["id"], "user", **flags)
+
+    @_api
     async def panel_y_context(request: Request) -> object:
         """Recompute a panel's y context (e.g. once its operating profile has finished)."""
         await _body(request)
@@ -642,6 +655,7 @@ def create_app(
         Route("/api/panels", list_panels),
         Route("/api/panels/{id}/y-view", panel_y_view, methods=["POST"]),
         Route("/api/panels/{id}/y-context", panel_y_context, methods=["POST"]),
+        Route("/api/panels/{id}/overlays", panel_overlays, methods=["POST"]),
         Route("/api/panels/{id}/marginal", panel_marginal, methods=["POST"]),
         Route("/api/panels/{id}/data-view", panel_data_view, methods=["POST"]),
         Route("/api/panels/{id}/data", panel_data),

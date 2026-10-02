@@ -1002,6 +1002,28 @@ class WorkspaceService:
         )
         return p
 
+    @atomic
+    def set_overlays(
+        self,
+        panel_id: str,
+        actor: Actor,
+        *,
+        normal: bool | None = None,
+        limit: bool | None = None,
+        ghost: bool | None = None,
+        reference: Reference | None = None,
+    ) -> Panel:
+        """Switch reference layers on or off (bead 2as.11); only the given flags change."""
+        p, spec = self._time_spec(panel_id)
+        for name, value in (("normal", normal), ("limit", limit), ("ghost", ghost)):
+            if value is not None:
+                setattr(spec.overlays, name, bool(value))
+        if reference is not None:
+            spec.references[reference.mode] = reference
+        p = self.workspace.set_spec(p.id, spec.model_dump())
+        self.log.append(actor, "panel.overlays_set", p.id, spec.overlays.model_dump())
+        return p
+
     def brief(self) -> dict:
         """Compact state for Claude: newest first, truncated to BRIEF_BUDGET_BYTES."""
         hyps = [

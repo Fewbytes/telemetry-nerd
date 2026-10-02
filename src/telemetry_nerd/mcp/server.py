@@ -636,6 +636,22 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise _fail(e) from e
 
     @mcp.tool()
+    async def set_overlays(
+        panel: str, normal: bool | None = None, limit: bool | None = None, ghost: bool | None = None
+    ) -> str:
+        """Switch reference layers on a time-series panel; only the flags you pass change.
+        normal: seasonal normal band (the same hour of the week, from the operating profile);
+        limit: the physical limit line (a bounded_by metric, e.g. filesystem size);
+        ghost: the same window last week as a faint dashed line (fetches it, so off by default).
+        normal and limit default to on where the data exists; the UI says why one is unavailable."""
+        try:
+            return _dump(await service.set_overlays(panel, "claude", normal, limit, ghost))
+        except SourceError as e:
+            raise _source_error(e) from e
+        except (NotFound, ValueError) as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
     async def show_marginal(
         panel: str, reference: str = "previous", reason: str = "", off: bool = False
     ) -> str:

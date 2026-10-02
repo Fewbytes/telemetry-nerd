@@ -27,6 +27,7 @@ from telemetry_nerd.analysis.marginal import (
     sample_bins,
     step_values,
 )
+from telemetry_nerd.analysis.profile import band_at
 from telemetry_nerd.analysis.quantiles import column_quantiles
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.charts.indexed import shifted, window_baselines
@@ -205,6 +206,23 @@ def marginal_payload(datasets, spec: ChartSpec, meta) -> dict | None:
     }
 
 
+def reference_series(datasets, ref, meta, width_px: int) -> list[dict]:
+    """A reference dataset moved onto the panel's time grid, at the panel's resolution."""
+    _, rres = datasets.get(ref.series)
+    table = shifted(rres.buckets, ref.shift_ms)
+    if meta.representation != "quantile":  # same range and step as the panel => identical LOD grid
+        table, _ = lod(table, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px)
+    return [
+        {
+            "id": sid,
+            "ts": g["ts_ms"].to_list(),
+            "avg": g["avg"].to_list(),
+            "count": g["count"].to_list(),
+        }
+        for (sid,), g in pl.DataFrame(table).group_by("series_id", maintain_order=True)
+    ]
+
+
 def index_payload(datasets, spec: ChartSpec, meta, result, width_px: int) -> dict | None:
     v = spec.y.selected
     if v is None or v.mode != "indexed":
@@ -223,19 +241,7 @@ def index_payload(datasets, spec: ChartSpec, meta, result, width_px: int) -> dic
             "label": "",
             "refused": f"no {v.baseline} reference fetched",
         }
-    _, rres = datasets.get(ref.series)
-    table = shifted(rres.buckets, ref.shift_ms)
-    if meta.representation != "quantile":  # same range and step as the panel => identical LOD grid
-        table, _ = lod(table, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px)
-    series = [
-        {
-            "id": sid,
-            "ts": g["ts_ms"].to_list(),
-            "avg": g["avg"].to_list(),
-            "count": g["count"].to_list(),
-        }
-        for (sid,), g in pl.DataFrame(table).group_by("series_id", maintain_order=True)
-    ]
+    series = reference_series(datasets, ref, meta, width_px)
     when = "last week" if ref.mode == "week" else "in the previous window"
     return {
         "baseline": v.baseline,
@@ -266,3 +272,92 @@ def signal_payload(datasets, panel: Panel, meta, width_px: int, labels) -> dict:
         removed, _ = lod(removed_table(raw.buckets, filt.buckets), meta.step_ms, rng, width_px)
         out["removed"] = series_payload(removed, labels)
     return out
+
+
+def _plain(labels: dict) -> dict:
+    return {k: v for k, v in labels.items() if k != "__name__"}
+
+
+def normal_payload(profile, series: list[dict], step_ms: int, window: str) -> dict:
+    """Seasonal normal band per drawn series from the operating profile (bead 2as.11).
+
+    Each bucket is compared with the same hour of the profile's period (hour of week); a profile
+    without a seasonal pattern gives a flat band at its pooled range. Series are matched to
+    profile series by labels (ignoring __name__, which a rate drops)."""
+    if profile is None:
+        return {
+            "available": False,
+            "reason": "the operating profile is not computed yet or the expression has none",
+        }
+    by_labels = {tuple(sorted(_plain(p.labels).items())): p for p in profile.series}
+    bands: dict[str, dict] = {}
+    unmatched: list[str] = []
+    seasonal_any = False
+    for s in series:
+        p = by_labels.get(tuple(sorted(_plain(s["labels"]).items())))
+        if p is None:
+            unmatched.append(s["id"])
+            continue
+        if p.seasonal is not None:
+            seasonal_any = True
+            lo, hi = [], []
+            for ts in s["ts"]:
+                b = band_at(p.seasonal, ts - step_ms)
+                lo.append(b.lo)
+                hi.append(b.hi)
+        else:
+            r = p.range
+            flo, fhi = (r.envelope_lo, r.envelope_hi) if profile.extremes else (r.p005, r.p995)
+            lo, hi = [flo] * len(s["ts"]), [fhi] * len(s["ts"])
+        bands[s["id"]] = {"ts": s["ts"], "lo": lo, "hi": hi}
+    if not bands:
+        return {
+            "available": False,
+            "reason": "no drawn series matches a profiled series (the profile covers other labels)",
+        }
+    kind = "same hour of week" if seasonal_any else "flat: no seasonal pattern found"
+    return {
+        "available": True,
+        "label": f"normal range ({window}, {kind})",
+        "stale": profile.stale,
+        "series": bands,
+        "unmatched": unmatched,
+    }
+
+
+def limit_payload(datasets, ctx, meta, labels, width_px: int) -> dict:
+    """The bounded_by metric drawn as a limit line, or why there is none."""
+    if ctx is None or ctx.limit is None:
+        why = next(
+            (
+                n.split(": ", 1)[-1]
+                for n in (ctx.notes if ctx else [])
+                if n.startswith("limit_unavailable")
+            ),
+            None,
+        )
+        return {
+            "available": False,
+            "reason": why or "the catalog has no bounded_by relation for this metric",
+        }
+    _, res = datasets.get(ctx.limit.dataset)
+    table, _ = lod(res.buckets, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px)
+    return {
+        "available": True,
+        "label": f"limit {ctx.limit.metric}",
+        "metric": ctx.limit.metric,
+        "hi": ctx.limit.hi,
+        "series": series_payload(table, series_labels(res.series)),
+    }
+
+
+def ghost_payload(datasets, spec: ChartSpec, meta, width_px: int) -> dict:
+    ref = spec.references.get("week")
+    if ref is None:
+        return {"available": True, "loaded": False, "label": "last week"}
+    return {
+        "available": True,
+        "loaded": True,
+        "label": ref.label or "last week",
+        "series": reference_series(datasets, ref, meta, width_px),
+    }

@@ -52,10 +52,13 @@ from telemetry_nerd.charts.ycontext import (
 from telemetry_nerd.charts.yview import value_stats
 from telemetry_nerd.core.events import Actor, EventLog
 from telemetry_nerd.core.panel_payloads import (
+    ghost_payload,
     heatmap_panel_data,
     histogram_panel_data,
     index_payload,
+    limit_payload,
     marginal_payload,
+    normal_payload,
     series_labels,
     series_payload,
     signal_payload,
@@ -757,6 +760,43 @@ class TelemetryService:
         p = await self.profiles.ensure(source, expr, force=refresh)
         return p.summary()
 
+    def _overlays(self, panel, meta, series, labels, step_ms: int, width_px: int) -> dict:
+        """Normal band, limit line and last-week ghost: what each is, whether it is on, and its
+        data when on. Disabled chips carry their reason (bead 2as.11)."""
+        spec = ChartSpec.model_validate(panel.spec)
+        if any(layer.mark != "line+envelope" for layer in spec.layers) or spec.signal:
+            return {}
+        ov = spec.overlays
+        profile = self.profiles.cached(meta.source, meta.expr)
+        window = format_duration(profile.window_ms) if profile else ""
+        normal = normal_payload(profile, series, step_ms, window)
+        limit = limit_payload(self.datasets, spec.y.context, meta, labels, width_px)
+        ghost = ghost_payload(self.datasets, spec, meta, width_px) if ov.ghost else {
+            "available": True, "loaded": "week" in spec.references, "label": "last week",
+        }  # fmt: skip
+        out = {"flags": ov.model_dump(), "normal": normal, "limit": limit, "ghost": ghost}
+        for name in ("normal", "limit"):  # data only when on: availability always
+            if not getattr(ov, name):
+                out[name] = {k: v for k, v in out[name].items() if k not in ("series", "unmatched")}
+        return out
+
+    async def set_overlays(
+        self,
+        panel_id: str,
+        actor: Actor,
+        normal: bool | None = None,
+        limit: bool | None = None,
+        ghost: bool | None = None,
+    ) -> dict:
+        """Toggle reference layers on a time panel; turning the ghost on fetches last week."""
+        ref = None
+        if ghost:
+            ref = await self.ensure_reference(panel_id, "week", actor)
+        p = self.ws.set_overlays(
+            panel_id, actor, normal=normal, limit=limit, ghost=ghost, reference=ref
+        )
+        return {"panel": p.id, "overlays": p.spec["overlays"]}
+
     def panel_data(self, panel_id: str, width_px: int) -> dict:
         panel = self.workspace.get_panel(panel_id)
         dataset_id = panel.dataset_ids[0]
@@ -802,6 +842,7 @@ class TelemetryService:
             "index": index_payload(
                 self.datasets, ChartSpec.model_validate(panel.spec), meta, result, width_px
             ),
+            "overlays": self._overlays(panel, meta, series, labels, effective_step, width_px),
             "panel": panel.to_dict(),
             "dataset": meta.to_dict(),
             "effective_step_ms": effective_step,

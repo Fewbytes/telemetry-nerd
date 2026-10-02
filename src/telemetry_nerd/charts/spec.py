@@ -117,12 +117,21 @@ class Marginal(BaseModel):
     reason: str | None = Field(default=None, max_length=160)
 
 
+class Overlays(BaseModel):
+    """Reference layers drawn under/over the data (bead 2as.11). Each is drawn only if it exists."""
+
+    normal: bool = True  # seasonal normal band from the operating profile
+    limit: bool = True  # physical limit line from a bounded_by relation
+    ghost: bool = False  # the same window last week (costs a source fetch, so opt-in)
+
+
 class ChartSpec(BaseModel):
     layers: list[Layer] = Field(min_length=1)
     y: YAxis = Field(default_factory=YAxis)
     references: dict[str, Reference] = Field(default_factory=dict)
     marginal: Marginal | None = None
     signal: SignalViews | None = None  # filtered/raw data views (4ok.9)
+    overlays: Overlays = Field(default_factory=Overlays)
 
 
 class ValidationIssue(BaseModel):
