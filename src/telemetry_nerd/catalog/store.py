@@ -91,6 +91,16 @@ class CatalogStore:
         )
         return self._db.total_changes - before
 
+    def names(self, source: str, prefix: str | None = None, limit: int = 1000) -> list[str]:
+        """Present metric names (optionally under a prefix), alphabetical, without loading claims."""
+        like = (prefix or "").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        rows = self._db.execute(
+            "SELECT metric FROM catalog_metrics WHERE source = ? AND present = 1 "
+            "AND metric LIKE ? ESCAPE '\\' ORDER BY metric LIMIT ?",
+            (source, like, limit),
+        ).fetchall()
+        return [r[0] for r in rows]
+
     def has_metric(self, source: str, metric: str) -> bool:
         return (
             self._db.execute(

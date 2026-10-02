@@ -32,6 +32,17 @@ rules; you never outrank the user, and you do not try. If your write comes back
    one coherent family per call.
 5. Report what you learned and what you could not establish.
 
+## Measuring behaviour
+
+`catalog_scan` samples a bounded set of metrics over a short window (default 30m) and records what
+it saw: resets, small decreases (a counter never does that), negatives. It writes `stats` claims
+where the evidence is strong and files system findings for contradictions (a declared gauge that
+only grows, a counter that decreases, negative values under a non-negative claim). Use it on the
+metrics an investigation touches, or one family at a time, never on a whole source. A result is
+a suggestion from a short window: a quiet counter looks constant, a slow gauge looks monotonic.
+Read the findings before overriding a pack or the source's declaration, and cite the scan
+(`basis`) when you write a claim that rests on it.
+
 ## Evidence and confidence
 
 `confidence` is at most 0.9; 1.0 is reserved for what the user verified. `basis` is required: one

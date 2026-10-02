@@ -287,7 +287,8 @@ export interface MetricCard {
   };
   quality: {
     step_ms: number; resolution_ms: number; scrape_interval_ms: number | null; scrape_interval_reason: string | null;
-    series: number; gap_pct: number | null; resets: { measured: boolean; reason: string };
+    series: number; gap_pct: number | null;
+    resets: { measured: boolean; reason?: string; window_ms?: number; series?: number; samples?: number; resets?: number; small_decreases?: number; negatives?: number; verdict?: string; scanned_ms?: number };
     cardinality: { in_panel: number; catalog: number | null };
   };
 }

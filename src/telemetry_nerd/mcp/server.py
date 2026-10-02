@@ -83,6 +83,9 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   bounds), record it with `catalog_write` and a basis; never claim a unit you cannot justify.
   Relations (`catalog_relate`: bounded_by, part_of, ...) and model bindings (`catalog_bind`:
   littles_law, RED, USE) go the same way; a binding role with no signal raises a Gap.
+- `catalog_scan` measures a bounded set of metrics over a short window (resets, small decreases,
+  negatives) and files contradictions with declared types or bounds as system findings; a short
+  window only suggests, so say so when you cite it.
 - `workspace_activity` lists what the user did since a sequence number.
 """
 
@@ -430,6 +433,32 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         winner. Bad claims are rejected individually."""
         try:
             return _dump({"results": service.ws.catalog_write_claude(source, claims)})
+        except ValueError as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
+    async def catalog_scan(
+        source: str,
+        metrics: list[str] | None = None,
+        prefix: str | None = None,
+        limit: int = 25,
+        window: str = "30m",
+        refresh: bool = False,
+    ) -> str:
+        """Measure what a short window of raw samples says about catalogued metrics: negatives,
+        monotonic growth, counter resets, small decreases (a counter never does that). Writes
+        origin=stats claims (type counter/gauge when the evidence is strong, bounds >=0 to fill a
+        gap; never over a pack, Claude or user claim) and files contradictions (a declared gauge
+        that only grows, a counter that decreases, negative values) as system findings.
+        Targets: `metrics`, else `prefix`, else the metrics this workspace already queried. Bounded:
+        <= 100 queries per call, a time budget, metrics scanned in the last day skipped, metrics
+        above the source's series cap skipped. A short window only suggests: say so."""
+        try:
+            return _dump(
+                await service.scan_metrics(source, metrics, prefix, limit, window, refresh)
+            )
+        except SourceError as e:
+            raise _source_error(e) from e
         except ValueError as e:
             raise _fail(e) from e
 

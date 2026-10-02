@@ -52,6 +52,12 @@ export const qualityRows = (q: MetricCard["quality"]): { label: string; value: s
     : { label: "scrape interval", value: "unknown", note: q.scrape_interval_reason ?? undefined },
   { label: "series in this panel", value: String(q.series) },
   { label: "empty buckets", value: q.gap_pct === null ? "unknown" : `${(q.gap_pct * 100).toFixed(1)}%` },
-  { label: "counter resets", value: "not measured", note: q.resets.reason },
+  q.resets.measured && q.resets.resets !== undefined
+    ? {
+        label: "counter resets",
+        value: `${q.resets.resets} resets, ${q.resets.small_decreases} small decreases`,
+        note: `${q.resets.verdict} over ${fmtDuration(q.resets.window_ms ?? 0)}, ${q.resets.series} series${q.resets.negatives ? `, ${q.resets.negatives} negative samples` : ""}`,
+      }
+    : { label: "counter resets", value: "not measured", note: q.resets.reason },
   { label: "cardinality (catalog)", value: "not measured", note: "the source's own series count per metric is not stored yet" },
 ];

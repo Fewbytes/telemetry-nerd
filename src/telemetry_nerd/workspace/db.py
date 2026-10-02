@@ -106,6 +106,36 @@ CREATE TABLE IF NOT EXISTS operating_profiles (
     failed_at_ms INTEGER,
     PRIMARY KEY (source, expr)
 );
+CREATE TABLE IF NOT EXISTS catalog_samples (
+    source TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    window_ms INTEGER NOT NULL,
+    step_ms INTEGER NOT NULL,
+    series INTEGER NOT NULL,
+    voting INTEGER NOT NULL,
+    n INTEGER NOT NULL,
+    min REAL,
+    max REAL,
+    negatives INTEGER NOT NULL,
+    increases INTEGER NOT NULL,
+    decreases INTEGER NOT NULL,
+    resets INTEGER NOT NULL,
+    small_decreases INTEGER NOT NULL,
+    gauge_voters INTEGER NOT NULL,
+    integral INTEGER NOT NULL,
+    constant INTEGER NOT NULL,
+    verdict TEXT NOT NULL,
+    dataset TEXT NOT NULL,
+    scanned_ms INTEGER NOT NULL,
+    PRIMARY KEY (source, metric)
+);
+CREATE TABLE IF NOT EXISTS catalog_findings (
+    source TEXT NOT NULL,
+    metric TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    finding_id TEXT NOT NULL,
+    PRIMARY KEY (source, metric, kind)
+);
 CREATE TABLE IF NOT EXISTS sources (
     name TEXT PRIMARY KEY,
     spec TEXT NOT NULL,

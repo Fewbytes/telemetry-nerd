@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
@@ -26,6 +27,7 @@ from telemetry_nerd.analysis.fraction import fraction_over, wilson
 from telemetry_nerd.analysis.quantile import attach_counts
 from telemetry_nerd.analysis.reference import reference_window
 from telemetry_nerd.analysis.resample import lod
+from telemetry_nerd.analysis.samples import pool, scan_series
 from telemetry_nerd.catalog.profiles import ProfileStore
 from telemetry_nerd.charts.dataview import SignalViews, offered_views
 from telemetry_nerd.charts.spec import (
@@ -106,6 +108,14 @@ def auto_step(rng: TimeRange, resolution_ms: int, target_buckets: int = 600) -> 
 
 
 MAX_BUCKETS_PER_QUERY = 50_000
+DEFAULT_SCAN = 25
+MAX_SCAN = 100  # queries per scan call: a scan is never "all metrics"
+SCAN_BUDGET_S = 60.0
+SCAN_POINTS = 120  # samples per series aimed for
+SCAN_CANDIDATES = 20  # prefix candidates considered per allowed query (many may be fresh)
+SCAN_FRESH_MS = 86_400_000
+MIN_SCAN_WINDOW_MS = 300_000
+MAX_SCAN_WINDOW_MS = 6 * 3_600_000
 SCRAPE_CACHE_MS = 3_600_000  # a measured scrape interval is reused for an hour
 PROFILE_WAIT_S = 8.0  # how long `show` waits for a first-view operating profile
 DIST_TARGET_COLUMNS = 300
@@ -408,6 +418,104 @@ class TelemetryService:
             out.append(res)
         return {"dataset": dataset_id, "x": x, "series": out}
 
+    async def scan_metrics(
+        self,
+        source: str,
+        metrics: list[str] | None = None,
+        prefix: str | None = None,
+        limit: int = DEFAULT_SCAN,
+        window: str = "30m",
+        refresh: bool = False,
+        budget_s: float = SCAN_BUDGET_S,
+        actor: Actor = "system",
+    ) -> dict:
+        """T1 sample statistics for a bounded set of catalogued metrics (bead 2as.6).
+
+        Never "all metrics": explicit names, else a prefix (hot first), else this workspace's hot
+        metrics; at most MAX_SCAN queries per call, a wall-clock budget, metrics scanned in the
+        last day skipped, and a metric above the source's series cap skipped with the reason."""
+        src = self._source(source)
+        window_ms = parse_duration(window)
+        if not MIN_SCAN_WINDOW_MS <= window_ms <= MAX_SCAN_WINDOW_MS:
+            raise ValueError(
+                f"window must be between {format_duration(MIN_SCAN_WINDOW_MS)} and "
+                f"{format_duration(MAX_SCAN_WINDOW_MS)}: a short window only suggests behaviour; "
+                "long-range shape is the operating profile's job"
+            )
+        limit = max(1, min(limit, MAX_SCAN))
+        res = max(src.resolution_ms, 1)
+        step_ms = -(-max(res, window_ms // SCAN_POINTS) // res) * res  # whole resolutions
+        skipped: list[dict] = []
+        if metrics:
+            targets = []
+            for m in dict.fromkeys(metrics):
+                if self.ws.catalog.has_metric(source, m):
+                    targets.append(m)
+                else:
+                    skipped.append(
+                        {"metric": m, "reason": "not in the catalog; run source_learn first"}
+                    )
+        else:
+            hot = self.ws.catalog_hot(source)
+            if prefix:
+                names = self.ws.catalog.names(source, prefix, limit * SCAN_CANDIDATES)
+                targets = sorted(names, key=lambda n: (n not in hot, n))
+            else:
+                targets = sorted(hot)
+        scanned: list[dict] = []
+        failed: list[dict] = []
+        t0 = time.monotonic()
+        attempted, stopped, left = 0, None, 0
+        for i, metric in enumerate(targets):
+            prev = self.ws.samples.get(source, metric)
+            if prev is not None and not refresh and self.clock() - prev.scanned_ms < SCAN_FRESH_MS:
+                skipped.append(
+                    {
+                        "metric": metric,
+                        "reason": "scanned within the last day (refresh=true to redo)",
+                    }
+                )
+                continue
+            if attempted >= limit:
+                stopped, left = "limit", len(targets) - i
+                break
+            if time.monotonic() - t0 >= budget_s:
+                stopped, left = "budget", len(targets) - i
+                break
+            attempted += 1
+            try:
+                out = await self.query(
+                    metric,
+                    start=f"now-{format_duration(window_ms)}",
+                    end="now",
+                    step=format_duration(step_ms),
+                    source=source,
+                    actor=actor,
+                )
+            except LimitExceeded as e:
+                skipped.append({"metric": metric, "reason": str(e)})
+                continue
+            except (SourceError, ValueError) as e:
+                failed.append({"metric": metric, "reason": str(e)})
+                continue
+            ds = out["dataset"]
+            _, result = self.datasets.get(ds)
+            stats = pool(_series_stats(result.buckets))
+            done = self.ws.record_scan(source, metric, stats, ds, window_ms, step_ms, actor)
+            scanned.append(
+                {
+                    "metric": metric, "verdict": stats.verdict, "series": stats.series,
+                    "samples": stats.n, "increases": stats.increases, "resets": stats.resets,
+                    "small_decreases": stats.small_decreases, "negatives": stats.negatives,
+                    **done,
+                }
+            )  # fmt: skip
+        return {
+            "source": source, "window": format_duration(window_ms), "step": format_duration(step_ms),
+            "scanned": scanned, "skipped": skipped, "failed": failed,
+            "stopped": stopped, "remaining": left,
+        }  # fmt: skip
+
     async def panel_card(self, panel_id: str) -> dict:
         """The metric card for a panel (bead 2as.12): catalog claims with provenance for each
         catalogued metric in the expression, the operating profile and measurable data quality."""
@@ -455,6 +563,19 @@ class TelemetryService:
         self.profiles.request(meta.source, meta.expr)  # compute in the background
         return {"available": False, "reason": "not computed yet (it is being computed now)"}
 
+    def _card_resets(self, source: str, metric: str | None) -> dict:
+        obs = self.ws.samples.get(source, metric) if metric else None
+        if obs is None:
+            return {
+                "measured": False,
+                "reason": "not scanned yet (catalog_scan measures it over a short window)",
+            }
+        return {
+            "measured": True, "window_ms": obs.window_ms, "series": obs.series, "samples": obs.n,
+            "resets": obs.resets, "small_decreases": obs.small_decreases, "negatives": obs.negatives,
+            "verdict": obs.verdict, "scanned_ms": obs.scanned_ms,
+        }  # fmt: skip
+
     async def _card_quality(self, meta, result, metric: str | None, parts) -> dict:
         interval, why = None, None
         selector = meta.expr if parts is not None else metric
@@ -479,7 +600,7 @@ class TelemetryService:
             "scrape_interval_reason": why,
             "series": series,
             "gap_pct": gap_pct(result.buckets, meta.start_ms, meta.end_ms, meta.step_ms),
-            "resets": {"measured": False, "reason": "needs sample statistics (not built yet)"},
+            "resets": self._card_resets(meta.source, metric),
             "cardinality": {"in_panel": series, "catalog": None},
         }
 
@@ -971,3 +1092,13 @@ class TelemetryService:
             "series": series,
             "caveats": caveats,
         }
+
+
+def _series_stats(buckets) -> list:
+    """Per-series sample statistics from a dataset's buckets (the bucket mean is the sample)."""
+    df = pl.from_arrow(buckets)
+    assert isinstance(df, pl.DataFrame)
+    return [
+        scan_series(g.sort("ts_ms")["avg"].to_list())
+        for _, g in df.group_by("series_id", maintain_order=True)
+    ]

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from telemetry_nerd.catalog.relation_store import RelationStore
+from telemetry_nerd.catalog.sample_store import SampleStore
 from telemetry_nerd.catalog.store import CatalogStore
 from telemetry_nerd.config import Settings
 from telemetry_nerd.core.events import EventLog
@@ -42,7 +43,13 @@ def build_service(settings: Settings) -> TelemetryService:
         workspace=workspace,
         log=log,
         ws=WorkspaceService(
-            workspace, objects, datasets, log, CatalogStore(wcon), RelationStore(wcon)
+            workspace,
+            objects,
+            datasets,
+            log,
+            CatalogStore(wcon),
+            RelationStore(wcon),
+            SampleStore(wcon),
         ),
         auto_profile=True,
     )

@@ -62,6 +62,14 @@ describe("qualityRows", () => {
     expect(rows["counter resets"]).toMatchObject({ value: "not measured" });
     expect(rows["cardinality (catalog)"].value).toBe("not measured");
   });
+  it("reports measured resets from a scan", () => {
+    const q = { ...card([]).quality, resets: { measured: true, window_ms: 1_800_000, series: 2, samples: 242, resets: 4, small_decreases: 0, negatives: 0, verdict: "counter-like", scanned_ms: 1 } };
+    const r = qualityRows(q).find((x) => x.label === "counter resets")!;
+    expect(r.value).toBe("4 resets, 0 small decreases");
+    expect(r.note).toBe("counter-like over 30m, 2 series");
+    const neg = qualityRows({ ...q, resets: { ...q.resets, negatives: 3 } }).find((x) => x.label === "counter resets")!;
+    expect(neg.note).toMatch(/3 negative samples/);
+  });
   it("explains an unknown scrape interval and flags one coarser than the step", () => {
     const q = card([]).quality;
     const unknown = qualityRows({ ...q, scrape_interval_ms: null, scrape_interval_reason: "fewer than 3 recent samples" }).find((r) => r.label === "scrape interval")!;

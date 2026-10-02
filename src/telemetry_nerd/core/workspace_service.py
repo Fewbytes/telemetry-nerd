@@ -9,6 +9,7 @@ from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from typing import Any
 
+from telemetry_nerd.analysis.samples import SampleStats
 from telemetry_nerd.catalog.models import (
     ORIGIN_RANK,
     CatalogEntry,
@@ -35,6 +36,7 @@ from telemetry_nerd.catalog.relations import (
     validate_relation,
 )
 from telemetry_nerd.catalog.rules import Facts, derive_claims, facts_from_claims, facts_from_name
+from telemetry_nerd.catalog.sample_store import SampleObservation, SampleStore
 from telemetry_nerd.catalog.search import overview as family_overview
 from telemetry_nerd.catalog.search import search as search_entries
 from telemetry_nerd.catalog.store import CatalogStore
@@ -55,7 +57,7 @@ from telemetry_nerd.core.events import Actor, Event, EventLog, check_actor
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.discovery import Discovery
 from telemetry_nerd.model.errors import NotFound
-from telemetry_nerd.model.time import now_ms
+from telemetry_nerd.model.time import format_duration, now_ms
 from telemetry_nerd.workspace.models import (
     Annotation,
     AnnotationIn,
@@ -69,6 +71,7 @@ from telemetry_nerd.workspace.models import (
     Message,
     MetricSuggestion,
     PanelRef,
+    Scope,
     StatisticRef,
     Thread,
     TimeSpan,
@@ -82,6 +85,8 @@ DEFAULT_HIGHLIGHT_TTL_MS = 300_000
 MAX_CLAUDE_BATCH = 200
 MAX_SEARCH = 200
 CLAUDE_MAX_CONFIDENCE = 0.9
+CURATED_ORIGINS = frozenset({"pack", "claude", "user"})  # a scan never overrules these
+NONNEG_BOUNDS = frozenset({"≥0", "[0,1]", "[0,100]"})
 
 
 def atomic[F: Callable](fn: F) -> F:
@@ -123,6 +128,7 @@ class WorkspaceService:
     log: EventLog
     catalog: CatalogStore
     relations: RelationStore
+    samples: SampleStore
     clock: Callable[[], int] = now_ms
     packs: PackIndex = field(default_factory=builtin_packs)
 
@@ -354,6 +360,145 @@ class WorkspaceService:
         if field in ("unit", "type"):
             self._refresh_panel_units(source, metric)
         return claim
+
+    @atomic
+    def record_scan(
+        self,
+        source: str,
+        metric: str,
+        stats: SampleStats,
+        dataset: str,
+        window_ms: int,
+        step_ms: int,
+        actor: Actor = "system",
+    ) -> dict[str, Any]:
+        """Store a sample scan; write the `stats` claims it justifies and file contradictions.
+
+        A stats claim never replaces a pack, Claude or user claim that disagrees (the
+        disagreement becomes a finding instead); it may replace a name rule or declared metadata.
+        Bounds are only claimed to fill a gap, so they cannot degrade a known [0,1]."""
+        now = self.clock()
+        self.samples.put(
+            source,
+            metric,
+            SampleObservation(
+                window_ms=window_ms, step_ms=step_ms, series=stats.series, voting=stats.voting,
+                n=stats.n, min=stats.min, max=stats.max, negatives=stats.negatives,
+                increases=stats.increases, decreases=stats.decreases, resets=stats.resets,
+                small_decreases=stats.small_decreases, gauge_voters=stats.gauge_voters,
+                integral=stats.integral, constant=stats.constant, verdict=stats.verdict,
+                dataset=dataset, scanned_ms=now,
+            ),
+        )  # fmt: skip
+        others = [c for c in self.catalog.claims_for(source, metric) if c.origin != "stats"]
+        declared_type = resolve(c for c in others if c.field == "type")
+        declared_bounds = resolve(c for c in others if c.field == "bounds")
+        window = format_duration(window_ms)
+        claims: list[str] = []
+
+        evidence_type = "counter" if stats.counter_like else "gauge" if stats.gauge_like else None
+        if evidence_type:
+            curated_disagrees = (
+                declared_type is not None
+                and declared_type.origin in CURATED_ORIGINS
+                and declared_type.value != evidence_type
+            )
+            if not curated_disagrees:
+                self._put_stats_claim(
+                    source, metric, "type", evidence_type, 0.6, f"sample scan over {window}", now
+                )
+                claims.append("type")
+        if stats.nonnegative and declared_bounds is None:
+            self._put_stats_claim(
+                source, metric, "bounds", "≥0", 0.4, f"no negative samples in {window}", now
+            )
+            claims.append("bounds")
+
+        findings = []
+        basis = (
+            "(a name convention only)"
+            if declared_type is not None and declared_type.origin == "rule"
+            else f"(declared by {declared_type.origin})"
+            if declared_type is not None
+            else ""
+        )
+        checks = [
+            (
+                "gauge_grows",
+                declared_type is not None and declared_type.value == "gauge" and stats.grows_only,
+                f"{metric} is declared a gauge {basis} but only increased over {window}",
+                "increases", stats.increases,
+            ),
+            (
+                "counter_decreases",
+                declared_type is not None and declared_type.value == "counter" and stats.small_decreases > 0,
+                f"{metric} is declared a counter {basis} but decreased without resetting over {window}",
+                "small_decreases", stats.small_decreases,
+            ),
+            (
+                "negative_values",
+                stats.negatives > 0
+                and (
+                    (declared_type is not None and declared_type.value == "counter")
+                    or (declared_bounds is not None and declared_bounds.value in NONNEG_BOUNDS)
+                ),
+                f"{metric} has negative samples although it is claimed non-negative over {window}",
+                "negatives", stats.negatives,
+            ),
+        ]  # fmt: skip
+        for kind, hit, claim, name, count in checks:
+            if not hit or self.samples.finding(source, metric, kind):
+                continue
+            f = self.finding_create(
+                FindingIn(
+                    claim=claim,
+                    scope=Scope(
+                        source=source,
+                        selector=metric,
+                        time_range=TimeSpan(start_ms=now - window_ms, end_ms=now),
+                        step=format_duration(step_ms),
+                        aggregation="raw samples (one per step)",
+                    ),
+                    evidence=[
+                        StatisticRef(
+                            kind="statistic", dataset=dataset, name=name, value=float(count),
+                            exact=True, method="sample scan",
+                            params={"series": stats.series, "samples": stats.n, "window": window},
+                        )
+                    ],
+                    caveats=["short_window"],
+                ),
+                actor,
+            )  # fmt: skip
+            self.samples.set_finding(source, metric, kind, f.id)
+            findings.append(f.id)
+        self.log.append(
+            actor, "catalog.scanned", None,
+            {"source": source, "metric": metric, "verdict": stats.verdict, "claims": claims, "findings": findings},
+        )  # fmt: skip
+        return {"claims": claims, "findings": findings}
+
+    def _put_stats_claim(
+        self,
+        source: str,
+        metric: str,
+        field: str,
+        value: Any,
+        confidence: float,
+        basis: str,
+        now: int,
+    ) -> None:
+        validate_value(field, value)
+        self.catalog.put_claim(
+            source,
+            metric,
+            Claim(
+                field=field, value=value, origin="stats", confidence=confidence,
+                citation=basis, ts_ms=now,
+            ),
+        )  # fmt: skip
+        if field in ("unit", "type"):
+            self._refresh_panel_units(source, metric)
 
     def _refresh_panel_units(self, source: str, metric: str) -> None:
         """Panels draw their axis unit from the catalog: when a claim changes a metric's unit (or
