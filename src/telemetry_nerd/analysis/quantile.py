@@ -18,4 +18,7 @@ def attach_counts(values: FetchResult, counts: FetchResult) -> FetchResult:
         .select(BUCKET_SCHEMA.names)
         .sort(["series_id", "ts_ms"])
     )
-    return FetchResult(joined.to_arrow().cast(BUCKET_SCHEMA), values.series, partial=values.partial)
+    failed = tuple(dict.fromkeys(values.failed + counts.failed))  # dedupe, keep order
+    return FetchResult(
+        joined.to_arrow().cast(BUCKET_SCHEMA), values.series, partial=values.partial, failed=failed
+    )

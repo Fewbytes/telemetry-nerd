@@ -33,3 +33,12 @@ def test_series_table_comes_from_values():
     values = result([(1, "a", 0.3)])
     out = attach_counts(values, result([(1, "zzz", 5.0)]))
     assert out.series.to_pylist() == values.series.to_pylist()
+
+
+def test_failed_spans_from_both_fetches_propagate_deduped():
+    v = result([(1, "a", 0.3)])
+    c = result([(1, "a", 5.0)])
+    values = FetchResult(v.buckets, v.series, failed=((10, 19, "E: v"), (30, 39, "E: x")))
+    counts = FetchResult(c.buckets, c.series, failed=((30, 39, "E: x"), (50, 59, "E: c")))
+    out = attach_counts(values, counts)
+    assert out.failed == ((10, 19, "E: v"), (30, 39, "E: x"), (50, 59, "E: c"))

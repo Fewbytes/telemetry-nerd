@@ -1,7 +1,7 @@
 import pytest
 
-from telemetry_nerd.sources.base import SourceError
-from tests.unit.fakes import FakeSource, make_service
+from telemetry_nerd.sources.base import SourceError, SourceUnavailable
+from tests.unit.fakes import NOW, FakeSource, make_service
 
 Q = 'histogram_quantile(0.95, sum by (r) (rate(lat{s="c"}[5m])))'
 
@@ -57,3 +57,18 @@ async def test_panel_data_never_rebuckets_quantiles(tmp_path):
     data = svc.panel_data(panel.id, width_px=100)  # 1201 buckets >> 100 px
     assert data["effective_step_ms"] == 15_000
     assert data["dataset"]["n_min"] == 200
+
+
+async def test_failed_counts_chunk_reaches_quantile_dataset(tmp_path):
+    class FlakyCounts(FakeSource):
+        async def fetch_values(self, expr, rng, step_ms):
+            if "histogram_count" in expr and rng.start_ms <= NOW - 24 * 3_600_000:
+                raise SourceUnavailable("counts down")
+            return await super().fetch_values(expr, rng, step_ms)
+
+    src = FlakyCounts(values={"histogram_count": 250.0, "histogram_quantile": 0.42})
+    svc = make_service(tmp_path, src)
+    out = await svc.query(Q, "now-30h", "now-1h", step="1m")
+    meta, _ = svc.datasets.get(out["dataset"])
+    assert meta.failed_spans
+    assert all(r.endswith("counts down") for *_, r in meta.failed_spans)
