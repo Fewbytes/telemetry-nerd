@@ -32,6 +32,10 @@ describe("cardSummary", () => {
     expect(cardSummary(card([f("unit", null)]))).toBe("nothing claimed yet");
     expect(cardSummary(card([], { metrics: [], learned: false }))).toBe("this source has not been learned");
   });
+  it("names the code node for a code output, not an unlearned source", () => {
+    const c = card([], { metrics: [], learned: false, produced_by: { kind: "code", node: "c3", output: "w", parents: ["d1"] } });
+    expect(cardSummary(c)).toBe("code output · node c3");
+  });
 });
 
 describe("labels and formats", () => {

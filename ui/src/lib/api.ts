@@ -48,13 +48,20 @@ export interface Panel {
 export interface SeriesData {
   id: string; labels: Record<string, string>; ts: number[];
   avg: (number | null)[]; min: (number | null)[]; max: (number | null)[]; count: (number | null)[];
+  /** declared interval of a code output (DatasetMeta.uncertainty says what it is) */
+  lo?: (number | null)[]; hi?: (number | null)[];
 }
+/** A tier-2 code output's producer (spec §5.2): the code node and its output name. */
+export interface Producer { kind: "code"; node: string; output: string; description?: string }
+/** Declared uncertainty: an interval (lo/hi per row) of `level` by `method`, or exact. */
+export interface Uncertainty { method?: string; level?: number | null; kind?: string; exact?: boolean }
 export interface DatasetMeta {
   id: string; source: string; expr: string; start_ms: number; end_ms: number;
   step_ms: number; resolution_ms: number; representation: string;
   quantile?: number | null; n_min?: number | null;
   scheme?: BucketSchemeInfo | null; histogram?: { selector: string; by: string[] } | null;
   source_caveats?: string[];
+  producer?: Producer | null; parents?: string[]; unit?: string | null; uncertainty?: Uncertainty | null;
 }
 /** Distribution cells. lo === null means -Inf, hi === null means +Inf (JSON has no Infinity). */
 export interface FilterInfo {
@@ -126,7 +133,7 @@ export interface OverlaysPayload {
   flags: OverlayFlags;
   normal: { available: boolean; reason?: string; label?: string; stale?: boolean; series?: Record<string, BandSeries>; unmatched?: string[] };
   limit: { available: boolean; reason?: string; label?: string; metric?: string; hi?: number; lines?: LineData[] };
-  ghost: { available: boolean; loaded: boolean; label?: string; series?: GhostSeries[] };
+  ghost: { available: boolean; reason?: string; loaded: boolean; label?: string; series?: GhostSeries[] };
 }
 export interface TimePanelData extends PanelDataBase { kind: "time"; bucket_state?: BucketStatePayload[]; bucket_state_more?: number; overlays?: OverlaysPayload; effective_step_ms: number; series: SeriesData[]; marginal?: MarginalData | null; index?: IndexPayload | null; raw?: SeriesData[]; removed?: SeriesData[]; filter?: FilterInfo }
 export interface HeatmapPanelData extends PanelDataBase {
@@ -312,6 +319,8 @@ export interface CardMetric {
 }
 export interface MetricCard {
   source: string; learned: boolean; metrics: CardMetric[];
+  /** a code output's card: no catalog metrics behind it, the producer instead */
+  produced_by?: { kind: "code"; node: string; output: string; parents: string[] };
   profile: {
     available: boolean; reason?: string; window_ms?: number; stale?: boolean; series_total?: number;
     range?: Record<string, number | null>; seasonal?: { period: string; amplitude: number | null }; caveats?: string[];

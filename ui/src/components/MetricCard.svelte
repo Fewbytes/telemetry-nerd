@@ -35,7 +35,9 @@
   {#if error}<div class="error">{error}</div>{/if}
   {#if loading && !card}<p class="none">loading…</p>{/if}
   {#if card}
-    {#if !card.learned}
+    {#if card.produced_by}
+      <p class="none" data-card-code>Output {card.produced_by.output} of code node {card.produced_by.node}{#if card.produced_by.parents.length}, from {card.produced_by.parents.join(", ")}{/if}: no catalog metrics, profile or scrape interval behind it.</p>
+    {:else if !card.learned}
       <p class="none">This source has not been learned yet, so the catalog has nothing to show for these metrics. Ask Claude to run <code>source_learn</code>.</p>
     {/if}
     {#each card.metrics as m (m.metric)}

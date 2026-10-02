@@ -29,6 +29,18 @@ describe("toUplot", () => {
     expect(m.data[1]).toEqual([1, null, 2]);
   });
 
+  it("draws a declared interval (code output) as the band, the min/max faint when given", () => {
+    const iv: SeriesData = { ...s("a", { i: "a" }, [1000, 2000], [5, 6]), min: [null, null], max: [null, null], count: [null, null], lo: [4, 5.5], hi: [7, 6.5] };
+    const m = toUplot([iv]);
+    expect(m.data.slice(1)).toEqual([[5, 6], [4, 5.5], [7, 6.5]]);
+    expect(m.bands).toEqual([{ series: [3, 2], fill: expect.stringMatching(/^rgba\(/) }]);
+    expect(m.series[2].label).toBe('{i="a"} lo');
+    const both = toUplot([{ ...iv, min: [3, 5], max: [8, 7] }]);
+    expect(both.data.length).toBe(6); // + dotted min/max, no second band
+    expect(both.bands.length).toBe(1);
+    expect(both.legendHidden).toEqual([2, 3, 4, 5]);
+  });
+
   it("builds a min/max band per series and never spans gaps", () => {
     const m = toUplot([s("a", { i: "a" }, [1000], [1])]);
     expect(m.bands).toEqual([{ series: [3, 2], fill: expect.stringMatching(/^rgba\(/) }]);

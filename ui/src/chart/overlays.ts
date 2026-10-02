@@ -48,7 +48,9 @@ export function overlayChips(ov: OverlaysPayload): Chip[] {
     },
     {
       key: "ghost", label: "last week", on: ov.flags.ghost && g.available, enabled: g.available,
-      title: !g.loaded
+      title: !g.available
+        ? `last week unavailable: ${g.reason ?? "no earlier window"}`
+        : !g.loaded
         ? "the same window one week earlier (fetched when switched on)"
         : g.series && g.series.length === 0
           ? "no data in the same window one week earlier: the source holds less history, or the series is new"

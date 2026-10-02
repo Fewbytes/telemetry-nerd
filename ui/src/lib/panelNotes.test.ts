@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { YContext } from "./api";
-import { caveatText, contextNotes, describeShown, panelNotes } from "./panelNotes";
+import { caveatText, contextNotes, describeShown, intervalLegend, panelNotes, provenanceText } from "./panelNotes";
 
 describe("panelNotes", () => {
   it("turns caveat keys into sentences and keeps unknown keys visible", () => {
@@ -131,5 +131,25 @@ describe("nonmergeable_aggregation (2as.31)", () => {
     expect(t).toMatch(/already-computed percentile/);
     expect(t).toMatch(/60\.3 ms.*35\.8 ms.*68\.5%/);
     expect(t).not.toBe("nonmergeable_aggregation");
+  });
+});
+
+describe("code outputs (tier-2)", () => {
+  const producer = { kind: "code" as const, node: "c3", output: "smooth" };
+  it("says the band is the declared interval, with level, kind and method", () => {
+    expect(intervalLegend({ uncertainty: { method: "bootstrap percentile", level: 0.95, kind: "confidence" } }))
+      .toBe("declared 95% confidence interval (bootstrap percentile)");
+    expect(intervalLegend({ uncertainty: { exact: true } })).toBeNull();
+    expect(intervalLegend({ uncertainty: null })).toBeNull();
+    expect(describeShown({ representation: "bucket_agg", producer, uncertainty: { method: "OLS", level: 0.9, kind: "prediction" } }, "1m"))
+      .toBe("Values per 1m bucket as output by code node c3 (line); band: declared 90% prediction interval (OLS).");
+  });
+  it("names the code node and its inputs as provenance, the source otherwise", () => {
+    expect(provenanceText({ source: "vm", producer, parents: ["d1", "d2"] })).toBe("produced by code node c3 (output smooth) from d1, d2");
+    expect(provenanceText({ source: "vm", producer: null })).toBe("vm");
+  });
+  it("explains no_uncertainty and unknown counts", () => {
+    expect(caveatText("no_uncertainty")).toContain("not usable as evidence");
+    expect(caveatText("counts_unknown")).toContain("unknown (not zero)");
   });
 });

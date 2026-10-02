@@ -207,8 +207,10 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
     const inEdge = (t: number) => spans.some(([a, b]) => t >= a && t <= b);
     const edgeAvg = spans.length ? s.ts.map((t, i) => (inEdge(t) ? s.avg[i] : null)) : null;
     const mainAvg = edgeAvg ? s.avg.map((v, i) => (inEdge(s.ts[i]) ? null : v)) : s.avg;
+    // a declared interval (code outputs) is the band; otherwise the min-max envelope is
+    const interval = s.lo && s.hi ? { lo: s.lo, hi: s.hi } : null;
     const avgIdx = data.length;
-    data.push(column(mainAvg), column(s.min), column(s.max));
+    data.push(column(mainAvg), column(interval ? interval.lo : s.min), column(interval ? interval.hi : s.max));
     // one legend row per series: the value plus its envelope, instead of separate min/max rows
     const withEnvelope = (_u: uPlot, v: number | null, _si: number, i: number | null) => {
       if (v == null || i == null) return "--";
@@ -218,10 +220,19 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
     legendHidden.push(avgIdx + 1, avgIdx + 2);
     uSeries.push(
       { label: name, stroke: color, width: 1.5, spanGaps: false, value: withEnvelope },
-      { label: `${name} min`, stroke: rgba(color, 0.35), width: 0.5, spanGaps: false, points: { show: false } },
-      { label: `${name} max`, stroke: rgba(color, 0.35), width: 0.5, spanGaps: false, points: { show: false } },
+      { label: `${name} ${interval ? "lo" : "min"}`, stroke: rgba(color, 0.35), width: 0.5, spanGaps: false, points: { show: false } },
+      { label: `${name} ${interval ? "hi" : "max"}`, stroke: rgba(color, 0.35), width: 0.5, spanGaps: false, points: { show: false } },
     );
     bands.push({ series: [avgIdx + 2, avgIdx + 1], fill: rgba(color, 0.15) });
+    if (interval && (s.min.some((v) => v != null) || s.max.some((v) => v != null))) {
+      // the code also gave the bucket's min/max: faint dotted edges, no fill (the band is the interval)
+      legendHidden.push(data.length, data.length + 1);
+      data.push(column(s.min), column(s.max));
+      uSeries.push(
+        { label: `${name} min`, stroke: rgba(color, 0.35), width: 0.5, dash: [1, 3], spanGaps: false, points: { show: false } },
+        { label: `${name} max`, stroke: rgba(color, 0.35), width: 0.5, dash: [1, 3], spanGaps: false, points: { show: false } },
+      );
+    }
     if (edgeAvg) {
       // filter edges (series start/end, around gaps): truncated kernel, unreliable: dashed twin
       data.push(column(edgeAvg));

@@ -19,6 +19,12 @@ const ov = (o: Partial<OverlaysPayload> = {}): OverlaysPayload => ({
 const s = (id: string, ts: number[], v: number[]): SeriesData => ({ id, labels: { i: id }, ts, avg: v, min: v, max: v, count: v.map(() => 4) });
 
 describe("overlayChips", () => {
+  it("disables last week with the reason when there is nothing to fetch (code output)", () => {
+    const why = "a code output is fixed data: no operating profile, limit or last-week window";
+    const g = overlayChips(ov({ ghost: { available: false, reason: why, loaded: false } }))[2];
+    expect(g.enabled).toBe(false);
+    expect(g.title).toBe(`last week unavailable: ${why}`);
+  });
   it("lists the three layers with their state", () => {
     const chips = overlayChips(ov());
     expect(chips.map((c) => [c.key, c.on, c.enabled])).toEqual([["normal", true, true], ["limit", true, true], ["ghost", false, true]]);

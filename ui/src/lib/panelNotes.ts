@@ -70,6 +70,9 @@ const CAVEATS: Record<string, Describe> = {
   nonmergeable_aggregation: () =>
     "An already-computed percentile was averaged, summed or merged over time or series on request: this is badly wrong in practice (24 hourly p90s averaged to 60.3 ms; the true p90 of the merged 811k requests was 35.8 ms, a 68.5% error). Recompute it from the merged histogram or raw data.",
   overflow: () => "Some observations are above the largest bucket edge; their values are unknown (top strip).",
+  no_uncertainty: () => "Produced by code without a declared uncertainty (or exact): not usable as evidence.",
+  counts_unknown: () => "The code gave no sample counts: coverage is unknown (not zero) and a coarser view averages the bucket values unweighted.",
+  failed_spans: () => "An input of the code had spans the source could not return.",
 };
 
 /** Plain-language caveat; unknown keys are shown as-is rather than hidden. */
@@ -182,9 +185,28 @@ export function contextNotes(c: YContext | null, unit: string | null = null): No
   return out;
 }
 
+/** "declared 95% confidence interval (bootstrap)" for a code output's band, or null. */
+export function intervalLegend(d: Pick<DatasetMeta, "uncertainty">): string | null {
+  const u = d.uncertainty;
+  if (!u || u.exact) return null;
+  const level = u.level != null ? `${Number((u.level * 100).toPrecision(3))}% ` : "";
+  return `declared ${level}${u.kind ?? "confidence"} interval (${u.method ?? "method not stated"})`;
+}
+
+/** Where the panel's data came from: the source, or the code node and its inputs (spec §5.2). */
+export function provenanceText(d: Pick<DatasetMeta, "source" | "producer" | "parents">): string {
+  const p = d.producer;
+  if (!p || p.kind !== "code") return d.source;
+  const from = d.parents?.length ? ` from ${d.parents.join(", ")}` : "";
+  return `produced by code node ${p.node} (output ${p.output})${from}`;
+}
+
 /** One sentence on what the plotted lines are. */
 export function describeShown(
-  d: Pick<DatasetMeta, "representation" | "quantile"> & { scheme?: DatasetMeta["scheme"]; histogram?: DatasetMeta["histogram"] },
+  d: Pick<DatasetMeta, "representation" | "quantile"> & {
+    scheme?: DatasetMeta["scheme"]; histogram?: DatasetMeta["histogram"];
+    producer?: DatasetMeta["producer"]; uncertainty?: DatasetMeta["uncertainty"];
+  },
   step: string,
   kind = "time",
   mark = "",
@@ -205,6 +227,15 @@ export function describeShown(
   }
   if (kind === "histogram") {
     return `Share of observations per value bucket, summed over each selected window (whole ${step} steps); bars are the source buckets (${d.scheme?.description ?? "unknown scheme"}).`;
+  }
+  const code = d.producer?.kind === "code" ? d.producer : null;
+  if (code && kind === "time" && !mark) {
+    const band = intervalLegend(d);
+    return `Values per ${step} bucket as output by code node ${code.node} (line)` +
+      (band ? `; band: ${band}.` : "; band: the bucket min–max where the code gave it.");
+  }
+  if (code && d.representation === "distribution" && kind === "heatmap") {
+    return `Counts per ${step} column and value bucket (colour), as output by code node ${code.node}; bins: ${d.scheme?.description ?? "unknown scheme"}.`;
   }
   if (d.representation === "distribution") {
     return `Counts per ${step} column and value bucket (colour), from increase() of the histogram; bins are the source buckets (${d.scheme?.description ?? "unknown scheme"}).`;

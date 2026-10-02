@@ -8,7 +8,7 @@
   } from "./lib/api";
   import { rgba, seriesName, toUplot } from "./chart/toUplot";
   import { drawRug, facetTop, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, rugMoreLabel, type RugCell } from "./chart/rug";
-  import { describeShown, panelNotes } from "./lib/panelNotes";
+  import { describeShown, intervalLegend, panelNotes, provenanceText } from "./lib/panelNotes";
   import { windowBadge } from "./lib/coverage";
   import { focusRects, notesAt } from "./chart/focus";
   import { fmtSI, fmtStep } from "./lib/format";
@@ -718,12 +718,17 @@
       <span class="hint">{data.filter.filter}; dashed: filter edge (unreliable)</span>
     </div>
   {/if}
+  {#if data?.kind === "time" && data.series.some((s) => s.lo) && intervalLegend(data.dataset)}
+    <div class="legend" data-interval-legend>band: {intervalLegend(data.dataset)}</div>
+  {/if}
   {#if data?.kind === "time"}
+    {@const fixed = data.dataset.producer?.kind === "code"}
     <div class="legend y-views" role="group" aria-label="Marginal histogram">
       marginal:
       <button type="button" class:on={!panel.spec.marginal} onclick={() => toggleMarginal(null)}>off</button>
       {#each [["previous", "vs previous window"], ["week", "vs last week"], ["profile", "vs normal profile"]] as [r, label] (r)}
-        <button type="button" disabled={indexedOn || margBusy} title={indexedOn ? "the marginal shows values; it is off in the indexed view" : ""}
+        <button type="button" disabled={indexedOn || margBusy || fixed}
+          title={fixed ? "a code output is fixed data: no reference window to fetch" : indexedOn ? "the marginal shows values; it is off in the indexed view" : ""}
           class:on={panel.spec.marginal?.reference === r} data-marginal-ref={r}
           onclick={() => toggleMarginal(r as "previous" | "week" | "profile")}>{label}</button>
       {/each}
@@ -735,7 +740,7 @@
     <div class="shown">
       <p class="what">{describeShown(data.dataset, fmtStep(data.effective_step_ms), data.kind, "mark" in data ? (data.kind === "heatmap" ? heatView === "percentiles" ? "percentiles" : "" : data.mark) : "")}</p>
       <p class="where">
-        {data.dataset.source} · {fmtTime(data.dataset.start_ms)} – {fmtTime(data.dataset.end_ms)} · step
+        <span data-provenance>{provenanceText(data.dataset)}</span> · {fmtTime(data.dataset.start_ms)} – {fmtTime(data.dataset.end_ms)} · step
         {fmtStep(data.effective_step_ms)}
       </p>
     </div>

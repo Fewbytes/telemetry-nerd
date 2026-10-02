@@ -23,6 +23,7 @@ export function editControl(f: Pick<CardField, "field" | "editable">): EditContr
 /** One line for the collapsed card: the facts a reader wants before opening it. */
 export function cardSummary(card: MetricCard): string {
   const m = card.metrics[0];
+  if (card.produced_by) return `code output · node ${card.produced_by.node}`;
   if (!m) return card.learned ? "no catalogued metric" : "this source has not been learned";
   const v = (name: string) => m.fields.find((f) => f.field === name)?.value;
   const bits = [v("unit") && `unit ${v("unit")}`, v("type") && String(v("type")), v("bounds") && String(v("bounds"))].filter(Boolean) as string[];
