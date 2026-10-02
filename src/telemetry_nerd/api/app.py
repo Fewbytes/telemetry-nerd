@@ -266,7 +266,9 @@ def create_app(
             return _error(400, "unit must be a string", hint='e.g. "s", "B", "req/s"')
         mark = body.get("mark", "auto")
         if not isinstance(mark, str):
-            return _error(400, "mark must be a string", hint='e.g. "auto", "spectrum", "seasonal"')
+            return _error(
+                400, "mark must be a string", hint='e.g. "auto", "spectrum", "seasonal", "fleet"'
+            )
         try:
             res = await service.show_auto(
                 body["dataset"],

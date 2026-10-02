@@ -60,5 +60,5 @@ def heat_rows(f: Fleet, names: list[str]) -> dict:
 
 def heat(ops: FleetOps, dataset_id: str, cfg: dict) -> dict:
     """Heatmap payload for a stored dataset (the analysis is memoised by FleetOps.run)."""
-    res = ops.run(dataset_id, cfg.get("by"), cfg.get("scale", "auto"), cfg.get("normalise", "none"))
-    return heat_rows(res[5], res[4])
+    run = ops.run(dataset_id, cfg.get("by"), cfg.get("scale", "auto"), cfg.get("normalise", "none"))
+    return heat_rows(run.fleet, run.names)
