@@ -333,3 +333,19 @@ async def test_window_beyond_the_dataset_counts_missing_columns(tmp_path):
     for s in data["series"]:
         [win] = s["windows"]
         assert (win["columns"], win["expected_columns"]) == (2, 5)
+
+
+async def test_a_previous_window_that_starts_before_the_data_widens_the_dataset(tmp_path):
+    src = FakeSource(name="default")
+    svc = make_service(tmp_path, src)
+    ds = (await svc.query_distribution("lat_seconds_bucket", start="now-2h", end="now-1h"))[
+        "dataset"
+    ]
+    panel = svc.show(ds, "How is latency distributed?").panel
+    m = svc.datasets.meta(ds)
+    # a 20 minute selection 5 minutes into the data: its previous window starts 15 minutes earlier
+    new = await svc.distribution_panel(panel.id, m.start_ms + 5 * 60_000, m.start_ms + 25 * 60_000)
+    assert [w["label"] for w in new.spec["layers"][0]["windows"]] == ["selection", "previous"]
+    wide = svc.datasets.meta(new.dataset_ids[0])
+    assert wide.id != ds and wide.start_ms <= m.start_ms - 14 * 60_000
+    assert len(src.hist_selectors) == 2  # the original query and the widened one

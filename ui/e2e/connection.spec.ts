@@ -50,7 +50,7 @@ test("pill follows the bridge: offline → terminal only → live → offline", 
     bridge.send({ type: "ready" });
     await expect(label).toHaveText("Terminal only");
     bridge.send({ type: "mode", mode: "channel" });
-    await expect(label).toHaveText("Claude live");
+    await expect(label).toHaveText(/^Claude live/); // plus the session id when one announces itself
   } finally {
     bridge.close();
   }

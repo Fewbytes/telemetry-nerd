@@ -478,6 +478,19 @@ class TelemetryService:
             meta = self.datasets.meta(out["dataset"])
         windows = [Window(start_ms=start_ms, end_ms=end_ms, label="selection")]
         span = end_ms - start_ms
+        if (
+            baseline == "previous"
+            and meta.histogram
+            and start_ms - span < meta.start_ms - meta.step_ms
+        ):
+            # the dataset does not reach back far enough for the comparison that was asked for:
+            # widen it to cover the previous window instead of silently dropping the baseline
+            out = await self.query_distribution(
+                meta.histogram["selector"], meta.histogram["by"], start=str(start_ms - span),
+                end=str(meta.end_ms), step=format_duration(meta.step_ms), source=meta.source,
+                actor=actor,
+            )  # fmt: skip
+            meta = self.datasets.meta(out["dataset"])
         if baseline == "previous" and start_ms - span >= meta.start_ms - meta.step_ms:
             windows.append(Window(start_ms=start_ms - span, end_ms=start_ms, label="previous"))
         a, b = iso(start_ms)[11:16], iso(end_ms)[11:16]
