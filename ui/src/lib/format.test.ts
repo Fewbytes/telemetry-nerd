@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EvidenceRef, Scope, TimeSpan } from "./api";
-import { fmtRange, fmtTime, refLabel, scopeLine, statLine, type StatisticRef } from "./format";
+import { fmtRange, fmtSI, fmtTime, refLabel, scopeLine, statLine, type StatisticRef } from "./format";
 
 const span = (startMs: number, endMs: number): TimeSpan => ({ start_ms: startMs, end_ms: endMs });
 const minutes = (h: number, m: number) => Date.UTC(2026, 8, 30, h, m);
@@ -70,6 +70,36 @@ describe("statLine", () => {
     expect(
       statLine(statRef({ name: "n", value: 42, interval: null, exact: true, method: "count" })),
     ).toBe("n = 42 (exact, count)");
+  });
+});
+
+describe("fmtSI", () => {
+  it("scales a big rate into the matching SI prefix (telemetry-nerd-klt)", () => {
+    // sum(rate(node_network_transmit_bytes_total[5m])) at B/s: this is the panel p22 case
+    expect(fmtSI(1_400_000_000, "B/s")).toBe("1.4 GB/s");
+  });
+
+  it("scales B, bit, Hz, W, J and count with k/M/G/T prefixes", () => {
+    expect(fmtSI(2_500, "B")).toBe("2.5 kB");
+    expect(fmtSI(3_200_000, "bit")).toBe("3.2 Mbit");
+    expect(fmtSI(5_000_000_000_000, "Hz")).toBe("5 THz");
+    expect(fmtSI(750, "W")).toBe("750 W");
+  });
+
+  it("leaves small values and unit-less numbers alone", () => {
+    expect(fmtSI(42, "B/s")).toBe("42 B/s");
+    expect(fmtSI(42, null)).toBe("42");
+  });
+
+  it("converts sub-second durations to ms, like the existing per-value formatter", () => {
+    expect(fmtSI(0.25, "s")).toBe("250 ms");
+    expect(fmtSI(90, "s")).toBe("90 s");
+  });
+
+  it("never scales percent, ratio or temperature", () => {
+    expect(fmtSI(97, "%")).toBe("97%");
+    expect(fmtSI(1_500_000, "ratio")).toBe("1500000 ratio");
+    expect(fmtSI(5_000, "°C")).toBe("5000 °C");
   });
 });
 

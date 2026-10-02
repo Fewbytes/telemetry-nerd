@@ -11,7 +11,8 @@
   import { describeShown, panelNotes } from "./lib/panelNotes";
   import { windowBadge } from "./lib/coverage";
   import { focusRects, notesAt } from "./chart/focus";
-  import { fmtStep } from "./lib/format";
+  import { fmtSI, fmtStep } from "./lib/format";
+  import { axisGutterSize } from "./chart/plotKit";
   import { setupCanvas } from "./chart/canvas";
   import { drawnFor, VIEW_LABELS, type DataViewName } from "./chart/dataview";
   import SpectrumPlot from "./components/SpectrumPlot.svelte";
@@ -345,7 +346,11 @@
                     splits: () => ratioTicks(yr.range![1]),
                     values: (_u: uPlot, ts: (number | null)[]) => ts.map((t) => (t == null ? "" : fmtRatio(t))),
                   }
-                : { label: unit ?? "value (unit unknown)", stroke, grid: { stroke: grid }, ticks: { stroke: grid } },
+                : {
+                    label: unit ?? "value (unit unknown)", stroke, grid: { stroke: grid }, ticks: { stroke: grid },
+                    size: axisGutterSize(),
+                    values: (_u: uPlot, ts: (number | null)[]) => ts.map((t) => (t == null ? "" : fmtSI(t, unit))),
+                  },
             ],
             // brush = x-only selection; we open a menu instead of zooming
             cursor: { drag: bandMode ? { setScale: false, x: false, y: true } : { setScale: false, x: true, y: false } },

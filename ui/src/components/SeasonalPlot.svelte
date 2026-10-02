@@ -2,8 +2,10 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import { flagMarks, seasonalLegend, toSeasonalUplot, verdictText, type SeasonalView } from "../chart/seasonal";
-  import { drawDots, plotAxes } from "../chart/plotKit";
+  import { drawDots, plotAxes, axisGutterSize } from "../chart/plotKit";
+  import { fmtRatio } from "../chart/indexed";
   import { seriesName } from "../chart/toUplot";
+  import { fmtSI } from "../lib/format";
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { SeasonalPanelData } from "../lib/api";
 
@@ -36,13 +38,20 @@
       now: { label: seriesName(series.labels), stroke: NOW, width: 1.75 },
     };
     const logY = v === "ratio" && series.ratio?.kind === "ratio";
+    const unit = data.panel.spec.y.unit;
     const u = new uPlot(
       {
         width, height,
         series: [{}, ...m.roles.slice(1).map((r, i) => (r === "cycle" ? { ...style.cycle, label: `−${series.cycles[i].j}` } : style[r]))],
         bands: m.bands.map((b) => ({ ...b, fill: mode === "dark" ? "rgba(140,140,140,0.20)" : "rgba(120,120,120,0.14)" })),
         scales: logY ? { y: { distr: 3, log: 2 } } : {},
-        axes: plotAxes(stroke, grid, { label: v === "ratio" ? (logY ? "now ÷ reference (log)" : "now − reference") : undefined }),
+        axes: plotAxes(stroke, grid, {
+          label: v === "ratio" ? (logY ? "now ÷ reference (log)" : "now − reference") : unit ?? undefined,
+          size: axisGutterSize(),
+          values: logY
+            ? (_u: uPlot, ts: (number | null)[]) => ts.map((t) => (t == null ? "" : fmtRatio(t)))
+            : (_u: uPlot, ts: (number | null)[]) => ts.map((t) => (t == null ? "" : fmtSI(t, unit))),
+        }),
         legend: { show: false },
         cursor: { drag: { x: false, y: false } },
         hooks: {

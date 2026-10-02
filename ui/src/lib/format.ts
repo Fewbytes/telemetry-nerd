@@ -52,3 +52,25 @@ export const fmtStep = (ms: number): string => (ms % 60_000 === 0 ? `${ms / 60_0
 
 /** HH:MMZ, for fleet times that are always UTC. */
 export const fmtTimeZ = (ms: number): string => `${fmtTime(ms)}Z`;
+
+const sig = (v: number): string => String(Number(v.toPrecision(3)));
+
+// decimal SI prefixes, largest first so the first match wins
+const SI_PREFIXES: [number, string][] = [[1e12, "T"], [1e9, "G"], [1e6, "M"], [1e3, "k"]];
+
+// units a catalog can carry that never take a magnitude prefix (bead 2as "catalog" UNITS set)
+const UNSCALED_UNITS = new Set(["%", "ratio", "°C"]);
+
+/**
+ * SI-scaled, unit-aware value label for a y-axis tick: "1.4 GB/s", "320 ms", "97%". The one
+ * formatter every unit-carrying axis (time panels, seasonal, heatmap/distribution) should share,
+ * so a counter in the billions reads as "1.4 G..." instead of a raw, comma-grouped integer.
+ */
+export function fmtSI(v: number, unit: string | null): string {
+  if (unit === "%") return `${sig(v)}%`;
+  if (!unit || UNSCALED_UNITS.has(unit)) return unit ? `${sig(v)} ${unit}` : sig(v);
+  if (unit === "s" && v !== 0 && Math.abs(v) < 1) return `${sig(v * 1000)} ms`;
+  const abs = Math.abs(v);
+  const hit = SI_PREFIXES.find(([mag]) => abs >= mag);
+  return hit ? `${sig(v / hit[0])} ${hit[1]}${unit}` : `${sig(v)} ${unit}`;
+}

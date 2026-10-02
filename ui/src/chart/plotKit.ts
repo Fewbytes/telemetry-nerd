@@ -9,6 +9,29 @@ export function plotAxes(stroke: string, grid: string, y: uPlot.Axis = {}, x: uP
   return [{ ...base, ...x }, { ...base, ...y }];
 }
 
+const AXIS_FONT_PX = 12;
+const AXIS_FONT = '12px system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
+
+/**
+ * A y-axis `size` that fits its longest formatted tick label, instead of uPlot's fixed 50px
+ * default — the gutter that clips a unit-scaled label like "1.4 GB/s". uPlot's own canvas
+ * (`self.ctx`) is device-pixel scaled, so the measured width is converted back to CSS pixels.
+ */
+type AxisSizeFn = Extract<uPlot.Axis.Size, (...args: never[]) => unknown>;
+
+export function axisGutterSize(pad = 14, min = 40): AxisSizeFn {
+  return (self, values) => {
+    if (!values || !values.length) return min;
+    const dpr = window.devicePixelRatio || 1;
+    const ctx = self.ctx;
+    ctx.save();
+    ctx.font = AXIS_FONT.replace(`${AXIS_FONT_PX}px`, `${AXIS_FONT_PX * dpr}px`);
+    const w = Math.max(...values.map((v) => ctx.measureText(v ?? "").width));
+    ctx.restore();
+    return Math.max(min, Math.ceil(w / dpr) + pad);
+  };
+}
+
 /** Draw a dot per mark (filled, or hollow when `filled` says no); call from a uPlot draw hook. */
 export function drawDots<M extends { x: number; y: number }>(
   p: uPlot, marks: M[], color: string, filled: (m: M) => boolean = () => true,
