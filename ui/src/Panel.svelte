@@ -3,7 +3,7 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import {
-    closePanel, fetchPanelData, refreshYContext, reportRender, selectYView, setMarginal, selectDataView,
+    closePanel, fetchPanelData, refreshYContext, reportRender, selectYView, setMarginal, selectDataView, setOverlays,
     type Annotation, type Panel, type PanelData, type Thread, type YView,
   } from "./lib/api";
   import { toUplot } from "./chart/toUplot";
@@ -14,6 +14,7 @@
   import SpectrogramPlot from "./components/SpectrogramPlot.svelte";
   import { fmtRatio, indexSeries, ratioTicks } from "./chart/indexed";
   import { drawMarginal, marginalHeader } from "./chart/marginal";
+  import { overlayChips, overlayDraw } from "./chart/overlays";
   import { badgeText, contextStrip, hasReference, nonZeroOrigin, offeredViews, refExtent, resolveY, yStats } from "./chart/yview";
   import { measureFirstDraw } from "./chart/measureDraw";
   import { drawAnnotations, drawOps, readAnnotationColors } from "./chart/annotations";
@@ -228,6 +229,23 @@
 
   const close = () => closePanel(panel.id).catch((e) => (error = String(e)));
 
+  // reference layers (2as.11): switching one changes the payload, so fetch it again
+  let overlayBusy = $state(false);
+  const toggleOverlay = (key: "normal" | "limit" | "ghost", on: boolean) => {
+    overlayBusy = true;
+    setOverlays(panel.id, { [key]: on })
+      .then(() => load(fetchWidth || 800))
+      .catch((e) => (error = String(e)))
+      .finally(() => (overlayBusy = false));
+  };
+  // a profile that finishes later arrives as a new y context: look at the layers again
+  let ctxKey: string | null = null;
+  $effect(() => {
+    const k = JSON.stringify(panel.spec.y.context ?? null);
+    if (ctxKey !== null && k !== ctxKey && data?.kind === "time") untrack(() => load(fetchWidth || 800));
+    ctxKey = k;
+  });
+
   $effect(() => {
     const el = plotEl;
     const d = data;
@@ -252,6 +270,7 @@
         nMin: d.dataset.n_min ?? null,
         context: untrack(() => filtDrawn?.context),
         edges: untrack(() => (viewNow === "raw" ? undefined : d.filter?.edges)),
+        overlays: overlayDraw(d.overlays),
       },
     );
     const width = (el.clientWidth || 800) - margW;
@@ -361,6 +380,7 @@
   id="panel-{panel.id}"
   data-panel-id={panel.id}
   data-annotation-count={annCount}
+  data-overlays={data?.kind === "time" ? Object.keys(overlayDraw(data.overlays) ?? {}).join(",") : undefined}
   data-heatmap-cells={data?.kind === "heatmap" ? heatCells : undefined}
   data-percentile-bands={data?.kind === "heatmap" && heatView === "percentiles" ? heatCells : undefined}
   data-render-ms={render ? render.ms.toFixed(1) : undefined}
@@ -499,6 +519,18 @@
       {/key}
     {/if}
   </div>
+  {#if data?.kind === "time" && data.overlays?.flags}
+    <div class="legend overlays" role="group" aria-label="Reference layers">
+      layers:
+      {#each overlayChips(data.overlays) as c (c.key)}
+        <button
+          type="button" data-overlay={c.key} title={c.title} class:on={c.on}
+          disabled={!c.enabled || overlayBusy} aria-pressed={c.on}
+          onclick={() => toggleOverlay(c.key, !c.on)}
+        >{c.label}</button>
+      {/each}
+    </div>
+  {/if}
   {#if data?.kind === "time" && yst}
     <div class="legend y-views" role="group" aria-label="Y-axis view">
       y:

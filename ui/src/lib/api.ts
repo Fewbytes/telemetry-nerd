@@ -8,6 +8,7 @@ export interface ChartSpec {
     range_mode: "data" | "reference" | "semantic"; unit: string | null; label: string | null;
     views?: YView[]; selected?: YView | null; context?: YContext | null;
   };
+  overlays?: OverlayFlags;
   signal?: { filter: string; kind: string; reason: string; offered: string[]; default: string; selected?: string | null } | null;
   references?: Record<string, { mode: string; label: string; start_ms: number; end_ms: number; shift_ms: number; series: string; dist?: string | null }>;
   marginal?: { reference: "previous" | "week"; author?: string; reason?: string | null } | null;
@@ -86,7 +87,17 @@ export interface BucketSchemeInfo {
   kind: string; edges: number[]; schema: number | null; per_decade: number | null; description: string;
 }
 interface PanelDataBase { panel: Panel; dataset: DatasetMeta; caveats: string[] }
-export interface TimePanelData extends PanelDataBase { kind: "time"; effective_step_ms: number; series: SeriesData[]; marginal?: MarginalData | null; index?: IndexPayload | null; raw?: SeriesData[]; removed?: SeriesData[]; filter?: FilterInfo }
+/** Reference layers on a time panel (bead 2as.11): availability always, data only when on. */
+export interface OverlayFlags { normal: boolean; limit: boolean; ghost: boolean }
+export interface BandSeries { ts: number[]; lo: (number | null)[]; hi: (number | null)[] }
+export interface GhostSeries { id: string; ts: number[]; avg: (number | null)[]; count: (number | null)[] }
+export interface OverlaysPayload {
+  flags: OverlayFlags;
+  normal: { available: boolean; reason?: string; label?: string; stale?: boolean; series?: Record<string, BandSeries>; unmatched?: string[] };
+  limit: { available: boolean; reason?: string; label?: string; metric?: string; hi?: number; series?: SeriesData[] };
+  ghost: { available: boolean; loaded: boolean; label?: string; series?: GhostSeries[] };
+}
+export interface TimePanelData extends PanelDataBase { kind: "time"; overlays?: OverlaysPayload; effective_step_ms: number; series: SeriesData[]; marginal?: MarginalData | null; index?: IndexPayload | null; raw?: SeriesData[]; removed?: SeriesData[]; filter?: FilterInfo }
 export interface HeatmapPanelData extends PanelDataBase {
   kind: "heatmap"; mark: "heatmap" | "percentiles"; effective_step_ms: number; value_merge: number; facet_height_px: number; series: HeatSeries[];
 }
@@ -246,3 +257,8 @@ export const selectDataView = (id: string, view: string) => postJSON<Panel>(`/ap
 
 /** Recompute a panel's y context, e.g. once its operating profile has finished computing. */
 export const refreshYContext = (id: string) => postJSON<unknown>(`/api/panels/${id}/y-context`);
+
+/** Switch reference layers; turning the ghost on makes the daemon fetch last week. */
+export const setOverlays = (id: string, body: Partial<OverlayFlags>) =>
+  postJSON<unknown>(`/api/panels/${id}/overlays`, body);
+

@@ -1,5 +1,6 @@
 import type uPlot from "uplot";
 import type { SeriesData } from "../lib/api";
+import type { OverlayDraw } from "./overlays";
 
 // Okabe-Ito: colorblind-safe categorical palette. The series budget (≤5) fits it.
 export const PALETTE = ["#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9"];
@@ -51,12 +52,20 @@ export interface ToUplotOpts {
   context?: { role: "raw" | "removed"; series: SeriesData[] };
   /** filter edge spans [t0, t1] ms (all series, or per series id): drawn dashed, they are unreliable */
   edges?: number[][] | Record<string, number[][]>;
+  /** reference layers (2as.11): normal band under each series, last-week ghost, limit line */
+  overlays?: OverlayDraw;
 }
+
+export const LIMIT_COLOR = "#D55E00"; // Okabe-Ito vermilion: a hazard, not a series colour
 
 export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {}): UplotModel {
   const all = new Set<number>(grid ? gridTimes(grid) : []);
   series.forEach((s) => s.ts.forEach((t) => all.add(t)));
   opts.context?.series.forEach((s) => s.ts.forEach((t) => all.add(t)));
+  const ov = opts.overlays;
+  Object.values(ov?.normal ?? {}).forEach((b) => b.ts.forEach((t) => all.add(t)));
+  ov?.limit?.forEach((s) => s.ts.forEach((t) => all.add(t)));
+  ov?.ghost?.forEach((s) => s.ts.forEach((t) => all.add(t)));
   const xs = [...all].sort((a, b) => a - b);
   const index = new Map(xs.map((t, i) => [t, i]));
   const data: (number | null)[][] = [xs.map((t) => t / 1000)];
@@ -73,8 +82,39 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
     return out;
   };
 
+  const onGrid = (ts: number[], values: (number | null)[]) => {
+    const out: (number | null)[] = Array(xs.length).fill(null);
+    ts.forEach((t, i) => {
+      const idx = index.get(t);
+      if (idx !== undefined) out[idx] = values[i];
+    });
+    return out;
+  };
+
   series.forEach((s, k) => {
     const color = PALETTE[k % PALETTE.length];
+    const base = s.labels ? seriesName(s.labels) : s.id;
+    const band = ov?.normal?.[s.id];
+    if (band) {
+      // the normal range for this hour: faint, underneath everything; the chips are its legend
+      const bi = data.length;
+      data.push(onGrid(band.ts, band.lo), onGrid(band.ts, band.hi));
+      legendHidden.push(bi, bi + 1);
+      uSeries.push(
+        { label: `${base} normal low`, stroke: "transparent", width: 0, points: { show: false }, spanGaps: false },
+        { label: `${base} normal high`, stroke: "transparent", width: 0, points: { show: false }, spanGaps: false },
+      );
+      bands.push({ series: [bi + 1, bi], fill: rgba(color, 0.08) });
+    }
+    const ghost = ov?.ghost?.find((g) => g.id === s.id);
+    if (ghost) {
+      // the same window a week ago, pointwise; percentile buckets with too few observations stay out
+      const nMin = opts.quantile ? (opts.nMin ?? null) : null;
+      const vals = ghost.avg.map((v, i) => (nMin !== null && (ghost.count[i] ?? 0) < nMin ? null : v));
+      legendHidden.push(data.length);
+      data.push(onGrid(ghost.ts, vals));
+      uSeries.push({ label: `${base} last week`, stroke: rgba(color, 0.45), width: 1, dash: [2, 4], spanGaps: false });
+    }
     const column = (values: (number | null)[]) => {
       const out: (number | null)[] = Array(xs.length).fill(null);
       // xs contains every s.ts, so every lookup hits
@@ -149,6 +189,13 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
       data.push(contextColumn(ctx, "avg"));
       uSeries.push({ label: `${name} removed part`, stroke: rgba(color, 0.8), width: 1, dash: [3, 3], spanGaps: false });
     }
+  });
+
+  ov?.limit?.forEach((l, i) => {
+    // a physical limit: dashed hazard colour; drawn over the data so it is never hidden by it
+    legendHidden.push(data.length);
+    data.push(onGrid(l.ts, l.avg));
+    uSeries.push({ label: `limit ${l.labels ? seriesName(l.labels) : i + 1}`, stroke: LIMIT_COLOR, width: 1.5, dash: [8, 4], spanGaps: false, points: { show: false } });
   });
 
   return { data: data as uPlot.AlignedData, series: uSeries, bands, legendHidden, points: xs.length * series.length };
