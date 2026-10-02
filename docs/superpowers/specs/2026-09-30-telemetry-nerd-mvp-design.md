@@ -323,6 +323,27 @@ thread cannot be reliably timed out.
   where the OS allows (`RLIMIT_AS` on Linux). Crash or kill → code node `failed` with the
   traceback, kernel restarted; datasets are server-side so only in-memory variables are lost.
   The daemon is never affected.
+- **Kernel manager (b98.3, settled 2026-10-02):** `kernels.KernelManager.execute(workspace,
+  code, env=, cwd=, timeout_s=) -> ExecResult(status ok|error|timeout|crashed, stdout, stderr,
+  result, error, traceback, duration_s, restarted, truncated)`; it never raises for a failed
+  run. Per-run settings (`TN_RUN_DIR`) are applied *inside* the persistent kernel by a silent
+  preamble (`kernels.runtime.begin_run`: set this run's env, drop the previous run's keys,
+  chdir, call `on_run` hooks) — `tn` reads env lazily or registers an `on_run` reset hook.
+  Runs on one kernel **queue** (FIFO; the timeout starts when the run gets the kernel);
+  workspaces run in parallel. Timeout = SIGINT to the kernel's process group, `interrupt_grace_s`
+  (5 s), then SIGKILL + restart. Defaults: run timeout 120 s, idle shutdown 30 min,
+  `RLIMIT_AS` 4 GiB (`TN_KERNEL_RUN_TIMEOUT_S`, `TN_KERNEL_IDLE_TIMEOUT_S`,
+  `TN_KERNEL_MEMORY_LIMIT_MB`, 0 = off); macOS does not enforce `RLIMIT_AS`, so no memory cap
+  there. stdout/stderr keep head + tail (32 k chars each). Connection files, logs and
+  `IPYTHONDIR` live under `<data_dir>/kernels/` (writable in the image; no reliance on
+  `$HOME`/`$XDG_RUNTIME_DIR`). No orphans: daemon shutdown (lifespan) SIGKILLs every kernel's
+  process group; an `atexit` hook does the same on other clean exits; if the daemon is
+  SIGKILLed, Linux `PR_SET_PDEATHSIG` kills the kernel at once and a forked watchdog in the
+  kernel's process group (≤0.5 s poll, independent of the kernel's GIL) kills the group,
+  on macOS too; ipykernel's parent poller is a third line. In the container the daemon is
+  PID 1, so its death ends every process. Not covered: user code that detaches into a new
+  session (`start_new_session=True`) escapes the process group. The image drops debugpy and
+  jedi/parso (optional in ipykernel; ~43 MB).
 - **Libraries:** numpy, polars, pyarrow are always there; scipy, statsmodels, scikit-learn,
   ruptures, pywavelets ship as the optional `analysis` extra (`telemetry-nerd[analysis]`;
   a `-full` image tag carries them).
