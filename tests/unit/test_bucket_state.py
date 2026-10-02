@@ -1,3 +1,5 @@
+import re
+
 import pyarrow as pa
 import pytest
 
@@ -409,7 +411,7 @@ def _miss_after(interval, step):
 
 SWEEP = [
     (interval, step, phase, jitter)
-    for interval in (15_000, 20_000, 25_000, 40_000, 60_000, 120_000)
+    for interval in (15_000, 20_000, 22_500, 25_000, 40_000, 45_000, 60_000, 90_000, 120_000)
     for step in (15_000, 30_000, 60_000)
     for phase in (0, 1_000, 7_500, 14_000)
     for jitter in (0, 2_000)
@@ -446,10 +448,14 @@ def test_sweep_ten_minute_hole_is_empty_inside_and_nowhere_else(interval, step, 
 
 
 @pytest.mark.parametrize(("fast", "slow"), [(15_000, 60_000), (60_000, 15_000)])
-def test_rate_change_within_the_window_reads_ok_and_flags_interval_change(fast, slow):
+# (jittered at a 30s step the change is not always flagged: not covered)
+@pytest.mark.parametrize(("step", "jitter"), [(S15, 0), (S15, 2_000), (30_000, 0)])
+def test_rate_change_within_the_window_reads_ok_and_flags_interval_change(fast, slow, step, jitter):
     half = HOUR // 2
-    ts = _sample_ts(fast, end=half) + _sample_ts(slow, start=half, end=HOUR)
-    out = _compute_rows(_count_rows(ts, S15), step=S15, res=S15)
+    ts = _sample_ts(fast, end=half, jitter=jitter, seed=1) + _sample_ts(
+        slow, start=half, end=HOUR, jitter=jitter, seed=2
+    )
+    out = _compute_rows(_count_rows(ts, step), step=step, res=S15)
     st = states(out)
     assert State.EMPTY not in st and State.PARTIAL not in st
     assert any(f & Flag.INTERVAL_CHANGE for f in out["flags"].to_pylist())
@@ -464,7 +470,9 @@ def test_rate_change_caveat_reports_both_intervals_in_order(first, then):
     ts = _sample_ts(first, end=half) + _sample_ts(then, start=half, end=HOUR)
     out = _compute_rows(_count_rows(ts, S15), step=S15, res=S15)
     [c] = [c for c in from_bucket_state(out, {"a": "A"}, S15) if c.code == "interval_change"]
-    assert f"{first // 1000}s → {then // 1000}s" in c.message
+    # "about": the smoothed boundary may put a sample on the wrong side
+    a, b = (int(x) for x in re.search(r"every (\d+)s → (\d+)s", c.message).groups())
+    assert abs(a * 1000 - first) <= 0.05 * first and abs(b * 1000 - then) <= 0.05 * then
 
 
 @pytest.mark.parametrize("seed", range(5))
@@ -509,3 +517,62 @@ def test_many_series_stay_fast():
     )  # fmt: skip
     assert out.num_rows == 20 * 1440
     assert time.perf_counter() - t0 < 1.0
+
+
+@pytest.mark.parametrize(("interval", "step"), [(45_000, 30_000), (90_000, 60_000), (22_500, S15)])
+@pytest.mark.parametrize("jitter", [0, 2_000, 5_000])
+@pytest.mark.parametrize("seed", range(3))
+def test_steady_cadence_near_one_and_a_half_steps_is_not_a_rate_change(
+    interval, step, jitter, seed
+):
+    # gaps alternate one and two steps: a steady rate, not a change between them
+    ts = _sample_ts(interval, phase=1_300 * seed, jitter=jitter, seed=seed)
+    out = _compute_rows(_count_rows(ts, step), step=step, res=15_000)
+    assert not any(f & Flag.INTERVAL_CHANGE for f in out["flags"].to_pylist())
+    assert State.EMPTY not in states(out) and State.PARTIAL not in states(out)
+
+
+def _keep_every(ts, k, lo, hi):
+    """Keep every k-th sample within [lo, hi): sustained partial loss."""
+    return [t for i, t in enumerate(ts) if not lo <= t < hi or i % k == 0]
+
+
+@pytest.mark.parametrize(
+    ("interval", "step", "k", "lo", "hi"),
+    [
+        (5_000, 30_000, 4, 1_200_000, 2_400_000),
+        (5_000, 60_000, 3, 600_000, 3_000_000),
+        (1_000, 60_000, 4, 600_000, 3_000_000),
+        (10_000, 60_000, 2, 1_200_000, 2_400_000),
+    ],
+)
+def test_sustained_partial_loss_shows_in_coverage(interval, step, k, lo, hi):
+    full = _sample_ts(interval, jitter=interval // 10)
+    kept = _keep_every(full, k, lo, hi)
+    out = _compute_rows(_count_rows(kept, step), step=step, res=15_000)
+    assert _alive_coverage(out) == pytest.approx(len(kept) / len(full), abs=0.05)
+    by_ts = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
+    assert all(by_ts[b] == State.PARTIAL for b in by_ts if lo + step <= b < hi)
+    assert all(by_ts[b] == State.OK for b in by_ts if b < lo or b > hi + step)
+
+
+def test_claim_over_a_stretch_keeping_a_quarter_of_its_samples_is_blocked():
+    from telemetry_nerd.core.coverage_check import claim_coverage
+
+    lo, hi = 600_000, 3_000_000
+    out = _compute_rows(_count_rows(_keep_every(_sample_ts(1_000), 4, lo, hi), 60_000), step=60_000)
+    [c] = claim_coverage(out, lo, hi, 60_000)
+    assert c.severity == "blocks_claim"
+
+
+def test_a_leading_spill_gives_no_credit_to_a_later_lost_scrape():
+    # first scrape late (its 0 bucket lies before the series is first seen: the first bucket holds
+    # 2), then early, late from scrape 180 (a 0) and early again from 200 (its 2). One scrape lost
+    # at 120 must read empty, not be paired with the leading 2.
+    late = lambda k: k == 1 or 180 <= k < 200
+    ts = [15_000 * k + (1_000 if late(k) else -1_000) for k in range(1, 241)]
+    lost = ts[119]
+    out = _compute_rows(_count_rows([t for t in ts if t != lost], S15), step=S15, res=S15)
+    by_ts = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
+    assert by_ts[120 * S15] == State.EMPTY
+    assert states(out).count(State.EMPTY) == 1

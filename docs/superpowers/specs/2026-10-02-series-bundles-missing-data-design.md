@@ -162,18 +162,25 @@ time since the series' last sample exceeds max(1.5 × I, I + step) (cadence miss
 silence likewise), else `ok`. Elsewhere every 0 bucket is `empty`, except at about one sample per
 bucket (step / I in [0.8, 1.2]): a scrape near a bucket boundary lands in the neighbouring bucket,
 so a lone 0 bucket paired with a 2 bucket (either order, only 1s between, each 2 pairing one 0) is
-`ok`; an unpaired 0 is a lost scrape. A 0 still waiting for its 2 at the window end, or before a
-hole or `unknown` span, is `ok` if the series was seen spilling. There `expected` is the series'
-samples per bucket over all its at-or-faster-than-step gaps (holes and `empty` buckets' time left
-out; at least 1), so a stretch with fewer samples per bucket still reads `partial` (a bucket is
-`partial` below expected − max(1, 10 % of expected) − 0.1, the 0.1 for the estimate's error).
-Coverage Σobserved / Σexpected stays ≈ 1 for a healthy series, jittered or changing rate.
+`ok`; an unpaired 0 is a lost scrape. A 2 opening a run (window start, after a hole or `unknown`
+span) pairs with a 0 out of sight and gives no credit to a later 0, except after a run of exactly
+two 0s (one lost scrape next to one that spilled), whose 0 it pairs. A 0 still waiting for its 2
+at the window end, or before a hole or `unknown` span, is `ok` if the series was seen spilling.
+There `expected` is the series' samples per bucket over its at-or-faster-than-step gaps, robust
+to loss: holes and `empty` buckets' time are left out, and it is re-estimated twice without the
+buckets short of the previous estimate (at least 1). A stretch with fewer samples per bucket
+therefore reads `partial` and coverage shows the loss (a stretch keeping 1/4 of its samples reads
+25 %, not the share of a baseline it pulled down). A bucket is `partial` below expected − max(1,
+10 % of expected) − 0.1, the 0.1 for the estimate's error. Coverage Σobserved / Σexpected stays ≈ 1
+for a healthy series, jittered or changing rate.
 
 Buckets before the first sample stay `absent`. An `unknown` bucket resets the cadence reference
 (what happened inside it is not known), so no `empty` follows a failed span. `interval_differs`
 reports the dominant interval: the median over `ok`/`partial` buckets of step / expected.
-`interval_change`: a series with a slower-than-step stretch is judged from its gaps: time per
-sample of each non-zero bucket, median-smoothed over 9; when that spans ≥ 2×, the buckets split at
+`interval_change`: a series with a slower-than-step stretch is judged from its gaps: the time per
+sample over the 5 non-zero buckets centred on each (Σgap / Σsamples, holes left out; a median of
+per-bucket values would flip on a steady ~1.5-step cadence, whose gaps alternate one and two
+steps); when that spans ≥ 2×, the buckets split at
 the geometric middle and, with 3 non-zero buckets a side and the slower side's lower quartile above
 the faster side's upper one, the side covering less of the window is flagged (with the 0 buckets of
 its gaps). Other series compare the counts of the halves of their non-zero buckets (≥ 2×, same
@@ -185,7 +192,10 @@ stay `ok`.
 Limits: a series scraped between 1 and 1.25 × the step reads as a step-rate one that loses a sample
 now and then (its skipped buckets `empty`), and a step-rate series losing more than about a fifth of
 its samples (or a slower one showing fewer than 2 gaps over the step) reads the other way; bucket counts cannot
-tell the two apart.
+tell the two apart. Sustained heavy loss (more than about a fifth of the samples over a stretch)
+in a series scraped near or slower than the step can likewise surface as `interval_change` (the
+stretch read as a slower rate) rather than `partial`/`empty`; at several samples per bucket it
+reads `partial`, with coverage showing the loss.
 
 Dataset level: failed spans with error text (never cached; retried on next read).
 

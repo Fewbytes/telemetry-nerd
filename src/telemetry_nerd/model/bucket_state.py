@@ -32,12 +32,13 @@ PARTIAL_RATIO = 0.9
 COUNT_SLACK = 0.1  # error of an estimated expected count, on top of one sample of jitter
 CHANGE_RATIO = 2.0  # a series' sample rate halves or doubles within the window
 CHANGE_MIN_BUCKETS = 3  # non-zero buckets each side of a rate change needs before it can be judged
-CHANGE_WINDOW = 9  # non-zero buckets in the centred median that localises a rate change
+CHANGE_WINDOW = 5  # non-zero buckets in the centred rate that localises a rate change
 LOCAL_GAPS = 16  # non-zero-bucket gaps in each one-sided neighbourhood the cadence is judged from
 LOCAL_MIN_GAPS = 2  # gaps a neighbourhood needs to stand on its own (else the other side, global)
 HOLE_RATIO = 2.0  # a gap over this many times its neighbourhood's median gap is a hole, not cadence
 SLOW_MIN_LONG = 2  # gaps longer than the step a neighbourhood needs before it can read as slow
 SLOW_MARGIN = 1.25  # interval this far above the step: slower than the step, not a step-rate one
+BASELINE_PASSES = 2  # re-estimates of the faster-than-step baseline without its short buckets
 SLOW_MISS_RATIO = 1.5  # a slower-than-step series misses its cadence after this many intervals
 SPILL_RATE = (0.8, 1.2)  # samples per bucket at which a scrape can spill into the next bucket
 
@@ -181,8 +182,9 @@ def _cadence(df: pl.DataFrame, step_ms: int) -> pl.DataFrame:
     the last sample (or UNKNOWN bucket) exceeds max(1.5 I, I + step), and `expected` = step / I.
     Otherwise every 0 bucket is a miss, except at about one sample per bucket a lone 0 paired with
     a 2 (a scrape that spilled into the next bucket), and `expected` is the series' samples per
-    bucket over all its at-or-faster-than-step gaps (holes and missed buckets' time left out; at
-    least 1), so a series whose count drops for a stretch reads partial there, as before.
+    bucket over its at-or-faster-than-step gaps (holes, missed buckets' time and buckets short of
+    the estimate left out; at least 1), so a series whose count drops for a stretch reads partial
+    there, as before, and coverage shows the loss.
     `interval_differs` reads the interval back as step / expected."""
     nz_b = (pl.col("observed") > 0) & ~pl.col("_unk")
     nz = df.filter(nz_b).select(
@@ -206,6 +208,10 @@ def _cadence(df: pl.DataFrame, step_ms: int) -> pl.DataFrame:
         (nz_b & (pl.col("observed") >= 2) & near_one).alias("_ev2"),
         ((zero & ~lone) | pl.col("_unk")).alias("_evx"),
     )
+    run0 = (pl.col("_evx") & ~pl.col("_unk")).fill_null(False)
+    two = lambda k: run0.shift(k).over(_S).fill_null(False)
+    # the end of a run of exactly two 0 buckets: one lost scrape next to one that spilled
+    df = df.with_columns((run0 & two(1) & ~two(2) & ~two(-1) & near_one).alias("_ev00"))
     spilled = _spilled(df.filter(pl.col("_ev0") | pl.col("_ev2") | pl.col("_evx")))
     df = df.join(spilled, on=[_S, "ts_ms"], how="left").sort(_S, "ts_ms")
     df = df.with_columns(
@@ -225,30 +231,46 @@ def _cadence(df: pl.DataFrame, step_ms: int) -> pl.DataFrame:
     g2 = pl.col("_g") - step_ms * pl.col("_lost").fill_null(0)
     med = g2.rolling_median(window_size=2 * LOCAL_GAPS + 1, center=True, min_samples=1)
     use = g2.is_not_null() & (g2 <= HOLE_RATIO * med.over(_S)) & ~pl.col("_sl")
-    fast = (
+    gaps = (
         nz.join(lost, on=[_S, "ts_ms"], how="left")
         .join(est.select(_S, "ts_ms", "_sl"), on=[_S, "ts_ms"], how="left")
         .sort(_S, "ts_ms")
         .with_columns(use.alias("_use"), g2.alias("_g2"))
-        .group_by(_S)
-        .agg(
-            pl.col("_c").filter("_use").sum().alias("_n"),
-            pl.col("_g2").filter("_use").sum().alias("_t"),
-            pl.col("_c").median().alias("_typ"),
-        )
-        .select(
-            _S,
-            pl.when(pl.col("_t") > 0)
-            .then(step_ms * pl.col("_n") / pl.col("_t"))
-            .otherwise(pl.col("_typ"))
-            .alias("_fast"),
-        )
     )
+
+    def per_bucket(gaps: pl.DataFrame) -> pl.DataFrame:
+        return (
+            gaps.group_by(_S)
+            .agg(
+                pl.col("_c").filter("_use").sum().alias("_n"),
+                pl.col("_g2").filter("_use").sum().alias("_t"),
+                pl.col("_c").median().alias("_typ"),
+            )
+            .select(
+                _S,
+                pl.when(pl.col("_t") > 0)
+                .then(step_ms * pl.col("_n") / pl.col("_t"))
+                .otherwise(pl.col("_typ"))
+                .clip(lower_bound=1.0)
+                .alias("_fast"),
+            )
+        )
+
+    # robust to sustained loss: buckets short of the estimate are left out and it is re-estimated
+    # from the rest (a stretch keeping 1/4 of its samples would otherwise pull the baseline down
+    # and read as most of what was expected)
+    fast = per_bucket(gaps)
+    for _ in range(BASELINE_PASSES):
+        fast = per_bucket(
+            gaps.join(fast, on=_S, how="left").with_columns(
+                pl.col("_use") & ~short(pl.col("_c"), pl.col("_fast"))
+            )
+        )
     df = df.join(fast, on=_S, how="left").sort(_S, "ts_ms")
     expected = (
         pl.when(pl.col("_slow"))
         .then(step_ms / pl.col("_I"))
-        .otherwise(pl.max_horizontal(pl.lit(1.0), pl.col("_fast").fill_null(1.0)))
+        .otherwise(pl.col("_fast").fill_null(1.0))
     )
     return df.with_columns(expected.alias("expected"))
 
@@ -335,30 +357,41 @@ def _spilled(events: pl.DataFrame) -> pl.DataFrame:
     bucket: a 0 bucket and a 2 bucket, in either order with only 1s between (`_ev0`/`_ev2`; rows
     sorted by series, ts). Pairs each 0 with an adjacent 2; a 0 left unpaired is a lost scrape,
     except a last one still waiting for its 2 in a series seen spilling (the 2 may lie past the
-    window end or inside a hole or UNKNOWN span, `_evx`, which also restarts the pairing). Returns
-    the paired 0 buckets with `_spill` = True."""
+    window end or inside a hole or UNKNOWN span, `_evx`, which also restarts the pairing). A 2
+    opening a run (window start, after a reset) pairs with a 0 before it, out of sight: it is
+    evidence of spilling but no credit for a later 0, unless the reset was a run of exactly two 0s
+    (`_ev00`): a lost scrape next to a spilled one, whose 0 it pairs. Returns the paired 0 buckets with `_spill`
+    = True."""
     ok_s: list[str] = []
     ok_t: list[int] = []
-    cur, credit, pending, paired = None, False, None, False
-    rows = events.select(_S, "ts_ms", "_ev0", "_evx").iter_rows()
-    for sid, t, is_zero, reset in (*rows, (None, None, None, None)):
+    cur, credit, pending, paired, fresh = None, False, None, False, True
+    run_end = None
+    rows = events.select(_S, "ts_ms", "_ev0", "_evx", "_ev00").iter_rows()
+    for sid, t, is_zero, reset, pair_end in (*rows, (None,) * 5):
         if sid != cur:
             if pending is not None and paired:
                 ok_s.append(cur)
                 ok_t.append(pending)
-            cur, credit, pending, paired = sid, False, None, False
+            cur, credit, pending, paired, fresh = sid, False, None, False, True
             if sid is None:
                 break
         if reset:
             if pending is not None and paired:
                 ok_s.append(sid)
                 ok_t.append(pending)
-            credit, pending = False, None
-        elif not is_zero:
+            credit, pending, fresh = False, None, True
+            run_end = t if pair_end else None
+            continue
+        if not is_zero:
             if pending is not None:
                 ok_s.append(sid)
                 ok_t.append(pending)
                 pending, paired = None, True
+            elif fresh:
+                if run_end is not None:  # its 0 is the spilled one of the two
+                    ok_s.append(sid)
+                    ok_t.append(run_end)
+                paired = True
             else:
                 credit = True
         elif credit:
@@ -367,6 +400,7 @@ def _spilled(events: pl.DataFrame) -> pl.DataFrame:
             credit, paired = False, True
         else:
             pending = t  # an earlier unpaired 0 stays a miss
+        fresh, run_end = False, None
     return pl.DataFrame(
         {_S: ok_s, "ts_ms": ok_t, "_spill": [True] * len(ok_s)},
         schema={_S: pl.String, "ts_ms": pl.Int64, "_spill": pl.Boolean},
@@ -432,8 +466,8 @@ def _interval_change(df: pl.DataFrame) -> tuple[pl.DataFrame, pl.Expr]:
 
 def _gap_interval_change(df: pl.DataFrame) -> tuple[pl.DataFrame, pl.Expr]:
     """Rate changes in series with a slower-than-step stretch, where 0/1 counts cannot show them:
-    from the time per sample (gap / count) of each non-zero bucket, median-smoothed over
-    CHANGE_WINDOW buckets. When that local interval spans >= CHANGE_RATIO, the buckets split at
+    from the time per sample over the CHANGE_WINDOW non-zero buckets centred on each (Σgap /
+    Σcount, holes left out). When that local interval spans >= CHANGE_RATIO, the buckets split at
     the geometric middle into a faster and a slower side; with CHANGE_MIN_BUCKETS each and clear
     separation (the slower side's lower quartile above the faster side's upper one, as for
     counts) the side covering less of the window gets INTERVAL_CHANGE, with the 0 buckets of its
@@ -445,8 +479,19 @@ def _gap_interval_change(df: pl.DataFrame) -> tuple[pl.DataFrame, pl.Expr]:
         .with_columns((pl.col("_gx") / pl.col("observed")).alias("_x"))
         .filter(pl.col("_by_gap") & pl.col("_x").is_not_null())
     )
-    m = pl.col("_x").rolling_median(window_size=CHANGE_WINDOW, center=True, min_samples=1)
-    nz = nz.with_columns(m.over(_S).alias("_mx"))
+    # smoothed as a rate (Σgap / Σsamples over the window), holes left out: a median of the
+    # per-bucket values flips between the two snapped gaps of a steady ~1.5-step cadence
+    g = pl.col("_gx")
+    med = g.rolling_median(window_size=2 * LOCAL_GAPS + 1, center=True, min_samples=1)
+    kept = g <= HOLE_RATIO * med.over(_S)
+    roll = lambda e: (
+        pl.when(kept).then(e).otherwise(0.0)
+        .rolling_sum(window_size=CHANGE_WINDOW, center=True, min_samples=1)
+        .over(_S)
+    )  # fmt: skip
+    nz = nz.with_columns((roll(g) / roll(pl.col("observed"))).alias("_mx")).filter(
+        pl.col("_mx").is_finite()
+    )
     nz = nz.with_columns(
         (pl.col("_mx") >= (pl.col("_mx").min() * pl.col("_mx").max()).sqrt())
         .over(_S)
