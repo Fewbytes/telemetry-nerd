@@ -30,6 +30,18 @@ def test_spectrum_summary_coarsens_and_cites_evidence(tmp_path):
     ev = next(p["evidence"] for p in peaks if p["significant"] and abs(p["period_s"] - 300) < 10)
     assert ev["name"] == "dominant_period" and ev["interval"][0] <= 300 <= ev["interval"][1]
     assert len(str(out)) < 2600
+    assert all(0 <= p["fap_red_noise"] <= 1 for p in peaks)
+    assert all(p["fap_red_noise"] < 0.01 for p in peaks if p["significant"])
+
+
+def test_spectrum_panel_draws_red_noise_level(tmp_path):
+    svc = make_service(tmp_path)
+    d = put(svc, "queue_depth", periodic(), M)
+    panel = svc.signal.spectrum_panel(d, None, None, 600)
+    (s,) = panel["series"]
+    assert len(s["red_level"]) == len(s["periods_s"]) and 0 <= s["ar1_phi"] < 1
+    # AR(1) background: the 1% level rises towards long periods (never below white at phi=0)
+    assert s["red_level"][-1] >= s["red_level"][0]
 
 
 @pytest.mark.parametrize(

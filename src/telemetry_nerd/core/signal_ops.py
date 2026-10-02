@@ -165,6 +165,7 @@ class SignalOps:
                     ],
                     "power": float(f"{pk.power:.3g}"),
                     "fap": float(f"{pk.fap:.2g}"),
+                    "fap_red_noise": float(f"{pk.fap_red_noise:.2g}"),
                     "local_ratio": None
                     if pk.local_ratio is None
                     else float(f"{pk.local_ratio:.3g}"),
@@ -175,10 +176,12 @@ class SignalOps:
                     item["evidence"] = {
                         "kind": "statistic", "dataset": dataset_id, "name": "dominant_period",
                         "value": item["period_s"], "interval": item["interval_s"], "exact": False,
-                        "method": "Lomb-Scargle peak, half-power width (>= 1/range)",
+                        "method": "Lomb-Scargle peak, half-power width (>= 1/range); "
+                                  "confirmed against AR(1) red noise",
                         "params": {
-                            "fap": pk.fap, "local_ratio": pk.local_ratio, "n": sp.n,
-                            "step": eff, "detrended": "linear",
+                            "fap": pk.fap, "fap_red_noise": pk.fap_red_noise,
+                            "ar1_phi": round(sp.phi, 3), "local_ratio": pk.local_ratio,
+                            "n": sp.n, "step": eff, "detrended": "linear",
                         },
                     }  # fmt: skip
                 peaks.append(item)
@@ -257,6 +260,7 @@ class SignalOps:
             edges, power = log_bins(periods, sp.power, n_bins)
             centres = np.sqrt(edges[:-1] * edges[1:]) / 1000.0
             ok = ~np.isnan(power)
+            red = sp.red_level(1.0 / centres[ok], prep.step_ms / 1000)
             series.append(
                 {
                     "id": sid,
@@ -264,6 +268,8 @@ class SignalOps:
                     "periods_s": [float(f"{x:.5g}") for x in centres[ok]],
                     "power": [float(f"{x:.4g}") for x in power[ok]],
                     "level": float(f"{sp.level:.4g}"),
+                    "red_level": [float(f"{x:.4g}") for x in red],
+                    "ar1_phi": float(f"{sp.phi:.3g}"),
                     "peaks": info["peaks"],
                     "caveats": sp.caveats,
                 }

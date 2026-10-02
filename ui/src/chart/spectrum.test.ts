@@ -17,6 +17,12 @@ test("period-axis model: one line per series plus the false-alarm level", () => 
   expect(String(m.series[2].label)).toContain("false-alarm");
   expect(m.xRange[0]).toBeCloseTo(150);
 });
+test("red-noise level drawn per series when present", () => {
+  const r = { ...d, series: [{ ...d.series[0], red_level: [0.05, 0.1, 0.3], ar1_phi: 0.4 }] };
+  const m = toSpectrumUplot(r);
+  expect(m.data[3]).toEqual([0.05, 0.1, 0.3]);
+  expect(String(m.series[3].label)).toContain("red noise");
+});
 test("limits are hatched, only significant peaks are marked", () => {
   expect(limitZones(d.limits, 100, 300000).map((z) => [z.from, z.to])).toEqual([[100, 240], [172800, 300000]]);
   expect(peakMarks(d.series[0]).map((p) => p.text)).toEqual(["5m [4.8m–5.2m]"]);

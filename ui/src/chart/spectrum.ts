@@ -2,14 +2,15 @@ import type uPlot from "uplot";
 import { PALETTE, seriesName } from "./toUplot";
 import { fmtPeriod } from "./period";
 
-export interface SpectrumPeak { period_s: number; interval_s: [number, number]; power: number; significant: boolean; fap: number }
+export interface SpectrumPeak { period_s: number; interval_s: [number, number]; power: number; significant: boolean; fap: number; fap_red_noise?: number }
 export interface SpectrumSeries {
   id: string; labels: Record<string, string>; periods_s: number[]; power: number[]; level: number;
-  peaks: SpectrumPeak[]; caveats: string[];
+  red_level?: number[]; ar1_phi?: number; peaks: SpectrumPeak[]; caveats: string[];
 }
 export interface SpectrumData { series: SpectrumSeries[]; limits: { shortest_s: number; longest_s: number } }
 
-/** Power against period (log x), one line per series, dashed 1% false-alarm level. Series may have different grids. */
+/** Power against period (log x), one line per series, dashed 1% false-alarm level (white noise) and a dotted
+ * 1% level per series against its AR(1) red-noise background (what `significant` uses). Series may have different grids. */
 export function toSpectrumUplot(d: SpectrumData): { data: uPlot.AlignedData; series: uPlot.Series[]; xRange: [number, number] } {
   const xs = [...new Set(d.series.flatMap((s) => s.periods_s))].sort((a, b) => a - b);
   const index = new Map(xs.map((x, i) => [x, i]));
@@ -24,6 +25,13 @@ export function toSpectrumUplot(d: SpectrumData): { data: uPlot.AlignedData; ser
   const lvl = Math.max(...d.series.map((s) => s.level));
   data.push(xs.map(() => lvl));
   series.push({ label: "1% false-alarm level (white noise)", stroke: "#888", width: 1, dash: [4, 4], points: { show: false } });
+  d.series.forEach((s, k) => {
+    if (!s.red_level) return;
+    const col: (number | null)[] = Array(xs.length).fill(null);
+    s.periods_s.forEach((p, i) => (col[index.get(p)!] = s.red_level![i]));
+    data.push(col);
+    series.push({ label: `1% level, AR(1) red noise${d.series.length > 1 ? ` (${seriesName(s.labels)})` : ""}`, stroke: PALETTE[k % PALETTE.length], width: 1, dash: [1, 3], spanGaps: true, points: { show: false } });
+  });
   return { data: data as uPlot.AlignedData, series, xRange: [d.limits.shortest_s / 1.6, d.limits.longest_s * 1.6] };
 }
 

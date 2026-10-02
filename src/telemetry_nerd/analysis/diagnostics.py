@@ -73,7 +73,7 @@ def candidate_peaks(sp: Spectrum | None) -> list[Peak]:
     """Peaks significant against white noise and not sampling artefacts, strongest first."""
     if sp is None:
         return []
-    good = [p for p in sp.peaks if p.significant and p.window <= WINDOW_ARTIFACT]
+    good = [p for p in sp.peaks if p.white_significant and p.window <= WINDOW_ARTIFACT]
     return sorted(good, key=lambda p: -p.power)
 
 

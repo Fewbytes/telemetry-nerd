@@ -73,3 +73,50 @@ def test_spectrogram_shows_2m_oscillation_appearing_mid_range():
     after = sg.power[sg.centres_ms - 15 * M >= 6 * 3_600_000, k]
     assert before.max() < 0.1 and after.min() > 0.5
     assert (sg.segment_ms, sg.hop_ms) == (30 * M, 15 * M)
+
+
+# lkn.4: 'significant' is confirmed against AR(1) red noise -----------------------------
+def _ar1(n, phi, seed):
+    rng = np.random.default_rng(seed)
+    e = rng.normal(size=n)
+    x = np.empty(n)
+    x[0] = e[0] / np.sqrt(1 - phi * phi)
+    for i in range(1, n):
+        x[i] = phi * x[i - 1] + e[i]
+    return x
+
+
+def test_ar1_wandering_is_not_significant():
+    t = np.arange(1440) * M
+    sig = [
+        p
+        for s in range(50)
+        for p in spectrum(t, _ar1(1440, 0.7, s), M, top=8).peaks
+        if p.significant
+    ]
+    assert len(sig) <= 2  # nominal 1% per series; white-noise FAP alone flags long periods
+    white = sum(
+        any(p.white_significant for p in spectrum(t, _ar1(1440, 0.7, s), M, top=8).peaks)
+        for s in range(50)
+    )
+    assert white >= len(sig)
+
+
+def test_step_is_not_a_significant_long_period():
+    t = np.arange(1440)
+    flagged = 0
+    for s in range(20):
+        y = np.random.default_rng(s).normal(size=1440) + np.where(t >= 1000, 2.0, 0.0)
+        sp = spectrum(t * M, y, M, top=8)
+        flagged += any(p.significant for p in sp.peaks)
+        assert all(0 <= p.fap_red_noise <= 1 for p in sp.peaks)
+    assert flagged <= 2
+
+
+def test_true_cycle_on_red_noise_stays_significant():
+    t = np.arange(1440)
+    for s in range(10):
+        y = 2 * np.sin(2 * np.pi * t / 120) + _ar1(1440, 0.5, s)
+        sp = spectrum(t * M, y, M, top=8)
+        hit = near(sp.peaks, 120 * M, 5 * M)
+        assert hit and hit[0].significant and hit[0].fap_red_noise < 0.01

@@ -66,6 +66,6 @@
 <div class="spectrum" data-spectrum-peaks={significant}>
   <div bind:this={el}></div>
   <div class="legend">
-    Lomb-Scargle, linear trend removed · step {Math.round(data.effective_step_ms / 1000)}s · dashed: 1% false-alarm level (white noise){redNoise ? "; long periods overstated (autocorrelation)" : ""} · {significant} significant peak{significant === 1 ? "" : "s"}
+    Lomb-Scargle, linear trend removed · step {Math.round(data.effective_step_ms / 1000)}s · dashed: 1% false-alarm level (white noise) · dotted: 1% level against AR(1) red noise (significant = above both){redNoise ? "; long periods overstated by white noise (autocorrelation)" : ""} · {significant} significant peak{significant === 1 ? "" : "s"}
   </div>
 </div>

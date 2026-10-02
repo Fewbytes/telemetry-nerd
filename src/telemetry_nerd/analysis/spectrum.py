@@ -2,12 +2,15 @@
 
 Generalised Lomb-Scargle (Zechmeister & Kürster 2009): evaluated only at observed times, so
 gaps are never interpolated. Power = share of variance a sinusoid explains, in [0, 1].
-False-alarm probability: Baluev (2008), as astropy's fap_baluev, standard normalisation."""
+False-alarm probability: Baluev (2008), as astropy's fap_baluev, standard normalisation.
+`significant` additionally requires the peak to stand out from an AR(1) red-noise background
+(stability.red_noise_test, bead lkn.4): the white-noise FAP calls AR(1) wandering and the
+1/f^2 power of a level step significant at long periods."""
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -70,8 +73,10 @@ class Peak:
     fap: float
     local_ratio: float | None
     window: float  # spectral-window power at f: high = periodic sampling gaps, not the signal
-    significant: bool
+    significant: bool  # white_significant and fap_red_noise < FAP_LEVEL
     at_limit: bool  # the half-power walk hit the edge of the resolvable range
+    white_significant: bool = False  # fap < FAP_LEVEL and local_ratio >= LOCAL_RATIO (or None)
+    fap_red_noise: float = 1.0  # against AR(1) red noise, after stronger confirmed peaks removed
 
 
 @dataclass(frozen=True)
@@ -82,8 +87,18 @@ class Spectrum:
     n: int
     shortest_ms: int
     longest_ms: int
-    level: float  # power at FAP 1%
+    level: float  # power at FAP 1% (white noise)
     caveats: list[str] = field(default_factory=list)
+    phi: float = 0.0  # AR(1) coefficient of the red-noise background
+
+    def red_level(self, f_hz: np.ndarray, step_s: float) -> np.ndarray:
+        """Power at red-noise FAP 1% per frequency: 2 S(f) z* / N with (1 - e^-z*)^M = 0.99."""
+        from telemetry_nerd.analysis.stability import ar1_spectrum
+
+        m = max(1.0, self.n / 2)
+        z = -math.log(-math.expm1(math.log1p(-FAP_LEVEL) / m))
+        s = np.array([ar1_spectrum(float(x), self.phi, step_s) for x in np.atleast_1d(f_hz)])
+        return np.clip(2 * s * z / self.n, 0.0, 1.0)
 
 
 def spectrum(
@@ -110,6 +125,7 @@ def spectrum(
     peaks = _peaks(f, p, 1 / span, top, t)
     if any(pk.window > WINDOW_ARTIFACT for pk in peaks):
         caveats.append("sampling_artifact")
+    peaks, phi = _red_noise(ts_ms, t, np.asarray(y, float), step_ms, peaks)
     return Spectrum(
         f,
         p,
@@ -119,7 +135,35 @@ def spectrum(
         round(1000 / fmin),
         level(FAP_LEVEL, t.size, f[-1], t),
         caveats,
+        phi,
     )
+
+
+def _red_noise(ts_ms, t, y, step_ms, peaks: list[Peak]) -> tuple[list[Peak], float]:
+    """Test every peak (strongest first) against AR(1) red noise, as analyze does: on what the
+    best structure model (constant / trend / level shifts, by BIC) leaves, so a step's 1/f^2
+    power is not read as a period; phi from that residual after removing the white-significant,
+    non-artefact peaks."""
+    from telemetry_nerd.analysis.autocorr import ar1, positions
+    from telemetry_nerd.analysis.diagnostics import structure
+    from telemetry_nerd.analysis.stability import red_noise_test
+
+    pos = positions(ts_ms, step_ms)
+    v = structure(pos, ts_ms, t, y, int(ts_ms[-1] - ts_ms[0]) + step_ms).resid
+    order = sorted(peaks, key=lambda pk: -pk.power)
+    bg = [pk.period_ms / 1000 for pk in order if pk.white_significant and pk.window <= WINDOW_ARTIFACT]  # fmt: skip
+    if not order:
+        return peaks, max(0.0, ar1(pos, v - v.mean()).phi)
+    tests = red_noise_test(
+        pos, t, v, [pk.period_ms / 1000 for pk in order], step_ms / 1000, max(1.0, t.size / 2), bg
+    )
+    by_period = {pk.period_ms: r.fap for pk, r in zip(order, tests, strict=True)}
+    out = [
+        replace(pk, fap_red_noise=by_period[pk.period_ms],
+                significant=pk.white_significant and by_period[pk.period_ms] < FAP_LEVEL)
+        for pk in peaks
+    ]  # fmt: skip
+    return out, tests[0].phi
 
 
 def _peaks(f, p, res, top, t) -> list[Peak]:
@@ -154,8 +198,9 @@ def _peak(f, p, i, res, t) -> Peak:
         fa,
         ratio,
         win,
-        fa < FAP_LEVEL and (ratio is None or ratio >= LOCAL_RATIO),
+        False,
         a == 0 or b == p.size - 1,
+        white_significant=fa < FAP_LEVEL and (ratio is None or ratio >= LOCAL_RATIO),
     )
 
 

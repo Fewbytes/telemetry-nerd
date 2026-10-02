@@ -323,6 +323,43 @@ def ar1_spectrum(f_hz: float, phi: float, step_s: float) -> float:
     return (1 - phi * phi) / (1 + phi * phi - 2 * phi * math.cos(2 * math.pi * f_hz * step_s))
 
 
+def red_noise_test(
+    pos: np.ndarray,
+    t_s: np.ndarray,
+    y: np.ndarray,
+    candidates_s: list[float],
+    step_s: float,
+    n_freqs: float,
+    background_s: list[float] | None = None,
+) -> list[Period]:
+    """FAP of each candidate period (strongest first) against an AR(1) red-noise background.
+
+    phi comes from the residual after removing the `background_s` sinusoids (default: all
+    candidates); each candidate is tested after prewhitening by the stronger candidates that
+    passed (fap < ALPHA), so sidelobes of one sinusoid are not counted as more periods.
+    Normalised GLS power p at f has p N / (2 S(f)) ~ Exp(1) under the background;
+    FAP = 1 - (1 - e^-z)^M (Schulz & Mudelsee's REDFIT idea, closed form)."""
+    from telemetry_nerd.analysis.autocorr import ar1
+    from telemetry_nerd.analysis.spectrum import lomb_scargle
+
+    if not candidates_s:
+        return []
+    bg = candidates_s if background_s is None else background_s
+    full = y - fit_harmonics(t_s, y, bg).curve(t_s)
+    phi = max(0.0, ar1(pos, full - full.mean()).phi)
+    out: list[Period] = []
+    n = y.size
+    for p_s in candidates_s:
+        kept = [k.period_s for k in out if k.fap < ALPHA]
+        r = y - fit_harmonics(t_s, y, kept).curve(t_s)
+        f = 1.0 / p_s
+        power = float(lomb_scargle(t_s, r - r.mean(), np.array([f]))[0])
+        z = power * n / (2 * ar1_spectrum(f, phi, step_s))
+        fap = float(-np.expm1(n_freqs * np.log1p(-math.exp(-z)))) if z < 700 else 0.0
+        out.append(Period(p_s, power, phi, fap))
+    return out
+
+
 def confirm_periods(
     pos: np.ndarray,
     t_s: np.ndarray,
@@ -333,27 +370,6 @@ def confirm_periods(
 ) -> list[Period]:
     """Keep candidate periods that stand out from an AR(1) red-noise background.
 
-    The white-noise FAP (Baluev) calls any long-period wandering significant; here the
-    background is AR(1) with phi from the residual after removing all candidates, and each
-    candidate is tested by prewhitening (stronger kept periods removed first), so sidelobes of
-    one sinusoid are not counted as more periods. Normalised GLS power p at f has
-    p N / (2 S(f)) ~ Exp(1) under the background; FAP = 1 - (1 - e^-z)^M (Schulz & Mudelsee's
-    REDFIT idea, closed form)."""
-    from telemetry_nerd.analysis.autocorr import ar1
-    from telemetry_nerd.analysis.spectrum import lomb_scargle
-
-    if not candidates_s:
-        return []
-    full = y - fit_harmonics(t_s, y, candidates_s).curve(t_s)
-    phi = max(0.0, ar1(pos, full - full.mean()).phi)
-    kept: list[Period] = []
-    n = y.size
-    for p_s in candidates_s:
-        r = y - fit_harmonics(t_s, y, [k.period_s for k in kept]).curve(t_s)
-        f = 1.0 / p_s
-        power = float(lomb_scargle(t_s, r - r.mean(), np.array([f]))[0])
-        z = power * n / (2 * ar1_spectrum(f, phi, step_s))
-        fap = float(-np.expm1(n_freqs * np.log1p(-math.exp(-z)))) if z < 700 else 0.0
-        if fap < ALPHA:
-            kept.append(Period(p_s, power, phi, fap))
-    return kept
+    The white-noise FAP (Baluev) calls any long-period wandering significant; see
+    `red_noise_test` for the background model and prewhitening."""
+    return [p for p in red_noise_test(pos, t_s, y, candidates_s, step_s, n_freqs) if p.fap < ALPHA]

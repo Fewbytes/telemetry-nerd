@@ -36,6 +36,9 @@ run rules and EWMA/CUSUM on per-series deviations.
    FAP = 1 − (1 − e^−z)^M, M = N/2), with prewhitening (stronger confirmed periods removed
    first) so sidelobes of one sinusoid are not extra periods. Order: structure on the raw series
    → periods confirmed on what it leaves → harmonics (≤ 3) removed → structure again.
+   The standalone `spectrum` tool uses the same test (lkn.4): every peak gets `fap_red_noise`
+   (on what the BIC structure model leaves), `significant` needs it < 1%, and the panel draws
+   the per-series red-noise 1% level 2 S_AR(f) z*/N (dotted) beside the white-noise level.
 2. **Autocorrelation.** ACF from observed pairs; τ_int = 1 + 2 Σ ρ_k by Geyer's initial positive
    sequence (lags ≤ n/4); n_eff = n / max(τ, 1) (never more than n). Lag-1 ρ reported with ±2/√n.
 3. **Trend.** OLS slope on the de-seasonalised series; SE inflated by √τ of the OLS residuals;

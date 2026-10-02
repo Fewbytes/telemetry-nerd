@@ -151,7 +151,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         Lomb-Scargle on the dataset's buckets: nothing is interpolated across gaps, a linear
         trend is removed first. Returns the top peaks per series with period, an interval (the
         half-power width, never finer than 1/range), power, fap (white-noise false-alarm
-        probability), local_ratio and `significant` (fap < 1% AND power >= 10x its neighbourhood).
+        probability), fap_red_noise (against an AR(1) background fitted to what trend / level
+        shifts leave, stronger confirmed peaks removed first), local_ratio and `significant`
+        (fap < 1% AND power >= 10x its neighbourhood AND fap_red_noise < 1%: AR(1) wandering and
+        level steps are not periods).
         Report only significant peaks; significant peaks carry an `evidence` statistic for
         finding_create. `limits` states what cannot be seen: periods shorter than 2 x step and
         longer than half the range. Caveats: red_noise (long periods look more significant than

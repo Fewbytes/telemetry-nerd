@@ -54,7 +54,8 @@ export interface FilterInfo {
 export interface SpectrumPanelData extends PanelDataBase {
   kind: "spectrum"; effective_step_ms: number; limits: { shortest_s: number; longest_s: number };
   series: { id: string; labels: Record<string, string>; periods_s: number[]; power: number[]; level: number;
-    peaks: { period_s: number; interval_s: [number, number]; power: number; significant: boolean; fap: number; period: string }[]; caveats: string[] }[];
+    red_level?: number[]; ar1_phi?: number;
+    peaks: { period_s: number; interval_s: [number, number]; power: number; significant: boolean; fap: number; fap_red_noise?: number; period: string }[]; caveats: string[] }[];
 }
 export interface SpectrogramPanelData extends PanelDataBase {
   kind: "spectrogram"; segment_ms: number; hop_ms: number; overlap: number; effective_step_ms: number;
