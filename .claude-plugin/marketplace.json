@@ -9,7 +9,7 @@
       "name": "telemetry-nerd",
       "source": "./",
       "description": "Evidence-first telemetry analysis workspace for Claude",
-      "version": "0.1.0",
+      "version": "0.0.2",
       "license": "Apache-2.0",
       "author": { "name": "Avishai Ish-Shalom" },
       "homepage": "https://github.com/Fewbytes/telemetry-nerd",
