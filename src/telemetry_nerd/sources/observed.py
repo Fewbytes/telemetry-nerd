@@ -13,13 +13,13 @@ It is derived only where that is exact:
   other arguments are number literals;
 * arithmetic with number literals (`x * 8`, `rate(x[1m]) / 1e3`);
 * aggregations sum/avg/min/max/count/group/stddev/stdvar with by/without (observed = the
-  members' samples), and `histogram_quantile(q, ...)` as an aggregation `without (le, vmrange)`.
-
-* arithmetic between two or more such operands (`a / b`): observed = the smaller operand count
-  per series and bucket (see `observed_count_query`).
+  members' samples), and `histogram_quantile(q, ...)` as an aggregation `without (le, vmrange)`;
+* top-level arithmetic between two or more such operands (`a / b`): observed = the smaller
+  operand count per series and bucket (see `observed_count_query`), capped in size.
 
 Anything else (comparisons/filters, set operators, vector matching, offset/@, topk,
-label_replace, unknown functions) returns None: the source cannot tell how many samples are
+label_replace, binary ops wrapped in a function or aggregation, more than `MAX_FOLD_OPERANDS`
+distinct operands or a query longer than `MAX_COUNT_QUERY_LEN`, unknown functions) returns None: the source cannot tell how many samples are
 behind a value, and consumers must say so (`counts_are_observed`).
 """
 
@@ -93,6 +93,10 @@ _KEYWORDS = frozenset(
         "nan",
     }
 )
+# the min fold repeats its operands (2^(n-1) copies of the first): cap it, since a count query
+# the backend rejects would fail the whole fetch where "cannot tell" merely degrades to UNKNOWN
+MAX_FOLD_OPERANDS = 4
+MAX_COUNT_QUERY_LEN = 4096
 _NAME = r"[a-zA-Z_:][a-zA-Z0-9_:]*"
 _SELECTOR = re.compile(
     rf"^\s*(?P<sel>(?P<name>{_NAME})?\s*(?P<matchers>\{{[^{{}}]*\}})?)\s*"
@@ -216,22 +220,21 @@ def _lift_call(text: str, masked: str, call: re.Match) -> tuple[str, list[str]] 
     return None
 
 
-def _count_query(text: str, masked: str, window: str) -> str | None:
+def _operand_counts(text: str, masked: str, window: str) -> list[str] | None:
+    """Count queries of the leaf operands of (nested) top-level arithmetic; None if any operand
+    cannot be derived. min is associative, so nested binary ops flatten into one operand list."""
     text, masked = _peel(text, masked)
     spans = _operands(masked)
     if spans is not None and len(spans) > 1:
         vectors = [(a, b) for a, b in spans if not _LITERAL.match(masked[a:b])]
-        if len(vectors) == 1:  # literals around one operand: it may itself be a ratio
-            a, b = vectors[0]
-            return _count_query(text[a:b], masked[a:b], window)
-        if len(vectors) >= 2:
-            parts = [_count_query(text[a:b], masked[a:b], window) for a, b in vectors]
-            if any(part is None for part in parts):
-                return None
-            query = parts[0]
-            for part in parts[1:]:
-                query = _min2(str(query), str(part))
-            return query
+        if len(vectors) >= 1:
+            found: list[str] = []
+            for a, b in vectors:
+                part = _operand_counts(text[a:b], masked[a:b], window)
+                if part is None:
+                    return None
+                found += part
+            return found
     lifted = _lift(text, masked)
     if lifted is None:
         return None
@@ -239,7 +242,20 @@ def _count_query(text: str, masked: str, window: str) -> str | None:
     query = f"count_over_time({selector}[{window}])"
     for wrapper in reversed(wrappers):
         query = f"{wrapper} ({query})"
-    return query
+    return [query]
+
+
+def _count_query(text: str, masked: str, window: str) -> str | None:
+    parts = _operand_counts(text, masked, window)
+    if parts is None:
+        return None
+    distinct = list(dict.fromkeys(parts))  # min(x, x) = x
+    if len(distinct) > MAX_FOLD_OPERANDS:
+        return None
+    query = distinct[0]
+    for part in distinct[1:]:
+        query = _min2(query, part)
+    return query if len(query) <= MAX_COUNT_QUERY_LEN else None
 
 
 def _min2(x: str, y: str) -> str:

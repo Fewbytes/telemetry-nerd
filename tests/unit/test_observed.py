@@ -1,6 +1,11 @@
 import pytest
 
-from telemetry_nerd.sources.observed import counts_are_observed, observed_count_query
+from telemetry_nerd.sources.observed import (
+    MAX_COUNT_QUERY_LEN,
+    MAX_FOLD_OPERANDS,
+    counts_are_observed,
+    observed_count_query,
+)
 
 DERIVED = [
     ('syn_gauge{case="i60"} * 1', 'count_over_time(syn_gauge{case="i60"}[1m])'),
@@ -42,6 +47,10 @@ CANNOT_TELL = [
     "a / b offset 1m",
     "topk(5, a / b)",
     "a / b and c",
+    "sum(a / b)",
+    "abs(a / b)",
+    "clamp_max(a / b, 1)",
+    "-(a / b)",
     'label_replace(a / b, "x", "$1", "y", "(.*)")',
     "up == 0",
     "a / (b > 1)",
@@ -107,3 +116,22 @@ def test_binary_arithmetic_between_observables_is_observed(expr):
 def test_three_operands_fold_pairwise():
     inner = _min2("count_over_time(a[1m])", "count_over_time(b[1m])")
     assert observed_count_query("(a / b) * c", "1m") == _min2(inner, "count_over_time(c[1m])")
+
+
+def test_repeated_operands_are_deduplicated():
+    q = observed_count_query("(MemTotal - MemAvailable) / MemTotal", "1m")
+    assert q == _min2("count_over_time(MemTotal[1m])", "count_over_time(MemAvailable[1m])")
+    assert q.count("count_over_time") == 4
+
+
+def test_too_many_distinct_operands_cannot_be_told():
+    names = "abcdefg"
+    ok = " + ".join(names[:MAX_FOLD_OPERANDS])
+    assert observed_count_query(ok, "1m") is not None
+    assert observed_count_query(" + ".join(names[: MAX_FOLD_OPERANDS + 1]), "1m") is None
+
+
+def test_oversized_fold_cannot_be_told():
+    long = [f"{n}_{'x' * (MAX_COUNT_QUERY_LEN // 8)}" for n in "abcd"]
+    assert observed_count_query(" + ".join(long), "1m") is None
+    assert observed_count_query(" + ".join(long[:2]), "1m") is not None

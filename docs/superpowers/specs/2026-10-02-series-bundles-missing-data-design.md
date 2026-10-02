@@ -203,24 +203,30 @@ fills (`subquery_fills_gaps`, verified on Prometheus and VictoriaMetrics), so it
 - *Exact where derivable*: one vector selector, label-preserving functions (`rate`, `increase`,
   `*_over_time`, `abs`, `clamp`, `histogram_count`, ...) with literal other arguments, arithmetic
   with literals, aggregations sum/avg/min/max/count/group/stddev/stdvar (by/without), and
-  `histogram_quantile(q, ...)` as an aggregation `without (le, vmrange)`, and arithmetic between
-  two or more derivable vector operands (`a / b`, `rate(err[5m]) / rate(total[5m])`,
-  `100 * (1 - a / b)`; `telemetry-nerd-mig`). For a binary op, `observed` per bucket is the
-  smaller of the operands' observed sample counts (a ratio is only as observed as its sparser
-  side); series present on only one side are not in the result, as they are not in the
-  expression's. The count queries of the operands are folded pairwise with
-  `((x) <= (y)) or ((y) and (x))`; any underivable operand makes the whole expression cannot-tell.
-  `count` comes from
+  `histogram_quantile(q, ...)` as an aggregation `without (le, vmrange)`. `count` comes from
   `count_over_time(sel[step])` lifted through the same aggregations with `sum`, so its series are
   the expression's own. For an aggregate, `observed` = samples of all members (member coverage
-  stays unknown, as today). A value in a bucket with no observed sample is filled and dropped
+  stays unknown, as today).
+  *Binary arithmetic* (`telemetry-nerd-mig`) between two or more derivable top-level vector
+  operands (`a / b`, `rate(err[5m]) / rate(total[5m])`, `100 * (1 - a / b)`): `observed` per
+  bucket is the smaller of the operands' observed sample counts (a ratio is only as observed as
+  its sparser side); series present on only one side are not in the result, as they are not in
+  the expression's. Operand count queries are deduplicated, then folded pairwise with
+  `((x) <= (y)) or ((y) and (x))`; any underivable operand makes the whole expression cannot-tell.
+  Because the min takes the smaller count, a `partial` bucket on the denser operand is hidden:
+  only gaps on the sparser side (or full gaps) show.
+  A value in a bucket with no observed sample is filled and dropped
   (bucket `empty`); samples without a value (e.g. `rate` with one sample) are dropped too, never
-  counted `partial`. Cost: same number of queries for `fetch` (the count query is replaced by a
-  cheaper selector count); `fetch_values` (quantile path) adds one count query and keeps only
-  values of buckets that observed samples (masks lookback fill on summary/gauge series, VM
-  previous-sample values, windows longer than the step).
+  counted `partial`. Cost: `fetch` runs the same number of queries, but the count query is no
+  cheaper for a ratio: the fold repeats its operands (up to 2^(n-1) `count_over_time` calls for
+  the first of n distinct operands), hence the cap below. `fetch_values` (quantile path) adds one
+  count query and keeps only values of buckets that observed samples (masks lookback fill on
+  summary/gauge series, VM previous-sample values, windows longer than the step).
 - *Cannot tell otherwise* (filters/comparisons, `bool`, set operators, vector matching,
-  `offset`/`@`, topk, label_replace, nested subqueries, unknown functions): the adapter keeps the
+  `offset`/`@`, topk, label_replace, nested subqueries, binary ops wrapped in a function or
+  aggregation such as `sum(a/b)`, `abs(a/b)`, `clamp_max(a/b, 1)`, `-(a/b)`, more than
+  `MAX_FOLD_OPERANDS` (4) distinct operands or a count query over `MAX_COUNT_QUERY_LEN` (4096)
+  characters, unknown functions): the adapter keeps the
   subquery count (it still weights the bucket mean), and `counts_are_observed(expr)` is False:
   consumers must mark those buckets `unknown` + `source_filled` (reason `subquery_fills_gaps`),
   never `ok`. Not derived from the profile: an evaluation count is never a sample count, even
