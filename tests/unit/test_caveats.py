@@ -1,7 +1,13 @@
 import pyarrow as pa
 
-from telemetry_nerd.model.bucket_state import STATE_SCHEMA, State
-from telemetry_nerd.model.caveats import Caveat, from_bucket_state, runs, series_name
+from telemetry_nerd.model.bucket_state import STATE_SCHEMA, Flag, State
+from telemetry_nerd.model.caveats import (
+    Caveat,
+    from_bucket_state,
+    interval_caveats,
+    runs,
+    series_name,
+)
 
 STEP = 60_000
 
@@ -61,3 +67,61 @@ def test_late_born_series_is_info_not_warning():
 def test_caveat_round_trips_through_json():
     c = Caveat(code="x", message="m", source="validator")
     assert Caveat.model_validate_json(c.model_dump_json()) == c
+
+
+# --- interval visibility (bead 6nm) ---
+
+RES = 15_000
+
+
+def _rows(sid, counts, expected, flags=0):
+    return [
+        (t * STEP, sid, float(c), float(expected), int(State.OK if c else State.EMPTY), flags)
+        for t, c in enumerate(counts, start=1)
+    ]
+
+
+def test_coarse_scrape_gets_one_dataset_level_info_caveat():
+    t = table(_rows("a", [1] * 5, 1) + _rows("b", [1] * 5, 1) + _rows("c", [4] * 5, 4))
+    names = {"a": '{instance="a"}', "b": '{instance="b"}', "c": '{instance="c"}'}
+    [c] = interval_caveats(t, names, STEP, RES)
+    assert c.code == "interval_differs" and c.severity == "info" and c.source == "bucket_state"
+    assert c.where.series == ["a", "b"] and c.where.spans is None
+    assert '{instance="a"}, {instance="b"}' in c.message and '{instance="c"}' not in c.message
+    assert "every 1m" not in c.message and "every 60s" in c.message and "15s" in c.message
+
+
+def test_configured_rate_and_jitter_give_no_interval_caveat():
+    t = table(_rows("a", [4, 3, 4, 4, 4], 4))
+    assert interval_caveats(t, {"a": "A"}, STEP, RES) == []
+
+
+def test_faster_than_configured_is_also_reported():
+    t = table(_rows("a", [8] * 5, 8))
+    [c] = interval_caveats(t, {"a": "A"}, STEP, RES)
+    assert "every 8s" in c.message  # 7.5s rounds to a whole second
+
+
+def test_silent_series_and_fake_resolution_are_not_judged():
+    silent = table(_rows("a", [0] * 5, 1))
+    assert interval_caveats(silent, {"a": "A"}, STEP, RES) == []
+    fine_step = table(_rows("a", [1] * 5, 1))
+    assert interval_caveats(fine_step, {"a": "A"}, STEP, 4 * STEP) == []
+
+
+def test_source_filled_is_not_judged():
+    t = table(_rows("a", [1] * 5, 1, int(Flag.SOURCE_FILLED)))
+    assert interval_caveats(t, {"a": "A"}, STEP, RES) == []
+
+
+def test_rate_change_caveat_per_series_with_spans():
+    f = int(Flag.INTERVAL_CHANGE)
+    rows = _rows("a", [4, 4, 4, 4], 2.5) + [
+        (t * STEP, "a", 1.0, 2.5, int(State.PARTIAL), f) for t in range(5, 9)
+    ]
+    t = table(rows + _rows("b", [4] * 8, 4))
+    [c] = [c for c in from_bucket_state(t, {"a": '{instance="a"}', "b": "B"}, STEP)
+           if c.code == "interval_change"]  # fmt: skip
+    assert c.severity == "info" and c.where.series == ["a"]
+    assert c.where.spans == [(4 * STEP, 8 * STEP)]
+    assert '{instance="a"}' in c.message and "15s → 60s" in c.message

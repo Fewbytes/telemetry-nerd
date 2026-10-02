@@ -12,7 +12,7 @@ from telemetry_nerd.analysis.exprkind import min_samples
 from telemetry_nerd.analysis.quantiles import quantile_bucket
 from telemetry_nerd.datasets.store import DatasetMeta
 from telemetry_nerd.model.bucket_state import Flag, State, grid
-from telemetry_nerd.model.caveats import runs
+from telemetry_nerd.model.caveats import differing_intervals, runs
 from telemetry_nerd.model.companions import derive_states
 from telemetry_nerd.model.distribution import DistResult
 from telemetry_nerd.model.series import FetchResult
@@ -83,7 +83,9 @@ def _coverage(
     return out, _unknown_spans(meta, df), df
 
 
-def _coverage_caveats(df: pl.DataFrame, unknown: dict, caveats: list[str]) -> None:
+def _coverage_caveats(
+    meta: DatasetMeta, df: pl.DataFrame, unknown: dict, caveats: list[str]
+) -> None:
     """missing_data: some alive bucket is PARTIAL or EMPTY; untrusted_data: anything UNKNOWN."""
     if unknown["unknown_spans"]:
         caveats.append("untrusted_data")
@@ -94,6 +96,11 @@ def _coverage_caveats(df: pl.DataFrame, unknown: dict, caveats: list[str]) -> No
         caveats.append("post_gap_spike")
     if df.height and df["state"].is_in([int(State.PARTIAL), int(State.EMPTY)]).any():
         caveats.append("missing_data")
+    if meta.representation != "quantile":  # presence mode has no sample counts to judge
+        if differing_intervals(df.to_arrow(), meta.step_ms, meta.resolution_ms):
+            caveats.append("interval_differs")
+        if ((df["flags"] & int(Flag.INTERVAL_CHANGE)) != 0).any():
+            caveats.append("interval_change")
 
 
 def _base_caveats(meta: DatasetMeta, now_ms: int, settle_ms: int) -> list[str]:
@@ -130,7 +137,7 @@ def summarize(
     labels = _labels_by_id(result.series)
     coverage, unknown, df = _coverage(meta, result, states)
     base |= unknown
-    _coverage_caveats(df, unknown, caveats)
+    _coverage_caveats(meta, df, unknown, caveats)
     if result.buckets.num_rows == 0:
         return _empty(base, caveats)
     # The grid is inclusive of both start and end (query_range and cache reads are BETWEEN).

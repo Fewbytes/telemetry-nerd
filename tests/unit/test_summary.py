@@ -273,3 +273,19 @@ def test_unknown_spans_are_capped():
     m = replace(meta(end=100_000), failed_spans=spans)
     out = run(m, result([], {}))
     assert len(out["unknown_spans"]) == 10 and out["unknown_spans_more"] == 20
+
+
+def test_coarse_scrape_and_rate_change_codes_in_summary():
+    # configured 250ms, scraped once per 1s bucket: the series' own rate differs
+    rows = [(i * STEP, "a", 1.0, 1.0, 1.0, 1) for i in range(5)]
+    out = run(meta(resolution=250), result(rows, {"a": "a"}))
+    assert "interval_differs" in out["caveats"] and "interval_change" not in out["caveats"]
+    # at the configured rate: neither
+    rows = [(i * STEP, "a", 1.0, 1.0, 1.0, 4) for i in range(5)]
+    out = run(meta(resolution=250), result(rows, {"a": "a"}))
+    assert not {"interval_differs", "interval_change"} & set(out["caveats"])
+    # rate change within the window
+    counts = [4, 4, 4, 4, 1, 1, 1, 1]
+    rows = [(i * STEP, "a", 1.0, 1.0, 1.0, c) for i, c in enumerate(counts)]
+    out = run(meta(end=7000, resolution=250), result(rows, {"a": "a"}))
+    assert "interval_change" in out["caveats"]

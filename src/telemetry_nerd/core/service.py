@@ -87,7 +87,14 @@ from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
 from telemetry_nerd.model.bucket_state import STATE_SCHEMA, coarsen, grid
-from telemetry_nerd.model.caveats import Caveat, Where, from_bucket_state, runs, series_name
+from telemetry_nerd.model.caveats import (
+    Caveat,
+    Where,
+    from_bucket_state,
+    interval_caveats,
+    runs,
+    series_name,
+)
 from telemetry_nerd.model.companions import dataset_bundle
 from telemetry_nerd.model.distribution import DIST_N_MIN
 from telemetry_nerd.model.time import (
@@ -1241,9 +1248,11 @@ class TelemetryService:
         state_rows: list[dict] = []
         state_more = 0
         if states is not None:
+            names = {sid: series_name(lb) for sid, lb in labels.items()}
+            if meta.representation != "quantile":  # presence mode has no sample counts to judge
+                located += interval_caveats(states, names, meta.step_ms, meta.resolution_ms)
             if effective_step != meta.step_ms:
                 states = coarsen(states, effective_step)
-            names = {sid: series_name(lb) for sid, lb in labels.items()}
             failed = [tuple(f) for f in meta.failed_spans]
             located += from_bucket_state(states, names, effective_step, failed)
             state_rows, state_more = rug_payload(states)

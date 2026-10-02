@@ -47,6 +47,14 @@ describe("rug", () => {
     expect(rugHint(uc, u, 60_000, "a", true)).toContain("cannot be observed");
   });
 
+  it("says when the series' sample rate changed", () => {
+    const s = { ...st("a", [STATE.OK], [1]), flags: [2] };
+    const [cell] = rugCells([s], 60_000, toX);
+    expect(rugHint(cell, s, 60_000, "a", true)).toContain("sample rate changed here");
+    const plain = st("a", [STATE.OK], [4]);
+    expect(rugHint(rugCells([plain], 60_000, toX)[0], plain, 60_000, "a", true)).not.toContain("sample rate changed");
+  });
+
   it("derives the interval from the series' own expected count, not a preset", () => {
     const s = { ...st("a", [STATE.PARTIAL], [0]), expected: [1] };
     const [cell] = rugCells([s], 60_000, toX);

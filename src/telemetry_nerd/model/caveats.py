@@ -10,7 +10,7 @@ import pyarrow as pa
 from pydantic import BaseModel
 
 from telemetry_nerd.model.bucket_state import FailedSpan, Flag, State
-from telemetry_nerd.model.time import format_duration
+from telemetry_nerd.model.time import format_duration, iso
 
 Severity = Literal["info", "warn", "blocks_claim"]
 
@@ -55,6 +55,66 @@ SPIKE_MESSAGE = (
 
 def _total(spans: list[tuple[int, int]]) -> str:
     return format_duration(sum(b - a for a, b in spans))
+
+
+INTERVAL_RATIO = 1.5  # own scrape interval this far from the configured one is worth saying
+
+
+def differing_intervals(states: pa.Table, step_ms: int, resolution_ms: int) -> dict[str, int]:
+    """series id -> its own sample interval (whole seconds) for series scraped at a rate other than
+    the source's configured one. Samples-mode states only (the caller gates presence mode); series
+    with no samples, source-filled counts, or a step finer than the scrape are not judged."""
+    if states.num_rows == 0 or resolution_ms <= 0 or step_ms < resolution_ms:
+        return {}
+    df = pl.from_arrow(states)
+    seen = df.filter((pl.col("observed") > 0) & (pl.col("state") != int(State.UNKNOWN)))
+    filled = df.filter((pl.col("flags") & int(Flag.SOURCE_FILLED)) != 0)["series_id"].unique()
+    per = (
+        seen.filter(~pl.col("series_id").is_in(filled.to_list()))
+        .group_by("series_id")
+        .agg(pl.col("expected").median().alias("expected"))
+        .sort("series_id")
+    )
+    out: dict[str, int] = {}
+    for sid, expected in per.iter_rows():
+        ratio = step_ms / expected / resolution_ms
+        if ratio >= INTERVAL_RATIO or ratio <= 1 / INTERVAL_RATIO:
+            out[sid] = max(1, round(step_ms / expected / 1000))
+    return out
+
+
+def interval_caveats(
+    states: pa.Table, names: Mapping[str, str], step_ms: int, resolution_ms: int
+) -> list[Caveat]:
+    """One dataset-level info caveat: series sampled at a rate other than the configured one are
+    judged against their own rate, so loss lasting most of the window cannot show."""
+    diff = differing_intervals(states, step_ms, resolution_ms)
+    if not diff:
+        return []
+    groups: dict[int, list[str]] = {}
+    for sid, secs in diff.items():
+        groups.setdefault(secs, []).append(sid)
+    parts = [
+        f"{', '.join(names.get(sid, sid) for sid in ids)}: sampled about every {secs}s"
+        for secs, ids in sorted(groups.items())
+    ]
+    message = (
+        f"{'; '.join(parts)} (source configured {format_duration(resolution_ms)}); coverage is "
+        "judged against each series' own rate, so loss lasting most of the window cannot show."
+    )
+    return [
+        Caveat(
+            code="interval_differs",
+            severity="info",
+            message=message,
+            where=Where(series=list(diff)),
+            source="bucket_state",
+        )
+    ]
+
+
+def _every(step_ms: int, count: float) -> str:
+    return f"{max(1, round(step_ms / count / 1000))}s"
 
 
 def from_bucket_state(
@@ -117,6 +177,9 @@ def from_bucket_state(
                     source="bucket_state",
                 )
             )
+        changed = g.filter((pl.col("flags") & int(Flag.INTERVAL_CHANGE)) != 0)
+        if changed.height:
+            out.append(_interval_change_caveat(sid, name, g, changed, step_ms))
         absent = runs(g.filter(pl.col("state") == int(State.ABSENT))["ts_ms"].to_list(), step_ms)
         if absent:
             out.append(
@@ -129,3 +192,27 @@ def from_bucket_state(
                 )
             )
     return out
+
+
+def _interval_change_caveat(
+    sid: str, name: str, g: pl.DataFrame, changed: pl.DataFrame, step_ms: int
+) -> Caveat:
+    spans = runs(changed["ts_ms"].to_list(), step_ms)
+    here = changed.filter(pl.col("observed") > 0)["observed"].median()
+    other = g.filter(
+        ((pl.col("flags") & int(Flag.INTERVAL_CHANGE)) == 0) & (pl.col("observed") > 0)
+    )["observed"].median()
+    early = changed["ts_ms"].min() < g.filter(pl.col("observed") > 0)["ts_ms"].median()
+    rates = (here, other) if early else (other, here)
+    around = spans[-1][1] if early else spans[0][0]
+    a, b = (_every(step_ms, r) for r in rates)
+    return Caveat(
+        code="interval_change",
+        severity="info",
+        message=(
+            f"{name}: sample rate changed within the window (about every {a} \u2192 {b} around "
+            f"{iso(around)}); buckets at the other rate may read ok or partial."
+        ),
+        where=Where(spans=spans, series=[sid]),
+        source="bucket_state",
+    )

@@ -29,6 +29,8 @@ class Flag(IntFlag):
 
 
 PARTIAL_RATIO = 0.9
+CHANGE_RATIO = 2.0  # a series' sample rate halves or doubles within the window
+CHANGE_MIN_BUCKETS = 3  # non-zero buckets each half needs before it can be judged
 
 STATE_SCHEMA = pa.schema(
     [
@@ -122,6 +124,10 @@ def compute(
         pl.when(unknown).then(0.0).otherwise(pl.col("observed")).alias("observed"),
     ).sort("series_id", "ts_ms")
     flags = pl.lit(int(Flag.SOURCE_FILLED) if source_filled else 0)
+    if mode == "samples" and not source_filled and step_ms >= resolution_ms:
+        # (a step finer than the scrape interval only ever counts 0 or 1: no rate to compare)
+        df, changed = _interval_change(df)
+        flags = flags | changed
     if post_gap_buckets > 0:
         is_gap = pl.col("state").is_in([int(State.EMPTY), int(State.UNKNOWN)])
         df = df.with_columns(is_gap.cum_sum().over("series_id").alias("_gap_no"))
@@ -136,6 +142,49 @@ def compute(
         flags = flags | pl.when(after).then(int(Flag.POST_GAP)).otherwise(0)
     out = df.with_columns(flags.cast(pl.UInt16).alias("flags")).select(STATE_SCHEMA.names)
     return out.to_arrow().cast(STATE_SCHEMA)
+
+
+def _interval_change(df: pl.DataFrame) -> tuple[pl.DataFrame, pl.Expr]:
+    """Series whose sample rate differs >= CHANGE_RATIO between the first and second half of their
+    non-zero buckets: the half further from the series' baseline (`expected`) gets INTERVAL_CHANGE.
+    Only a flag: the baseline and the states are unchanged. Returns df (sorted by series, ts)
+    with helper bounds and the flag expression."""
+    nz = df.filter(pl.col("observed") > 0).with_columns(
+        (pl.int_range(pl.len()).over("series_id") >= pl.len().over("series_id") // 2).alias("_late")
+    )
+    half = {
+        h: nz.filter(pl.col("_late") == (h == "late"))
+        .group_by("series_id")
+        .agg(
+            pl.col("observed").median().alias(f"_m_{h}"),
+            pl.len().alias(f"_n_{h}"),
+            pl.col("ts_ms").min().alias(f"_a_{h}"),
+            pl.col("ts_ms").max().alias(f"_b_{h}"),
+        )
+        for h in ("early", "late")
+    }
+    exp = nz.group_by("series_id").agg(pl.col("expected").first().alias("_exp"))
+    st = half["early"].join(half["late"], on="series_id").join(exp, on="series_id")
+    lo, hi = pl.min_horizontal("_m_early", "_m_late"), pl.max_horizontal("_m_early", "_m_late")
+    dist = lambda m: (m / pl.col("_exp")).log().abs()
+    late_is_odd = dist(pl.col("_m_late")) >= dist(pl.col("_m_early"))
+    st = (
+        st.filter(
+            (pl.col("_n_early") >= CHANGE_MIN_BUCKETS)
+            & (pl.col("_n_late") >= CHANGE_MIN_BUCKETS)
+            & (hi >= CHANGE_RATIO * lo)
+        )
+        .with_columns(
+            pl.when(late_is_odd).then(pl.col("_a_late")).otherwise(pl.col("_a_early")).alias("_lo"),
+            pl.when(late_is_odd).then(pl.col("_b_late")).otherwise(pl.col("_b_early")).alias("_hi"),
+        )
+        .select("series_id", "_lo", "_hi")
+    )
+    df = df.join(st, on="series_id", how="left")
+    changed = pl.when(pl.col("ts_ms").is_between(pl.col("_lo"), pl.col("_hi"))).then(
+        int(Flag.INTERVAL_CHANGE)
+    )
+    return df, changed.otherwise(0)
 
 
 GROUP_SCHEMA = pa.schema(

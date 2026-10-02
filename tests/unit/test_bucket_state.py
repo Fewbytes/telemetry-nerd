@@ -1,7 +1,7 @@
 import pyarrow as pa
 import pytest
 
-from telemetry_nerd.model.bucket_state import STATE_SCHEMA, State, compute, grid
+from telemetry_nerd.model.bucket_state import STATE_SCHEMA, Flag, State, compute, grid
 from telemetry_nerd.model.series import BUCKET_SCHEMA
 
 STEP, RES = 60_000, 15_000  # expected 4 samples per bucket
@@ -131,3 +131,52 @@ def test_recorded_wikimedia_series_has_no_partial_buckets():
         mode="samples",
     )
     assert State.PARTIAL not in states(out) and State.EMPTY not in states(out)
+
+
+def _change_rows(counts, sid="a"):
+    return [(t * STEP, sid, 1.0, c) for t, c in enumerate(counts, start=1)]
+
+
+def _flags(table, sid="a"):
+    return [
+        f for f, i in zip(table["flags"].to_pylist(), table["series_id"].to_pylist()) if i == sid
+    ]
+
+
+def test_rate_change_flags_the_half_that_is_not_the_baseline():
+    # median of 8 non-zero counts = 2.5; the 1/bucket half is further from it than the 4/bucket half
+    out = run(_change_rows([4, 4, 4, 4, 1, 1, 1, 1]), end=8 * STEP)
+    assert [bool(f & int(Flag.INTERVAL_CHANGE)) for f in _flags(out)] == [False] * 4 + [True] * 4
+    # the flag never changes a state: same states as without it
+    assert states(out) == [State.OK] * 4 + [State.PARTIAL] * 4
+
+
+def test_rate_change_flags_first_half_when_it_is_the_outlier():
+    out = run(_change_rows([1, 1, 1, 4, 4, 4, 4, 4, 4]), end=9 * STEP)
+    flagged = [bool(f & int(Flag.INTERVAL_CHANGE)) for f in _flags(out)]
+    assert flagged == [True] * 4 + [False] * 5
+
+
+def test_jittery_steady_series_has_no_rate_change():
+    out = run(_change_rows([3, 4, 4, 3, 4, 4, 3, 4]), end=8 * STEP)
+    assert not any(f & int(Flag.INTERVAL_CHANGE) for f in _flags(out))
+
+
+def test_rate_change_needs_three_buckets_per_half():
+    out = run(_change_rows([4, 4, 4, 4, 1, 1]), end=6 * STEP)  # 3 + 3 -> flagged
+    assert any(f & int(Flag.INTERVAL_CHANGE) for f in _flags(out))
+    out = run(_change_rows([4, 4, 4, 4, 4, 1]), end=6 * STEP)  # halves 3 + 3, medians 4 vs 4
+    assert not any(f & int(Flag.INTERVAL_CHANGE) for f in _flags(out))
+    out = run(_change_rows([4, 4, 1, 1, 1]), end=5 * STEP)  # 2 + 3
+    assert not any(f & int(Flag.INTERVAL_CHANGE) for f in _flags(out))
+
+
+def test_rate_change_not_judged_in_presence_mode_or_source_filled():
+    rows = _change_rows([4, 4, 4, 4, 1, 1, 1, 1])
+    out = run(rows, end=8 * STEP, mode="presence")
+    assert not any(f & int(Flag.INTERVAL_CHANGE) for f in _flags(out))
+    out = compute(
+        buckets(rows), ("a",), start_ms=STEP, end_ms=8 * STEP, step_ms=STEP,
+        resolution_ms=RES, mode="samples", source_filled=True,
+    )  # fmt: skip
+    assert not any(f & int(Flag.INTERVAL_CHANGE) for f in _flags(out))

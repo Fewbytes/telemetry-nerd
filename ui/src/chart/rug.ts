@@ -88,6 +88,7 @@ const WORDS: Record<number, string> = {
   [STATE.ABSENT]: "series not seen yet", [STATE.UNKNOWN]: "unknown (fetch failed or source could not tell)",
 };
 
+export const FLAG_INTERVAL_CHANGE = 2;
 export const FLAG_SOURCE_FILLED = 8;
 export const FLAG_POST_GAP = 16;
 
@@ -101,6 +102,7 @@ export function rugHint(cell: RugCell, s: BucketStatePayload, stepMs: number, na
     lines.push(`${obs} of ${Math.round(exp)} expected samples (series reports every ${fmtStep(every)})`);
   }
   const flags = s.flags[cell.i] ?? 0;
+  if (flags & FLAG_INTERVAL_CHANGE) lines.push("sample rate changed here (this series reports at a different rate than in the rest of the window)");
   if (flags & FLAG_SOURCE_FILLED) lines.push("coverage cannot be observed for this expression");
   if (flags & FLAG_POST_GAP) lines.push("computed from the sample before the gap (VictoriaMetrics); not a real spike");
   const seen = s.ts.filter((t, k) => t <= cell.ts && s.observed[k] > 0).at(-1);

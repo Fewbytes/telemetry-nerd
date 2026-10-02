@@ -7,6 +7,10 @@ describe("panelNotes", () => {
     expect(caveatText("low_count", 200)).toContain("fewer than 200");
     expect(caveatText("something_new")).toBe("something_new");
   });
+  it("explains the sample-rate caveats in plain words", () => {
+    expect(caveatText("interval_differs")).toContain("own rate");
+    expect(caveatText("interval_change")).toContain("sample rate changed");
+  });
   it("adds the y-scale note as info, after the caveats", () => {
     const notes = panelNotes(["gaps"], { yScaledToData: true, nMin: null });
     expect(notes.map((n) => [n.kind, n.key])).toEqual([
