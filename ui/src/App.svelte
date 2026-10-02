@@ -26,7 +26,8 @@
   setContext("catalogSeq", () => ws.catalogSeq);
   // the read-only code view (tier-2 nodes): opened from panel provenance, the run list and c-id chips
   let codeOpen = $state<string | null>(null);
-  setContext("openCode", (id: string) => (codeOpen = id));
+  const openCode = (id: string): void => { codeOpen = id; };
+  setContext("openCode", openCode);
   $effect(() => ws.start());
 
   // accent every highlighted target; re-runs on snapshot change so re-rendered DOM keeps it
@@ -102,12 +103,12 @@
         <PanelView {panel} annotations={ws.snapshot?.annotations ?? []} {threads} />
       {/each}
     </div>
-    <Sidebar snapshot={ws.snapshot} onopencode={(id) => (codeOpen = id)} />
+    <Sidebar snapshot={ws.snapshot} onopencode={openCode} />
   </div>
   {#if codeOpen}
     <CodeView
       id={codeOpen} runs={ws.snapshot?.code ?? []} panels={ws.snapshot?.panels ?? []}
-      onclose={() => (codeOpen = null)} onopen={(id) => (codeOpen = id)}
+      onclose={() => (codeOpen = null)} onopen={openCode}
     />
   {/if}
 </main>

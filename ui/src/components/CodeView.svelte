@@ -3,7 +3,7 @@
   // came out, and a re-run (a NEW node: finished nodes are immutable). No editor on purpose.
   import { fetchCode, rerunCode, type CodeBrief, type CodeNode, type Panel } from "../lib/api";
   import {
-    boundText, durationText, highlightPython, inputLinks, outputLinks, statusView,
+    boundText, type BoundedText, durationText, highlightPython, inputLinks, outputLinks, statusView,
   } from "../lib/codeView";
 
   let { id, runs, panels, onclose, onopen }: {
@@ -13,7 +13,7 @@
   let node = $state.raw<CodeNode | null>(null);
   let loadError = $state<string | null>(null);
   let busy = $state(false); // a re-run started from this view is in flight
-  let rerunResult = $state.raw<{ from: string; node: CodeNode } | null>(null);
+  let rerunResult = $state.raw<CodeNode | null>(null);
   let rerunError = $state<string | null>(null);
   let dialog: HTMLDialogElement | undefined = $state();
 
@@ -50,9 +50,8 @@
   async function rerun() {
     if (!node || running) return;
     busy = true; rerunError = null; rerunResult = null;
-    const from = node.id;
     try {
-      rerunResult = { from, node: await rerunCode(from) };
+      rerunResult = await rerunCode(node.id);
     } catch (e) {
       rerunError = String(e);
     } finally {
@@ -61,6 +60,12 @@
   }
   const panelHref = (p: string) => `#/panel/${p}`;
 </script>
+
+{#snippet stream(label: string, b: BoundedText, extra: Record<string, string> = {})}
+  {#if b.hiddenLines}<p class="muted">… {b.hiddenLines} earlier lines hidden</p>{/if}
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex (scrollable region: keyboard users must be able to scroll it) -->
+  <pre class="stream" tabindex="0" aria-label={label} {...extra}>{b.text}</pre>
+{/snippet}
 
 <dialog bind:this={dialog} class="code-view" aria-labelledby="code-view-title" onclose={onclose}
   onclick={(e) => { if (e.target === dialog) dialog?.close(); }}>
@@ -126,23 +131,15 @@
       {#if node.status === "failed"}
         <h3>Error</h3>
         <p class="cv-error" data-code-error>{node.error}</p>
-        {#if trace}
-          {#if trace.hiddenLines}<p class="muted">… {trace.hiddenLines} earlier lines hidden</p>{/if}
-          <!-- svelte-ignore a11y_no_noninteractive_tabindex (scrollable region: keyboard users must be able to scroll it) -->
-          <pre class="stream trace" tabindex="0" aria-label="Traceback" data-code-traceback>{trace.text}</pre>
-        {/if}
+        {#if trace}{@render stream("Traceback", trace, { class: "stream trace", "data-code-traceback": "" })}{/if}
       {/if}
       {#if out}
         <h3>stdout{node.truncated ? " (truncated by the kernel)" : ""}</h3>
-        {#if out.hiddenLines}<p class="muted">… {out.hiddenLines} earlier lines hidden</p>{/if}
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex (scrollable region: keyboard users must be able to scroll it) -->
-        <pre class="stream" tabindex="0" aria-label="stdout" data-code-stdout>{out.text}</pre>
+        {@render stream("stdout", out, { "data-code-stdout": "" })}
       {/if}
       {#if err}
         <h3>stderr</h3>
-        {#if err.hiddenLines}<p class="muted">… {err.hiddenLines} earlier lines hidden</p>{/if}
-        <!-- svelte-ignore a11y_no_noninteractive_tabindex (scrollable region: keyboard users must be able to scroll it) -->
-        <pre class="stream" tabindex="0" aria-label="stderr">{err.text}</pre>
+        {@render stream("stderr", err)}
       {/if}
       {#if node.result}
         <h3>Result</h3>
@@ -158,10 +155,10 @@
       </footer>
       <div aria-live="polite">
         {#if rerunResult}
-          {@const r = statusView(rerunResult.node)}
+          {@const r = statusView(rerunResult)}
           <p class="rerun-result" data-code-rerun-result>
-            Re-run finished as <button type="button" class="ref-chip obj-id" onclick={() => onopen(rerunResult!.node.id)}>{rerunResult.node.id}</button>:
-            {r.glyph} {r.text}{rerunResult.node.duration_s != null ? `, ${durationText(rerunResult.node.duration_s)}` : ""}
+            Re-run finished as <button type="button" class="ref-chip obj-id" onclick={() => onopen(rerunResult!.id)}>{rerunResult.id}</button>:
+            {r.glyph} {r.text}{rerunResult.duration_s != null ? `, ${durationText(rerunResult.duration_s)}` : ""}
           </p>
         {/if}
         {#if rerunError}<p class="cv-error" role="alert">Re-run failed: {rerunError}</p>{/if}

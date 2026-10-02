@@ -278,5 +278,3 @@ ul.gaps { list-style: none; margin: 0; padding: 0; }
 .code-view .tok-num { color: var(--syn-num); }
 .code-view .tok-builtin { color: var(--syn-builtin); }
 .code-view .tok-deco { color: var(--syn-deco); }
-.code-link { cursor: pointer; border: 0; font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em; font-weight: 600; color: var(--fg); }
-.code-link:hover, .code-link:focus-visible { outline: 2px solid var(--ann-claude); }

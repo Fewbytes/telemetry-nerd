@@ -721,8 +721,9 @@
       <span class="hint">{data.filter.filter}; dashed: filter edge (unreliable)</span>
     </div>
   {/if}
-  {#if data?.kind === "time" && data.series.some((s) => s.lo) && intervalLegend(data.dataset)}
-    <div class="legend" data-interval-legend>band: {intervalLegend(data.dataset)}</div>
+  {#if data?.kind === "time" && data.series.some((s) => s.lo)}
+    {@const bandLegend = intervalLegend(data.dataset)}
+    {#if bandLegend}<div class="legend" data-interval-legend>band: {bandLegend}</div>{/if}
   {/if}
   {#if data?.kind === "time"}
     {@const fixed = data.dataset.producer?.kind === "code"}
@@ -740,10 +741,11 @@
     </div>
   {/if}
   {#if data}
+    {@const parts = provenanceParts(data.dataset)}
     <div class="shown">
       <p class="what">{describeShown(data.dataset, fmtStep(data.effective_step_ms), data.kind, "mark" in data ? (data.kind === "heatmap" ? heatView === "percentiles" ? "percentiles" : "" : data.mark) : "")}</p>
       <p class="where">
-        <span data-provenance>{#if provenanceParts(data.dataset)}{@const [pre, node, post] = provenanceParts(data.dataset)!}{pre}<button type="button" class="ref-chip obj-id code-link" data-code-link={node} title="View the code of {node}" onclick={() => openCode?.(node)}>{node}</button>{post}{:else}{provenanceText(data.dataset)}{/if}</span> · {fmtTime(data.dataset.start_ms)} – {fmtTime(data.dataset.end_ms)} · step
+        <span data-provenance>{#if parts}{@const [pre, node, post] = parts}{pre}<button type="button" class="ref-chip obj-id" data-code-link={node} title="View the code of {node}" onclick={() => openCode?.(node)}>{node}</button>{post}{:else}{provenanceText(data.dataset)}{/if}</span> · {fmtTime(data.dataset.start_ms)} – {fmtTime(data.dataset.end_ms)} · step
         {fmtStep(data.effective_step_ms)}
       </p>
     </div>
