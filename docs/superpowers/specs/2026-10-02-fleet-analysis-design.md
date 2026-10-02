@@ -160,7 +160,34 @@ follow-up.
 
 ## Calibration (seeded simulation)
 
-See the table filled from `tests/unit/test_fleet.py` and the calibration runs.
+`uv run python scripts/calibrate_fleet.py --seeds 300` (fleets from `tests/unit/fleet_sim.py`):
+288 steps, shared daily load x exp(member level (sd 5%) + AR(1) noise (sd 10%)); planted members:
+persistent x1.8, transient x2.7 for 12 steps mid-window, drifting 0 -> x2.2 over the window.
+False alarm = share of homogeneous fleets in which ANY member is named (design: 1%). Detection =
+the planted member named with the right kind (drifting may be `shifted`).
+
+| scenario | false alarm (any member) | by test level/change/spike/episode/long | detect persistent/transient/drifting |
+|---|---|---|---|
+| M=10 AR(0.6) normal | 0.3% | 0.3% / 0.0% / 0.0% / 0.0% / 0.0% | - |
+| M=30 AR(0.6) normal | 0.0% | 0.0% / 0.0% / 0.0% / 0.0% / 0.0% | 99.7% / 100.0% / 100.0% |
+| M=100 AR(0.6) normal | 0.3% | 0.0% / 0.3% / 0.0% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% |
+| M=300 AR(0.6) normal | 0.0% | 0.0% / 0.0% / 0.0% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% |
+| M=100 white normal | 2.0% | 0.0% / 0.7% / 0.3% / 0.7% / 0.3% | 100.0% / 100.0% / 100.0% |
+| M=100 AR(0.9) normal | 0.7% | 0.3% / 0.3% / 0.0% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% |
+| M=100 AR(0.6) t(4) | 1.3% | 0.0% / 0.3% / 0.0% / 0.0% / 1.0% | 100.0% / 100.0% / 100.0% |
+| M=30 AR(0.6) t(4) | 1.3% | 0.0% / 0.7% / 0.7% / 0.0% / 0.0% | 99.3% / 100.0% / 100.0% |
+| M=100 AR(0.6) 10% missing | 0.0% | 0.0% / 0.0% / 0.0% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% |
+| M=100 no heterogeneity | 1.3% | 1.0% / 0.3% / 0.0% / 0.0% / 0.0% | 100.0% / 100.0% / 100.0% |
+| M=100 AR(0.6) t(3) | 5.3% | 0.0% / 0.7% / 1.0% / 1.3% / 3.7% | 100.0% / 100.0% / 100.0% |
+
+Reading: at or under the 1% design for normal noise with autocorrelation, missing data, any fleet
+size; 2.0% for white noise (6 of 300: spread across tests, within ~2 binomial SEs of 1% plus
+Bonferroni slack used up by MAD-based df); 1.3% with t(4) noise thanks to the heavy-tail branch;
+**5.3% with t(3) noise** (mostly the 15-step scale, whose own tail check does not fire while its
+far tail is still heavier than t). Very spiky fleets therefore over-report long episodes somewhat
+(follow-up lkn.14). Detection is >= 99% for all three planted kinds in every scenario. Seeded
+tests pin the acceptance case (100 members, 3 planted, exactly those named with their kinds),
+the homogeneous false-alarm bound (<= 2 of 30 fleets at M = 30 and 100) and heavy-tail behaviour.
 
 ## Out of scope (follow-ups)
 
