@@ -45,6 +45,16 @@ claims on the next learn). Nobody overrides a family the user confirmed. MCP `ca
 the catalog view; user decisions are intentional events.
 
 ## Not done
-Exposing the dimension as a series label so `fleet(by=[...])` works for name-encoded families (the
-query path; follow-up bead); splitting a slot into sub-dimensions (underscores inside identifiers
+Splitting a slot into sub-dimensions (underscores inside identifiers
 make it ambiguous); templates in other separators.
+
+## Querying a family (2as.26)
+The template is accepted where a metric name goes: `sum by (dimension) (airflow_ti_finish_*_removed{job="x"})`.
+`Service.query` expands a template the catalog knows into `label_replace({__name__=~"pre.+suf",...},
+"dimension", "$1", "__name__", "pre(.+)suf")` before the source sees it (string literals are never
+touched; unknown `*` identifiers are left for the source to reject), so grouping and
+`fleet(by=["dimension"])` work. Range functions drop the metric name, losing the dimension and
+colliding members, so `rate(<template>[5m])` is expanded to MetricsQL `keep_metric_names` on
+victoriametrics sources and refused with that reason on plain Prometheus. The label is called
+`dimension`; a series that already has one would be overwritten (documented, not guarded). Dataset
+`expr` is the expanded text, so cache identity follows what was actually asked of the source.

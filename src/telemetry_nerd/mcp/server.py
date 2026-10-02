@@ -149,6 +149,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         source: a name from source_list (default "default").
         start/end: `now`, `now-<dur>` (e.g. now-6h), epoch ms, or ISO-8601 with timezone.
         step: `auto` (~600 buckets) or a duration like 30s, 1m, 5m.
+        Name-template families (catalog entries like airflow_ti_finish_*_removed): write the template
+        where a metric name goes to select every member; the text in the slot becomes the `dimension`
+        label, so `sum by (dimension) (airflow_ti_finish_*_removed)` and fleet(by=["dimension"]) work.
+        Range functions over a family (rate(...[5m])) need a victoriametrics source (keep_metric_names).
         Quantiles: write histogram_quantile(q, sum by (...) (rate(x[$__rate_interval])))
         as the WHOLE expression. It is evaluated per step (never rolled up) and each bucket
         carries n, the observations behind it; buckets with n < 10/(1-q) are flagged

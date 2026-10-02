@@ -35,6 +35,8 @@ from telemetry_nerd.analysis.quantile import attach_counts
 from telemetry_nerd.analysis.reference import reference_window
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.analysis.samples import pool, scan_series
+from telemetry_nerd.catalog.family_query import SLOT, FamilyQueryRefused
+from telemetry_nerd.catalog.family_query import rewrite as rewrite_families
 from telemetry_nerd.catalog.profiles import ProfileStore
 from telemetry_nerd.charts.context_lines import (
     ContextSpec,
@@ -283,6 +285,22 @@ class TelemetryService:
             )
         return src
 
+    def _expand_families(self, expr: str, source: str, src: Source) -> str:
+        """A name-template family written where a metric goes selects all its members and exposes
+        the name-encoded text as the `dimension` label (bead 2as.26)."""
+        if SLOT not in expr:
+            return expr
+        keeps = getattr(src, "flavor", "prometheus") == "victoriametrics"
+        try:
+            out, _ = rewrite_families(
+                expr,
+                lambda t: self.ws.families.info(source, t) is not None,
+                keeps_names=keeps,
+            )
+        except FamilyQueryRefused as e:
+            raise SourceError(str(e), hint="see the catalog family for the members") from e
+        return out
+
     async def query(
         self,
         expr: str,
@@ -294,6 +312,7 @@ class TelemetryService:
         allow_nonmergeable: bool = False,
     ) -> dict:
         src = self._source(source)
+        expr = self._expand_families(expr, source, src)
         now = self.clock()
         rng = TimeRange(parse_time(start, now), parse_time(end, now))
         step_ms = auto_step(rng, src.resolution_ms) if step == "auto" else parse_duration(step)
