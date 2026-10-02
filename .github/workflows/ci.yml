@@ -1,0 +1,93 @@
+name: CI
+
+# Tests, lint and UI checks run on every push and pull request. The container image is built
+# and pushed to GHCR ONLY for version tags (v*); regular pushes never build or publish it.
+# Integration tests (-m integration: Docker / public network) are excluded from CI.
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  python:
+    name: Python tests and lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked
+      - name: Lint (ruff check + format check)
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: Release metadata in sync
+        run: python3 scripts/check_version.py
+      - name: Tests (integration excluded via pytest addopts)
+        run: uv run pytest
+
+  ui:
+    name: UI tests and type check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+      - name: Unit tests (vitest)
+        run: npm test
+      - name: Type check (svelte-check)
+        run: npx svelte-check --tsconfig ./tsconfig.app.json --fail-on-warnings
+
+  image:
+    name: Build and push image (version tags only)
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [python, ui]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/fewbytes/telemetry-nerd
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must match pyproject version
+        run: python3 scripts/check_version.py "$GITHUB_REF_NAME"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
