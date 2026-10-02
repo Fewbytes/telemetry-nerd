@@ -395,7 +395,8 @@ thread cannot be reliably timed out.
   `code.finished`. Run dirs are GC'd at daemon start and after each run, keeping running nodes,
   the 20 newest, and nodes whose outputs a panel, a finding or another dataset's parents
   reference. Evidence: `finding_create` rejects a statistic or panel backed by a code output
-  that `exchange.run.evidence_blocker` refuses (no declared uncertainty; fit params by name).
+  that `core.code_outputs.evidence_problem` refuses (it wraps `exchange.run.evidence_blocker`:
+  no declared uncertainty; fit params must be cited exactly as stored, by name).
   HTTP (read-only, for the UI): `GET /api/code`, `GET /api/code/{id}`; the workspace snapshot
   and `workspace_get` list nodes without their code text.
 - **Evidence rule:** outputs must declare uncertainty or `exact`; otherwise they are tagged
