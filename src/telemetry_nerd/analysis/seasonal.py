@@ -319,6 +319,74 @@ def _block_n(R: np.ndarray, blocks: list[slice]) -> list[int]:
     return [int(np.sum(~np.isnan(R[:, b]))) for b in blocks]
 
 
+def _level(
+    X: np.ndarray, c: np.ndarray, d: np.ndarray, obs: np.ndarray, scale: str
+) -> tuple[Level, float]:
+    """Now's mean deviation from the centre against a Student-t prediction interval from the
+    cycles' levels (k-1 df); also the cycles' mean level (dbar)."""
+    k = X.shape[0]
+    d0 = float(np.nanmean(d))
+    # cycle levels relative to the common centre (in-sample: their spread is the spread of the
+    # cycle levels); now - median of k cycles has variance sigma^2 (1 + v_k)
+    Dl = np.array([float(np.nanmean(x[obs] - c[obs])) for x in X])
+    dbar, sd = float(np.mean(Dl)), float(np.std(Dl, ddof=1))
+    w = math.sqrt(1 + _median_var(k))
+    h90 = t_quantile(0.95, k - 1) * sd * w
+    h99 = t_quantile(1 - ALPHA / 2, k - 1) * sd * w
+    conv = (lambda v: float(math.exp(v))) if scale == "log" else float
+    level = Level(
+        d0, conv(d0), (conv(dbar - h90), conv(dbar + h90)), (conv(dbar - h99), conv(dbar + h99)),
+        [conv(v) for v in Dl], not dbar - h99 <= d0 <= dbar + h99,
+    )  # fmt: skip
+    return level, dbar
+
+
+def _extremes(
+    dc: np.ndarray,
+    Rc: np.ndarray,
+    b_med: np.ndarray,
+    b_sig: np.ndarray,
+    block_n: list[int],
+    n: int,
+    tau: float,
+) -> Extremes:
+    """Points of now beyond a Sidak threshold on the phase blocks' robust z, raised to the
+    largest |z| a previous cycle reached when those exceed it (heavy tails)."""
+    with np.errstate(invalid="ignore", divide="ignore"):
+        z = (dc - b_med) / b_sig
+        zr = (Rc - b_med) / b_sig
+    # Sidak over every point (exact for independent points, conservative under correlation);
+    # sigma is a MAD estimate from the block pool: Student t on its effective df = pool / tau x
+    # DF_SHARE (MAD is 37% efficient, and LOO residuals sharing a phase are dependent)
+    df = max(3.0, DF_SHARE * float(np.min(block_n)) / max(1.0, tau))
+    sidak = t_quantile(1 - ALPHA / (2 * max(1, n)), df)
+    prev_max = [float(np.nanmax(np.abs(r))) if np.any(np.isfinite(r)) else 0.0 for r in zr]
+    heavy = any(m > sidak for m in prev_max)
+    thr = max([sidak, *prev_max]) if heavy else sidak
+    pts = [(int(i), float(z[i])) for i in np.flatnonzero(np.isfinite(z) & (np.abs(z) > thr))]
+    return Extremes(thr, sidak, pts, prev_max, heavy, bool(pts))
+
+
+def _outside_band(
+    outside_now: np.ndarray,
+    Rc: np.ndarray,
+    w_lo: np.ndarray,
+    w_hi: np.ndarray,
+    n: int,
+    n_eff: float,
+) -> OutsideBand:
+    """Share of now's points outside the 90% band: binomial on n_eff against 10%, and beyond
+    every previous cycle's share."""
+    share = float(outside_now.sum() / n)
+    prev_share = []
+    for r in Rc:
+        ok = ~np.isnan(r) & ~np.isnan(w_lo)
+        prev_share.append(float(np.mean((r[ok] < w_lo[ok]) | (r[ok] > w_hi[ok]))) if ok.any() else 0.0)  # fmt: skip
+    ne = max(1, round(n_eff))
+    p = binom_sf(round(share * ne), ne, 1 - (BAND[1] - BAND[0]))
+    return OutsideBand(share, prev_share, p, p < ALPHA and share > max(prev_share))
+
+
 def compare(
     now: np.ndarray,
     cycles: list[Cycle],
@@ -390,19 +458,7 @@ def compare(
         return out
 
     # 1. level over the window ------------------------------------------------------------
-    d0 = float(np.nanmean(d))
-    # cycle levels relative to the common centre (in-sample: their spread is the spread of the
-    # cycle levels); now - median of k cycles has variance sigma^2 (1 + v_k)
-    Dl = np.array([float(np.nanmean(x[obs] - c[obs])) for x in X])
-    dbar, sd = float(np.mean(Dl)), float(np.std(Dl, ddof=1))
-    w = math.sqrt(1 + _median_var(k))
-    h90 = t_quantile(0.95, k - 1) * sd * w
-    h99 = t_quantile(1 - ALPHA / 2, k - 1) * sd * w
-    conv = (lambda v: float(math.exp(v))) if scale == "log" else float
-    level = Level(
-        d0, conv(d0), (conv(dbar - h90), conv(dbar + h90)), (conv(dbar - h99), conv(dbar + h99)),
-        [conv(v) for v in Dl], not dbar - h99 <= d0 <= dbar + h99,
-    )  # fmt: skip
+    level, dbar = _level(X, c, d, obs, scale)
 
     # 2./3. within-window shape: each cycle relative to its own (median) level, so the
     # cycle-level component (judged by 1. with k-1 df) does not count once per point; the
@@ -410,69 +466,49 @@ def compare(
     Rc = R - np.nanmedian(R, axis=1)[:, None]
     dc = d - float(np.nanmedian(d))
     w_lo, w_hi, b_med, b_sig = _block_stats(Rc, blocks, f)
-
-    # 2. extremes -------------------------------------------------------------------------
-    with np.errstate(invalid="ignore", divide="ignore"):
-        z = (dc - b_med) / b_sig
-        zr = (Rc - b_med) / b_sig
-    # Sidak over every point (exact for independent points, conservative under correlation);
-    # sigma is a MAD estimate from the block pool: Student t on its effective df = pool / tau x
-    # DF_SHARE (MAD is 37% efficient, and LOO residuals sharing a phase are dependent)
-    df = max(3.0, DF_SHARE * float(np.min(_block_n(Rc, blocks))) / max(1.0, out.tau))
-    sidak = t_quantile(1 - ALPHA / (2 * max(1, out.n)), df)
-    prev_max = [float(np.nanmax(np.abs(r))) if np.any(np.isfinite(r)) else 0.0 for r in zr]
-    heavy = any(m > sidak for m in prev_max)
-    thr = max([sidak, *prev_max]) if heavy else sidak
-    pts = [(int(i), float(z[i])) for i in np.flatnonzero(np.isfinite(z) & (np.abs(z) > thr))]
-    extremes = Extremes(thr, sidak, pts, prev_max, heavy, bool(pts))
-    if heavy:
+    extremes = _extremes(dc, Rc, b_med, b_sig, _block_n(Rc, blocks), out.n, out.tau)
+    if extremes.heavy_tails:
         out.caveats.append("heavy_tails")
-
-    # 3. share outside the 90% band ----------------------------------------------------------
     outside_now = obs & ((dc < w_lo) | (dc > w_hi))
-    share = float(outside_now.sum() / out.n)
-    prev_share = []
-    for r in Rc:
-        ok = ~np.isnan(r) & ~np.isnan(w_lo)
-        prev_share.append(float(np.mean((r[ok] < w_lo[ok]) | (r[ok] > w_hi[ok]))) if ok.any() else 0.0)  # fmt: skip
-    ne = max(1, round(out.n_eff))
-    p = binom_sf(round(share * ne), ne, 1 - (BAND[1] - BAND[0]))
-    outside = OutsideBand(share, prev_share, p, p < ALPHA and share > max(prev_share))
+    outside = _outside_band(outside_now, Rc, w_lo, w_hi, out.n, out.n_eff)
 
     out.level, out.extremes, out.outside = level, extremes, outside
     signs: set[str] = set()
     fmt = (lambda v: f"x{v:.3g}") if scale == "log" else (lambda v: f"{v:+.3g}")
     if level.flagged:
-        signs.add("higher" if d0 > dbar else "lower")
+        signs.add("higher" if level.d0 > dbar else "lower")
         out.reasons.append(
             f"window level {fmt(level.ratio)} vs the reference; normal cycles "
             f"{fmt(level.normal[0])}..{fmt(level.normal[1])} (90%, from {k} cycles)"
         )
     if extremes.flagged:
+        pts = extremes.points
         signs |= {"higher" if zz > 0 else "lower" for _, zz in pts}
         top = max(pts, key=lambda q: abs(q[1]))
         out.reasons.append(
-            f"{len(pts)} point(s) beyond |z| {thr:.2f} (max {top[1]:+.1f} at phase {top[0]}); "
-            f"previous cycles reached at most {max(prev_max):.1f}"
+            f"{len(pts)} point(s) beyond |z| {extremes.threshold:.2f} (max {top[1]:+.1f} at "
+            f"phase {top[0]}); previous cycles reached at most {max(extremes.previous_max):.1f}"
         )
     if outside.flagged:
         dirs = dc[outside_now] - (w_lo + w_hi)[outside_now] / 2
         signs |= {"higher" if v > 0 else "lower" for v in dirs}
         out.reasons.append(
-            f"{share:.0%} of points outside the 90% shape band (previous cycles "
-            f"{min(prev_share):.0%}..{max(prev_share):.0%}, p={p:.1g} on n_eff {out.n_eff:.0f})"
+            f"{outside.share:.0%} of points outside the 90% shape band (previous cycles "
+            f"{min(outside.previous):.0%}..{max(outside.previous):.0%}, p={outside.p:.1g} on "
+            f"n_eff {out.n_eff:.0f})"
         )
     if signs:
         out.verdict = "unusual"
         if level.flagged:  # shape detectors are relative to the window's own level
-            out.direction = "higher" if d0 > dbar else "lower"
+            out.direction = "higher" if level.d0 > dbar else "lower"
         else:
             out.direction = next(iter(signs)) if len(signs) == 1 else "mixed"
     else:
         out.verdict = "usual"
         out.reasons.append(
             f"within normal: level {fmt(level.ratio)} (normal {fmt(level.normal[0])}.."
-            f"{fmt(level.normal[1])}), {share:.0%} outside the 90% shape band, no extreme points"
+            f"{fmt(level.normal[1])}), {outside.share:.0%} outside the 90% shape band, no "
+            "extreme points"
         )
     return out
 
