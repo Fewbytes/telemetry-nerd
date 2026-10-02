@@ -390,3 +390,14 @@ async def test_mcp_operating_profile_and_profile_source_pairing(svc):
     )
     assert not r.is_error, text(r)
     assert json.loads(text(r))["source"]["profile_source"] == "wm-1h"
+
+
+async def test_hourly_history_with_a_partial_chunk_is_not_read_as_complete(svc):
+    p = await svc.profiles.ensure("default", "queue_depth")
+    assert svc.profiles.hourly(p) is not None
+    svc.cache._con.execute(  # one chunk of the history came from a partial source answer
+        "UPDATE cache_chunks SET failed = $f WHERE chunk_start = "
+        "(SELECT MIN(chunk_start) FROM cache_chunks)",
+        {"f": f'[[{p.start_ms}, {p.end_ms}, "PartialResponse: x"]]'},
+    )
+    assert svc.profiles.hourly(p) is None

@@ -136,7 +136,7 @@ from telemetry_nerd.model.time import (
     parse_duration,
     parse_time,
 )
-from telemetry_nerd.sources.base import LimitExceeded, Source, SourceError
+from telemetry_nerd.sources.base import LimitExceeded, Source, SourceError, SourceUnavailable
 from telemetry_nerd.sources.registry import SourceRegistry
 from telemetry_nerd.sources.spec import RESERVED_NAMES, SourceSpec
 from telemetry_nerd.workspace.store import Panel, WorkspaceStore
@@ -1100,6 +1100,12 @@ class TelemetryService:
         found = None
         for label in cands:
             dist = await src.fetch_histogram(h["selector"], (label,), rng, dstep)
+            if dist.failed:  # the values seen may be missing some: no definitive classification
+                raise SourceUnavailable(
+                    f"the outcome-label probe on `{label}` got only a partial response "
+                    f"({dist.failed[0][2]}); its values cannot be classified reliably",
+                    hint="retry shortly",
+                )
             values = [lb[label] for lb in series_labels(dist.series).values() if lb.get(label)]
             outcomes = classify(label, values)
             if outcomes.success or outcomes.failure:

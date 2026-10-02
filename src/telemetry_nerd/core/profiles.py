@@ -299,6 +299,8 @@ class ProfileService:
             return None
         qexpr = p.expr if is_selector(p.expr) else f"values|{p.expr}"
         got = self.cache.peek(psrc.identity, qexpr, TimeRange(p.start_ms, p.end_ms), p.step_ms)
+        if got.failed:  # a partial chunk is a gappy history: like a failed fetch, not "cached"
+            return None
         df = pl.from_arrow(got.buckets)
         assert isinstance(df, pl.DataFrame)
         if df.height == 0:

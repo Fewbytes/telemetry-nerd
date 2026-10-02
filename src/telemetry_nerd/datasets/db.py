@@ -16,6 +16,10 @@ _SCHEMA = [
         qkey VARCHAR, chunk_start BIGINT, ts_ms BIGINT, series_id VARCHAR,
         avg DOUBLE, min DOUBLE, max DOUBLE, count BIGINT)""",
     "ALTER TABLE cache_chunks ADD COLUMN IF NOT EXISTS partial BIGINT DEFAULT 0",
+    # a partial chunk's unknown spans and a chunk's informational source notes, as JSON (3o0);
+    # NULL on chunks stored before these columns existed (read as: complete, no notes)
+    "ALTER TABLE cache_chunks ADD COLUMN IF NOT EXISTS failed VARCHAR",
+    "ALTER TABLE cache_chunks ADD COLUMN IF NOT EXISTS notes VARCHAR",
     "CREATE TABLE IF NOT EXISTS datasets (id VARCHAR PRIMARY KEY, meta VARCHAR NOT NULL)",
     """CREATE TABLE IF NOT EXISTS dataset_rows (
         dataset_id VARCHAR, ts_ms BIGINT, series_id VARCHAR,

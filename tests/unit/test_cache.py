@@ -233,3 +233,80 @@ async def test_chunk_reported_failed_by_the_fetcher_keeps_its_data_but_is_not_ca
     again = FakeFetcher()
     await cache.get("src", "up", rng, STEP, again)
     assert again.calls == []  # now cached
+
+
+def _partial(fetcher_result: FetchResult, rng: TimeRange, notes=()) -> FetchResult:
+    return FetchResult(
+        fetcher_result.buckets,
+        fetcher_result.series,
+        failed=((rng.start_ms, rng.end_ms, "PartialResponse: x"),),
+        notes=tuple(notes),
+    )
+
+
+async def test_partial_refetch_does_not_replace_a_complete_chunk(cache, clock):
+    """3o0: a complete recent chunk survives a partial refetch; only the buckets newer than the
+    complete copy are reported unknown; the chunk stays eligible for refresh."""
+    rng = TimeRange(NOW - SPAN, NOW - STEP)  # the current, mutable chunk
+    clock.t = NOW - 5 * STEP  # first fetched mid-chunk
+    first = await cache.get("src", "up", rng, STEP, FakeFetcher())
+    assert first.failed == ()
+    complete_rows = first.buckets.num_rows
+
+    async def partial_fetch(r):
+        full = await FakeFetcher()(r)
+        half = full.buckets.slice(0, 2)  # the source only half answered
+        return _partial(FetchResult(half, full.series), r)
+
+    clock.t = NOW  # past the recent ttl
+    second = await cache.get("src", "up", rng, STEP, partial_fetch)
+    assert second.buckets.num_rows == complete_rows  # complete rows kept
+    first_new = NOW - 5 * STEP + STEP  # first bucket after the old fetch time
+    assert [(a, b) for a, b, _ in second.failed] == [(first_new, NOW - STEP)]
+    again = FakeFetcher()
+    third = await cache.get("src", "up", rng, STEP, again)  # still eligible for refresh
+    assert len(again.calls) == 1 and third.failed == () and third.buckets.num_rows == complete_rows
+
+
+async def test_peek_reports_failed_spans_of_a_partial_chunk(cache):
+    rng = TimeRange(NOW - 2 * SPAN, NOW - SPAN - STEP)
+
+    async def partial_fetch(r):
+        return _partial(await FakeFetcher()(r), r)
+
+    await cache.get("src", "up", rng, STEP, partial_fetch)
+    got = cache.peek("src", "up", rng, STEP)
+    assert got.buckets.num_rows == 10  # data still there
+    assert [f[2] for f in got.failed] == ["PartialResponse: x"]
+    await cache.get("src", "up", rng, STEP, FakeFetcher())  # recovered
+    assert cache.peek("src", "up", rng, STEP).failed == ()
+
+
+async def test_source_notes_persist_per_chunk_and_survive_pure_cache_hits(cache):
+    rng = TimeRange(1_200_000, 2_400_000)  # settled chunks: the second get is all cache
+
+    async def noted(r):
+        res = await FakeFetcher()(r)
+        return FetchResult(res.buckets, res.series, notes=("rollup in use",))
+
+    first = await cache.get("src", "up", rng, STEP, noted)
+    assert first.notes == ("rollup in use",)
+    again = FakeFetcher()
+    second = await cache.get("src", "up", rng, STEP, again)
+    assert again.calls == [] and second.notes == ("rollup in use",)
+    assert cache.peek("src", "up", rng, STEP).notes == ("rollup in use",)
+
+
+def test_existing_cache_db_is_migrated(tmp_path):
+    import duckdb
+
+    path = tmp_path / "old.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute(
+        "CREATE TABLE cache_chunks (qkey VARCHAR, chunk_start BIGINT, fetched_at BIGINT, "
+        "immutable BOOLEAN, PRIMARY KEY (qkey, chunk_start))"
+    )
+    con.execute("INSERT INTO cache_chunks VALUES ('q', 0, 1, TRUE)")
+    con.close()
+    con = open_duckdb(path)
+    assert con.execute("SELECT failed, notes FROM cache_chunks").fetchall() == [(None, None)]

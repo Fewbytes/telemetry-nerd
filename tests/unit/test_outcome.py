@@ -134,3 +134,20 @@ async def test_refusals_are_specific(svc, src):
     src.discover = with_codes  # type: ignore[method-assign]
     with pytest.raises(ValueError, match="classifiable"):
         await svc.split_outcome(ds, "user")
+
+
+async def test_a_partial_probe_response_gives_no_definitive_classification(svc, src):
+    from dataclasses import replace
+
+    from telemetry_nerd.sources.base import SourceUnavailable
+
+    ds = (await svc.query_distribution("http_dur_bucket", start="now-2h"))["dataset"]
+    real = src.fetch_histogram
+
+    async def partial(selector, by, rng, step_ms):
+        dist = await real(selector, by, rng, step_ms)
+        return replace(dist, failed=((rng.start_ms, rng.end_ms, "PartialResponse: x"),))
+
+    src.fetch_histogram = partial  # type: ignore[method-assign]
+    with pytest.raises(SourceUnavailable, match="partial response"):
+        await svc.split_outcome(ds, "user")

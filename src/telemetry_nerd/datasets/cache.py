@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from collections.abc import Awaitable, Callable
 
 import duckdb
@@ -60,9 +61,10 @@ class SeriesCache:
         async with self._lock:
             now = self._clock()
             state = {
-                row[0]: (row[1], row[2])
+                row[0]: (row[1], row[2], row[3])
                 for row in self._con.execute(
-                    "SELECT chunk_start, fetched_at, immutable FROM cache_chunks WHERE qkey = $q",
+                    """SELECT chunk_start, fetched_at, immutable, failed IS NULL
+                       FROM cache_chunks WHERE qkey = $q""",
                     {"q": qkey},
                 ).fetchall()
             }
@@ -76,7 +78,6 @@ class SeriesCache:
 
             results = await asyncio.gather(*(bounded(cs) for cs in missing), return_exceptions=True)
             failed: list[tuple[int, int, str]] = []
-            notes: list[str] = []
             errored = 0
             for cs, result in zip(missing, results, strict=True):
                 if isinstance(result, BaseException):
@@ -85,41 +86,68 @@ class SeriesCache:
                     failed.append((cs, cs + span - step_ms, f"{type(result).__name__}: {result}"))
                     errored += 1
                     continue
-                notes += result.notes
                 immutable = cs + span <= now - self.settle_ms
                 fetched_at = now
                 if result.failed:
-                    # The source answered only partially (1h9.12): keep what it returned, report
-                    # the span unknown, and store the chunk as already stale so the next read
-                    # asks again rather than serving it as complete.
-                    failed += result.failed
+                    # The source answered only partially (1h9.12): store the chunk as already
+                    # stale so the next read asks again rather than serving it as complete.
                     immutable, fetched_at = False, now - self.recent_ttl_ms
+                    old = state.get(cs)
+                    if old is not None and old[2]:
+                        # 3o0: we hold a complete earlier copy of this chunk. Keep it (a partial
+                        # answer is worse data than a complete one) and report unknown only the
+                        # buckets after the moment that copy was fetched, which it cannot cover.
+                        failed += self._keep_complete(qkey, cs, step_ms, old[0], result, fetched_at)
+                        continue
+                    failed += result.failed
                 self._store(qkey, cs, cs + span - step_ms, result, fetched_at, immutable)
             starts = self.chunk_starts(rng, step_ms)
             if errored and errored == len(starts):
                 raise next(r for r in results if isinstance(r, BaseException))
-            partial = self._con.execute(
-                """SELECT COALESCE(SUM(partial), 0) FROM cache_chunks
-                   WHERE qkey = $q AND chunk_start BETWEEN $a AND $b""",
-                {"q": qkey, "a": starts[0], "b": starts[-1]},
-            ).fetchone()
-            read = self._read(qkey, rng)
+            read = self._read(qkey, rng, step_ms)
+            # failed: what this call learned (incl. chunks that errored and were not stored);
+            # notes: every chunk's, so a pure cache hit still carries them
             return FetchResult(
-                read.buckets,
-                read.series,
-                partial=int(partial[0]) if partial else 0,
-                failed=tuple(failed),
-                notes=tuple(dict.fromkeys(notes)),
-            )
+                read.buckets, read.series, partial=read.partial,
+                failed=tuple(failed), notes=read.notes,
+            )  # fmt: skip
 
     def peek(self, source_identity: str, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
-        """What the cache holds for the range, without fetching (may be incomplete)."""
-        return self._read(self.query_key(source_identity, expr, step_ms), rng)
+        """What the cache holds for the range, without fetching. Missing chunks are simply
+        absent, but a chunk stored from a partial source answer reports its unknown spans in
+        `failed` (3o0): a caller must treat that like a failed fetch, not read it as complete."""
+        return self._read(self.query_key(source_identity, expr, step_ms), rng, step_ms)
 
-    def _fresh(self, state: tuple[int, bool] | None, now: int) -> bool:
+    def _keep_complete(
+        self, qkey: str, cs: int, step_ms: int, old_fetched_at: int, result: FetchResult,
+        fetched_at: int,
+    ) -> list[tuple[int, int, str]]:  # fmt: skip
+        """Rule (3o0): a refetch that came back partial never replaces a complete stored chunk.
+        The stored rows stay and the chunk stays eligible for refresh (stale at once, still
+        mutable). Buckets at or before the old fetch time are covered by the complete copy; the
+        unknown spans are the refetch's failed spans clipped to the buckets after it."""
+        first_uncovered = cs + ((old_fetched_at - cs) // step_ms + 1) * step_ms
+        spans = [
+            (max(a, first_uncovered), b, why) for a, b, why in result.failed if b >= first_uncovered
+        ]
+        con = self._con
+        row = con.execute(
+            "SELECT notes FROM cache_chunks WHERE qkey = $q AND chunk_start = $c",
+            {"q": qkey, "c": cs},
+        ).fetchone()
+        old_notes = json.loads(row[0]) if row and row[0] else []
+        notes = list(dict.fromkeys([*old_notes, *result.notes]))
+        con.execute(
+            """UPDATE cache_chunks SET fetched_at = $f, immutable = FALSE, notes = $n
+               WHERE qkey = $q AND chunk_start = $c""",
+            {"q": qkey, "c": cs, "f": fetched_at, "n": json.dumps(notes) if notes else None},
+        )
+        return spans
+
+    def _fresh(self, state: tuple[int, bool, bool] | None, now: int) -> bool:
         if state is None:
             return False
-        fetched_at, immutable = state
+        fetched_at, immutable, _ = state
         return immutable or now - fetched_at < self.recent_ttl_ms
 
     def _store(
@@ -143,17 +171,41 @@ class SeriesCache:
                 con.unregister("_tn_in")
             upsert_series(con, result.series)
             con.execute(
-                """INSERT INTO cache_chunks (qkey, chunk_start, fetched_at, immutable, partial)
-                   VALUES ($q, $c, $f, $i, $p)""",
-                {**params, "f": now, "i": immutable, "p": result.partial},
+                """INSERT INTO cache_chunks
+                       (qkey, chunk_start, fetched_at, immutable, partial, failed, notes)
+                   VALUES ($q, $c, $f, $i, $p, $x, $n)""",
+                {
+                    **params,
+                    "f": now,
+                    "i": immutable,
+                    "p": result.partial,
+                    "x": json.dumps(result.failed) if result.failed else None,
+                    "n": json.dumps(result.notes) if result.notes else None,
+                },
             )
             con.commit()
         except Exception:
             con.rollback()
             raise
 
-    def _read(self, qkey: str, rng: TimeRange) -> FetchResult:
+    def _read(self, qkey: str, rng: TimeRange, step_ms: int) -> FetchResult:
         params = {"q": qkey, "s": rng.start_ms, "e": rng.end_ms}
+        starts = self.chunk_starts(rng, step_ms)
+        partial = 0
+        failed: list[tuple[int, int, str]] = []
+        notes: list[str] = []
+        for p, f, n in self._con.execute(
+            """SELECT COALESCE(partial, 0), failed, notes FROM cache_chunks
+               WHERE qkey = $q AND chunk_start BETWEEN $a AND $b ORDER BY chunk_start""",
+            {"q": qkey, "a": starts[0], "b": starts[-1]},
+        ).fetchall():
+            partial += int(p)
+            failed += [
+                (a, b, why)
+                for a, b, why in (json.loads(f) if f else [])
+                if b >= rng.start_ms and a <= rng.end_ms
+            ]
+            notes += json.loads(n) if n else []
         buckets = fetch_arrow(
             self._con,
             """SELECT ts_ms, series_id, avg, min, max, count FROM cache_buckets
@@ -170,4 +222,7 @@ class SeriesCache:
             params,
             SERIES_SCHEMA,
         )
-        return FetchResult(buckets, series)
+        return FetchResult(
+            buckets, series, partial=partial, failed=tuple(failed),
+            notes=tuple(dict.fromkeys(notes)),
+        )  # fmt: skip
