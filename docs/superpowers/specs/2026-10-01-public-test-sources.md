@@ -118,6 +118,44 @@ Responses pass through Varnish (`x-cache: … miss, pass`): nothing is cached fo
    envoy/istio histograms (heatmaps, M4), mediawiki/varnish request rates (RED),
    Airflow (name-template clustering).
 
+## Live verification of operating profiles (telemetry-nerd-2as.23, 2026-10-02)
+
+`ProfileService` run end to end against live Wikimedia (1 request at a time, >= 1 s apart),
+`wikimedia` -> `wikimedia-1h` pairing: `profiled_from` was `wikimedia-1h` for all three; the
+unpaired source was not contacted. Fixtures: `tests/fixtures/wikimedia/profile/` (110 KiB,
+13 files: 12 `query_range` + `clock.json`; recorder `scripts/record_wikimedia_profiles.py`),
+replayed offline by `tests/unit/test_wikimedia_profiles.py`; live test
+`tests/integration/test_wikimedia_profile_live.py`.
+
+| Profile (30 d x 1h, 720 h) | Result | Wall time (cold) |
+|---|---|---|
+| gauge `node_load1{wdqs1018}` (selector: min/max/avg/count rollup) | n=720, p50 55.0, p0.5-p99.5 0.3-98, envelope 0-133.6, max 136.6, seasonal fit, no caveats | 7.6-9.2 s |
+| counter `node_network_receive_bytes_total{eno12399np0}` -> `rate(x[4h])` | n=720, p50 160 kB/s, p0.5-p99.5 17-244 kB/s; `no_intra_hour_extremes` | 2.0-2.4 s |
+| `histogram_quantile(0.99, ...envoy_cluster_upstream_rq_time_bucket...)` | n=720, p50 45 ms, p99.5 2500 (the top finite bucket); `quantile_series` | 1.6-1.8 s |
+
+Per-query latency of the 30 d x 1h range queries (min/max/avg/count_over_time(x[1h]),
+rate(x[4h]), histogram_quantile): 0.3-0.8 s, 15-25 KB responses, on both datasources. The
+gauge's 7.6 s is 8 requests (4 rollups x 2 cache chunks) serialized by the politeness gate.
+
+**The `thanos-downsample-1h` datasource does not serve downsampled data by default.** At 20,
+60, 120, 200 and 300 days back, `node_load1` / `max_over_time(x[5m])` at 5 min steps and
+`count_over_time(x[1h])` are identical to the raw `thanos` datasource (same values, count 60,
+native resolution); Wikimedia keeps raw data for >= 300 days, and the downsample datasource
+only *allows* coarser blocks (Thanos `max_source_resolution`), it does not prefer them.
+Sending `max_source_resolution=1h` explicitly does return downsampled blocks (1h-spaced
+samples): hourly min/max/avg then match raw within ~0.3-0.6% (median relative difference;
+block boundaries differ slightly), rate(x[4h]) and the quantile within ~0.1%, but
+`count_over_time(x[1h])` returns about 1 (the downsampled sample count; the sample count is
+lost), with no latency gain. Consequences: the profile's hourly min/max on Wikimedia are the
+true native-resolution min/max (raw), the pairing is a functional no-op there, and the
+"downsampled data is faster" premise did not hold: raw Thanos already answers 30 d x 1h in
+under a second. Decision on the preset: telemetry-nerd-2as.25.
+
+Also noted: the series cache fetches whole 720-bucket chunks aligned to the epoch, and a 30 d
+x 1h profile window is exactly one chunk long, so a cold profile reads two chunks (about 2x the
+needed data). Harmless here; later daily refreshes fetch only the newest chunk.
+
+
 # Other public sources
 
 Probed 2026-10-01 with one or two light requests each. "Unit coverage" = metadata entries

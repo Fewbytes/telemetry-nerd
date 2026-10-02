@@ -1,0 +1,8 @@
+{
+ "clock_ms": 1790920800000,
+ "exprs": {
+  "gauge": "node_load1{site=\"eqiad\",instance=\"wdqs1018:9100\"}",
+  "counter": "node_network_receive_bytes_total{instance=\"wdqs1018:9100\",device=\"eno12399np0\"}",
+  "quantile": "histogram_quantile(0.99, sum by (le) (rate(envoy_cluster_upstream_rq_time_bucket{site=\"eqiad\",prometheus=\"ops\",instance=\"an-web1001:9631\"}[$__rate_interval])))"
+ }
+}
