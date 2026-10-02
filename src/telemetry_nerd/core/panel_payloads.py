@@ -32,9 +32,30 @@ from telemetry_nerd.analysis.quantiles import column_quantiles
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.charts.indexed import shifted, window_baselines
 from telemetry_nerd.charts.spec import ChartSpec
+from telemetry_nerd.model.bucket_state import State
 from telemetry_nerd.model.distribution import DIST_N_MIN, QUANTILE_CHOICES
 from telemetry_nerd.model.time import TimeRange, format_duration, iso
 from telemetry_nerd.workspace.store import Panel
+
+
+def state_payload(states) -> list[dict]:
+    """bucket_state for series with any non-OK bucket (an all-ok panel draws no rug)."""
+    df = pl.from_arrow(states)
+    if df.is_empty():
+        return []
+    bad = df.filter(pl.col("state") != int(State.OK))["series_id"].unique()
+    out = []
+    for (sid,), g in (
+        df.filter(pl.col("series_id").is_in(bad.implode()))
+        .sort("ts_ms")
+        .group_by("series_id", maintain_order=True)
+    ):
+        out.append({
+            "id": sid, "ts": g["ts_ms"].to_list(), "state": g["state"].to_list(),
+            "observed": g["observed"].to_list(), "expected": g["expected"].to_list(),
+            "flags": g["flags"].to_list(),
+        })  # fmt: skip
+    return sorted(out, key=lambda s: s["id"])
 
 
 def series_labels(series_table) -> dict[str, dict]:

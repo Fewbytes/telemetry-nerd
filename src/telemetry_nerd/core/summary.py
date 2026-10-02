@@ -10,6 +10,8 @@ import polars as pl
 from telemetry_nerd.analysis.exprkind import min_samples
 from telemetry_nerd.analysis.quantiles import quantile_bucket
 from telemetry_nerd.datasets.store import DatasetMeta
+from telemetry_nerd.model.bucket_state import State, compute
+from telemetry_nerd.model.caveats import runs
 from telemetry_nerd.model.distribution import DistResult
 from telemetry_nerd.model.series import FetchResult
 from telemetry_nerd.model.time import format_duration, iso
@@ -31,6 +33,37 @@ def _empty(base: dict, caveats: list[str]) -> dict:
         "more_series": 0,
         "caveats": ["empty", *caveats],
     }
+
+
+def _coverage(meta: DatasetMeta, result: FetchResult) -> tuple[dict[str, dict], list[list[str]]]:
+    """Per series: observed/expected share, total missing, longest gap; dataset unknown spans."""
+    mode = "presence" if meta.representation == "quantile" else "samples"
+    st = compute(result.buckets, result.series["series_id"].to_pylist(), start_ms=meta.start_ms,
+                 end_ms=meta.end_ms, step_ms=meta.step_ms, resolution_ms=meta.resolution_ms,
+                 mode=mode, failed=[tuple(f) for f in meta.failed_spans])  # fmt: skip
+    df = pl.from_arrow(st)
+    bad = [int(State.EMPTY), int(State.PARTIAL), int(State.UNKNOWN)]
+    out: dict[str, dict] = {}
+    for (sid,), g in df.group_by("series_id"):
+        alive = g.filter(pl.col("state") != int(State.ABSENT))
+        exp = alive["expected"].sum()
+        gaps = runs(alive.filter(pl.col("state").is_in(bad))["ts_ms"].to_list(), meta.step_ms)
+        longest = max((b - a for a, b in gaps), default=0)
+        out[sid] = {
+            "pct": _round(min(1.0, alive["observed"].sum() / exp) if exp else 0.0),
+            "missing": format_duration(sum(b - a for a, b in gaps)) if gaps else "0s",
+            "longest_gap": format_duration(longest) if longest else None,
+        }
+    unknown = runs(df.filter(pl.col("state") == int(State.UNKNOWN))["ts_ms"].unique().to_list(),
+                   meta.step_ms)  # fmt: skip
+    return out, [[iso(a), iso(b)] for a, b in unknown]
+
+
+def _coverage_caveats(coverage: dict[str, dict], unknown_spans: list, caveats: list[str]) -> None:
+    if unknown_spans:
+        caveats.append("untrusted_data")
+    if any(c["pct"] < 1.0 for c in coverage.values()):
+        caveats.append("missing_data")
 
 
 def _base_caveats(meta: DatasetMeta, now_ms: int, settle_ms: int) -> list[str]:
@@ -60,10 +93,13 @@ def summarize(
     if result.buckets.num_rows == 0:
         return _empty(base, caveats)
     labels = _labels_by_id(result.series)
+    coverage, unknown_spans = _coverage(meta, result)
+    base["unknown_spans"] = unknown_spans
+    _coverage_caveats(coverage, unknown_spans, caveats)
     # The grid is inclusive of both start and end (query_range and cache reads are BETWEEN).
     expected = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
     if meta.representation == "quantile":
-        return _summarize_quantile(meta, result, base, caveats, expected, top)
+        return _summarize_quantile(meta, result, base, caveats, expected, top, coverage)
     # Non-finite values (null, or NaN from a careless source) carry a count but no value.
     # They must not bias the mean: weight only buckets that have an avg.
     df = pl.from_arrow(result.buckets).with_columns(pl.col("avg", "min", "max").fill_nan(None))
@@ -97,6 +133,7 @@ def summarize(
             "max": _round(r["max"]),
             "mean": _round(r["mean"]),
             "gaps": int(r["gaps"]),
+            "coverage": coverage.get(r["series_id"]),
         }
         for r in per.head(top).to_dicts()
     ]
@@ -110,7 +147,13 @@ def summarize(
 
 
 def _summarize_quantile(
-    meta: DatasetMeta, result: FetchResult, base: dict, caveats: list[str], expected: int, top: int
+    meta: DatasetMeta,
+    result: FetchResult,
+    base: dict,
+    caveats: list[str],
+    expected: int,
+    top: int,
+    coverage: dict[str, dict],
 ) -> dict:
     """Percentiles are reported per bucket with their n; never averaged (spec §1.2)."""
     labels = _labels_by_id(result.series)
@@ -149,6 +192,7 @@ def _summarize_quantile(
             "buckets": int(r["buckets"]),
             "meaningful_buckets": int(r["meaningful_buckets"]) if meta.n_min is not None else None,
             "gaps": int(r["gaps"]),
+            "coverage": coverage.get(r["series_id"]),
         }
         for r in per.head(top).to_dicts()
     ]

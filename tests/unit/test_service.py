@@ -1,6 +1,8 @@
+import pyarrow as pa
 import pytest
 
 from telemetry_nerd.core.service import ChartRejected, auto_step
+from telemetry_nerd.model.series import BUCKET_SCHEMA, FetchResult
 from telemetry_nerd.model.time import TimeRange
 from telemetry_nerd.sources.base import LimitExceeded, SourceError
 from tests.unit.fakes import FakeSource, NonFiniteSource, PartialSource, make_service
@@ -156,3 +158,39 @@ async def test_too_many_buckets_is_limit_exceeded_before_any_fetch(tmp_path):
         await svc.query("up", start="now-30d", end="now", step="1s")
     assert "coarser step" in (exc.value.hint or "")
     assert src.calls == 0
+
+
+class HoleySource(FakeSource):
+    """Series i1 has no samples 2-5 min past each hour (three 1m buckets).
+
+    Fixed by wall-clock position, not by index: the cache fetches whole chunks that start
+    before the queried range, so an index-based hole would fall outside it."""
+
+    async def fetch(self, expr, rng, step_ms):
+        res = await super().fetch(expr, rng, step_ms)
+        b = res.buckets.to_pylist()
+        sid1 = sorted({r["series_id"] for r in b})[1]
+        kept = [
+            r
+            for r in b
+            if not (r["series_id"] == sid1 and 120_000 <= r["ts_ms"] % 3_600_000 < 300_000)
+        ]
+        return FetchResult(pa.Table.from_pylist(kept, schema=BUCKET_SCHEMA), res.series)
+
+
+async def test_panel_data_reports_missing_buckets(tmp_path):
+    svc = make_service(tmp_path, HoleySource())
+    ds = (await svc.query("up", start="now-2h", end="now-1h", step="1m"))["dataset"]
+    panel = svc.show(ds, "Holes?").panel
+    data = svc.panel_data(panel.id, width_px=2000)
+    assert [s["id"] for s in data["bucket_state"]] == [sorted(s["id"] for s in data["series"])[1]]
+    [c] = [c for c in data["located"] if c["code"] == "missing_data"]
+    assert len(c["where"]["spans"]) == 1
+    assert "missing_data" in data["caveats"] and "gaps" not in data["caveats"]
+
+
+async def test_clean_panel_has_no_bucket_state(tmp_path):
+    svc = make_service(tmp_path)
+    ds = (await svc.query("up", start="now-2h", end="now-1h", step="1m"))["dataset"]
+    data = svc.panel_data(svc.show(ds, "Clean?").panel.id, width_px=2000)
+    assert data["bucket_state"] == [] and data["located"] == []

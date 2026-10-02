@@ -72,6 +72,7 @@ from telemetry_nerd.core.panel_payloads import (
     series_labels,
     series_payload,
     signal_payload,
+    state_payload,
 )
 from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.profiles import ProfileService
@@ -82,6 +83,9 @@ from telemetry_nerd.core.summary import summarize, summarize_distribution
 from telemetry_nerd.core.workspace_service import WorkspaceService
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
+from telemetry_nerd.model.bucket_state import coarsen
+from telemetry_nerd.model.caveats import from_bucket_state, series_name
+from telemetry_nerd.model.companions import dataset_bundle
 from telemetry_nerd.model.distribution import DIST_N_MIN
 from telemetry_nerd.model.time import (
     TimeRange,
@@ -1181,6 +1185,22 @@ class TelemetryService:
         labels = series_labels(result.series)
         series = series_payload(table, labels)
         caveats = self._time_summary(meta, result, self.clock())["caveats"]
+        bundle = dataset_bundle(self.datasets, meta, result)
+        states = bundle.companions.get("bucket_state")
+        located = list(bundle.caveats)
+        state_rows: list[dict] = []
+        if states is not None:
+            if effective_step != meta.step_ms:
+                states = coarsen(states, effective_step)
+            names = {sid: series_name(lb) for sid, lb in labels.items()}
+            failed = [tuple(f) for f in meta.failed_spans]
+            located += from_bucket_state(states, names, effective_step, failed)
+            state_rows = state_payload(states)
+        if any(c.code == "missing_data" for c in located) and "gaps" in caveats:
+            caveats.remove("gaps")
+        for c in located:
+            if c.severity != "info" and c.code not in caveats:
+                caveats.append(c.code)
         extra = signal_payload(self.datasets, panel, meta, width_px, labels)
         if extra:
             caveats.append("filtered")
@@ -1196,6 +1216,8 @@ class TelemetryService:
             "dataset": meta.to_dict(),
             "effective_step_ms": effective_step,
             "series": series,
+            "bucket_state": state_rows,
+            "located": [c.model_dump() for c in located],
             "caveats": caveats,
         }
 

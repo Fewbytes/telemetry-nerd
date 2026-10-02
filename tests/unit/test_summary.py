@@ -224,3 +224,17 @@ def test_distribution_summary_flags_low_n_columns():
     assert s["series"][0]["low_n_columns"] == 1
     assert s["series"][0]["quantile_buckets"] == {}
     assert "low_count" in s["caveats"]
+
+
+async def test_summary_reports_coverage(tmp_path):
+    from tests.unit.fakes import make_service
+    from tests.unit.test_service import HoleySource
+
+    svc = make_service(tmp_path, HoleySource())
+    out = await svc.query("up", start="now-2h", end="now-1h", step="1m")
+    s = out["summary"]
+    assert "missing_data" in s["caveats"]
+    cov = {tuple(x["labels"].items()): x["coverage"] for x in s["series"]}
+    worst = min(cov.values(), key=lambda c: c["pct"])
+    assert worst["longest_gap"] == "3m" and worst["pct"] < 1.0
+    assert s["unknown_spans"] == []

@@ -72,7 +72,7 @@ class FakeSource:
                 "avg": [r[2] for r in rows],
                 "min": [r[2] - 0.5 for r in rows],
                 "max": [r[2] + 0.5 for r in rows],
-                "count": [4] * len(rows),
+                "count": [max(1, step_ms // self.resolution_ms)] * len(rows),
             },
             schema=BUCKET_SCHEMA,
         )
