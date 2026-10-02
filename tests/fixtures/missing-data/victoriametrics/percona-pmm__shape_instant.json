@@ -1,0 +1,1 @@
+{"claim":"shape_instant","source":"percona-pmm","note":"","request":{"path":"/api/v1/query","params":{"query":"count(up)","time":"1790926505"}},"status":200,"body":{"status":"success","data":{"resultType":"vector","result":[{"metric":{},"value":[1790926505,"198"]}]},"stats":{"seriesFetched":"198","executionTimeMsec":1}}}

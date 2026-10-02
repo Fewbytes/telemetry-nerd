@@ -1,0 +1,1 @@
+{"claim":"retention_edge","source":"cern-openstack","note":"range far before any plausible retention","request":{"path":"/api/v1/query_range","params":{"query":"up","start":"1713166505.194","end":"1713252905.194","step":"3600s"}},"status":200,"body":{"status":"success","data":{"resultType":"matrix","result":[]}}}

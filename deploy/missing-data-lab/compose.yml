@@ -1,0 +1,36 @@
+# Missing-data research lab (bead telemetry-nerd-1h9.10). Ports are offset from the dev stack
+# (8428) so both can run. Driven by scripts/missing_data_lab.py.
+#   just lab-up ; uv run scripts/missing_data_lab.py serve ; ... ; just lab-down
+name: tn-lab
+services:
+  prom:            # vanilla Prometheus, default 5m lookback, scrapes the lab exporter
+    image: docker.io/prom/prometheus:latest
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-remote-write-receiver
+      - --storage.tsdb.retention.time=2d
+    ports: ["19090:9090"]
+    volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+  prom-limits:     # tiny query limits, fed only with synthetic history via remote write
+    image: docker.io/prom/prometheus:latest
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-remote-write-receiver
+      - --query.max-samples=400
+    ports: ["19091:9090"]
+    volumes: ["./prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+  vm:              # single-node VictoriaMetrics, defaults, scrapes the lab exporter
+    image: docker.io/victoriametrics/victoria-metrics:v1.137.0
+    command:
+      - -promscrape.config=/etc/vm/scrape.yml
+      - -retentionPeriod=30d
+    ports: ["18428:8428"]
+    volumes: ["./vm-scrape.yml:/etc/vm/scrape.yml:ro"]
+  vm-limits:       # tiny limits + 1d retention (the minimum)
+    image: docker.io/victoriametrics/victoria-metrics:v1.137.0
+    command:
+      - -retentionPeriod=1d
+      - -search.maxPointsPerTimeseries=100
+      - -search.maxUniqueTimeseries=3
+      - -search.maxSamplesPerQuery=500
+    ports: ["18429:8428"]

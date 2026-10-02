@@ -1,0 +1,1 @@
+{"claim":"buildinfo","source":"promlabs-demo","note":"","request":{"path":"/api/v1/status/buildinfo","params":{}},"status":200,"body":{"status":"success","data":{"version":"3.14.0","revision":"dd6905a4ca80f358c489275f04bb93894b55c101","branch":"main","buildUser":"root@87dd2705e384","buildDate":"20260825-12:23:08","goVersion":"go1.27.0"}}}

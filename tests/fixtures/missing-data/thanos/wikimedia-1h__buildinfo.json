@@ -1,0 +1,1 @@
+{"claim":"buildinfo","source":"wikimedia-1h","note":"","request":{"path":"/api/v1/status/buildinfo","params":{}},"status":200,"body":{"status":"success","data":{"version":"0.38.0","revision":"non-git","branch":"non-git","buildUser":"pbuilder@build2001","buildDate":"20250414-09:27:40","goVersion":"go1.24.2"}}}

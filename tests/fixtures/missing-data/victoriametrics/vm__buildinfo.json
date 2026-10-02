@@ -1,0 +1,1 @@
+{"claim":"buildinfo","source":"vm","note":"","request":{"path":"/api/v1/status/buildinfo","params":{}},"status":200,"body":{"status":"success","data":{"version":"2.24.0"}}}

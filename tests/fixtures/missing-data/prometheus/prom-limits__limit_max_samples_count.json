@@ -1,0 +1,1 @@
+{"claim":"limit_max_samples_count","source":"prom-limits","note":"","request":{"path":"/api/v1/query_range","params":{"query":"count_over_time(syn_gauge[1m])","start":"1790923560.000","end":"1790926260.000","step":"5s"}},"status":422,"body":{"status":"error","errorType":"execution","error":"query processing would load too many samples into memory in query execution"}}

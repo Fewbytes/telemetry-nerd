@@ -191,7 +191,10 @@ Adapter rules:
 3. Profile summary shown on the source card and in the provenance footer.
 4. Each profile property is pinned by recorded-fixture tests (`1h9.6`, `1h9.10`).
 
-Known current gap: `fetch_values` (quantile path) uses expression evaluation. Quantiles via
+Known current gaps (evidence: `docs/data-source-quirks.md`, bead `1h9.10`): the adapter's expression
+path (`count_over_time((expr)[step:res])`) fills gaps like instant evaluation (`1h9.11`); VictoriaMetrics
+`increase`/`rate` carry a gap's whole increase into the first bucket after it (`1h9.13`); warnings /
+`isPartial` are ignored (`1h9.12`). Profiles are in `sources/semantics.py`. Also: `fetch_values` (quantile path) uses expression evaluation. Quantiles via
 `histogram_quantile(increase(...[step]))` are range-based and safe; plain-gauge value queries are
 not, and must move to the `*_over_time` path or be flagged.
 

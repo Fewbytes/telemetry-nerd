@@ -1,0 +1,1 @@
+{"claim":"flags","source":"vm","note":"retention / lookback / latency flags are readable from the server","request":{"path":"/flags","params":{}},"status":200,"body":"-retentionPeriod=\"30d\""}

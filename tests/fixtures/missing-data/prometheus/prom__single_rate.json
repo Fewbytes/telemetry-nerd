@@ -1,0 +1,1 @@
+{"claim":"single_rate","source":"prom","note":"window shorter than the sample interval","request":{"path":"/api/v1/query_range","params":{"query":"rate(syn_counter_total{case=\"i15\"}[5s])","start":"1790923560.000","end":"1790923660.000","step":"15s"}},"status":200,"body":{"status":"success","data":{"resultType":"matrix","result":[]}}}

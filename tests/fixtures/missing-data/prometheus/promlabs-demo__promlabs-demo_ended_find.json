@@ -1,0 +1,1 @@
+{"claim":"promlabs-demo_ended_find","source":"promlabs-demo","note":"","request":{"path":"/api/v1/query","params":{"query":"topk(1, timestamp(last_over_time(up[6h])) < 1790925414)","time":"1790926313.550"}},"status":200,"body":{"status":"success","data":{"resultType":"vector","result":[]}}}

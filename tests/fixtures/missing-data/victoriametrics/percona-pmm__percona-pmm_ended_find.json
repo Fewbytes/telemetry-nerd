@@ -1,0 +1,1 @@
+{"claim":"percona-pmm_ended_find","source":"percona-pmm","note":"","request":{"path":"/api/v1/query","params":{"query":"topk(1, last_over_time(up[3h]) unless last_over_time(up[20m]))","time":"1790926638.375"}},"status":200,"body":{"status":"success","data":{"resultType":"vector","result":[]},"stats":{"seriesFetched":"396","executionTimeMsec":8}}}

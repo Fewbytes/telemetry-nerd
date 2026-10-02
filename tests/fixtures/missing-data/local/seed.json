@@ -1,0 +1,75 @@
+{
+ "start_ms": 1790923560000,
+ "series": [
+  {
+   "labels": {
+    "__name__": "syn_gauge",
+    "job": "syn",
+    "case": "i15"
+   },
+   "samples": 105,
+   "first_ms": 1790923560000,
+   "last_ms": 1790925735000
+  },
+  {
+   "labels": {
+    "__name__": "syn_gauge",
+    "job": "syn",
+    "case": "i60"
+   },
+   "samples": 21,
+   "first_ms": 1790923560000,
+   "last_ms": 1790926140000
+  },
+  {
+   "labels": {
+    "__name__": "syn_counter_total",
+    "job": "syn",
+    "case": "i15"
+   },
+   "samples": 100,
+   "first_ms": 1790923560000,
+   "last_ms": 1790925645000
+  },
+  {
+   "labels": {
+    "__name__": "syn_gauge",
+    "job": "syn",
+    "case": "single"
+   },
+   "samples": 1,
+   "first_ms": 1790924760000,
+   "last_ms": 1790924760000
+  },
+  {
+   "labels": {
+    "__name__": "syn_hist_bucket",
+    "job": "syn",
+    "le": "1"
+   },
+   "samples": 90,
+   "first_ms": 1790923560000,
+   "last_ms": 1790925345000
+  },
+  {
+   "labels": {
+    "__name__": "syn_hist_bucket",
+    "job": "syn",
+    "le": "5"
+   },
+   "samples": 120,
+   "first_ms": 1790923560000,
+   "last_ms": 1790925345000
+  },
+  {
+   "labels": {
+    "__name__": "syn_hist_bucket",
+    "job": "syn",
+    "le": "+Inf"
+   },
+   "samples": 120,
+   "first_ms": 1790923560000,
+   "last_ms": 1790925345000
+  }
+ ]
+}

@@ -70,3 +70,9 @@ docker-build:
 docker-run *args:
     ${CONTAINER:-podman} run --rm -p 127.0.0.1:7070:7070 -v tn-data:/data \
         -e TN_SOURCE_URL="${TN_SOURCE_URL:-http://host.containers.internal:8428}" {{args}} {{image}}
+
+lab-up:
+    podman compose -f deploy/missing-data-lab/compose.yml up -d
+
+lab-down:
+    podman compose -f deploy/missing-data-lab/compose.yml down -v

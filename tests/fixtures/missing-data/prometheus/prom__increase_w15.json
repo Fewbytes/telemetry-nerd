@@ -1,0 +1,1 @@
+{"claim":"increase_w15","source":"prom","note":"counter +15/15s (truth 1/s), 10 min gap from +600 s, reset at +1500 s","request":{"path":"/api/v1/query_range","params":{"query":"increase(syn_counter_total[15s])","start":"1790923560.000","end":"1790925660.000","step":"15s"}},"status":200,"body":{"status":"success","data":{"resultType":"matrix","result":[]}}}

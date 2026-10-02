@@ -1,0 +1,1 @@
+{"claim":"retention_edge","source":"promlabs-demo","note":"range far before any plausible retention","request":{"path":"/api/v1/query_range","params":{"query":"up","start":"1713166313.550","end":"1713252713.550","step":"3600s"}},"status":200,"body":{"status":"success","data":{"resultType":"matrix","result":[]}}}

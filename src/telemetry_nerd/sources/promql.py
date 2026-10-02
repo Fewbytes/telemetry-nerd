@@ -28,6 +28,11 @@ from telemetry_nerd.model.series import (
 from telemetry_nerd.model.time import TimeRange, format_duration
 from telemetry_nerd.sources.base import LimitExceeded, Limits, SourceError, SourceUnavailable
 from telemetry_nerd.sources.gate import Gate
+from telemetry_nerd.sources.semantics import (
+    MissingDataSemantics,
+    classify_limit_error,
+    semantics_for,
+)
 from telemetry_nerd.sources.spec import SourceSpec
 
 MAX_STEPS_PER_QUERY = 11_000
@@ -69,6 +74,24 @@ def _malformed(message: str) -> SourceError:
     )
 
 
+_LIMIT_HINTS = {
+    "max_points": "use a coarser step or a shorter range",
+    "max_samples": "narrow the selector, shorten the range, or use a coarser step",
+    "max_series": "narrow the selector with label filters or aggregate, e.g. sum by (service) (...)",
+    "range_too_long": "shorten the range",
+    "timeout": "narrow the selector, shorten the range, or use a coarser step",
+}
+
+
+def _raise_if_limit(message: str) -> None:
+    """Server-side query limits (documented per backend in sources/semantics.py) are
+    LimitExceeded, never a generic failure: the data exists but was not served."""
+    if (kind := classify_limit_error(message)) is not None:
+        raise LimitExceeded(
+            f"source refused the query: {message.strip()[:300]}", hint=_LIMIT_HINTS[kind]
+        )
+
+
 def is_selector(expr: str) -> bool:
     return bool(_SELECTOR.match(expr))
 
@@ -85,8 +108,10 @@ class PromQLSource:
         client: httpx.AsyncClient | None = None,
         headers: Mapping[str, str] | None = None,
         gate: Gate | None = None,
+        backend: str | None = None,
     ) -> None:
         self.name = name
+        self.backend = backend
         self.base_url = base_url.rstrip("/")
         self.flavor = flavor
         self.resolution_ms = resolution_ms
@@ -119,6 +144,11 @@ class PromQLSource:
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
+
+    @property
+    def semantics(self) -> MissingDataSemantics:
+        """What this source does at the edges of its data (profile; evidence in data-source-quirks)."""
+        return semantics_for(self.backend, self.flavor)
 
     @property
     def identity(self) -> str:
@@ -244,6 +274,8 @@ class PromQLSource:
         try:
             body = resp.json()
         except ValueError as e:
+            # Thanos answers some limit errors as plain text, not the JSON envelope
+            _raise_if_limit(resp.text)
             raise SourceUnavailable(
                 f"non-JSON response from source (HTTP {resp.status_code})",
                 hint="check the source URL points at a Prometheus-compatible API, not a proxy page",
@@ -251,6 +283,7 @@ class PromQLSource:
         if not isinstance(body, dict):
             raise _malformed(f"unexpected response body {type(body).__name__}")
         if body.get("status") != "success":
+            _raise_if_limit(str(body.get("error", "")))
             raise SourceError(
                 f"query failed: {body.get('error', f'HTTP {resp.status_code}')}",
                 hint="check PromQL/MetricsQL syntax and metric names",

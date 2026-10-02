@@ -1,0 +1,1 @@
+{"claim":"vm-playground_ended_find","source":"vm-playground","note":"","request":{"path":"/api/v1/query","params":{"query":"topk(1, last_over_time(up[3h]) unless last_over_time(up[20m]))","time":"1790926638.375"}},"status":200,"body":{"status":"success","isPartial":false,"data":{"resultType":"vector","result":[]},"stats":{"seriesFetched":"218","executionTimeMsec":14}}}

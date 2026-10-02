@@ -1,0 +1,1 @@
+{"claim":"buildinfo","source":"cern-eos","note":"","request":{"path":"/api/v1/status/buildinfo","params":{}},"status":200,"body":{"status":"success","data":{"version":"0.32.5","revision":"750e8a94eed5226cd4562117295d540a968c163c","branch":"HEAD","buildUser":"root@053ebc7b5322","buildDate":"20231019-04:13:41","goVersion":"go1.21.3"}}}

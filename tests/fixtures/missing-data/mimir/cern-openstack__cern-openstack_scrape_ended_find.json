@@ -1,0 +1,1 @@
+{"claim":"cern-openstack_scrape_ended_find","source":"cern-openstack","note":"","request":{"path":"/api/v1/query","params":{"query":"topk(1, last_over_time(kube_pod_info[3h]) unless kube_pod_info)","time":"1790926613.970"}},"status":200,"body":{"status":"success","data":{"resultType":"vector","result":[]}}}
