@@ -43,6 +43,25 @@ a suggestion from a short window: a quiet counter looks constant, a slow gauge l
 Read the findings before overriding a pack or the source's declaration, and cite the scan
 (`basis`) when you write a claim that rests on it.
 
+## Learning from the repo, dashboards and docs
+
+If you can read the code that exposes a metric, that is the best evidence there is: the help text,
+the type and the unit are what the author declared. `catalog_context` does the extraction:
+
+1. Find definitions with `rg`/`ast-grep` (`Counter(`, `NewGaugeVec`, `create_counter`, ...), and
+   dashboards (`*.json` with `panels`) and docs with metric tables.
+2. Read the few files that matter and send them as `files=[{path, text}]`. Nothing leaves the
+   daemon's side: it reads no files itself. Use `dry_run=true` first when unsure.
+3. Read the result: `unmatched` are definitions this source does not have (another service, another
+   environment, a renamed series: a lead, not an error); `skipped` names were built at runtime and
+   need you to resolve them by hand; `findings` are places where the repo disagrees with what the
+   source declares, a pack, or a scan. Look at each: either the code is stale, the deployment is
+   old, or the source is wrong.
+
+Claims from code carry `file:line`; cite it. They rank below measured behaviour, so a metric that
+behaves unlike its code is a finding to investigate, not something to overwrite. A dashboard unit
+is weaker evidence than a registration (people pick the nearest unit), and a docs table weaker still.
+
 ## Evidence and confidence
 
 `confidence` is at most 0.9; 1.0 is reserved for what the user verified. `basis` is required: one

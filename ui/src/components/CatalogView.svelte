@@ -101,7 +101,7 @@
     <input type="text" placeholder="name prefix, e.g. node_cpu" aria-label="Prefix" value={f.prefix} onchange={(e) => set("prefix", e.currentTarget.value)} />
     <select aria-label="Winning origin" value={f.origin} onchange={(e) => set("origin", e.currentTarget.value as CatalogFilters["origin"])}>
       <option value="">any origin</option>
-      {#each ["user", "claude", "stats", "pack", "metadata", "rule"] as o (o)}<option value={o}>{originLabel(o)}</option>{/each}
+      {#each ["user", "claude", "stats", "context", "pack", "metadata", "rule"] as o (o)}<option value={o}>{originLabel(o)}</option>{/each}
     </select>
     <select aria-label="Reviewed" value={f.reviewed} onchange={(e) => set("reviewed", e.currentTarget.value as CatalogFilters["reviewed"])}>
       <option value="">reviewed or not</option><option value="no">needs review</option><option value="yes">reviewed</option>

@@ -13,6 +13,8 @@ from typing import Any
 from telemetry_nerd.analysis.samples import SampleStats
 from telemetry_nerd.catalog.browse import Browse
 from telemetry_nerd.catalog.browse import browse as browse_catalog
+from telemetry_nerd.catalog.context import GRAFANA_UNITS, MAX_BYTES, MAX_FILES, SOURCE_CONFIDENCE
+from telemetry_nerd.catalog.context import extract as extract_context
 from telemetry_nerd.catalog.families import detect as detect_families
 from telemetry_nerd.catalog.models import (
     ORIGIN_RANK,
@@ -40,6 +42,7 @@ from telemetry_nerd.catalog.relations import (
     validate_relation,
 )
 from telemetry_nerd.catalog.rules import (
+    PROVENANCE,
     Facts,
     derive_claims,
     facts_from_claims,
@@ -55,6 +58,7 @@ from telemetry_nerd.charts.dataview import SignalViews
 from telemetry_nerd.charts.indexed import check_index, shifted
 from telemetry_nerd.charts.spec import ChartSpec, Marginal, Reference, YContext
 from telemetry_nerd.charts.units import infer_unit_with_provenance, metric_names
+from telemetry_nerd.charts.ycontext import counter_rate_metric, selector_parts
 from telemetry_nerd.charts.yview import (
     BUILTIN_LABELS,
     INDEX_LABELS,
@@ -75,6 +79,7 @@ from telemetry_nerd.workspace.models import (
     Annotation,
     AnnotationIn,
     AnnotationRef,
+    ClaimRef,
     Finding,
     FindingIn,
     Gap,
@@ -98,7 +103,10 @@ DEFAULT_HIGHLIGHT_TTL_MS = 300_000
 MAX_CLAUDE_BATCH = 200
 MAX_SEARCH = 200
 CLAUDE_MAX_CONFIDENCE = 0.9
-CURATED_ORIGINS = frozenset({"pack", "claude", "user"})  # a scan never overrules these
+CONTEXT_MAX_FILES = MAX_FILES
+CONTEXT_MAX_BYTES = MAX_BYTES
+CONTEXT_REPORT = 50  # unmatched/skipped entries listed per call
+CURATED_ORIGINS = frozenset({"context", "pack", "claude", "user"})  # a scan never overrules these
 NONNEG_BOUNDS = frozenset({"≥0", "[0,1]", "[0,100]"})
 
 
@@ -108,7 +116,9 @@ def atomic[F: Callable](fn: F) -> F:
 
     @functools.wraps(fn)
     def wrapper(self, *args, **kwargs):
-        actor = sig.bind(self, *args, **kwargs).arguments["actor"]
+        bound = sig.bind(self, *args, **kwargs)
+        bound.apply_defaults()  # an omitted `actor` takes its default, and is still validated
+        actor = bound.arguments["actor"]
         check_actor(actor)
         with self.log.transaction():
             return fn(self, *args, **kwargs)
@@ -231,6 +241,9 @@ class WorkspaceService:
                         raise NotFound(f"dataset {did} not found")
                 case AnnotationRef(annotation=aid):
                     self.objects.get_annotation(aid)
+                case ClaimRef(source=src, metric=m):
+                    if not self.catalog.has_metric(src, m):
+                        raise NotFound(f"no catalog entry for {m!r} on {src!r}")
         data = self._check_claim_coverage(data)
         if data.hypothesis is not None:
             self.objects.get_hypothesis(data.hypothesis)
@@ -910,6 +923,212 @@ class WorkspaceService:
             **({} if effective else {"outranked_by": win.origin}),
             "gaps": out["gaps"],
         }
+
+    @atomic
+    def catalog_context(
+        self,
+        source: str,
+        files: list[dict[str, Any]],
+        dry_run: bool = False,
+        actor: Actor = "claude",
+    ) -> dict[str, Any]:
+        """Learn from text Claude read in the repo: code that registers metrics, Grafana dashboards,
+        markdown metric tables (bead 2as.18). Writes `context` claims with file:line citations for
+        metrics this source has; reports definitions it does not have and names it could not read.
+
+        Claims follow the normal precedence (user, Claude and measured behaviour outrank them), and
+        where one disagrees with what the source declares, a pack or a scan, a finding is filed."""
+        if not isinstance(files, list) or not files or len(files) > CONTEXT_MAX_FILES:
+            raise ValueError(f"send 1 to {CONTEXT_MAX_FILES} files per call as [{{path, text}}]")
+        for f in files:
+            if (
+                not isinstance(f, dict)
+                or not isinstance(f.get("path"), str)
+                or not isinstance(f.get("text"), str)
+            ):
+                raise ValueError("each file needs a string `path` and `text`")  # noqa: TRY004
+            if len(f["text"].encode()) > CONTEXT_MAX_BYTES:
+                raise ValueError(
+                    f"{f['path']}: larger than {CONTEXT_MAX_BYTES} bytes; send the relevant part"
+                )
+        found = extract_context(files)
+        now = self.clock()
+        proposals: dict[tuple[str, str], Claim] = {}
+        notes: list[str] = []
+
+        def propose(metric: str, field_: str, value: Any, confidence: float, cite: str) -> None:
+            try:
+                validate_value(field_, value)
+            except ValueError:
+                return
+            key = (metric, field_)
+            old = proposals.get(key)
+            if old is not None and old.value != value:
+                kept = old if old.confidence >= confidence else None
+                notes.append(
+                    f"{metric} {field_}: {old.citation} says {old.value!r}, {cite} says {value!r}; "
+                    f"kept {'the first' if kept else 'the second'}"
+                )
+                if kept:
+                    return
+            elif old is not None and old.confidence >= confidence:
+                return
+            proposals[key] = Claim(
+                field=field_,
+                value=value,
+                origin="context",
+                confidence=confidence,
+                citation=cite,
+                ts_ms=now,
+            )  # type: ignore[arg-type]
+
+        unmatched: list[dict] = []
+        matched_metrics: set[str] = set()
+        for d in found.definitions:
+            hits = [n for n in d.names if self.catalog.has_metric(source, n)]
+            if d.kind in ("histogram", "summary") and self.catalog.has_metric(source, d.base):
+                hits.append(d.base)  # a native histogram is exposed under its base name
+            if not hits:
+                unmatched.append({"name": d.base, "where": f"{d.path}:{d.line}"})
+                continue
+            for n in hits:
+                matched_metrics.add(n)
+                if d.help and d.help.strip():
+                    propose(n, "description", d.help.strip(), d.confidence, d.citation)
+                if d.unit:
+                    propose(n, "unit", d.unit, d.confidence, d.citation)
+                exact = n == d.base or n in d.names and d.kind in ("counter", "gauge")
+                if (
+                    d.kind in ("counter", "gauge")
+                    and exact
+                    or d.kind in ("histogram", "summary")
+                    and n == d.base
+                ):
+                    propose(n, "type", d.kind, d.confidence, d.citation)
+        for p in found.panels:
+            self._panel_context(source, p, propose, matched_metrics)
+
+        findings: list[str] = []
+        rows = list(proposals.items())
+        for (metric, field_), claim in rows:
+            if field_ not in ("type", "unit"):
+                continue
+            others = [
+                c for c in self.catalog.claims_for(source, metric)
+                if c.origin != "context" and c.field == field_
+            ]  # fmt: skip
+            top = resolve(others)
+            if (
+                top is None
+                or top.origin not in ("metadata", "pack", "stats")
+                or top.value == claim.value
+            ):
+                continue
+            kind = f"context_vs_{top.origin}_{field_}"
+            if dry_run or self.samples.finding(source, metric, kind):
+                continue
+            f = self.finding_create(
+                FindingIn(
+                    claim=(
+                        f"{metric}: {claim.citation} says {field_} is {claim.value!r}, "
+                        f"but {PROVENANCE[top.origin]} says {top.value!r}"
+                    ),
+                    scope=Scope(
+                        source=source, selector=metric, time_range=TimeSpan(start_ms=now - 3_600_000, end_ms=now),
+                        step="1m", aggregation="catalog claims (no data)",
+                    ),
+                    evidence=[
+                        ClaimRef(
+                            kind="claim", source=source, metric=metric, field=field_,
+                            origins=["context", top.origin], note=claim.citation,
+                        )
+                    ],
+                    caveats=["not_measured"],
+                ),
+                "system",  # a mechanical discovery, like a scan's: not Claude's claim
+            )  # fmt: skip
+            self.samples.set_finding(source, metric, kind, f.id)
+            findings.append(f.id)
+
+        changed = 0
+        if not dry_run and rows:
+            changed = self.catalog.put_claims_bulk(source, [(m, c) for (m, _), c in rows])
+            for metric in {m for (m, f_), _ in rows if f_ in ("unit", "type")}:
+                self._refresh_panel_units(source, metric)
+        out = {
+            "dry_run": dry_run,
+            "files": len(files),
+            "definitions": len(found.definitions),
+            "panels": len(found.panels),
+            "metrics_matched": len(matched_metrics),
+            "claims": len(rows),
+            "claims_changed": changed,
+            "findings": findings,
+            "context_conflicts": notes,
+            "unmatched": unmatched[:CONTEXT_REPORT],
+            "unmatched_total": len(unmatched),
+            "skipped": [
+                {"where": f"{s.path}:{s.line}" if s.line else s.path, "reason": s.reason}
+                for s in found.skipped[:CONTEXT_REPORT]
+            ],
+            "skipped_total": len(found.skipped),
+        }
+        if dry_run:
+            out["preview"] = [
+                {
+                    "metric": m,
+                    "field": f_,
+                    "value": c.value,
+                    "confidence": c.confidence,
+                    "basis": c.citation,
+                }
+                for (m, f_), c in rows[:100]
+            ]
+        else:
+            self.log.append(
+                actor, "catalog.context_ingested", None,
+                {k: out[k] for k in ("files", "definitions", "metrics_matched", "claims", "claims_changed")}
+                | {"source": source, "findings": findings},
+            )  # fmt: skip
+        return out
+
+    def _panel_context(self, source: str, p, propose, matched: set[str]) -> None:
+        """A dashboard panel speaks for a metric only when every expression is about that one
+        metric: a plain selector or a rate of a counter. Its unit becomes that metric's unit."""
+        metrics: set[str] = set()
+        rate_forms: set[bool] = set()
+        for expr in p.exprs:
+            sel = selector_parts(expr)
+            rate = counter_rate_metric(expr)
+            m = sel[0] if sel else rate
+            if m is None:
+                return
+            metrics.add(m)
+            rate_forms.add(rate is not None and sel is None)
+        if len(metrics) != 1 or len(rate_forms) != 1:
+            return
+        (metric,) = metrics
+        (is_rate,) = rate_forms
+        if not self.catalog.has_metric(source, metric):
+            return
+        cite = f'dashboard: {p.path} panel "{p.title}"'
+        info = GRAFANA_UNITS.get(p.unit_id or "")
+        if info is not None:
+            unit, per_second = info
+            if per_second == is_rate and (is_rate or not per_second):
+                matched.add(metric)
+                propose(
+                    metric,
+                    "unit",
+                    unit,
+                    SOURCE_CONFIDENCE["dashboard"],
+                    f"{cite} (grafana unit {p.unit_id!r})",
+                )
+        if p.description and p.description.strip() and not is_rate:
+            matched.add(metric)
+            propose(
+                metric, "description", p.description.strip(), SOURCE_CONFIDENCE["dashboard"], cite
+            )
 
     def catalog_hot(self, source: str) -> set[str]:
         """Catalogued metrics this workspace has actually queried (any dataset expression)."""

@@ -14,15 +14,18 @@ from pydantic import BaseModel, Field
 
 from telemetry_nerd.model.discovery import MetricType
 
-Origin = Literal["user", "claude", "stats", "pack", "metadata", "rule"]
-#: precedence: user > claude > stats > pack > metadata > rule
+Origin = Literal["user", "claude", "stats", "context", "pack", "metadata", "rule"]
+#: precedence: user > claude > stats > context > pack > metadata > rule. `context` is what the
+#: repo's code, docs and dashboards say: more specific than a generic pack, but a declaration that
+#: may be stale, so observed behaviour (stats) outranks it.
 ORIGIN_RANK: dict[str, int] = {
     "rule": 0,
     "metadata": 1,
     "pack": 2,
-    "stats": 3,
-    "claude": 4,
-    "user": 5,
+    "context": 3,
+    "stats": 4,
+    "claude": 5,
+    "user": 6,
 }
 ORIGINS = frozenset(get_args(Origin))
 

@@ -44,6 +44,7 @@ export function statLine(ref: StatisticRef): string {
 export function refLabel(ref: EvidenceRef): string {
   if (ref.kind === "panel") return `panel ${ref.panel}`;
   if (ref.kind === "annotation") return `annotation ${ref.annotation}`;
+  if (ref.kind === "claim") return `${ref.metric} ${ref.field}: ${ref.origins.join(" vs ")} disagree`;
   return statLine(ref);
 }
 

@@ -116,7 +116,20 @@ class StatisticRef(_Strict):
         return self
 
 
-EvidenceRef = Annotated[PanelRef | AnnotationRef | StatisticRef, Field(discriminator="kind")]
+class ClaimRef(_Strict):
+    """Catalog claims as evidence: where origins disagree about a metric's field."""
+
+    kind: Literal["claim"]
+    source: str = Field(min_length=1)
+    metric: str = Field(min_length=1)
+    field: str = Field(min_length=1)
+    origins: list[str] = Field(min_length=2)
+    note: str | None = None
+
+
+EvidenceRef = Annotated[
+    PanelRef | AnnotationRef | StatisticRef | ClaimRef, Field(discriminator="kind")
+]
 
 AnnotationKind = Literal["event", "region", "threshold", "band", "note"]
 

@@ -2,7 +2,7 @@
 import type { CardField, MetricCard } from "./api";
 
 export const ORIGIN_LABEL: Record<string, string> = {
-  user: "you", claude: "Claude", stats: "measured", pack: "pack", metadata: "source", rule: "name rule",
+  user: "you", claude: "Claude", stats: "measured", context: "repo/docs", pack: "pack", metadata: "source", rule: "name rule",
 };
 export const originLabel = (o: string | null): string => (o ? (ORIGIN_LABEL[o] ?? o) : "no claim");
 

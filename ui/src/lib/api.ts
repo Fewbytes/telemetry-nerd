@@ -140,6 +140,7 @@ export interface Scope {
 export type EvidenceRef =
   | { kind: "panel"; panel: string }
   | { kind: "annotation"; annotation: string }
+  | { kind: "claim"; source: string; metric: string; field: string; origins: string[]; note?: string | null }
   | {
       kind: "statistic"; dataset: string; name: string; value: number;
       interval: [number, number] | null; exact: boolean; method: string;

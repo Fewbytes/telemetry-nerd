@@ -43,6 +43,8 @@
             {:else}
               {refLabel(ref)}
             {/if}
+          {:else if ref.kind === "claim"}
+            <a href="#/catalog" title="open the catalog to see the claims side by side">{refLabel(ref)}</a>{#if ref.note} <span class="basis">— {ref.note}</span>{/if}
           {:else}
             {statLine(ref)}
           {/if}

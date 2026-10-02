@@ -111,6 +111,11 @@ describe("refLabel", () => {
     expect(refLabel(annotation)).toBe("annotation a2");
   });
 
+  it("labels claim refs by the metric, the field and who disagrees", () => {
+    const claim: EvidenceRef = { kind: "claim", source: "vm", metric: "queue_wait_seconds", field: "unit", origins: ["context", "metadata"] };
+    expect(refLabel(claim)).toBe("queue_wait_seconds unit: context vs metadata disagree");
+  });
+
   it("renders statistic refs through statLine", () => {
     expect(refLabel(statRef({}))).toBe("p99 = 2.5 [2.1, 3.2] (bootstrap)");
   });

@@ -35,6 +35,9 @@ describe("cardSummary", () => {
 });
 
 describe("labels and formats", () => {
+  it("names the repo/docs origin", () => {
+    expect(originLabel("context")).toBe("repo/docs");
+  });
   it("names origins for people", () => {
     expect(originLabel("user")).toBe("you");
     expect(originLabel("metadata")).toBe("source");

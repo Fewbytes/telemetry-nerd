@@ -95,6 +95,9 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   bounds), record it with `catalog_write` and a basis; never claim a unit you cannot justify.
   Relations (`catalog_relate`: bounded_by, part_of, ...) and model bindings (`catalog_bind`:
   littles_law, RED, USE) go the same way; a binding role with no signal raises a Gap.
+- When you can read the service's repo, `catalog_context` turns its metric registrations,
+  dashboards and docs into cited claims (description, type, unit): find the files with rg, read the
+  few that matter, send their text. Say where a claim came from when you cite it.
 - `catalog_scan` measures a bounded set of metrics over a short window (resets, small decreases,
   negatives) and files contradictions with declared types or bounds as system findings; a short
   window only suggests, so say so when you cite it.
@@ -519,6 +522,24 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         queried come first (hot). Rows carry the winning type/unit/role/bounds and their origin."""
         try:
             return _dump(service.ws.catalog_search(source, query, prefix, needs_review, limit))
+        except (NotFound, ValueError) as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
+    def catalog_context(source: str, files: list[dict[str, str]], dry_run: bool = False) -> str:
+        """Teach the catalog what the repo, docs and dashboards say about this source's metrics.
+        You read the files (rg/ast-grep to find them), send `files` as [{path, text}] (<= 50 files,
+        <= 1 MB each; the daemon reads nothing itself). Extracted deterministically: Python
+        prometheus_client and OpenTelemetry registrations, Go prometheus/OpenTelemetry, JS/TS
+        OpenTelemetry, Grafana dashboard JSON (panel unit and description for single-metric panels),
+        markdown metric tables. Names built at runtime are skipped and reported, never guessed.
+        Writes origin=context claims (description, type, unit) with a file:line citation for metrics
+        this source has; they rank below measured behaviour, Claude and the user. If one disagrees
+        with what the source declares, a pack or a scan, a finding is filed. Returns matched
+        metrics, `unmatched` definitions (in code, not in this source: a lead), skipped files.
+        dry_run=true previews without writing."""
+        try:
+            return _dump(service.ws.catalog_context(source, files, dry_run, "claude"))
         except (NotFound, ValueError) as e:
             raise _fail(e) from e
 

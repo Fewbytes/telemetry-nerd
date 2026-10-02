@@ -18,6 +18,7 @@ PROVENANCE: dict[str, str] = {
     "user": "set by user",
     "claude": "provided by claude",
     "stats": "measured from data",
+    "context": "repo, docs or dashboard",
     "pack": "knowledge pack",
     "metadata": "source metadata",
     "rule": "inferred from metric name",

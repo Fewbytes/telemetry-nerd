@@ -4,7 +4,7 @@ import type { CatalogRow } from "./api";
 export const PAGE = 50;
 export interface CatalogFilters {
   source: string; q: string; prefix: string;
-  origin: "" | "user" | "claude" | "stats" | "pack" | "metadata" | "rule";
+  origin: "" | "user" | "claude" | "stats" | "context" | "pack" | "metadata" | "rule";
   weak: boolean; // winner below 0.6
   conflicts: boolean; findings: boolean;
   reviewed: "" | "yes" | "no";
