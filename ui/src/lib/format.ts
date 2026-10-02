@@ -46,3 +46,6 @@ export function refLabel(ref: EvidenceRef): string {
   if (ref.kind === "annotation") return `annotation ${ref.annotation}`;
   return statLine(ref);
 }
+
+/** Step length as "2m" (whole minutes) or "30s". */
+export const fmtStep = (ms: number): string => (ms % 60_000 === 0 ? `${ms / 60_000}m` : `${ms / 1000}s`);

@@ -244,7 +244,8 @@ cell = measured, nothing happened. Partial columns faded like low-n cells.
 
 ### 7.3 Window views (histogram, ECDF, CCDF, threshold readout)
 
-Coverage badge ("covers 87% of window · 5m missing · 2 resets"), click → mini rug of the window.
+Coverage badge ("covers 87% of window · 5m missing · 2 resets"), with a tooltip listing missing steps; a mini rug only if real use shows the
+tooltip is not enough.
 Fractions/counts carry the caveat when coverage < 100%.
 
 ### 7.4 Hover hints

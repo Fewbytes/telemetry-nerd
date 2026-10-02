@@ -9,6 +9,8 @@
   import { PALETTE, rgba, seriesName, toUplot } from "./chart/toUplot";
   import { drawRug, hitRug, rugCells, rugHeight, rugHint, type RugCell } from "./chart/rug";
   import { describeShown, panelNotes } from "./lib/panelNotes";
+  import { windowBadge } from "./lib/coverage";
+  import { fmtStep } from "./lib/format";
   import { setupCanvas } from "./chart/canvas";
   import { drawnFor, VIEW_LABELS, type DataViewName } from "./chart/dataview";
   import SpectrumPlot from "./components/SpectrumPlot.svelte";
@@ -66,7 +68,6 @@
   let render = $state<{ ms: number; exceeded: boolean } | null>(null);
 
   const fmtTime = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z");
-  const fmtStep = (ms: number) => (ms % 60_000 === 0 ? `${ms / 60_000}m` : `${ms / 1000}s`);
 
   let requestId = 0;
   const load = (width: number) => {
@@ -556,6 +557,9 @@
     {/if}
     {#if data && data.kind === "histogram"}
       {@const hg = data}
+      {#each hg.series.flatMap((s) => s.windows.map((w) => windowBadge(w, hg.effective_step_ms)).filter((b) => b !== null)) as b, i (i)}
+        <span class="chip caveat" data-window-coverage title={b.title}>{b.text}</span>
+      {/each}
       {#each hg.series as s, i (s.id)}
         <DistributionPlot
           data={hg} series={s} width={fetchWidth} unit={hg.panel.spec.y.unit}
