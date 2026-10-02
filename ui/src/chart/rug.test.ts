@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hitRug, MAX_ROWS, ROW_GAP, ROW_H, rugCells, rugHeight, rugHint, rugMoreLabel, STATE } from "./rug";
+import { hitRug, MAX_ROWS, ROW_GAP, ROW_H, RUG_GAP, rugAxisExtra, rugCells, rugHeight, rugHint, rugMoreLabel, rugTop, STATE } from "./rug";
 import { relativeLuminance } from "./colormap";
 import type { BucketStatePayload } from "../lib/api";
 
@@ -69,5 +69,20 @@ describe("rugMoreLabel", () => {
   });
   it("counts the omitted series and points to the footer", () => {
     expect(rugMoreLabel(3)).toBe("+3 more series with coverage issues (see footer)");
+  });
+});
+
+describe("rug placement geometry", () => {
+  it("claims no axis space when nothing is drawn", () => {
+    expect(rugAxisExtra(0)).toBe(0);
+  });
+  it("claims rug height plus the gap, growing per row and capped", () => {
+    expect(rugAxisExtra(1)).toBe(rugHeight(1) + RUG_GAP);
+    expect(rugAxisExtra(3)).toBeGreaterThan(rugAxisExtra(1));
+    expect(rugAxisExtra(99)).toBe(rugAxisExtra(MAX_ROWS));
+  });
+  it("starts the rug a gap below the plot floor", () => {
+    expect(rugTop(200)).toBe(200 + RUG_GAP);
+    expect(RUG_GAP).toBeGreaterThanOrEqual(2);
   });
 });

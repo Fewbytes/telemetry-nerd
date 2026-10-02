@@ -3,7 +3,7 @@
   import { colormap, type ColormapName } from "../chart/colormap";
   import { cellSpan, hitTest, layoutHeatmap, STRIP_PX, timeAt, timeColumns, type HeatLayout } from "../chart/heatmap";
   import { fmtValue, valueTicks } from "../chart/axis";
-  import { drawRug, hitRug, rugCells, rugHeight, rugHint, type RugCell } from "../chart/rug";
+  import { drawRug, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, type RugCell } from "../chart/rug";
   import { rgba, seriesName } from "../chart/toUplot";
   import { fmtRange } from "../lib/format";
   import { focusRects } from "../chart/focus";
@@ -27,6 +27,8 @@
   let layout: HeatLayout | null = null;
   const plotW = $derived(Math.max(10, width - AXIS_LEFT));
   const plotH = $derived(Math.max(10, height - AXIS_BOTTOM));
+  // the rug sits between the plot floor and the time tick labels: the canvas grows by its height
+  const rugExtra = $derived(series.state ? rugAxisExtra(1) : 0);
   const cmap = $derived(colormap(cmapName));
 
   function hatch(ctx: CanvasRenderingContext2D, x: number, w: number, h: number) {
@@ -50,6 +52,7 @@
     if (!el || !st) return;
     const ctx = setupCanvas(el, plotW, rugHeight(1));
     if (!ctx) return;
+    el.style.top = `${rugTop((canvas?.offsetTop ?? 0) + plotH)}px`;
     const css = getComputedStyle(el);
     const grey = css.getPropertyValue("--muted").trim();
     const fg = css.getPropertyValue("--fg").trim();
@@ -72,7 +75,7 @@
     const el = canvas;
     if (!el) return;
     const t0 = performance.now();
-    const ctx = setupCanvas(el, width, height);
+    const ctx = setupCanvas(el, width, height + rugExtra);
     if (!ctx) return;
     const css = getComputedStyle(el);
     const v = (name: string) => css.getPropertyValue(name).trim();
@@ -127,7 +130,7 @@
     for (let i = 0; i <= 4; i++) {
       const x = (plotW * i) / 4;
       ctx.textAlign = i === 4 ? "right" : "center"; // keep the last label inside the canvas
-      ctx.fillText(new Date(timeAt(l, x)).toISOString().slice(11, 16), x, plotH + 2);
+      ctx.fillText(new Date(timeAt(l, x)).toISOString().slice(11, 16), x, plotH + rugExtra + 2);
     }
     if (drag) { ctx.fillStyle = "rgba(127,127,127,0.25)"; ctx.fillRect(Math.min(drag.from, drag.to), 0, Math.abs(drag.to - drag.from), plotH); }
     ctx.restore();
@@ -173,7 +176,7 @@
   ></canvas>
   {#if series.state}
     <canvas class="rug" bind:this={rugEl} data-rug aria-label="Coverage rug: where data is missing"
-      style="margin-left: {AXIS_LEFT}px" onmousemove={onRugMove} onmouseleave={() => (rugTip = null)}></canvas>
+      style="left: {AXIS_LEFT}px" onmousemove={onRugMove} onmouseleave={() => (rugTip = null)}></canvas>
     {#if rugTip}<div class="rug-tip" style="left: {rugTip.x}px; top: {rugTip.y}px">{rugTip.text}</div>{/if}
   {/if}
   {#if tip}<div class="tip" style="left: {tip.x}px; top: {tip.y}px">{tip.text}</div>{/if}
@@ -182,7 +185,7 @@
 <style>
   .facet { position: relative; }
   .facet-label { font-size: 11px; color: var(--muted); }
-  .rug { display: block; }
+  .rug { display: block; position: absolute; }
   .rug-tip { position: absolute; white-space: pre; font-size: 11px; background: var(--fg); color: var(--bg); padding: 4px 6px; border-radius: 4px; pointer-events: none; z-index: 5; }
   .tip { position: absolute; pointer-events: none; background: var(--bg); border: 1px solid var(--border); padding: 2px 6px; font-size: 11px; white-space: nowrap; z-index: 5; }
 </style>

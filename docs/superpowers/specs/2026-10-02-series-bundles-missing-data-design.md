@@ -225,7 +225,7 @@ fills (`subquery_fills_gaps`, verified on Prometheus and VictoriaMetrics), so it
 
 - **Stepped paths by default** (each bucket = its interval; risers only between adjacent present
   buckets). Connected lines only on explicit request, with a caveat. Applies to Claude's `show()`.
-- **Coverage rug** under the x-axis, drawn only when any plotted `bucket_state` ≠ ok:
+- **Coverage rug** between the plot floor and the x-axis tick labels (small gap below the plot; tick labels stay last), drawn only when any plotted `bucket_state` ≠ ok:
   - rows: the plotted aggregate, plus one per drawn outlier or silent member
   - encoding: tint = ok · grey fill ∝ missing share = partial · solid grey = empty ·
     hatch = unknown · dotted = absent

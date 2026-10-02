@@ -255,6 +255,6 @@ ul.gaps { list-style: none; margin: 0; padding: 0; }
 .catalog-view .chip.warn { color: var(--warn); border-color: var(--warn); }
 .catalog-pager { display: flex; gap: 10px; align-items: center; margin: 10px 0; }
 .panel .rug-wrap { position: relative; }
-.panel .rug { display: block; }
+.panel .rug { display: block; position: absolute; left: 0; z-index: 3; }
 .panel .rug-tip { position: absolute; white-space: pre; font-size: 11px; background: var(--fg); color: var(--bg); padding: 4px 6px; border-radius: 4px; pointer-events: none; z-index: 5; }
 .panel .rug-more { font-size: 11px; color: var(--muted); margin-top: 2px; }

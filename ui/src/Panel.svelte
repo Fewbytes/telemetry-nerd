@@ -7,7 +7,7 @@
     type Annotation, type Panel, type PanelData, type Thread, type Where, type YView,
   } from "./lib/api";
   import { PALETTE, rgba, seriesName, toUplot } from "./chart/toUplot";
-  import { drawRug, hitRug, rugCells, rugHeight, rugHint, rugMoreLabel, type RugCell } from "./chart/rug";
+  import { drawRug, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, rugMoreLabel, type RugCell } from "./chart/rug";
   import { describeShown, panelNotes } from "./lib/panelNotes";
   import { windowBadge } from "./lib/coverage";
   import { focusRects, notesAt } from "./chart/focus";
@@ -188,7 +188,7 @@
     const s = data.bucket_state[c.row];
     activeNotes = notesAt(notes, s.id, c.ts);
     const sd = data.series.find((x) => x.id === s.id);
-    rugTip = { x: e.offsetX + 8, y: e.offsetY + 12, text: rugHint(c, s, data.effective_step_ms, sd?.labels ? seriesName(sd.labels) : s.id, data.dataset.representation !== "quantile") };
+    rugTip = { x: e.offsetX + 8, y: (rugEl?.offsetTop ?? 0) + e.offsetY + 12, text: rugHint(c, s, data.effective_step_ms, sd?.labels ? seriesName(sd.labels) : s.id, data.dataset.representation !== "quantile") };
   }
   let margBusy = $state(false);
   const indexedOn = $derived((chosen?.mode as string | undefined) === "indexed");
@@ -318,6 +318,7 @@
       },
     );
     const width = (el.clientWidth || 800) - margW;
+    const rugExtra = rugAxisExtra(d.bucket_state?.length ?? 0);
     const unit = d.panel.spec.y.unit;
     const up = measureFirstDraw(
       (onDraw) =>
@@ -331,7 +332,11 @@
             },
             // axis/grid colors from CSS tokens so they follow the theme
             axes: [
-              { stroke, grid: { stroke: grid }, ticks: { stroke: grid } },
+              // a rug sits between the plot floor and the tick labels: grow the axis, push the labels
+              // below it, and drop the tick marks (they would cut through the rug rows)
+              rugExtra > 0
+                ? { stroke, grid: { stroke: grid }, ticks: { show: false }, size: 50 + rugExtra, gap: 5 + rugExtra }
+                : { stroke, grid: { stroke: grid }, ticks: { stroke: grid } },
               yr?.log && d.index
                 ? {
                     label: "ratio to baseline (log)", stroke, grid: { stroke: grid }, ticks: { stroke: grid },
@@ -377,6 +382,7 @@
                     const left = u.bbox.left / dpr;
                     const rctx = setupCanvas(rugEl, u.width, rugHeight(bs.length));
                     if (rctx) {
+                      rugEl.style.top = `${rugTop((u.bbox.top + u.bbox.height) / dpr)}px`;
                       // same array toUplot coloured by, so tints match the lines
                       const order = new Map(drawnNow.map((s, k) => [s.id, k]));
                       const grey = getComputedStyle(el).getPropertyValue("--muted").trim();
@@ -474,6 +480,11 @@
   </header>
   {#if error}<div class="error">{error}</div>{/if}
   <div bind:this={plotEl} class="plot" style="position: relative">
+    {#if data?.kind === "time" && (data.bucket_state?.length ?? 0) > 0}
+      <canvas class="rug" bind:this={rugEl} data-rug aria-label="Coverage rug: where data is missing"
+        onmousemove={onRugMove} onmouseleave={onRugLeave}></canvas>
+      {#if rugTip}<div class="rug-tip" style="left:{rugTip.x}px;top:{rugTip.y}px">{rugTip.text}</div>{/if}
+    {/if}
     {#if marg}
       <canvas class="marginal" bind:this={margEl} data-marginal data-marginal-basis={marg.basis}
         title="{marg.what} · filled: now · dashed: {marg.reference.label}"></canvas>
@@ -614,11 +625,8 @@
       {/key}
     {/if}
   </div>
-  {#if data?.kind === "time" && (data.bucket_state?.length ?? 0) > 0}
+  {#if data?.kind === "time" && data.bucket_state_more}
     <div class="rug-wrap">
-      <canvas class="rug" bind:this={rugEl} data-rug aria-label="Coverage rug: where data is missing"
-        onmousemove={onRugMove} onmouseleave={onRugLeave}></canvas>
-      {#if rugTip}<div class="rug-tip" style="left:{rugTip.x}px;top:{rugTip.y}px">{rugTip.text}</div>{/if}
       {#if data.bucket_state_more}<div class="rug-more">{rugMoreLabel(data.bucket_state_more)}</div>{/if}
     </div>
   {/if}

@@ -12,6 +12,15 @@ export interface RugStyle { tint: (row: number) => string; grey: string; line: s
 
 export const rugHeight = (rows: number): number => (rows === 0 ? 0 : Math.min(rows, MAX_ROWS) * (ROW_H + ROW_GAP) + 2);
 
+/** CSS px between the plot floor and the top of the rug, so it never merges with a line at y=0. */
+export const RUG_GAP = 3;
+
+/** Extra x-axis space (CSS px) the rug claims between plot floor and tick labels: 0 when nothing is drawn. */
+export const rugAxisExtra = (rows: number): number => (rows === 0 ? 0 : rugHeight(rows) + RUG_GAP);
+
+/** Top of the rug canvas (CSS px, same frame as the plot-bottom it is given). */
+export const rugTop = (plotBottom: number): number => plotBottom + RUG_GAP;
+
 /** One cell per bucket per row; bucket ts is the bucket END, so a cell spans (ts - step, ts]. */
 export function rugCells(states: BucketStatePayload[], stepMs: number, toX: (ms: number) => number): RugCell[] {
   const out: RugCell[] = [];
