@@ -88,6 +88,7 @@ class SimSource:
         self.sims, self.start_ms, self.scrape_s = sims, start_ms, scrape_s
         self.hide, self.latency_scale, self.latency_name = hide, latency_scale, latency_name
         self.exprs: list[str] = []
+        self.discovery = None
 
     async def probe(self) -> dict:
         return {"reachable": True}
@@ -151,3 +152,6 @@ class SimSource:
             schema=SERIES_SCHEMA,
         )
         return FetchResult(buckets, series)
+
+    async def discover(self):
+        return self.discovery

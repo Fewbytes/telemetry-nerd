@@ -102,6 +102,7 @@ class LittlesOps:
         catalog_any: Callable[[str], bool],
         binding: Callable[[str, str], Any],
         clock: Callable[[], int],
+        family: Callable[[str, str], list[str] | None] = lambda s, m: None,
     ) -> None:
         self._datasets = datasets
         self._query = query
@@ -111,6 +112,7 @@ class LittlesOps:
         self._catalog_any = catalog_any
         self._binding = binding
         self._clock = clock
+        self._family = family  # histogram family members of a catalogued base name, or None
         self._last: dict[str, dict] = {}
         self._memo: Memo[dict] = Memo()
 
@@ -162,19 +164,27 @@ class LittlesOps:
         facts = self._facts(source, name)
         if getattr(facts, "statistic", None) == "quantile":
             raise ValueError(refusal)
-        native = False
-        if self._catalog_any(source):
-            classic = self._has(source, f"{base}_sum") and self._has(source, f"{base}_count")
-            native = (
-                not classic
-                and self._has(source, base)
-                and (getattr(self._facts(source, base), "type", None) == "histogram")
-            )
-            if not classic and not native:
-                raise ValueError(
-                    f"no {base}_sum / {base}_count on {source!r}: " + refusal.split(": ", 1)[1]
-                )
-        return {"base": base, "selector": sel, "native": native}
+        return {"base": base, "selector": sel, "native": self._native(source, base, refusal)}
+
+    def _native(self, source: str, base: str, refusal: str | None = None) -> bool:
+        """True for a native histogram (no _bucket/_sum/_count series). With a catalog, a base
+        name without _sum/_count there is refused when `refusal` is given (percentile-only)."""
+        members = self._family(source, base)
+        if members:
+            return not any(m.endswith("_bucket") for m in members)
+        if not self._catalog_any(source):
+            return False  # nothing known: classic; the queries come back empty if wrong
+        if self._has(source, f"{base}_sum") and self._has(source, f"{base}_count"):
+            return False
+        if self._has(source, base) and getattr(self._facts(source, base), "type", None) == (
+            "histogram"
+        ):
+            return True
+        if refusal is None:
+            return False
+        raise ValueError(
+            f"no {base}_sum / {base}_count on {source!r}: " + refusal.split(": ", 1)[1]
+        )
 
     def _unit(self, source: str, base: str, given: str | None) -> tuple[float, str, str | None]:
         if given:
@@ -182,7 +192,9 @@ class LittlesOps:
             if u not in UNIT_SECONDS:
                 raise ValueError(f"latency_unit must be one of {', '.join(UNIT_SECONDS)}")
             return UNIT_SECONDS[u], u, "given"
-        facts = self._facts(source, f"{base}_sum")
+        facts = self._facts(source, base)
+        if getattr(facts, "unit", None) not in UNIT_SECONDS:
+            facts = self._facts(source, f"{base}_sum")
         u = getattr(facts, "unit", None)
         if u in UNIT_SECONDS:
             return UNIT_SECONDS[u], u, getattr(facts, "unit_provenance", None) or "catalog"
@@ -271,11 +283,16 @@ class LittlesOps:
             cnt_q = f"{agg} (rate({lat['base']}_count{lsel}{ri}))"
         arr_is_rate = arr_type == "gauge"
         # a native histogram has no _count series: its count is histogram_count(rate(h))
-        arr_native = arr_type == "histogram" or (lat["native"] and arr_name == lat["base"])
+        # a histogram named as the arrival signal: its count (classic _count, native
+        # histogram_count) counts completions
+        arr_hist = arr_type == "histogram" or arr_name == lat["base"]
+        arr_native = arr_hist and self._native(source, arr_name)
         if arr_is_rate:
             arr_q = f"{agg} ({arr_name}{arr_sel})"
         elif arr_native:
             arr_q = f"{agg} (histogram_count(rate({arr_name}{arr_sel}{ri})))"
+        elif arr_hist:
+            arr_q = f"{agg} (rate({arr_name}_count{arr_sel}{ri}))"
         else:
             arr_q = f"{agg} (rate({arr_name}{arr_sel}{ri}))"
         exprs = {
@@ -292,7 +309,7 @@ class LittlesOps:
             )  # fmt: skip
             ds[role] = out["dataset"]
         if arrivals == "auto":
-            same = arr_name == f"{lat['base']}_count" or (arr_native and arr_name == lat["base"])
+            same = arr_name == f"{lat['base']}_count" or arr_name == lat["base"]
             arrivals = "completions" if same else "unknown"
         cfg = {
             "source": source, "datasets": ds, "by": by, "step_ms": step, "window_ms": win,

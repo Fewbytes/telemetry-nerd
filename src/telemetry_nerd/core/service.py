@@ -257,6 +257,7 @@ class TelemetryService:
             self.datasets, self.query, lambda s: self._source(s).resolution_ms,
             self.ws.catalog_facts, self.ws.catalog.has_metric,
             lambda s: bool(self.ws.catalog.names(s, None, 1)), self._littles_binding, self.clock,
+            self._histogram_family,
         )  # fmt: skip
         self.code = CodeOps(
             self.datasets, self.ws, self.log, self.kernels,
@@ -264,8 +265,22 @@ class TelemetryService:
         )  # fmt: skip
 
     def _littles_binding(self, source: str, key: str):
-        found = self.ws.relations.bindings("catalog", source, kind="littles_law", key=key)
-        return found[0] if found else None
+        found = self.ws.relations.bindings("catalog", source, kind="littles_law")
+        hit = [b for b in found if b.key == key]
+        if hit:
+            return hit[0]
+        keys = ", ".join(repr(b.key) for b in found) or "none yet"
+        raise ValueError(
+            f"no littles_law binding with key {key!r} on {source!r} (bound keys: {keys}; a "
+            "binding_suggest id is not a key: binding_accept it, then pass its key; or pass "
+            "arrival_rate, latency and concurrency)"
+        )
+
+    def _histogram_family(self, source: str, metric: str) -> list[str] | None:
+        if not self.ws.catalog.has_metric(source, metric):
+            return None
+        h = self.ws.catalog_entry(source, metric).fields.get("histogram_family")
+        return list(h.value) if h is not None and h.value else None
 
     async def check_littles_law(self, actor: Actor = "claude", **kw) -> dict:
         """L vs lambda W per window and group, with a propagated interval (czt.2)."""

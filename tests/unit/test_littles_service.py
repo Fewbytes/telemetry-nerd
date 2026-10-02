@@ -207,3 +207,31 @@ def test_histogram_count_as_arrivals_is_completions(tmp_path):
     a = next(a for a in out["assumptions"] if a["name"] == "arrivals_vs_completions")
     assert "completions" in a["detail"]
     assert out["verdict"] == "consistent"
+
+
+def test_suggested_binding_from_otel_metadata_runs(tmp_path):
+    """czt.1 proposes the histogram BASE name (only base names come from metadata): the check
+    finds _sum/_count through the catalog's histogram family and reads the ms/s unit there."""
+    from .test_binding_suggest import discovery, real
+
+    lat = "http_server_request_duration_seconds"
+    sims = {"i0": simulate(9, rates=[(0.0, 6.0)], c=10)}
+    src = SimSource(sims, START, latency_name=lat)
+    src.discovery = discovery(real("play_otel_metadata.json"))
+    svc = make_service(tmp_path, source=src)
+
+    async def go():
+        await svc.learn("default")
+        s = next(
+            x
+            for x in svc.ws.binding_suggest("default", "littles_law", limit=100)["suggestions"]
+            if x["roles"]["latency"] == lat
+        )
+        svc.ws.binding_accept("default", s["id"], basis="test")
+        with pytest.raises(ValueError, match="bound keys"):
+            await svc.check_littles_law(binding=s["id"], start="now-1h", window="5m")
+        return await svc.check_littles_law(binding=s["key"], start="now-1h", window="5m", by=[])
+
+    out = asyncio.run(go())
+    assert out["verdict"] == "consistent"
+    assert any(f"rate({lat}_sum" in e for e in src.exprs)
