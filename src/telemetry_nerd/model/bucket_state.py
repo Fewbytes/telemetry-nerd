@@ -24,6 +24,7 @@ class Flag(IntFlag):
     RESET = 1
     INTERVAL_CHANGE = 2
     STALE_MARKER = 4
+    # UNKNOWN bucket: the expression's counts are subquery evaluations, not samples.
     SOURCE_FILLED = 8
 
 
@@ -65,7 +66,10 @@ def compute(
     resolution_ms: int,
     mode: Mode,
     failed: Sequence[FailedSpan] = (),
+    source_filled: bool = False,
 ) -> pa.Table:
+    """`source_filled`: the counts are not observed samples (expression cannot tell), so every
+    bucket is UNKNOWN + SOURCE_FILLED."""
     ts = grid(start_ms, end_ms, step_ms)
     if not ts or not series_ids:
         return STATE_SCHEMA.empty_table()
@@ -96,7 +100,7 @@ def compute(
         .agg(pl.col("ts_ms").min().alias("first_seen"))
     )
     df = df.join(first, on="series_id", how="left")
-    unknown = pl.lit(False)
+    unknown = pl.lit(source_filled)
     for a, b, _reason in failed:
         unknown = unknown | pl.col("ts_ms").is_between(a, b)
     state = (
@@ -110,15 +114,12 @@ def compute(
         .then(int(State.PARTIAL))
         .otherwise(int(State.OK))
     )
-    out = (
-        df.with_columns(
-            state.cast(pl.UInt8).alias("state"),
-            pl.lit(0, pl.UInt16).alias("flags"),
-            pl.when(unknown).then(0.0).otherwise(pl.col("observed")).alias("observed"),
-        )
-        .sort("series_id", "ts_ms")
-        .select(STATE_SCHEMA.names)
-    )
+    df = df.with_columns(
+        state.cast(pl.UInt8).alias("state"),
+        pl.when(unknown).then(0.0).otherwise(pl.col("observed")).alias("observed"),
+    ).sort("series_id", "ts_ms")
+    flags = pl.when(pl.lit(source_filled)).then(int(Flag.SOURCE_FILLED)).otherwise(0)
+    out = df.with_columns(flags.cast(pl.UInt16).alias("flags")).select(STATE_SCHEMA.names)
     return out.to_arrow().cast(STATE_SCHEMA)
 
 

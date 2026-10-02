@@ -9,7 +9,7 @@ import polars as pl
 import pyarrow as pa
 from pydantic import BaseModel
 
-from telemetry_nerd.model.bucket_state import FailedSpan, State
+from telemetry_nerd.model.bucket_state import FailedSpan, Flag, State
 from telemetry_nerd.model.time import format_duration
 
 Severity = Literal["info", "warn", "blocks_claim"]
@@ -43,6 +43,12 @@ def series_name(labels: Mapping[str, str]) -> str:
     return "{" + ", ".join(f'{k}="{v}"' for k, v in sorted(labels.items())) + "}"
 
 
+SUBQUERY_FILLS_GAPS = "subquery_fills_gaps"
+UNOBSERVABLE_MESSAGE = (
+    "Coverage unknown: this expression's sample counts cannot be observed (subquery fills gaps)."
+)
+
+
 def _total(spans: list[tuple[int, int]]) -> str:
     return format_duration(sum(b - a for a, b in spans))
 
@@ -60,10 +66,14 @@ def from_bucket_state(
         everyone = len(affected) == df["series_id"].n_unique()
         spans = runs(unknown["ts_ms"].unique().to_list(), step_ms)
         reasons = sorted({r for *_ab, r in failed}) or ["source could not tell"]
+        message = f"Data unknown for {_total(spans)} ({'; '.join(reasons)})."
+        if ((unknown["flags"] & int(Flag.SOURCE_FILLED)) != 0).any():
+            # the expression itself hides coverage: one dataset-level reason, not per bucket
+            message = UNOBSERVABLE_MESSAGE
         out.append(
             Caveat(
                 code="untrusted_data",
-                message=f"Data unknown for {_total(spans)} ({'; '.join(reasons)}).",
+                message=message,
                 where=Where(spans=spans, series=None if everyone else affected),
                 source="bucket_state",
             )

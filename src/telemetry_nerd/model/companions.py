@@ -13,6 +13,7 @@ import pyarrow as pa
 from telemetry_nerd.model.bucket_state import STATE_SCHEMA, coarsen, compute
 from telemetry_nerd.model.caveats import Caveat, from_bucket_state
 from telemetry_nerd.model.series import FetchResult
+from telemetry_nerd.sources.observed import counts_are_observed
 
 Policy = Literal["carry", "recompute", "derive", "drop"]
 
@@ -59,7 +60,9 @@ class Bundle:
     caveats: list[Caveat] = field(default_factory=list)
 
 
-def _derive_states(meta, result: FetchResult) -> pa.Table:
+def derive_states(meta, result: FetchResult) -> pa.Table:
+    """bucket_state of a stored dataset: pure function of its buckets, failed spans, expression
+    and the semantics hints recorded at query time."""
     mode = "presence" if meta.representation == "quantile" else "samples"
     failed = [tuple(f) for f in getattr(meta, "failed_spans", [])]
     return compute(
@@ -71,6 +74,8 @@ def _derive_states(meta, result: FetchResult) -> pa.Table:
         resolution_ms=meta.resolution_ms,
         mode=mode,
         failed=failed,
+        # counts that are subquery evaluations (lookback-filled) cannot show coverage
+        source_filled=not counts_are_observed(meta.expr),
     )
 
 
@@ -81,7 +86,7 @@ def dataset_bundle(store, meta, result: FetchResult) -> Bundle:
     p = policy(op, "bucket_state")
     dropped = False
     if p == "derive":
-        companions["bucket_state"] = _derive_states(meta, result)
+        companions["bucket_state"] = derive_states(meta, result)
     elif p == "carry":
         src_meta, src_result = store.get(meta.derived["from"])
         src = dataset_bundle(store, src_meta, src_result).companions.get("bucket_state")

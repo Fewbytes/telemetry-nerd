@@ -11,8 +11,9 @@ import pyarrow as pa
 from telemetry_nerd.analysis.exprkind import min_samples
 from telemetry_nerd.analysis.quantiles import quantile_bucket
 from telemetry_nerd.datasets.store import DatasetMeta
-from telemetry_nerd.model.bucket_state import State, compute, grid
+from telemetry_nerd.model.bucket_state import State, grid
 from telemetry_nerd.model.caveats import runs
+from telemetry_nerd.model.companions import derive_states
 from telemetry_nerd.model.distribution import DistResult
 from telemetry_nerd.model.series import FetchResult
 from telemetry_nerd.model.time import format_duration, iso
@@ -61,11 +62,7 @@ def _coverage(
     Everything comes from the bucket_state (the bundle's when given), never from re-judging
     summed counts."""
     if states is None:
-        mode = "presence" if meta.representation == "quantile" else "samples"
-        states = compute(result.buckets, result.series["series_id"].to_pylist(),
-                         start_ms=meta.start_ms, end_ms=meta.end_ms, step_ms=meta.step_ms,
-                         resolution_ms=meta.resolution_ms, mode=mode,
-                         failed=[tuple(f) for f in meta.failed_spans])  # fmt: skip
+        states = derive_states(meta, result)
     df = pl.from_arrow(states)
     bad = [int(State.EMPTY), int(State.PARTIAL), int(State.UNKNOWN)]
     out: dict[str, dict] = {}

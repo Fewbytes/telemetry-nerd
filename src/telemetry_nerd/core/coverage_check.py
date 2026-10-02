@@ -5,8 +5,8 @@ from __future__ import annotations
 import polars as pl
 import pyarrow as pa
 
-from telemetry_nerd.model.bucket_state import State
-from telemetry_nerd.model.caveats import Caveat, Where
+from telemetry_nerd.model.bucket_state import Flag, State
+from telemetry_nerd.model.caveats import UNOBSERVABLE_MESSAGE, Caveat, Where
 
 BLOCK_BELOW = 0.5
 
@@ -22,7 +22,13 @@ def claim_coverage(states: pa.Table, start_ms: int, end_ms: int, step_ms: int) -
         return [Caveat(code="missing_data", severity="blocks_claim", where=where,
                        source="validator",
                        message="No data from this dataset in the claim window.")]  # fmt: skip
-    if (alive["state"] == int(State.UNKNOWN)).any():
+    unknown = alive.filter(pl.col("state") == int(State.UNKNOWN))
+    if ((unknown["flags"] & int(Flag.SOURCE_FILLED)) != 0).any():
+        return [Caveat(code="untrusted_data", severity="blocks_claim", where=where,
+                       source="validator", message=UNOBSERVABLE_MESSAGE + " Re-query a simpler "
+                       "expression (e.g. split it into its selectors) instead of retrying "
+                       "this one.")]  # fmt: skip
+    if unknown.height:
         return [Caveat(code="untrusted_data", severity="blocks_claim", where=where,
                        source="validator", message="The claim window contains data the source "
                        "could not return (fetch failed or unknown).")]  # fmt: skip
