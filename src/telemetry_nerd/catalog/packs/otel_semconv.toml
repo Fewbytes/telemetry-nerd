@@ -1,0 +1,644 @@
+# OpenTelemetry semantic-convention metrics as they actually appear in Prometheus: HTTP/RPC/DB
+# client-side instrumentation, JVM/Go/CPython runtime metrics, OTel SDK/Collector self-metrics,
+# span-metrics-connector output, and the k6/Grafana Alloy self-metrics that commonly ride along
+# with an OTel pipeline.
+#
+# Naming: OTel semconv names are dotted (e.g. "http.server.request.duration"); the Prometheus
+# exposition format turns dots into underscores and appends the OTLP->Prometheus unit suffix
+# (_seconds, _bytes, _ratio, _total for monotonic sums, ...). Every `name`/`names`/`match` below
+# is the *Prometheus-exposed* form; the semconv dotted source name is given in each entry's
+# description or comment for provenance.
+#
+# Grounding: every exact name and match regex was checked live against Grafana Play's
+# `/api/v1/metadata` (the hosted OTel demo + k6 Cloud + Grafana Alloy fleet feeding it) on
+# 2026-10-02; tests/unit/test_packs.py enforces it against tests/fixtures/packs/play_otel_metadata.json.
+# A few series (traces_spanmetrics_*, k6_*) are ingested via OTLP/remote-write and carry no
+# Prometheus TYPE/HELP metadata on that endpoint; those were instead confirmed live via
+# `/api/v1/series` (existence + labels, e.g. k6_metric_type) and `/api/v1/query` (sample shape),
+# and are called out below. The stable semconv name `db.client.operation.duration`
+# (-> db_client_operation_duration_seconds) was NOT observed live on Grafana Play at grounding
+# time -- see telemetry-nerd-2as.21 follow-up for live-verifying it against a target that actually
+# emits it (and for process.runtime.dotnet.* / fuller otelcol_* coverage, deferred for scope).
+
+[pack]
+name = "otel_semconv"
+version = "semconv-experimental/stable-mixed"
+citation = "https://opentelemetry.io/docs/specs/semconv/, grounded live against Grafana Play (hosted OTel demo) 2026-10-02"
+
+# ======================= HTTP (http.server.*, http.client.*) ============================
+# Two generations coexist in the wild: the stable "*.request.duration" (seconds) and the older
+# experimental "*.duration" (milliseconds, sometimes also re-exposed in seconds by newer SDKs).
+[[metric]]
+names = ["http_server_request_duration_seconds", "http_client_request_duration_seconds"]
+type = "histogram"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "latency"
+description = "Stable semconv http.server.request.duration / http.client.request.duration. Classic histogram on Grafana Play (has _bucket/_sum/_count); some SDKs instead emit this as a native histogram with no _bucket series -- check for both."
+
+[[metric]]
+names = ["http_server_duration_seconds", "http_server_duration_milliseconds", "http_client_duration_milliseconds"]
+type = "histogram"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "latency"
+description = "Pre-stable semconv http.server.duration / http.client.duration. Mind the unit: the _milliseconds forms are in ms, not seconds -- rate()/histogram_quantile() output is ms, don't divide by 1000 only once."
+
+[[metric]]
+name = "http_server_active_requests"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "saturation"
+description = "semconv http.server.active_requests (UpDownCounter): in-flight request count, a concurrency gauge."
+
+[[metric]]
+names = ["http_server_request_size_bytes", "http_server_response_size_bytes", "http_client_request_size_bytes", "http_client_request_body_size_bytes", "http_client_response_size_bytes"]
+type = "histogram"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+description = "semconv *.request.size / *.response.size / *.request.body.size: message size distribution in bytes."
+
+[[metric]]
+name = "http_server_requests_total"
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+description = "Request count counter alongside the duration histogram (not itself a stable semconv name; some HTTP server instrumentations emit it in addition to the histogram's own _count)."
+
+# ============================ RPC (rpc.server.*, rpc.client.*) ===========================
+[[metric]]
+names = ["rpc_server_call_duration_seconds", "rpc_client_call_duration_seconds"]
+type = "histogram"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "latency"
+description = "Stable semconv rpc.server.call.duration / rpc.client.call.duration (gRPC and other RPC frameworks)."
+
+[[metric]]
+names = ["rpc_server_duration_milliseconds", "rpc_client_duration_milliseconds"]
+type = "histogram"
+unit = "ms"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "latency"
+description = "Pre-stable semconv rpc.server.duration / rpc.client.duration, in milliseconds (not seconds)."
+
+[[metric]]
+names = ["rpc_server_request_size_bytes", "rpc_client_request_size_bytes", "rpc_server_response_size_bytes", "rpc_client_response_size_bytes"]
+type = "histogram"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+description = "semconv rpc.*.request.size / rpc.*.response.size: uncompressed message size distribution."
+
+[[metric]]
+names = ["rpc_server_requests_per_rpc", "rpc_client_requests_per_rpc", "rpc_server_responses_per_rpc", "rpc_client_responses_per_rpc"]
+type = "histogram"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "count"
+description = "semconv rpc.*.requests_per_rpc / rpc.*.responses_per_rpc: message count per RPC; 1 for all non-streaming calls."
+
+# =========================================== DB ==========================================
+# The stable semconv name db.client.operation.duration (-> db_client_operation_duration_seconds)
+# was NOT observed live on Grafana Play at grounding time (follow-up: verify against a source
+# that emits it). What IS observed are two pre-stable/vendor duration metrics:
+[[metric]]
+name = "db_query_duration_seconds"
+type = "histogram"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "latency"
+description = "Observed on Grafana Play; not the current stable semconv name (that is db.client.operation.duration -> db_client_operation_duration_seconds, unverified live -- see pack header). Treat as a db-client duration histogram, classic (_bucket/_sum/_count)."
+
+[[metric]]
+name = "db_sql_latency_milliseconds"
+type = "histogram"
+unit = "ms"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "latency"
+description = "Observed on Grafana Play (JVM SQL driver instrumentation); milliseconds, not seconds. Pre-stable/vendor naming, not db.client.operation.duration."
+
+# ============================ JVM runtime (stable jvm.* semconv) =========================
+[[metric]]
+name = "jvm_class_count"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "count"
+description = "semconv jvm.class.count: classes currently loaded."
+
+[[metric]]
+names = ["jvm_class_loaded_total", "jvm_class_unloaded_total"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "count"
+description = "semconv jvm.class.loaded / jvm.class.unloaded: cumulative class (un)load events since JVM start."
+
+[[metric]]
+name = "jvm_cpu_count"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "capacity"
+description = "semconv jvm.cpu.count: processors available to the JVM."
+
+[[metric]]
+name = "jvm_cpu_recent_utilization_ratio"
+type = "gauge"
+unit = "ratio"
+bounds = "[0,1]"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "utilization"
+description = "semconv jvm.cpu.recent_utilization."
+
+[[metric]]
+name = "jvm_cpu_time_seconds_total"
+type = "counter"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "cpu-time"
+description = "semconv jvm.cpu.time: cumulative CPU time consumed by the JVM process."
+
+[[metric]]
+name = "jvm_gc_duration_seconds"
+type = "histogram"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "latency"
+description = "semconv jvm.gc.duration: GC pause/cycle duration. Classic histogram on Grafana Play (has _bucket)."
+
+[[metric]]
+names = ["jvm_memory_committed_bytes", "jvm_memory_used_bytes", "jvm_memory_used_after_last_gc_bytes"]
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "memory"
+bounded_by = ["jvm_memory_limit_bytes"]
+description = "semconv jvm.memory.used / jvm.memory.committed / jvm.memory.used_after_last_gc, per memory pool (labelled jvm.memory.pool.name/jvm.memory.type). bounded_by jvm_memory_limit_bytes only holds when the pool has a limit; many pools report limit -1 (unbounded)."
+
+[[metric]]
+name = "jvm_memory_limit_bytes"
+type = "gauge"
+unit = "B"
+bounds = "none"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "capacity"
+description = "semconv jvm.memory.limit. -1 is a real, documented value meaning 'no limit' for that pool -- don't treat it as an error or plot it as a ceiling without filtering it out."
+
+[[metric]]
+name = "jvm_thread_count"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "count"
+description = "semconv jvm.thread.count: executing platform threads."
+
+# ========================= Go runtime (experimental process.runtime.go.*) ================
+[[metric]]
+name = "process_runtime_go_cgo_calls"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "count"
+description = "semconv process.runtime.go.cgo.calls: cumulative cgo call count from runtime.NumCgoCall, exposed as a gauge snapshot rather than a counter despite being monotonic underneath."
+
+[[metric]]
+name = "process_runtime_go_gc_count_total"
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "operations"
+description = "semconv process.runtime.go.gc.count: completed GC cycles."
+
+[[metric]]
+name = "process_runtime_go_gc_pause_ns"
+type = "histogram"
+unit = "ns"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "latency"
+description = "semconv process.runtime.go.gc.pause_ns. Unit is nanoseconds, NOT converted to seconds like most duration metrics -- a frequent source of off-by-1e9 mistakes when charted next to other latency metrics."
+
+[[metric]]
+name = "process_runtime_go_gc_pause_ns_total"
+type = "counter"
+unit = "ns"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "latency"
+description = "Cumulative nanoseconds in GC stop-the-world pauses since process start; same nanosecond-unit caveat as process_runtime_go_gc_pause_ns."
+
+[[metric]]
+name = "process_runtime_go_goroutines"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "saturation"
+description = "semconv process.runtime.go.goroutines. A sustained climb with no corresponding load increase usually means a goroutine leak."
+
+[[metric]]
+names = ["process_runtime_go_mem_heap_alloc_bytes", "process_runtime_go_mem_heap_idle_bytes", "process_runtime_go_mem_heap_released_bytes"]
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "memory"
+bounded_by = ["process_runtime_go_mem_heap_sys_bytes"]
+description = "semconv process.runtime.go.mem.heap_alloc / heap_idle / heap_released (Go runtime MemStats)."
+
+[[metric]]
+name = "process_runtime_go_mem_heap_inuse_bytes"
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "memory"
+bounded_by = ["process_runtime_go_mem_heap_sys_bytes"]
+description = "semconv process.runtime.go.mem.heap_inuse: heap spans currently in use (heap_idle + heap_inuse ≈ heap_sys)."
+
+[[metric]]
+name = "process_runtime_go_mem_heap_sys_bytes"
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "capacity"
+description = "semconv process.runtime.go.mem.heap_sys: heap memory obtained from the OS."
+
+[[metric]]
+names = ["process_runtime_go_mem_heap_objects", "process_runtime_go_mem_live_objects"]
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "count"
+description = "semconv process.runtime.go.mem.heap_objects / mem.live_objects."
+
+[[metric]]
+name = "process_runtime_go_mem_lookups_total"
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "operations"
+description = "semconv process.runtime.go.mem.lookups: pointer lookups performed by the runtime (rare on modern Go; near zero in practice)."
+
+# ========================= CPython runtime (experimental process.runtime.cpython.*) ======
+[[metric]]
+name = "process_runtime_cpython_context_switches_total"
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "operations"
+description = "semconv process.runtime.cpython.context_switches."
+
+[[metric]]
+name = "process_runtime_cpython_cpu_time_seconds_total"
+type = "counter"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "cpu-time"
+description = "semconv process.runtime.cpython.cpu_time."
+
+[[metric]]
+name = "process_runtime_cpython_cpu_utilization_ratio"
+type = "gauge"
+unit = "ratio"
+bounds = "[0,1]"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "utilization"
+description = "semconv process.runtime.cpython.cpu.utilization."
+
+[[metric]]
+name = "process_runtime_cpython_gc_count_bytes_total"
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "operations"
+description = "semconv process.runtime.cpython.gc_count: cumulative GC collection count by generation. Grafana Play declares its unit as bytes (a known upstream mislabel in the opentelemetry-python-contrib runtime instrumentation) despite the value being a count, not a byte quantity -- the pack overrides that declared unit."
+
+[[metric]]
+name = "process_runtime_cpython_memory_bytes"
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "memory"
+description = "semconv process.runtime.cpython.memory (RSS)."
+
+[[metric]]
+name = "process_runtime_cpython_thread_count"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "count"
+description = "semconv process.runtime.cpython.thread_count."
+
+# ======================= OTel SDK self-observability / Collector self-metrics ============
+[[metric]]
+name = "otel_sdk_span_live"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "count"
+description = "OTel SDK self-metric otel.sdk.span.live: spans started but not yet ended. A sustained climb means spans are being leaked (never ended)."
+
+[[metric]]
+name = "otel_sdk_span_started_total"
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+description = "OTel SDK self-metric otel.sdk.span.started."
+
+[[metric]]
+names = ["otelcol_exporter_sent_spans_total", "otelcol_receiver_accepted_spans_total"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+description = "OTel Collector self-metrics: spans successfully pushed into/out of a pipeline stage."
+
+[[metric]]
+names = ["otelcol_receiver_failed_spans_total", "otelcol_receiver_refused_spans_total"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "errors"
+description = "OTel Collector self-metrics: spans that failed processing / were refused (e.g. queue full) at the receiver."
+
+# =============== Span metrics (span-metrics connector / Tempo: traces_spanmetrics_*) =====
+[[metric]]
+name = "traces_spanmetrics_latency"
+type = "histogram"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "latency"
+description = "Span-metrics-connector RED latency histogram, derived from trace spans. On Grafana Play this is exposed ONLY as a native histogram (no _bucket/_sum/_count classic series) -- histogram_quantile() still works against it, but don't look for the classic member series."
+
+[[metric]]
+name = "traces_spanmetrics_calls_total"
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+description = "Span-metrics-connector call count per service/span-name/status: the R and E of RED (rate via rate(), errors by filtering status_code)."
+
+[[metric]]
+name = "traces_spanmetrics_size_total"
+type = "counter"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+description = "Span-metrics-connector cumulative span size."
+
+# ===================================== k6 self-metrics ====================================
+# k6's own Prometheus/remote-write output labels each series with k6_metric_type (the original
+# k6 metric kind: gauge/counter/rate/trend); that label is what grounds the types below, since
+# these series carry no Prometheus TYPE/HELP metadata on Grafana Play (see pack header).
+[[metric]]
+name = "k6_vus"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "load"
+bounded_by = ["k6_vus_max"]
+description = "Active virtual users (k6_metric_type=gauge)."
+
+[[metric]]
+name = "k6_vus_max"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "capacity"
+description = "Configured maximum virtual users for the test run (k6_metric_type=gauge)."
+
+[[metric]]
+name = "k6_iterations_total"
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+description = "Completed test-script iterations (k6_metric_type=counter)."
+
+[[metric]]
+name = "k6_iteration_duration"
+type = "histogram"
+unit = "ms"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "latency"
+description = "k6 Trend metric for iteration duration, exposed as a native histogram (no classic _bucket/_sum/_count on Grafana Play); milliseconds, confirmed from the observed sample scale (sum ~3.3e4 for a single ~33s iteration)."
+
+[[metric]]
+names = ["k6_data_sent_total", "k6_data_received_total"]
+type = "counter"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+description = "Bytes sent/received by the k6 load generator (k6_metric_type=counter)."
+
+[[metric]]
+name = "k6_checks_total"
+type = "gauge"
+bounds = "[0,1]"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "state"
+description = "Named *_total but k6_metric_type=rate: observed sample values are 0 or 1 (pass/fail of one check evaluation), NOT a cumulative counter. Do not rate()/increase() it; aggregate with avg() over the check label to get a pass ratio."
+
+# ===================================== Grafana Alloy self-metrics ========================
+[[metric]]
+name = "alloy_build_info"
+type = "gauge"
+additivity_series = "none"
+role = "info"
+description = "Constant 1 with labels carrying Alloy build/version information."
+
+[[metric]]
+names = ["alloy_component_controller_evaluating", "alloy_component_controller_running_components", "alloy_component_evaluation_queue_size", "alloy_component_graph_connection"]
+type = "gauge"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "state"
+description = "Alloy component-controller graph-evaluation state/queue size."
+
+[[metric]]
+names = ["alloy_component_dependencies_wait_seconds", "alloy_component_evaluation_seconds"]
+type = "histogram"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "latency"
+description = "Time components spend waiting on a dependency update / being evaluated."
+
+[[metric]]
+names = ["alloy_config_hash", "alloy_config_last_load_successful"]
+type = "gauge"
+additivity_series = "none"
+role = "state"
+description = "Current config hash (join key) / whether the last config (re)load succeeded (1/0)."
+
+[[metric]]
+name = "alloy_config_last_load_success_timestamp_seconds"
+type = "gauge"
+unit = "s"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "timestamp"
+description = "Unix timestamp, not a duration. Use time() - metric for time since the last successful config load."
+
+[[metric]]
+name = "alloy_config_load_failures_total"
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "errors"
+
+[[metric]]
+name = "alloy_resources_process_cpu_seconds_total"
+type = "counter"
+unit = "s"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "cpu-time"
+
+[[metric]]
+names = ["alloy_resources_process_resident_memory_bytes", "alloy_resources_process_virtual_memory_bytes"]
+type = "gauge"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "memory"
+
+[[metric]]
+name = "alloy_resources_process_start_time_seconds"
+type = "gauge"
+unit = "s"
+bounds = "≥0"
+additivity_series = "intensive"
+additivity_time = "intensive"
+role = "timestamp"
+description = "Unix timestamp, not a duration. Use time() - metric for process uptime."
+
+[[metric]]
+names = ["alloy_resources_machine_rx_bytes_total", "alloy_resources_machine_tx_bytes_total"]
+type = "counter"
+unit = "B"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+
+[[metric]]
+names = ["alloy_prometheus_relabel_cache_hits", "alloy_prometheus_relabel_cache_misses", "alloy_prometheus_relabel_cache_deletes", "alloy_prometheus_relabel_cache_ttl_evictions", "alloy_prometheus_relabel_metrics_processed", "alloy_prometheus_relabel_metrics_written"]
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "operations"
+description = "Alloy prometheus.relabel component counters (cache effectiveness, throughput)."
+
+[[metric]]
+name = "alloy_prometheus_relabel_cache_size"
+type = "gauge"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "intensive"
+role = "capacity"

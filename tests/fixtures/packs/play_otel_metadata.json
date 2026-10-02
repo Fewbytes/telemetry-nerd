@@ -1,0 +1,681 @@
+{
+"alloy_build_info": [
+{
+"help": "A metric with a constant '1' value labeled by version, revision, branch, goversion from which alloy was built, and the goos and goarch for the build.",
+"type": "gauge",
+"unit": ""
+}
+],
+"alloy_component_controller_evaluating": [
+{
+"help": "Tracks if the controller is currently in the middle of a graph evaluation",
+"type": "gauge",
+"unit": ""
+}
+],
+"alloy_component_controller_running_components": [
+{
+"help": "Total number of running components.",
+"type": "gauge",
+"unit": ""
+}
+],
+"alloy_component_dependencies_wait_seconds": [
+{
+"help": "Time spent by components waiting to be evaluated after their dependency is updated.",
+"type": "histogram",
+"unit": ""
+}
+],
+"alloy_component_evaluation_queue_size": [
+{
+"help": "Tracks the number of components waiting to be evaluated in the worker pool",
+"type": "gauge",
+"unit": ""
+}
+],
+"alloy_component_evaluation_seconds": [
+{
+"help": "Time spent performing component evaluation",
+"type": "histogram",
+"unit": ""
+}
+],
+"alloy_component_graph_connection": [
+{
+"help": "Indicates that two components are connected in the graph",
+"type": "gauge",
+"unit": ""
+}
+],
+"alloy_config_hash": [
+{
+"help": "Hash of the currently active config file.",
+"type": "gauge",
+"unit": ""
+}
+],
+"alloy_config_last_load_success_timestamp_seconds": [
+{
+"help": "Timestamp of the last successful configuration load.",
+"type": "gauge",
+"unit": ""
+}
+],
+"alloy_config_last_load_successful": [
+{
+"help": "Config loaded successfully.",
+"type": "gauge",
+"unit": ""
+}
+],
+"alloy_config_load_failures_total": [
+{
+"help": "Configuration load failures.",
+"type": "counter",
+"unit": ""
+}
+],
+"alloy_prometheus_relabel_cache_deletes": [
+{
+"help": "Total number of cache deletes",
+"type": "counter",
+"unit": ""
+}
+],
+"alloy_prometheus_relabel_cache_hits": [
+{
+"help": "Total number of cache hits",
+"type": "counter",
+"unit": ""
+}
+],
+"alloy_prometheus_relabel_cache_misses": [
+{
+"help": "Total number of cache misses",
+"type": "counter",
+"unit": ""
+}
+],
+"alloy_prometheus_relabel_cache_size": [
+{
+"help": "Total size of relabel cache.",
+"type": "gauge",
+"unit": ""
+}
+],
+"alloy_prometheus_relabel_cache_ttl_evictions": [
+{
+"help": "Number of relabel cache entries removed by the periodic TTL scan. Always 0 when cache_ttl is unset.",
+"type": "counter",
+"unit": ""
+}
+],
+"alloy_prometheus_relabel_metrics_processed": [
+{
+"help": "Total number of metrics processed",
+"type": "counter",
+"unit": ""
+}
+],
+"alloy_prometheus_relabel_metrics_written": [
+{
+"help": "Total number of metrics written",
+"type": "counter",
+"unit": ""
+}
+],
+"alloy_resources_machine_rx_bytes_total": [
+{
+"help": "Total bytes, host-wide, received across all network interfaces.",
+"type": "counter",
+"unit": ""
+}
+],
+"alloy_resources_machine_tx_bytes_total": [
+{
+"help": "Total bytes, host-wide, sent across all given network interface.",
+"type": "counter",
+"unit": ""
+}
+],
+"alloy_resources_process_cpu_seconds_total": [
+{
+"help": "Total user and system CPU time spent in seconds.",
+"type": "counter",
+"unit": ""
+}
+],
+"alloy_resources_process_resident_memory_bytes": [
+{
+"help": "Resident memory size in bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"alloy_resources_process_start_time_seconds": [
+{
+"help": "Start time of the process since unix epoch in seconds.",
+"type": "gauge",
+"unit": ""
+}
+],
+"alloy_resources_process_virtual_memory_bytes": [
+{
+"help": "Virtual memory size in bytes.",
+"type": "gauge",
+"unit": ""
+}
+],
+"db_query_duration_seconds": [
+{
+"help": "Duration of database queries in seconds",
+"type": "histogram",
+"unit": ""
+}
+],
+"db_sql_latency_milliseconds": [
+{
+"help": "The latency of calls in milliseconds",
+"type": "histogram",
+"unit": "milliseconds"
+}
+],
+"http_client_duration_milliseconds": [
+{
+"help": "Measures the duration of outbound HTTP requests.",
+"type": "histogram",
+"unit": "milliseconds"
+}
+],
+"http_client_request_body_size_bytes": [
+{
+"help": "Size of HTTP client request bodies.",
+"type": "histogram",
+"unit": "bytes"
+}
+],
+"http_client_request_duration_seconds": [
+{
+"help": "Measures the duration of outbound HTTP requests.",
+"type": "histogram",
+"unit": "seconds"
+}
+],
+"http_client_request_size_bytes": [
+{
+"help": "Measures the size of HTTP request messages.",
+"type": "histogram",
+"unit": "bytes"
+}
+],
+"http_client_response_size_bytes": [
+{
+"help": "Measures the size of HTTP response messages.",
+"type": "histogram",
+"unit": "bytes"
+}
+],
+"http_server_active_requests": [
+{
+"help": "Measures the number of concurrent HTTP requests that are currently in-flight.",
+"type": "gauge",
+"unit": ""
+}
+],
+"http_server_duration_milliseconds": [
+{
+"help": "Measures the duration of inbound HTTP requests.",
+"type": "histogram",
+"unit": "milliseconds"
+}
+],
+"http_server_duration_seconds": [
+{
+"help": "Measures the duration of inbound HTTP requests.",
+"type": "histogram",
+"unit": "seconds"
+}
+],
+"http_server_request_duration_seconds": [
+{
+"help": "Duration of HTTP server requests in seconds",
+"type": "histogram",
+"unit": ""
+}
+],
+"http_server_request_size_bytes": [
+{
+"help": "Measures the size of HTTP request messages (compressed).",
+"type": "histogram",
+"unit": "bytes"
+}
+],
+"http_server_requests_total": [
+{
+"help": "Total number of HTTP server requests",
+"type": "counter",
+"unit": ""
+}
+],
+"http_server_response_size_bytes": [
+{
+"help": "Measures the size of HTTP request messages (compressed).",
+"type": "histogram",
+"unit": "bytes"
+}
+],
+"jvm_class_count": [
+{
+"help": "Number of classes currently loaded.",
+"type": "gauge",
+"unit": ""
+}
+],
+"jvm_class_loaded_total": [
+{
+"help": "Number of classes loaded since JVM start.",
+"type": "counter",
+"unit": ""
+}
+],
+"jvm_class_unloaded_total": [
+{
+"help": "Number of classes unloaded since JVM start.",
+"type": "counter",
+"unit": ""
+}
+],
+"jvm_cpu_count": [
+{
+"help": "Number of processors available to the Java virtual machine.",
+"type": "gauge",
+"unit": ""
+}
+],
+"jvm_cpu_recent_utilization_ratio": [
+{
+"help": "Recent CPU utilization for the process as reported by the JVM.",
+"type": "gauge",
+"unit": ""
+}
+],
+"jvm_cpu_time_seconds_total": [
+{
+"help": "CPU time used by the process as reported by the JVM.",
+"type": "counter",
+"unit": "seconds"
+}
+],
+"jvm_gc_duration_seconds": [
+{
+"help": "Duration of JVM garbage collection actions.",
+"type": "histogram",
+"unit": "seconds"
+}
+],
+"jvm_memory_committed_bytes": [
+{
+"help": "Measure of memory committed.",
+"type": "gauge",
+"unit": "bytes"
+}
+],
+"jvm_memory_limit_bytes": [
+{
+"help": "Measure of max obtainable memory.",
+"type": "gauge",
+"unit": "bytes"
+}
+],
+"jvm_memory_used_after_last_gc_bytes": [
+{
+"help": "Measure of memory used, as measured after the most recent garbage collection event on this pool.",
+"type": "gauge",
+"unit": "bytes"
+}
+],
+"jvm_memory_used_bytes": [
+{
+"help": "Measure of memory used.",
+"type": "gauge",
+"unit": "bytes"
+}
+],
+"jvm_thread_count": [
+{
+"help": "Number of executing platform threads.",
+"type": "gauge",
+"unit": ""
+}
+],
+"k6_checks_total": [
+{
+"help": "(no live TYPE/HELP: k6-Cloud remote-write; k6_metric_type=rate confirmed via /api/v1/series, sample values are 0/1 via /api/v1/query, NOT a cumulative counter despite the _total suffix)",
+"type": "gauge",
+"unit": ""
+}
+],
+"k6_data_received_total": [
+{
+"help": "(no live TYPE/HELP: k6-Cloud remote-write; k6_metric_type=counter confirmed via /api/v1/series)",
+"type": "counter",
+"unit": ""
+}
+],
+"k6_data_sent_total": [
+{
+"help": "(no live TYPE/HELP: k6-Cloud remote-write; k6_metric_type=counter confirmed via /api/v1/series)",
+"type": "counter",
+"unit": ""
+}
+],
+"k6_iteration_duration": [
+{
+"help": "(no live TYPE/HELP: k6-Cloud remote-write native histogram (k6 Trend); confirmed via /api/v1/query sample {count,sum,buckets}, sum scale implies milliseconds)",
+"type": "histogram",
+"unit": ""
+}
+],
+"k6_iterations_total": [
+{
+"help": "(no live TYPE/HELP: k6-Cloud remote-write; k6_metric_type=counter confirmed via /api/v1/series)",
+"type": "counter",
+"unit": ""
+}
+],
+"k6_vus": [
+{
+"help": "(no live TYPE/HELP: k6-Cloud remote-write; k6_metric_type=gauge confirmed via /api/v1/series)",
+"type": "gauge",
+"unit": ""
+}
+],
+"k6_vus_max": [
+{
+"help": "(no live TYPE/HELP: k6-Cloud remote-write; k6_metric_type=gauge confirmed via /api/v1/series)",
+"type": "gauge",
+"unit": ""
+}
+],
+"otel_sdk_span_live": [
+{
+"help": "The number of created spans with `recording=true` for which the end operation has not been called yet.",
+"type": "gauge",
+"unit": ""
+}
+],
+"otel_sdk_span_started_total": [
+{
+"help": "The number of created spans.",
+"type": "counter",
+"unit": ""
+}
+],
+"otelcol_exporter_sent_spans_total": [
+{
+"help": "Number of spans successfully sent to destination. [Alpha]",
+"type": "counter",
+"unit": ""
+}
+],
+"otelcol_receiver_accepted_spans_total": [
+{
+"help": "Number of spans successfully pushed into the pipeline. [Alpha]",
+"type": "counter",
+"unit": ""
+}
+],
+"otelcol_receiver_failed_spans_total": [
+{
+"help": "The number of spans that failed to be processed by the receiver due to internal errors. [Alpha]",
+"type": "counter",
+"unit": ""
+}
+],
+"otelcol_receiver_refused_spans_total": [
+{
+"help": "Number of spans that could not be pushed into the pipeline. [Alpha]",
+"type": "counter",
+"unit": ""
+}
+],
+"process_runtime_cpython_context_switches_total": [
+{
+"help": "Runtime context switches",
+"type": "counter",
+"unit": "switches"
+}
+],
+"process_runtime_cpython_cpu_time_seconds_total": [
+{
+"help": "Runtime cpython CPU time",
+"type": "counter",
+"unit": "seconds"
+}
+],
+"process_runtime_cpython_cpu_utilization_ratio": [
+{
+"help": "Runtime CPU utilization",
+"type": "gauge",
+"unit": ""
+}
+],
+"process_runtime_cpython_gc_count_bytes_total": [
+{
+"help": "Runtime cpython GC count",
+"type": "counter",
+"unit": "bytes"
+}
+],
+"process_runtime_cpython_memory_bytes": [
+{
+"help": "Runtime cpython memory",
+"type": "gauge",
+"unit": "bytes"
+}
+],
+"process_runtime_cpython_thread_count": [
+{
+"help": "Runtime active threads count",
+"type": "gauge",
+"unit": ""
+}
+],
+"process_runtime_go_cgo_calls": [
+{
+"help": "Number of cgo calls made by the current process",
+"type": "gauge",
+"unit": ""
+}
+],
+"process_runtime_go_gc_count_total": [
+{
+"help": "Number of completed garbage collection cycles",
+"type": "counter",
+"unit": ""
+}
+],
+"process_runtime_go_gc_pause_ns": [
+{
+"help": "Amount of nanoseconds in GC stop-the-world pauses",
+"type": "histogram",
+"unit": ""
+}
+],
+"process_runtime_go_gc_pause_ns_total": [
+{
+"help": "Cumulative nanoseconds in GC stop-the-world pauses since the program started",
+"type": "counter",
+"unit": ""
+}
+],
+"process_runtime_go_goroutines": [
+{
+"help": "Number of goroutines that currently exist",
+"type": "gauge",
+"unit": ""
+}
+],
+"process_runtime_go_mem_heap_alloc_bytes": [
+{
+"help": "Bytes of allocated heap objects",
+"type": "gauge",
+"unit": "bytes"
+}
+],
+"process_runtime_go_mem_heap_idle_bytes": [
+{
+"help": "Bytes in idle (unused) spans",
+"type": "gauge",
+"unit": "bytes"
+}
+],
+"process_runtime_go_mem_heap_inuse_bytes": [
+{
+"help": "Bytes in in-use spans",
+"type": "gauge",
+"unit": "bytes"
+}
+],
+"process_runtime_go_mem_heap_objects": [
+{
+"help": "Number of allocated heap objects",
+"type": "gauge",
+"unit": ""
+}
+],
+"process_runtime_go_mem_heap_released_bytes": [
+{
+"help": "Bytes of idle spans whose physical memory has been returned to the OS",
+"type": "gauge",
+"unit": "bytes"
+}
+],
+"process_runtime_go_mem_heap_sys_bytes": [
+{
+"help": "Bytes of heap memory obtained from the OS",
+"type": "gauge",
+"unit": "bytes"
+}
+],
+"process_runtime_go_mem_live_objects": [
+{
+"help": "Number of live objects is the number of cumulative Mallocs - Frees",
+"type": "gauge",
+"unit": ""
+}
+],
+"process_runtime_go_mem_lookups_total": [
+{
+"help": "Number of pointer lookups performed by the runtime",
+"type": "counter",
+"unit": ""
+}
+],
+"rpc_client_call_duration_seconds": [
+{
+"help": "Measures the duration of an outgoing Remote Procedure Call (RPC).",
+"type": "histogram",
+"unit": "seconds"
+}
+],
+"rpc_client_duration_milliseconds": [
+{
+"help": "Measures the duration of inbound RPC.",
+"type": "histogram",
+"unit": "milliseconds"
+}
+],
+"rpc_client_request_size_bytes": [
+{
+"help": "Measures size of RPC request messages (uncompressed).",
+"type": "histogram",
+"unit": "bytes"
+}
+],
+"rpc_client_requests_per_rpc": [
+{
+"help": "Measures the number of messages received per RPC. Should be 1 for all non-streaming RPCs.",
+"type": "histogram",
+"unit": ""
+}
+],
+"rpc_client_response_size_bytes": [
+{
+"help": "Measures size of RPC response messages (uncompressed).",
+"type": "histogram",
+"unit": "bytes"
+}
+],
+"rpc_client_responses_per_rpc": [
+{
+"help": "Measures the number of messages received per RPC. Should be 1 for all non-streaming RPCs.",
+"type": "histogram",
+"unit": ""
+}
+],
+"rpc_server_call_duration_seconds": [
+{
+"help": "Measures the duration of an incoming Remote Procedure Call (RPC).",
+"type": "histogram",
+"unit": "seconds"
+}
+],
+"rpc_server_duration_milliseconds": [
+{
+"help": "The duration of an inbound RPC invocation",
+"type": "histogram",
+"unit": "milliseconds"
+}
+],
+"rpc_server_request_size_bytes": [
+{
+"help": "Measures size of RPC request messages (uncompressed).",
+"type": "histogram",
+"unit": "bytes"
+}
+],
+"rpc_server_requests_per_rpc": [
+{
+"help": "Measures the number of messages received per RPC. Should be 1 for all non-streaming RPCs.",
+"type": "histogram",
+"unit": ""
+}
+],
+"rpc_server_response_size_bytes": [
+{
+"help": "Measures size of RPC response messages (uncompressed).",
+"type": "histogram",
+"unit": "bytes"
+}
+],
+"rpc_server_responses_per_rpc": [
+{
+"help": "Measures the number of messages received per RPC. Should be 1 for all non-streaming RPCs.",
+"type": "histogram",
+"unit": ""
+}
+],
+"traces_spanmetrics_calls_total": [
+{
+"help": "(no live TYPE/HELP: OTLP-ingested; confirmed present via /api/v1/series)",
+"type": "counter",
+"unit": ""
+}
+],
+"traces_spanmetrics_latency": [
+{
+"help": "(no live TYPE/HELP: OTLP-ingested native histogram; confirmed via /api/v1/query, sample shape {count,sum,buckets}, no _bucket/_sum/_count classic series)",
+"type": "histogram",
+"unit": ""
+}
+],
+"traces_spanmetrics_size_total": [
+{
+"help": "(no live TYPE/HELP: OTLP-ingested; confirmed present via /api/v1/series)",
+"type": "counter",
+"unit": ""
+}
+]
+}

@@ -98,10 +98,12 @@ def real(name):
 
 NODE = real("wikimedia_node_metadata.json")
 K8S = real("play_k8s_metadata.json")
+OTEL = real("play_otel_metadata.json")
 PACKS = {lp.pack.name: lp for lp in builtin_packs().packs}
+ALL_PACKS = [("node_exporter", NODE), ("kubernetes", K8S), ("otel_semconv", OTEL)]
 
 
-@pytest.mark.parametrize(("pack", "meta"), [("node_exporter", NODE), ("kubernetes", K8S)])
+@pytest.mark.parametrize(("pack", "meta"), ALL_PACKS)
 def test_every_pack_name_exists_in_real_metadata(pack, meta):
     lp = PACKS[pack]
     assert lp.exact_names() <= meta.keys()
@@ -112,7 +114,7 @@ def test_every_pack_name_exists_in_real_metadata(pack, meta):
             assert target in meta, f"{target} (bounded_by) is not a real metric"
 
 
-@pytest.mark.parametrize(("pack", "meta"), [("node_exporter", NODE), ("kubernetes", K8S)])
+@pytest.mark.parametrize(("pack", "meta"), ALL_PACKS)
 def test_packs_never_contradict_a_declared_type(pack, meta):
     ix = PackIndex((PACKS[pack],))
     for name, (e,) in meta.items():
@@ -123,14 +125,14 @@ def test_packs_never_contradict_a_declared_type(pack, meta):
 
 
 def test_all_builtin_claims_are_valid_catalog_values():
-    for meta in (NODE, K8S):
+    for meta in (NODE, K8S, OTEL):
         for name in meta:
             for c in builtin_packs().claims_for(name):
                 validate_value(c.field, c.value)
 
 
 def test_counters_and_rates_are_consistent_with_additivity():
-    for name in [*NODE, *K8S]:
+    for name in [*NODE, *K8S, *OTEL]:
         c = claims(builtin_packs(), name)
         if c.get("type") == "counter":
             assert c.get("additivity_time") == "additive", name
@@ -148,7 +150,7 @@ def disc_from(*metas):
 
 @pytest.fixture
 async def learned(tmp_path):
-    svc = make_service(tmp_path, FakeSource(name="default", discovery=disc_from(NODE, K8S)))
+    svc = make_service(tmp_path, FakeSource(name="default", discovery=disc_from(NODE, K8S, OTEL)))
     await svc.learn("default")
     return svc.ws
 
@@ -201,6 +203,42 @@ def test_kube_state_flags_are_zero_one_and_additive(learned):
 def test_user_claim_beats_pack(learned):
     learned.catalog_claim("default", "node_load1", "role", "mine", "user", "user")
     assert learned.catalog_entry("default", "node_load1").fields["role"].value == "mine"
+
+
+def test_otel_pack_applies_prometheus_exposed_names_not_dotted_semconv(learned):
+    e = learned.catalog_entry("default", "http_server_request_duration_seconds")
+    assert e.fields["type"].value == "histogram" and e.fields["unit"].value == "s"
+    assert e.fields["type"].origin == "pack"
+
+
+def test_otel_pack_overrides_a_declared_unit_mislabel(learned):
+    e = learned.catalog_entry("default", "process_runtime_cpython_gc_count_bytes_total")
+    assert e.fields["unit"].value == "count" and e.fields["unit"].origin == "pack"
+    # the live source declares/derives unit "bytes" for a value that is actually a count
+    assert {(c.origin, c.value) for c in e.conflicts()["unit"]} == {
+        ("metadata", "B"),
+        ("rule", "B"),
+    }
+
+
+def test_otel_pack_flags_k6_checks_as_a_ratio_not_a_counter(learned):
+    e = learned.catalog_entry("default", "k6_checks_total")
+    assert e.fields["type"].value == "gauge" and e.fields["bounds"].value == "[0,1]"
+
+
+def test_otel_pack_links_k6_vus_to_its_configured_max(learned):
+    (rel,) = learned.catalog_relations("default", "k6_vus", "bounded_by")["relations"]
+    assert (rel.subject, rel.object) == ("k6_vus", "k6_vus_max")
+
+
+def test_otel_pack_flags_go_gc_pause_nanoseconds(learned):
+    e = learned.catalog_entry("default", "process_runtime_go_gc_pause_ns")
+    assert e.fields["unit"].value == "ns"
+
+
+def test_otel_pack_jvm_memory_bounded_by_limit(learned):
+    rel = learned.catalog_relations("default", "jvm_memory_used_bytes", "bounded_by")["relations"]
+    assert [r.object for r in rel] == ["jvm_memory_limit_bytes"]
 
 
 async def test_pack_relations_only_link_metrics_the_source_has(tmp_path):

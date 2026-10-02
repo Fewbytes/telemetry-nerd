@@ -4,6 +4,14 @@ Two bulk calls to Wikimedia (node_exporter; Thanos metadata is non-deterministic
 unioned) and one to Grafana Play (kube-state-metrics, cAdvisor): interactive volume only.
 Prints every pack name or relation target that real metadata does not contain.
 Run: uv run python scripts/refresh_pack_fixtures.py
+
+Note: the otel_semconv pack is NOT refreshed by this script. A handful of its entries
+(traces_spanmetrics_*, k6_*) are OTLP/remote-write series with no live TYPE/HELP on
+`/api/v1/metadata`; their fixture entries were hand-assembled from `/api/v1/series` and
+`/api/v1/query` evidence (see tests/fixtures/packs/play_otel_metadata.json and the pack's
+header comment). Re-running this script's `slice_for`/bulk-metadata approach against that pack
+would silently drop those entries. Refresh the pure-metadata entries by hand with the same
+per-metric `/api/v1/metadata?metric=<name>` calls used to build the fixture originally.
 """
 
 from __future__ import annotations
