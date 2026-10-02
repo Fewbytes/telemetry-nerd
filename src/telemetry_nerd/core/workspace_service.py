@@ -197,7 +197,7 @@ class WorkspaceService:
             states = dataset_bundle(self.datasets, meta, result).companions.get("bucket_state")
             if states is None:
                 continue
-            for c in claim_coverage(states, span.start_ms, span.end_ms):
+            for c in claim_coverage(states, span.start_ms, span.end_ms, meta.step_ms):
                 (blocking if c.severity == "blocks_claim" else warnings).append(
                     f"{did}: {c.message}"
                 )

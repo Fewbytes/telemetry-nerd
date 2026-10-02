@@ -11,8 +11,11 @@ from telemetry_nerd.model.caveats import Caveat, Where
 BLOCK_BELOW = 0.5
 
 
-def claim_coverage(states: pa.Table, start_ms: int, end_ms: int) -> list[Caveat]:
-    df = pl.from_arrow(states).filter(pl.col("ts_ms").is_between(start_ms + 1, end_ms))
+def claim_coverage(states: pa.Table, start_ms: int, end_ms: int, step_ms: int) -> list[Caveat]:
+    """A bucket ending at t covers (t - step, t]; it counts when that overlaps the claim window."""
+    df = pl.from_arrow(states).filter(
+        (pl.col("ts_ms") > start_ms) & (pl.col("ts_ms") - step_ms < end_ms)
+    )
     alive = df.filter(pl.col("state") != int(State.ABSENT))
     where = Where(spans=[(start_ms, end_ms)])
     if alive.is_empty():

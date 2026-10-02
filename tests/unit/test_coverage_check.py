@@ -15,30 +15,40 @@ def table(states, obs=None):
 
 
 def test_clean_window_passes():
-    assert claim_coverage(table([State.OK] * 4), 0, 4 * STEP) == []
+    assert claim_coverage(table([State.OK] * 4), 0, 4 * STEP, STEP) == []
 
 
 def test_unknown_in_window_blocks():
-    [c] = claim_coverage(table([State.OK, State.UNKNOWN, State.OK]), 0, 3 * STEP)
+    [c] = claim_coverage(table([State.OK, State.UNKNOWN, State.OK]), 0, 3 * STEP, STEP)
     assert (c.code, c.severity) == ("untrusted_data", "blocks_claim")
 
 
 def test_unknown_outside_window_is_ignored():
-    assert claim_coverage(table([State.OK, State.OK, State.UNKNOWN]), 0, 2 * STEP) == []
+    assert claim_coverage(table([State.OK, State.OK, State.UNKNOWN]), 0, 2 * STEP, STEP) == []
 
 
 def test_mostly_missing_blocks_and_little_missing_warns():
-    [c] = claim_coverage(table([State.EMPTY, State.EMPTY, State.OK]), 0, 3 * STEP)
+    [c] = claim_coverage(table([State.EMPTY, State.EMPTY, State.OK]), 0, 3 * STEP, STEP)
     assert c.severity == "blocks_claim"
-    [c] = claim_coverage(table([State.EMPTY, State.OK, State.OK, State.OK]), 0, 4 * STEP)
+    [c] = claim_coverage(table([State.EMPTY, State.OK, State.OK, State.OK]), 0, 4 * STEP, STEP)
     assert (c.code, c.severity) == ("missing_data", "warn")
 
 
 def test_window_outside_the_data_blocks():
-    [c] = claim_coverage(table([State.OK] * 3), 10 * STEP, 12 * STEP)
+    [c] = claim_coverage(table([State.OK] * 3), 10 * STEP, 12 * STEP, STEP)
     assert (c.code, c.severity) == ("missing_data", "blocks_claim")
 
 
 def test_window_over_only_absent_buckets_blocks():
-    [c] = claim_coverage(table([State.ABSENT, State.ABSENT, State.OK]), 0, 2 * STEP)
+    [c] = claim_coverage(table([State.ABSENT, State.ABSENT, State.OK]), 0, 2 * STEP, STEP)
     assert (c.code, c.severity) == ("missing_data", "blocks_claim")
+
+
+def test_claim_inside_one_ok_bucket_overlaps_it():
+    # bucket (60s, 120s] is OK; claim (70s, 110s] lies strictly inside it
+    assert claim_coverage(table([State.OK, State.OK]), 70_000, 110_000, STEP) == []
+
+
+def test_claim_touching_a_bucket_only_at_its_edge_does_not_overlap():
+    [c] = claim_coverage(table([State.OK]), STEP, 2 * STEP, STEP)  # bucket (0,60s] ends at start
+    assert c.severity == "blocks_claim"
