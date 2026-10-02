@@ -56,6 +56,9 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   trend/sustained shift, highpass to remove baseline/diurnal before looking for spikes/steps,
   bandpass around a spectrum peak. Never filter percentiles or raw counters. `show` the result;
   state the filter and why in your answer; raw stays one click away for the user.
+- Latency of a service that returns errors: `split_outcome(dataset)` opens successful and failed
+  requests as two panels (fast errors flatter latency, slow ones hide in it). Say which label and
+  values it used and what it left out (4xx, unknown values).
 - Report caveats from summaries (gaps, settling, fake_resolution) when you describe data.
 - NEVER present a percentile without its sample count. A quantile over n samples is
   meaningless unless n >= ~10/(1-q) per bucket: p50 ~20, p95 ~200, p99 ~1000, p99.9 ~10000.
@@ -848,6 +851,20 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         if hint := service.seasonal_suggestion(dataset, mark):
             out["suggest"] = hint
         return _dump(out)
+
+    @mcp.tool()
+    async def split_outcome(dataset: str) -> str:
+        """Latency by outcome: for a histogram-backed dataset (latency distribution or
+        histogram_quantile series) open TWO new panels, successful and failed requests, so fast errors
+        cannot flatter the latency and slow errors cannot hide in it. The outcome label (status,
+        code, outcome, result, ...) and its values are found and classified deterministically: HTTP
+        2xx/3xx success, 5xx failure; 4xx and unknown values are left out and listed in `excluded`.
+        Use it whenever you report latency for a service that returns errors, and say which label
+        and values were used. Returns {label, success: {panel, dataset, values}, failure, excluded}."""
+        try:
+            return _dump(await service.split_outcome(dataset, "claude"))
+        except (ValidationError, NotFound, ValueError, SourceError) as e:
+            raise _fail(e) from e
 
     @mcp.tool()
     async def reframe(panel: str, index: int) -> str:

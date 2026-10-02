@@ -29,6 +29,7 @@ from telemetry_nerd.analysis.exprkind import (
 )
 from telemetry_nerd.analysis.filters import FilterSpec
 from telemetry_nerd.analysis.fraction import fraction_over, wilson
+from telemetry_nerd.analysis.outcome import OUTCOME_LABELS, add_matcher, candidate_labels, classify
 from telemetry_nerd.analysis.profile_reference import describe, hourly_means, matched_hours
 from telemetry_nerd.analysis.quantile import attach_counts
 from telemetry_nerd.analysis.reference import reference_window
@@ -912,6 +913,73 @@ class TelemetryService:
                 )
             )
             break  # the strongest limit only
+        return out
+
+    async def split_outcome(self, dataset_id: str, actor: Actor = "user") -> dict:
+        """Latency by outcome (bead 2as.19): the same histogram for successful and for failed
+        requests as two new panels, so fast errors cannot flatter the latency and slow ones cannot
+        hide in it. The outcome label and its values are found and classified deterministically
+        (analysis/outcome.py); values it cannot classify (4xx, unknown words) are left out and
+        reported. The original is untouched."""
+        meta = self.datasets.meta(dataset_id)
+        h = meta.histogram
+        if not h:
+            raise ValueError(
+                "splitting by outcome needs a histogram-backed dataset (a latency distribution or "
+                "a histogram_quantile series)"
+            )
+        src = self._source(meta.source)
+        cands = candidate_labels((await src.discover()).label_names)
+        if not cands:
+            raise ValueError(
+                "this source has no outcome-like label "
+                f"({', '.join(OUTCOME_LABELS[:4])}, ...); nothing to split by"
+            )
+        dstep = max(meta.step_ms, 2 * src.resolution_ms)
+        rng = TimeRange(meta.start_ms, meta.end_ms)
+        found = None
+        for label in cands:
+            dist = await src.fetch_histogram(h["selector"], (label,), rng, dstep)
+            values = [lb[label] for lb in series_labels(dist.series).values() if lb.get(label)]
+            outcomes = classify(label, values)
+            if outcomes.success or outcomes.failure:
+                found = outcomes
+                break
+        if found is None:
+            raise ValueError(
+                f"none of the outcome labels {cands} has classifiable values on this histogram"
+            )
+        out: dict = {"label": found.label, "excluded": list(found.excluded), "dataset": dataset_id}
+        for kind, values in (("success", found.success), ("failure", found.failure)):
+            if not values:
+                out[kind] = None
+                continue
+            sel = add_matcher(h["selector"], found.label, values)
+            what = "successful" if kind == "success" else "failed"
+            question = f"How long do {what} requests take ({found.label}=~{'|'.join(values)})?"
+            if meta.representation == "distribution":
+                ds = (
+                    await self.query_distribution(
+                        sel, h["by"], start=str(meta.start_ms), end=str(meta.end_ms),
+                        step=format_duration(meta.step_ms), source=meta.source, actor=actor,
+                    )
+                )["dataset"]  # fmt: skip
+                res = self.show(ds, question, actor)
+            else:
+                expr = meta.expr.replace(h["selector"], sel)
+                if expr == meta.expr:
+                    raise ValueError("the histogram selector is not written out in the expression")
+                ds = (
+                    await self.query(
+                        expr, start=str(meta.start_ms), end=str(meta.end_ms),
+                        step=format_duration(meta.step_ms), source=meta.source, actor=actor,
+                    )
+                )["dataset"]  # fmt: skip
+                res = self.show(ds, question, actor, raw_ok=True)
+                await self.y_context(res.panel.id, actor)
+            out[kind] = {"panel": res.panel.id, "dataset": ds, "values": list(values)}
+        if out["failure"] is None:
+            out["note"] = f"no failed requests ({found.label}) in this window: nothing to compare"
         return out
 
     async def ensure_reference(self, panel_id: str, mode: str, actor: Actor) -> Reference:

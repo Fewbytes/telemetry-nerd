@@ -3,7 +3,7 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import {
-    closePanel, fetchPanelData, refreshYContext, reframePanel, reportRender, selectYView, setMarginal, selectDataView, setOverlays,
+    closePanel, fetchPanelData, refreshYContext, reframePanel, splitOutcome, reportRender, selectYView, setMarginal, selectDataView, setOverlays,
     type Annotation, type Panel, type PanelData, type Thread, type Where, type YView,
   } from "./lib/api";
   import { rgba, seriesName, toUplot } from "./chart/toUplot";
@@ -282,6 +282,20 @@
       .then(() => load(fetchWidth || 800))
       .catch((e) => (error = String(e)))
       .finally(() => (overlayBusy = false));
+  };
+  // follow-up (2as.19): fast errors flatter latency, so offer success and failure apart
+  let splitBusy = $state(false);
+  let splitNote = $state<string | null>(null);
+  const split = () => {
+    splitBusy = true;
+    splitNote = null;
+    splitOutcome(panel.id)
+      .then((r) => {
+        const bits = [r.success && `successes ${r.success.panel}`, r.failure && `failures ${r.failure.panel}`].filter(Boolean);
+        splitNote = `by ${r.label}: ${bits.join(", ")}${r.excluded.length ? ` (left out: ${r.excluded.join(", ")})` : ""}${r.note ? `. ${r.note}` : ""}`;
+      })
+      .catch((e) => (error = String(e)))
+      .finally(() => (splitBusy = false));
   };
   // reframings (2as.15) are proposals: accepting one opens a new panel, this one is untouched
   let reframeBusy = $state(false);
@@ -651,6 +665,15 @@
           onclick={() => toggleOverlay(c.key, !c.on)}
         >{c.label}</button>
       {/each}
+    </div>
+  {/if}
+  {#if data?.dataset.histogram}
+    <div class="legend reframes" role="group" aria-label="Follow-ups">
+      follow-up:
+      <button type="button" data-follow-up="split-outcome" disabled={splitBusy}
+        title="Fast errors flatter latency and slow errors hide in it: show successful and failed requests apart (two new panels; this one stays)."
+        onclick={split}>split by success / failure</button>
+      {#if splitNote}<span class="hint" data-split-note>{splitNote}</span>{/if}
     </div>
   {/if}
   {#if data?.kind === "time" && yctx?.reframes?.length}

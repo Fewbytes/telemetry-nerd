@@ -288,6 +288,8 @@ export const setMarginal = (id: string, reference: "previous" | "week" | "profil
 export const selectDataView = (id: string, view: string) => postJSON<Panel>(`/api/panels/${id}/data-view`, { view });
 
 /** Recompute a panel's y context, e.g. once its operating profile has finished computing. */
+export interface OutcomeSplit { label: string; excluded: string[]; success: { panel: string; values: string[] } | null; failure: { panel: string; values: string[] } | null; note?: string }
+export const splitOutcome = (id: string) => postJSON<OutcomeSplit>(`/api/panels/${id}/split-outcome`);
 export const reframePanel = (id: string, index: number) => postJSON<{ panel: Panel }>(`/api/panels/${id}/reframe`, { index });
 export const refreshYContext = (id: string) => postJSON<unknown>(`/api/panels/${id}/y-context`);
 

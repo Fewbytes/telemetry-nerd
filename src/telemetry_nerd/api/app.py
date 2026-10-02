@@ -386,6 +386,13 @@ def create_app(
         return await service.set_overlays(request.path_params["id"], "user", **flags)
 
     @_api
+    async def panel_split_outcome(request: Request) -> object:
+        """Follow-up: this latency histogram for successful and for failed requests, as two panels."""
+        await _body(request)
+        p = service.workspace.get_panel(request.path_params["id"])
+        return await service.split_outcome(p.dataset_ids[0], "user")
+
+    @_api
     async def panel_reframe(request: Request) -> object:
         """Accept a proposed reframing: a new panel from the suggestion at `index`."""
         body = await _body(request)
@@ -775,6 +782,7 @@ def create_app(
         Route("/api/panels/{id}/y-view", panel_y_view, methods=["POST"]),
         Route("/api/panels/{id}/y-context", panel_y_context, methods=["POST"]),
         Route("/api/panels/{id}/reframe", panel_reframe, methods=["POST"]),
+        Route("/api/panels/{id}/split-outcome", panel_split_outcome, methods=["POST"]),
         Route("/api/panels/{id}/overlays", panel_overlays, methods=["POST"]),
         Route("/api/panels/{id}/card", panel_card),
         Route("/api/catalog/claims", catalog_claim_create, methods=["POST"]),
