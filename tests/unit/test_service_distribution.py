@@ -267,3 +267,49 @@ async def test_histogram_windows_report_column_coverage(tmp_path):
     assert w["i1"]["columns"] < w["i1"]["expected_columns"]
     assert w["i1"]["unknown"] is False
     assert w["i0"]["columns"] == w["i0"]["expected_columns"]
+
+
+class MinuteHoleSource(FakeSource):
+    """Series i1 lacks the columns whose minute-of-hour ends in 3 and 6."""
+
+    async def fetch_histogram(self, selector, by, rng, step_ms):
+        self.calls += 1
+        ts = list(range(rng.start_ms, rng.end_ms + 1, step_ms))
+        result = [
+            {"metric": {"instance": f"i{k}", "le": le},
+             "values": [[t / 1000, str(c * (k + 1))] for t in ts
+                        if not (k == 1 and (t // 60_000) % 10 in (3, 6))]}
+            for k in range(self.n_series) for le, c in self.cumulative.items()
+        ]  # fmt: skip
+        return from_matrix(self.name, result, expr=histogram_expr(selector, by, step_ms))
+
+
+async def test_window_coverage_counts_a_missing_first_or_last_column(tmp_path):
+    svc = make_service(tmp_path, MinuteHoleSource())
+    out = await svc.query_distribution(
+        "lat_bucket", by=["instance"], start="now-2h", end="now-1h", step="1m"
+    )
+    meta = svc.datasets.meta(out["dataset"])
+    step = meta.step_ms
+    t3 = next(t for t in range(meta.start_ms + 3 * step, meta.end_ms, step)
+              if (t // 60_000) % 10 == 3)  # fmt: skip
+    t6 = t3 + 3 * step
+    wins = [Window(start_ms=t3 - step, end_ms=t3 + 2 * step, label="first"),
+            Window(start_ms=t6 - 3 * step, end_ms=t6, label="last")]  # fmt: skip
+    res = svc.show(out["dataset"], "Dist?", mark="histogram", windows=wins)
+    data = svc.panel_data(res.panel.id, 600)
+    by = {s["labels"]["instance"]: s["windows"] for s in data["series"]}
+    for w in by["i1"]:
+        assert (w["columns"], w["expected_columns"]) == (2, 3)
+    for w in by["i0"]:
+        assert (w["columns"], w["expected_columns"]) == (3, 3)
+
+
+async def test_zero_count_columns_are_observed(tmp_path):
+    zero = {"0.1": 0.0, "1": 0.0, "10": 0.0, "+Inf": 0.0}
+    svc = make_service(tmp_path, FakeSource(cumulative=zero))
+    out = await svc.query_distribution(
+        "lat_bucket", by=["instance"], start="now-2h", end="now-1h", step="1m"
+    )
+    data = svc.panel_data(svc.show(out["dataset"], "Dist?").panel.id, width_px=4000)
+    assert all(s["n"] and sum(s["n"]) == 0 and s["state"] is None for s in data["series"])

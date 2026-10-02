@@ -3,7 +3,7 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from telemetry_nerd.api.app import create_app
-from tests.unit.fakes import make_service
+from tests.unit.fakes import NOW, make_service
 
 HOSTS = ["testserver", "127.0.0.1", "localhost", "[::1]"]
 
@@ -76,7 +76,7 @@ def _make_finding(client, service):
     scope = {
         "source": "default",
         "selector": "up",
-        "time_range": {"start_ms": 1, "end_ms": 2},
+        "time_range": {"start_ms": NOW - 7_200_000, "end_ms": NOW - 3_600_000},
         "step": "15s",
         "aggregation": "avg",
     }

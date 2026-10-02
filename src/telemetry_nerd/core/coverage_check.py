@@ -14,9 +14,11 @@ BLOCK_BELOW = 0.5
 def claim_coverage(states: pa.Table, start_ms: int, end_ms: int) -> list[Caveat]:
     df = pl.from_arrow(states).filter(pl.col("ts_ms").is_between(start_ms + 1, end_ms))
     alive = df.filter(pl.col("state") != int(State.ABSENT))
-    if alive.is_empty():
-        return []
     where = Where(spans=[(start_ms, end_ms)])
+    if alive.is_empty():
+        return [Caveat(code="missing_data", severity="blocks_claim", where=where,
+                       source="validator",
+                       message="No data from this dataset in the claim window.")]  # fmt: skip
     if (alive["state"] == int(State.UNKNOWN)).any():
         return [Caveat(code="untrusted_data", severity="blocks_claim", where=where,
                        source="validator", message="The claim window contains data the source "

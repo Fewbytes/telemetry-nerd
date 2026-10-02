@@ -10,7 +10,7 @@ from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.series import BUCKET_SCHEMA, FetchResult
 from telemetry_nerd.workspace.models import AnnotationIn, FindingIn, GapIn, TimeSpan
 
-from .fakes import FakeSource, make_service
+from .fakes import NOW, FakeSource, make_service
 from .test_service import HoleySource
 
 
@@ -20,7 +20,7 @@ def scope():
         "selector": "up",
         "step": "1m",
         "aggregation": "avg",
-        "time_range": {"start_ms": 0, "end_ms": 60_000},
+        "time_range": {"start_ms": NOW - 3_600_000, "end_ms": NOW},
     }
 
 
@@ -494,4 +494,20 @@ async def test_finding_over_a_partial_window_is_created_with_a_warning(tmp_path)
 async def test_finding_over_a_clean_window_gains_no_caveats(tmp_path):
     svc, ds, meta, _ = await _queried(tmp_path, HoleySource())
     f = svc.ws.finding_create(claim_in(ds, meta.start_ms, meta.start_ms + 600_000), "claude")
+    assert f.caveats == []
+
+
+async def test_panel_evidence_goes_through_the_coverage_check(tmp_path):
+    svc, ds, _, hole = await _queried(tmp_path, AllHoleSource())
+    pid = svc.show(ds, "Holes?").panel.id
+    data = claim_in(ds, hole - 60_000, hole + 120_000).model_dump()
+    data["evidence"] = [{"kind": "panel", "panel": pid}]
+    with pytest.raises(ValueError, match="coverage"):
+        svc.ws.finding_create(FindingIn(**data), "claude")
+
+
+async def test_distribution_evidence_is_skipped(tmp_path):
+    svc = make_service(tmp_path)
+    ds = (await svc.query_distribution("lat_bucket", start="now-2h", end="now-1h"))["dataset"]
+    f = svc.ws.finding_create(claim_in(ds, 0, 60_000), "claude")
     assert f.caveats == []

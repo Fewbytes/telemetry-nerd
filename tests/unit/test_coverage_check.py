@@ -32,3 +32,13 @@ def test_mostly_missing_blocks_and_little_missing_warns():
     assert c.severity == "blocks_claim"
     [c] = claim_coverage(table([State.EMPTY, State.OK, State.OK, State.OK]), 0, 4 * STEP)
     assert (c.code, c.severity) == ("missing_data", "warn")
+
+
+def test_window_outside_the_data_blocks():
+    [c] = claim_coverage(table([State.OK] * 3), 10 * STEP, 12 * STEP)
+    assert (c.code, c.severity) == ("missing_data", "blocks_claim")
+
+
+def test_window_over_only_absent_buckets_blocks():
+    [c] = claim_coverage(table([State.ABSENT, State.ABSENT, State.OK]), 0, 2 * STEP)
+    assert (c.code, c.severity) == ("missing_data", "blocks_claim")
