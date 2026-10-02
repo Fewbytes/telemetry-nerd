@@ -29,10 +29,13 @@ run rules and EWMA/CUSUM on per-series deviations.
 
 ## Checks
 
-1. **Frequency.** `spectrum()` (Lomb-Scargle, Baluev FAP) on the same prepared series; only
-   `significant` peaks count. Significant periods (≤ 3, each ≥ 2 cycles in range) are removed by
-   least-squares harmonic regression before the stability tests, so a daily cycle is not read as
-   a level shift or drift.
+1. **Frequency.** `spectrum()` (Lomb-Scargle, Baluev FAP) gives white-noise-significant
+   candidates. The white-noise FAP calls AR(1) wandering and the 1/f² power of a step
+   "significant", so candidates are **confirmed against an AR(1) red-noise background**
+   (φ from the residual after removing all candidates; z = p N / (2 S_AR(f)) ~ Exp(1);
+   FAP = 1 − (1 − e^−z)^M, M = N/2), with prewhitening (stronger confirmed periods removed
+   first) so sidelobes of one sinusoid are not extra periods. Order: structure on the raw series
+   → periods confirmed on what it leaves → harmonics (≤ 3) removed → structure again.
 2. **Autocorrelation.** ACF from observed pairs; τ_int = 1 + 2 Σ ρ_k by Geyer's initial positive
    sequence (lags ≤ n/4); n_eff = n / max(τ, 1) (never more than n). Lag-1 ρ reported with ±2/√n.
 3. **Trend.** OLS slope on the de-seasonalised series; SE inflated by √τ of the OLS residuals;
@@ -48,9 +51,10 @@ run rules and EWMA/CUSUM on per-series deviations.
    used as supporting evidence only (KPSS over-rejects under strong AR(1)).
 6. **Heteroscedasticity.** Robust scale (MAD) of model residuals, last third / first third, with
    a log-normal interval from var(log σ̂_MAD) ≈ 1.36 / n_eff per third.
-7. **Shape** of per-step values: skewness and excess kurtosis with SEs √(6/n_eff), √(24/n_eff);
-   zero share (exact count + Wilson interval on n_eff); bimodality coefficient (> 5/9 flags; a
-   level shift also produces it, which the report says).
+7. **Shape** of per-step values: skewness and excess kurtosis with moving-block bootstrap
+   intervals (blocks ≈ 2τ; the normal-theory √(6/n) is far too narrow for skewed data); zero
+   share (exact count + Wilson on n_eff); bimodality coefficient > 5/9 **and** negative excess
+   kurtosis (BC alone fires on any strongly skewed law); `bimodal_from_shift` caveat.
 
 ## SPC
 
@@ -76,7 +80,12 @@ run rules and EWMA/CUSUM on per-series deviations.
   standardised sequence; statistics restart after each signal, so signals are episodes. In-control
   ARL₀ by Brook-Evans Markov chains (EWMA: Lucas-Saccucci, 2·100+1 states; CUSUM: 200 states,
   two-sided 1/ARL = 1/ARL⁺ + 1/ARL⁻). Expected episodes = n_judged / ARL₀; p = Poisson tail.
-- **In control** iff no detector exceeds its expectation at p < 0.01.
+- **In control** iff none of the deciding detectors (rule 1 on the standardised sequence, EWMA,
+  CUSUM) exceeds its expectation at p < 0.01/3. p-values use a conservative scenario for the
+  baseline's estimation error (σ at its one-sided 95% upper bound, centre off by its 95% bound)
+  so a short baseline does not manufacture alarms. Rules 2–4 count overlapping windows: reported
+  with expected counts, no p-value. The drawn-band exceedances (raw, marginal σ) are reported
+  with a Wilson interval on n_eff (they cluster under autocorrelation).
 - Minimum baseline: 30 points and n_eff ≥ 10, else the SPC section is `insufficient_data`.
 
 ## Verdict (per series)
@@ -86,14 +95,16 @@ Primary label, in priority order, with every other label that applies in `also`:
 | label | rule |
 |---|---|
 | `insufficient_data` | < 32 points, > 50% gaps, constant, or n_eff < 10 |
-| `level_shifted` | a significant changepoint (p < 0.01), |δ| ≥ 1 σ_within, step model SSE < trend SSE |
-| `drifting` | 99% slope interval excludes 0, change over range ≥ 1 σ_resid, trend SSE ≤ step SSE |
-| `periodic` | ≥ 1 significant spectrum peak |
+| `insufficient_data` (also) | n_eff < 10 after removing structure (near-unit-root series) |
+| `level_shifted` | significant changepoint(s) (p < 0.01), \|δ\| ≥ 0.25 σ_within, step model has the lowest BIC |
+| `drifting` | 99% slope interval excludes 0, change ≥ 0.25 σ_resid, trend model has the lowest BIC |
+| `periodic` | ≥ 1 period confirmed against red noise |
 | `noisy` | none of the above, but heteroscedastic, heavy-tailed (kurtosis interval > 1) or SPC out of control |
 | `stable` | none of the above |
 
-Materiality (1 σ) is a stated parameter: smaller significant shifts and trends are reported as
-`minor` findings, not verdicts. Reasons are short strings with the numbers.
+Materiality (0.25 σ; "small" below 1 σ) is a stated parameter: smaller significant shifts and
+trends are reported as `minor`; an out-of-control chart explained by a (minor) shift or trend is
+not "noisy". Reasons are short strings with the numbers.
 
 ## API
 
@@ -105,8 +116,9 @@ Materiality (1 σ) is a stated parameter: smaller significant shifts and trends 
   the baseline (default first half, same function as analyze).
 - Panel payload `kind: "spc"`: per series ts, value, centre, lcl/ucl (+ 2σ), violations
   `{ts, value, rules}`, EWMA/CUSUM signal times, baseline window, mode, caveats.
-- UI `SpcPlot.svelte`: series line, centre line, 3σ band (2σ faint), shaded baseline window,
-  violations as red rings, legend stating baseline, mode (individuals | AR(1) residuals), n, n_eff.
+- UI `SpcPlot.svelte`: series line (null rows at gaps), centre line, 3σ band, shaded baseline
+  window, violations (filled: deciding rules, hollow: supplementary run rules), legend stating
+  baseline, mode (individuals | AR(1) residuals), n, n_eff.
 
 ## Validation
 
