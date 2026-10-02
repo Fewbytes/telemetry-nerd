@@ -43,6 +43,20 @@ export function rgba(hex: string, alpha: number): string {
 
 const fmt = (v: number): string => String(Number(v.toPrecision(4)));
 
+// With spanGaps:false, a sample flanked by nulls on both sides has no line segment to
+// draw (stepped or not), so uPlot's density-based auto marker can skip it too and the
+// sample vanishes. Force a marker for exactly those indices; defer to the default
+// show-all-or-none behaviour otherwise (telemetry-graphing-guide.md §7).
+export const isolatedPointsFilter: uPlot.Series.Points["filter"] = (u, seriesIdx, show) => {
+  if (show) return null;
+  const ydata = u.data[seriesIdx] as (number | null)[];
+  const idxs: number[] = [];
+  for (let i = 0; i < ydata.length; i++) {
+    if (ydata[i] != null && ydata[i - 1] == null && ydata[i + 1] == null) idxs.push(i);
+  }
+  return idxs.length ? idxs : null;
+};
+
 export interface Grid {
   start: number; // ms
   end: number; // ms, inclusive
@@ -157,7 +171,14 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
       const vals = ghost.avg.map((v, i) => (nMin !== null && (ghost.count[i] ?? 0) < nMin ? null : v));
       legendHidden.push(data.length);
       data.push(onGrid(ghost.ts, vals));
-      uSeries.push({ label: `${base} last week`, stroke: rgba(color, 0.45), width: 1, dash: [2, 4], spanGaps: false });
+      uSeries.push({
+        label: `${base} last week`,
+        stroke: rgba(color, 0.45),
+        width: 1,
+        dash: [2, 4],
+        spanGaps: false,
+        points: { filter: isolatedPointsFilter },
+      });
     }
     const column = (values: (number | null)[]) => {
       const out: (number | null)[] = Array(xs.length).fill(null);
@@ -175,7 +196,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
       const nMin = opts.nMin ?? null;
       const ok = s.avg.map((v, i) => (nMin === null || (s.count[i] ?? 0) >= nMin ? v : null));
       data.push(column(ok));
-      uSeries.push({ label: name, stroke: color, width: 1.5, spanGaps: false });
+      uSeries.push({ label: name, stroke: color, width: 1.5, spanGaps: false, points: { filter: isolatedPointsFilter } });
       if (nMin !== null) {
         const low = s.avg.map((v, i) => ((s.count[i] ?? 0) < nMin ? v : null));
         data.push(column(low));
@@ -186,6 +207,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
           width: 1,
           dash: [4, 4],
           spanGaps: false,
+          points: { filter: isolatedPointsFilter },
         });
       }
       return;
@@ -197,7 +219,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
       data.push(contextColumn(ctx, "avg"), contextColumn(ctx, "min"), contextColumn(ctx, "max"));
       legendHidden.push(ci + 1, ci + 2);
       uSeries.push(
-        { label: `${name} raw`, stroke: rgba(color, 0.35), width: 1, spanGaps: false },
+        { label: `${name} raw`, stroke: rgba(color, 0.35), width: 1, spanGaps: false, points: { filter: isolatedPointsFilter } },
         { label: "", stroke: "transparent", width: 0, points: { show: false } },
         { label: "", stroke: "transparent", width: 0, points: { show: false } },
       );
@@ -219,7 +241,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
     };
     legendHidden.push(avgIdx + 1, avgIdx + 2);
     uSeries.push(
-      { label: name, stroke: color, width: 1.5, spanGaps: false, value: withEnvelope },
+      { label: name, stroke: color, width: 1.5, spanGaps: false, value: withEnvelope, points: { filter: isolatedPointsFilter } },
       { label: `${name} ${interval ? "lo" : "min"}`, stroke: rgba(color, 0.35), width: 0.5, spanGaps: false, points: { show: false } },
       { label: `${name} ${interval ? "hi" : "max"}`, stroke: rgba(color, 0.35), width: 0.5, spanGaps: false, points: { show: false } },
     );
@@ -237,12 +259,26 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
       // filter edges (series start/end, around gaps): truncated kernel, unreliable: dashed twin
       data.push(column(edgeAvg));
       legendHidden.push(uSeries.length);
-      uSeries.push({ label: `${name} (filter edge, unreliable)`, stroke: color, width: 1.5, dash: [4, 4], spanGaps: false });
+      uSeries.push({
+        label: `${name} (filter edge, unreliable)`,
+        stroke: color,
+        width: 1.5,
+        dash: [4, 4],
+        spanGaps: false,
+        points: { filter: isolatedPointsFilter },
+      });
     }
     if (ctx && opts.context?.role === "removed") {
       // the part a high/band-pass took out, dashed over the raw series
       data.push(contextColumn(ctx, "avg"));
-      uSeries.push({ label: `${name} removed part`, stroke: rgba(color, 0.8), width: 1, dash: [3, 3], spanGaps: false });
+      uSeries.push({
+        label: `${name} removed part`,
+        stroke: rgba(color, 0.8),
+        width: 1,
+        dash: [3, 3],
+        spanGaps: false,
+        points: { filter: isolatedPointsFilter },
+      });
     }
   });
 

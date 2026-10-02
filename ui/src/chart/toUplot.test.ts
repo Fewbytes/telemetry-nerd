@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { seriesName, stepify, toUplot } from "./toUplot";
+import { isolatedPointsFilter, seriesName, stepify, toUplot } from "./toUplot";
 import type { SeriesData } from "../lib/api";
+import type uPlot from "uplot";
 
 const s = (id: string, labels: Record<string, string>, ts: number[], v: number[]): SeriesData => ({
   id, labels, ts, avg: v, min: v.map((x) => x - 1), max: v.map((x) => x + 1), count: v.map(() => 4),
@@ -45,6 +46,34 @@ describe("toUplot", () => {
     const m = toUplot([s("a", { i: "a" }, [1000], [1])]);
     expect(m.bands).toEqual([{ series: [3, 2], fill: expect.stringMatching(/^rgba\(/) }]);
     expect(m.series[1].spanGaps).toBe(false);
+  });
+});
+
+describe("isolatedPointsFilter", () => {
+  const u = (data: (number | null)[]) => ({ data: [[], data] }) as unknown as uPlot;
+
+  it("marks a sample flanked by nulls on both sides when auto-show is off", () => {
+    expect(isolatedPointsFilter!(u([null, 1, null, 2, 3, null]), 1, false)).toEqual([1]);
+  });
+
+  it("marks an isolated sample at either edge of the series", () => {
+    expect(isolatedPointsFilter!(u([1, null, null, null, 2]), 1, false)).toEqual([0, 4]);
+  });
+
+  it("returns null when there is nothing isolated", () => {
+    expect(isolatedPointsFilter!(u([1, 2, 3]), 1, false)).toBeNull();
+    expect(isolatedPointsFilter!(u([null, null]), 1, false)).toBeNull();
+  });
+
+  it("defers to the default show-all behaviour when density is low enough to show already", () => {
+    expect(isolatedPointsFilter!(u([null, 1, null]), 1, true)).toBeNull();
+  });
+});
+
+describe("toUplot isolated points", () => {
+  it("wires the isolated-point filter onto the main series so a lone sample between gaps stays visible", () => {
+    const m = toUplot([s("a", { i: "a" }, [1000, 2000, 3000], [1, 2, 3])]);
+    expect(m.series[1].points?.filter).toBe(isolatedPointsFilter);
   });
 });
 
