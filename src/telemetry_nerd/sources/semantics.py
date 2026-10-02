@@ -355,7 +355,7 @@ MIMIR = MissingDataSemantics(
     reset_visible_in_step_window=documented(False, _DOC_PROM_STALE),
     tiers=documented((), _DOC_MIMIR_LIMITS),
     resolution_reported=documented(False, _DOC_MIMIR_LIMITS),
-    partial_response_signal=unknown(None),
+    partial_response_signal=documented("warnings", _DOC_PROM_API),
     dedup_hides_replica_gaps=documented(
         True,
         "https://grafana.com/docs/mimir/latest/configure/configure-high-availability-deduplication/",

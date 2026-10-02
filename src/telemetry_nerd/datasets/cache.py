@@ -76,16 +76,27 @@ class SeriesCache:
 
             results = await asyncio.gather(*(bounded(cs) for cs in missing), return_exceptions=True)
             failed: list[tuple[int, int, str]] = []
+            notes: list[str] = []
+            errored = 0
             for cs, result in zip(missing, results, strict=True):
                 if isinstance(result, BaseException):
                     if not isinstance(result, SourceError) or isinstance(result, LimitExceeded):
                         raise result
                     failed.append((cs, cs + span - step_ms, f"{type(result).__name__}: {result}"))
+                    errored += 1
                     continue
+                notes += result.notes
                 immutable = cs + span <= now - self.settle_ms
-                self._store(qkey, cs, cs + span - step_ms, result, now, immutable)
+                fetched_at = now
+                if result.failed:
+                    # The source answered only partially (1h9.12): keep what it returned, report
+                    # the span unknown, and store the chunk as already stale so the next read
+                    # asks again rather than serving it as complete.
+                    failed += result.failed
+                    immutable, fetched_at = False, now - self.recent_ttl_ms
+                self._store(qkey, cs, cs + span - step_ms, result, fetched_at, immutable)
             starts = self.chunk_starts(rng, step_ms)
-            if failed and len(failed) == len(starts):
+            if errored and errored == len(starts):
                 raise next(r for r in results if isinstance(r, BaseException))
             partial = self._con.execute(
                 """SELECT COALESCE(SUM(partial), 0) FROM cache_chunks
@@ -98,6 +109,7 @@ class SeriesCache:
                 read.series,
                 partial=int(partial[0]) if partial else 0,
                 failed=tuple(failed),
+                notes=tuple(dict.fromkeys(notes)),
             )
 
     def peek(self, source_identity: str, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:

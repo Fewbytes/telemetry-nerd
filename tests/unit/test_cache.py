@@ -206,3 +206,30 @@ async def test_limit_exceeded_propagates(cache):
         await cache.get(
             "src", "up", rng, STEP, FlakyFetcher([NOW - 2 * SPAN], LimitExceeded("too many"))
         )
+
+
+async def test_chunk_reported_failed_by_the_fetcher_keeps_its_data_but_is_not_cached_as_complete(
+    cache, clock
+):
+    """A partial source response (1h9.12): data returned, span unknown, refetched next read."""
+    calls = []
+
+    async def partial_fetch(rng):
+        calls.append(rng)
+        res = await FakeFetcher()(rng)
+        return FetchResult(
+            res.buckets, res.series, failed=((rng.start_ms, rng.end_ms, "PartialResponse: x"),)
+        )
+
+    rng = TimeRange(NOW - 2 * SPAN, NOW - SPAN - STEP)  # old: would be immutable if complete
+    first = await cache.get("src", "up", rng, STEP, partial_fetch)
+    assert first.buckets.num_rows == 10  # data kept
+    assert [f[2] for f in first.failed] == ["PartialResponse: x"]
+    second = await cache.get("src", "up", rng, STEP, partial_fetch)
+    assert len(calls) == 2  # not served from cache
+    assert [f[2] for f in second.failed] == ["PartialResponse: x"]
+    ok = await cache.get("src", "up", rng, STEP, FakeFetcher())  # source recovered
+    assert ok.failed == () and ok.buckets.num_rows == 10
+    again = FakeFetcher()
+    await cache.get("src", "up", rng, STEP, again)
+    assert again.calls == []  # now cached

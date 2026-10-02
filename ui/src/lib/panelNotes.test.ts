@@ -11,6 +11,14 @@ describe("panelNotes", () => {
     expect(caveatText("interval_differs")).toContain("own rate");
     expect(caveatText("interval_change")).toContain("sample rate changed");
   });
+  it("shows a source warning as an info note without the code prefix", () => {
+    expect(caveatText("source_warning:PromQL info: odd name")).toBe("Source note: PromQL info: odd name");
+    const notes = panelNotes(["source_warning:odd", "gaps"], { yScaledToData: false, nMin: null });
+    expect(notes.map((n) => [n.kind, n.text])).toEqual([
+      ["info", "Source note: odd"],
+      ["caveat", expect.stringContaining("no data")],
+    ]);
+  });
   it("adds the y-scale note as info, after the caveats", () => {
     const notes = panelNotes(["gaps"], { yScaledToData: true, nMin: null });
     expect(notes.map((n) => [n.kind, n.key])).toEqual([

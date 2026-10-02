@@ -171,8 +171,12 @@ at window edges (68.65 vs 63.19 in the first hour).
 
 No `warnings` key in any recorded Thanos response; partial responses could not be provoked
 on the public instances. 📖 `warnings` per
-<https://thanos.io/tip/components/query.md/#partial-response>. The adapter ignores `warnings`
-today (bead `telemetry-nerd-1h9.12`); `bucket_state` treats an unprovable property as unknown.
+<https://thanos.io/tip/components/query.md/#partial-response>. **Adapter rule (1h9.12):** any
+entry in `warnings` means data may be missing and makes the chunk's span UNKNOWN
+(`PartialResponse: <message>`, data kept, chunk not cached as complete), except engine
+annotations starting `PromQL info:` / `PromQL warning:`, which describe the expression and
+become a `source_warning:<text>` caveat. An unrecognised message counts as partial (can't tell
+=> unknown). Same rule for Mimir. Synthetic bodies only; not provoked live.
 
 ### TQ4 Deduplication ✅
 
@@ -242,7 +246,8 @@ shows a preceding gap longer than the window are `source_filled` for `increase`/
 The cluster endpoint adds `isPartial` to every response (`false` observed;
 `vm-playground__shape_range`); single node omits it (`percona-pmm__shape_range`). A node-down
 case could not be provoked on the public cluster. 📖 `isPartial: true` and
-`-search.denyPartialResponse`.
+`-search.denyPartialResponse`. **Adapter (1h9.12):** `isPartial: true` makes the chunk's span
+UNKNOWN (`PartialResponse: ...`), data kept; covered by synthetic bodies.
 
 ### VQ4 Recent-data reliability ✅ (not reproduced) / ❓ (cache, push lag)
 

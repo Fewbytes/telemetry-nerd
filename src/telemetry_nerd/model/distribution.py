@@ -80,6 +80,8 @@ class DistResult:
     scheme: BucketScheme
     expr: str = ""
     caveats: tuple[str, ...] = ()
+    # fetch spans the source answered only partially: inclusive step-ts span, "Class: message"
+    failed: tuple[tuple[int, int, str], ...] = ()
 
 
 QUANTILE_CHOICES = (0.5, 0.9, 0.95, 0.99, 0.999)  # selectable percentile bands

@@ -9,8 +9,9 @@ import os
 import re
 import time
 from collections.abc import Mapping, Sequence
+from dataclasses import replace
 from importlib.metadata import PackageNotFoundError, version
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import httpx
 import pyarrow as pa
@@ -92,6 +93,48 @@ def _raise_if_limit(message: str) -> None:
         raise LimitExceeded(
             f"source refused the query: {message.strip()[:300]}", hint=_LIMIT_HINTS[kind]
         )
+
+
+# Prometheus-engine annotations (Prometheus 3 / Thanos / Mimir) that describe the expression,
+# not the data's completeness: "PromQL info: ..." and "PromQL warning: ...". Anything else in
+# `warnings` (store unavailable, partial response, timeouts, ...) may mean data is missing, and
+# a message we cannot classify is treated as partial: can't tell => unknown (spec section 6).
+_INFORMATIONAL = re.compile(r"^\s*PromQL (info|warning):", re.IGNORECASE)
+_VM_PARTIAL = (
+    "VictoriaMetrics returned isPartial=true: some storage nodes did not answer, "
+    "so the result may be incomplete"
+)
+
+
+def classify_warnings(warnings: object) -> tuple[str | None, list[str]]:
+    """Split a response's `warnings` into (partial message or None, informational notes)."""
+    if not isinstance(warnings, list):
+        return None, []
+    partial: list[str] = []
+    notes: list[str] = []
+    for w in warnings:
+        text = str(w)
+        (notes if _INFORMATIONAL.match(text) else partial).append(text)
+    return ("; ".join(partial) if partial else None), notes
+
+
+class _Matrix(NamedTuple):
+    """A range query's series plus what the response said about its own completeness."""
+
+    result: list[dict]
+    partial: str | None = None  # source message when the response is partial
+    notes: tuple[str, ...] = ()  # informational warnings
+
+
+def _completeness(
+    rng: TimeRange, *parts: _Matrix
+) -> tuple[tuple[tuple[int, int, str], ...], tuple[str, ...]]:
+    """(failed spans, notes) of one chunk fetch: a partial response makes the whole chunk
+    unknown (we cannot tell which series or steps are missing), the data stays."""
+    msgs = list(dict.fromkeys(p.partial for p in parts if p.partial))
+    notes = tuple(dict.fromkeys(n for p in parts for n in p.notes))
+    failed = ((rng.start_ms, rng.end_ms, f"PartialResponse: {'; '.join(msgs)}"),) if msgs else ()
+    return failed, notes
 
 
 def is_selector(expr: str) -> bool:
@@ -195,8 +238,8 @@ class PromQLSource:
         )
         cells: dict[tuple[str, int], dict[str, float | None]] = {}
         labels_by_sid: dict[str, dict[str, str]] = {}
-        for query_field, result in zip(queries, results, strict=True):
-            for item in result:
+        for query_field, matrix in zip(queries, results, strict=True):
+            for item in matrix.result:
                 if isinstance(item, dict) and "histograms" in item:
                     raise _native_histograms()
                 try:
@@ -268,7 +311,8 @@ class PromQLSource:
             {"series_id": sids, "labels": [labels_json(labels_by_sid[s]) for s in sids]},
             schema=SERIES_SCHEMA,
         )
-        return FetchResult(buckets, series, partial=partial)
+        failed, notes = _completeness(rng, *results)
+        return FetchResult(buckets, series, partial=partial, failed=failed, notes=notes)
 
     async def _get_json(
         self, path: str, params: dict[str, str], timeout_s: float | None = None
@@ -329,13 +373,15 @@ class PromQLSource:
             )
         observed_q = observed_count_query(expr, format_duration(step_ms))
         if observed_q is None:
-            result = await self._query_range(expr.strip(), rng, step_ms)
-            counts = None
+            matrix = await self._query_range(expr.strip(), rng, step_ms)
+            count_matrix = None
         else:
-            result, counts = await asyncio.gather(
+            matrix, count_matrix = await asyncio.gather(
                 self._query_range(expr.strip(), rng, step_ms),
                 self._query_range(observed_q, rng, step_ms),
             )
+        result = matrix.result
+        counts = None if count_matrix is None else count_matrix.result
         rows: list[tuple[int, str, float | None]] = []
         labels_by_sid: dict[str, dict[str, str]] = {}
         for item in result:
@@ -384,7 +430,8 @@ class PromQLSource:
             {"series_id": sids, "labels": [labels_json(labels_by_sid[s]) for s in sids]},
             schema=SERIES_SCHEMA,
         )
-        return FetchResult(buckets, series)
+        failed, notes = _completeness(rng, matrix, *([count_matrix] if count_matrix else []))
+        return FetchResult(buckets, series, failed=failed, notes=notes)
 
     def _observed_cells(self, result: list[dict]) -> set[tuple[str, int]]:
         """(series_id, ts_ms) of buckets with at least one observed sample."""
@@ -418,9 +465,9 @@ class PromQLSource:
             raise SourceError(
                 str(e), hint="`by` takes plain label names other than le/vmrange"
             ) from e
-        result = await self._query_range(expr, rng, step_ms)
+        matrix = await self._query_range(expr, rng, step_ms)
         try:
-            dist = from_matrix(self.name, result, expr=expr)
+            dist = from_matrix(self.name, matrix.result, expr=expr)
         except (ValueError, TypeError, IndexError, KeyError) as e:
             raise SourceError(str(e), hint=_HIST_HINT) from e
         if dist.scheme.kind == "classic":
@@ -434,6 +481,13 @@ class PromQLSource:
             raise LimitExceeded(
                 f"histogram has {dist.rows.num_rows} non-empty cells (limit {self.limits.max_points})",
                 hint="use a coarser step or a shorter range",
+            )
+        failed, notes = _completeness(rng, matrix)
+        if failed or notes:
+            dist = replace(
+                dist,
+                failed=failed,
+                caveats=(*dist.caveats, *(f"source_warning:{n}" for n in notes)),
             )
         return dist
 
@@ -472,7 +526,7 @@ class PromQLSource:
                 ),
             )
 
-    async def _query_range(self, query: str, rng: TimeRange, step_ms: int) -> list[dict]:
+    async def _query_range(self, query: str, rng: TimeRange, step_ms: int) -> _Matrix:
         params = {
             "query": query,
             "start": f"{rng.start_ms / 1000:.3f}",
@@ -482,7 +536,8 @@ class PromQLSource:
         if self.flavor == "victoriametrics":
             # Our cache owns freshness; VM's response cache would hide late samples.
             params["nocache"] = "1"
-        data = (await self._get_json("/api/v1/query_range", params)).get("data")
+        body = await self._get_json("/api/v1/query_range", params)
+        data = body.get("data")
         if not isinstance(data, dict) or "resultType" not in data or "result" not in data:
             raise _malformed("response missing data.resultType / data.result")
         if data["resultType"] != "matrix":
@@ -492,7 +547,10 @@ class PromQLSource:
             )
         if not isinstance(data["result"], list):
             raise _malformed("data.result is not a list")
-        return data["result"]
+        partial, notes = classify_warnings(body.get("warnings"))
+        if body.get("isPartial") is True:  # VictoriaMetrics cluster
+            partial = "; ".join(filter(None, (_VM_PARTIAL, partial)))
+        return _Matrix(data["result"], partial, tuple(notes))
 
     async def probe(self) -> dict:
         """Cheap reachability check: buildinfo, else a trivial instant query

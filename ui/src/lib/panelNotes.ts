@@ -76,8 +76,12 @@ const CAVEATS: Record<string, Describe> = {
 };
 
 /** Plain-language caveat; unknown keys are shown as-is rather than hidden. */
+const SOURCE_WARNING = "source_warning:";
+
 export const caveatText = (key: string, nMin: number | null = null, representation = "bucket_agg"): string =>
-  (CAVEATS[key] ?? (() => key))(nMin, representation === "distribution");
+  key.startsWith(SOURCE_WARNING)
+    ? `Source note: ${key.slice(SOURCE_WARNING.length)}`
+    : (CAVEATS[key] ?? (() => key))(nMin, representation === "distribution");
 
 /** Warnings and notes about the graph, kept apart from what the graph displays. */
 export function panelNotes(
@@ -100,7 +104,7 @@ export function panelNotes(
   const notes: Note[] = caveats
     .filter((key) => !locatedCodes.has(key))
     .map((key) => ({
-      kind: "caveat",
+      kind: key.startsWith(SOURCE_WARNING) ? "info" : "caveat",
       key,
       text: caveatText(key, opts.nMin, opts.representation),
     }));

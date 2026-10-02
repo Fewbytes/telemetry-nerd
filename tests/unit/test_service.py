@@ -250,3 +250,37 @@ async def test_failed_chunk_with_other_chunk_empty_is_untrusted_not_empty(tmp_pa
     [c] = [c for c in data["located"] if c["code"] == "untrusted_data"]
     assert c["where"]["spans"] and c["where"]["series"] is None
     assert "untrusted_data" in data["caveats"]
+
+
+class PartialResponseSource(FakeSource):
+    """Every chunk comes back with data but the source said it was partial (1h9.12)."""
+
+    async def fetch(self, expr, rng, step_ms):
+        res = await super().fetch(expr, rng, step_ms)
+        msg = "PartialResponse: store s1 unavailable, results may be incomplete"
+        return FetchResult(res.buckets, res.series, failed=((rng.start_ms, rng.end_ms, msg),))
+
+
+async def test_partial_source_response_is_untrusted_data_with_the_source_message(tmp_path):
+    svc = make_service(tmp_path, PartialResponseSource())
+    out = await svc.query("up", start="now-2h", end="now-1h", step="1m")
+    assert "untrusted_data" in out["summary"]["caveats"]
+    assert out["summary"]["series_count"] == 2  # data kept
+    data = svc.panel_data(svc.show(out["dataset"], "Partial?").panel.id, width_px=2000)
+    [c] = [c for c in data["located"] if c["code"] == "untrusted_data"]
+    assert "store s1 unavailable" in c["message"]
+    assert "untrusted_data" in data["caveats"]
+
+
+class NotedSource(FakeSource):
+    async def fetch(self, expr, rng, step_ms):
+        res = await super().fetch(expr, rng, step_ms)
+        return FetchResult(res.buckets, res.series, notes=("PromQL info: odd name",))
+
+
+async def test_informational_source_warning_is_a_caveat_not_unknown(tmp_path):
+    svc = make_service(tmp_path, NotedSource())
+    out = await svc.query("up", start="now-2h", end="now-1h", step="1m")
+    caveats = out["summary"]["caveats"]
+    assert "source_warning:PromQL info: odd name" in caveats
+    assert "untrusted_data" not in caveats

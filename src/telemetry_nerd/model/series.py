@@ -40,6 +40,8 @@ class FetchResult:
     partial: int = 0  # incomplete source cells dropped (a bucket the source only half-returned)
     # chunks that failed: inclusive bucket-ts span and "ErrorClass: message" (bucket_state UNKNOWN)
     failed: tuple[tuple[int, int, str], ...] = ()
+    # informational source warnings (not missing data): shown as `source_warning` caveats
+    notes: tuple[str, ...] = ()
 
 
 def empty_result() -> FetchResult:

@@ -144,7 +144,9 @@ class DatasetStore:
             derived=derived,
             failed_spans=[list(f) for f in result.failed],
             semantics_flags=dict(semantics_flags or {}),
-            source_caveats=list(lineage.caveats) if lineage else [],
+            source_caveats=_union(
+                lineage.caveats if lineage else (), [f"source_warning:{n}" for n in result.notes]
+            ),
             **(lineage.fields() if lineage else {}),
         )
         names = result.buckets.column_names
@@ -260,6 +262,7 @@ class DatasetStore:
             n_min=n_min,
             scheme=dist.scheme.to_dict(),
             histogram=histogram,
+            failed_spans=[list(f) for f in dist.failed],
             source_caveats=_union(dist.caveats, lineage.caveats if lineage else ()),
             **(lineage.fields() if lineage else {}),
         )
