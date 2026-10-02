@@ -362,7 +362,7 @@ def control_chart(
         eb = e[baseline[ok]]
         se_ = robust_sigma(eb)
         if se_ == 0:
-            return _insufficient(baseline, judged, y, "baseline residuals are constant")
+            return _insufficient(baseline, judged, y, "baseline residuals are constant", caveats)
         chart.sigma_resid = se_
         z = np.full(y.size, np.nan)
         z[ok] = e / se_

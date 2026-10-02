@@ -120,6 +120,18 @@ def test_small_baseline_is_insufficient_and_stated():
     assert c.mode == "insufficient_data" and "needs >= 30" in c.reason and c.in_control is None
 
 
+def test_constant_ar1_residuals_insufficient_keeps_caveats_already_gathered():
+    """7xe: a baseline alternating +1/-1 fits a significant phi, whose one-step residuals are
+    then exactly flat (MAD 0) -> the ar1_residuals refusal. short_baseline (ne < 100, gathered
+    before this refusal) must survive it, like it already does for the sigma=0 and n_eff
+    refusals."""
+    n_base = 40
+    y = np.r_[np.tile([1.0, -1.0], n_base // 2), np.zeros(10)]
+    c = chart(y, n_base)
+    assert c.mode == "insufficient_data" and "residuals are constant" in c.reason
+    assert c.caveats == ["short_baseline"]
+
+
 def test_seasonal_centre_is_fitted_on_baseline_only():
     t = np.arange(0, 4 * 86400, 300.0)
     rng = np.random.default_rng(2)
