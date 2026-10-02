@@ -4,14 +4,14 @@
 # The M5 tier-2 sandbox image (bead b98) is a separate image (deploy/sandbox/); this one
 # stays free of Jupyter/kernel deps.
 
-FROM node:22-slim AS ui
+FROM node:26-trixie-slim AS ui
 WORKDIR /ui
 COPY ui/package.json ui/package-lock.json ./
 RUN npm ci
 COPY ui/ ./
 RUN npm run build
 
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS build
+FROM ghcr.io/astral-sh/uv:python3.14-trixie-slim AS build
 WORKDIR /src
 COPY pyproject.toml uv.lock hatch_build.py ./
 COPY src/ src/
@@ -22,7 +22,7 @@ RUN uv build --wheel --out-dir /dist \
  && uv venv /opt/venv \
  && VIRTUAL_ENV=/opt/venv uv pip install /dist/*.whl
 
-FROM python:3.12-slim-bookworm
+FROM python:3.14-slim-trixie
 RUN useradd --system --create-home --uid 10001 tn \
  && mkdir /data && chown tn:tn /data
 COPY --from=build /opt/venv /opt/venv
