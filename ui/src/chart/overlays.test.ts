@@ -9,10 +9,6 @@ const ov = (o: Partial<OverlaysPayload> = {}): OverlaysPayload => ({
   limit: {
     available: true, label: "limit size_bytes", metric: "size_bytes", hi: 9, origin: "pack", confidence: 0.85, basis: "pack node_exporter@1.x: cite",
     series: [{ id: "l", labels: { __name__: "size_bytes" }, ts: [1000, 2000], avg: [9, 9], min: [9, 9], max: [9, 9], count: [1, 1] }],
-    reframings: [
-      { transform: "headroom", expr: "(size_bytes) - (used_bytes)", label: "headroom (limit − value)", reason: "carries the bound with it", origin: "rule" },
-      { transform: "percent_of_limit", expr: "100 * (used_bytes) / (size_bytes)", label: "% of limit", reason: "same risk at any scale", origin: "rule" },
-    ],
   },
   ghost: { available: true, loaded: false, label: "last week" },
   ...o,
