@@ -119,9 +119,10 @@ def histogram_panel_data(panel, meta, dist, labels, caveats, width_px) -> dict:
         if exact is not None:
             src = exact[k].get(sid) or empty_window(w)
             out["source"] = {"lo": src["lo"], "hi": src["hi"], "c": src["c"]}
-        # window_histogram's membership: ts > start and ts - step < end, on the dataset's grid
-        first = max(w["start_ms"] + 1, meta.start_ms)
-        last = min(w["end_ms"] + meta.step_ms - 1, meta.end_ms)
+        # window_histogram's membership: ts > start and ts - step < end, on the step grid;
+        # not clipped to the dataset, so columns the window asks for beyond it count as missing
+        first = w["start_ms"] + 1
+        last = w["end_ms"] + meta.step_ms - 1
         want = grid(first, last, meta.step_ms)
         g = states.filter((pl.col("series_id") == sid) & pl.col("ts_ms").is_in(want))
         out["expected_columns"] = len(want)

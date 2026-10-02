@@ -1,10 +1,12 @@
 import json
 import math
+from types import SimpleNamespace
 
 import pytest
 
 from telemetry_nerd.analysis.histogram import from_matrix, histogram_expr
 from telemetry_nerd.charts.spec import Window
+from telemetry_nerd.core.panel_payloads import histogram_panel_data, series_labels
 from telemetry_nerd.core.service import ChartRejected
 from telemetry_nerd.sources.base import SourceError
 from tests.unit.fakes import FakeSource, make_service
@@ -313,3 +315,21 @@ async def test_zero_count_columns_are_observed(tmp_path):
     )
     data = svc.panel_data(svc.show(out["dataset"], "Dist?").panel.id, width_px=4000)
     assert all(s["n"] and sum(s["n"]) == 0 and s["state"] is None for s in data["series"])
+
+
+async def test_window_beyond_the_dataset_counts_missing_columns(tmp_path):
+    # show() refuses such windows, so build the payload from a stub panel
+    svc = make_service(tmp_path)
+    out = await svc.query_distribution(
+        "lat_bucket", by=["instance"], start="now-2h", end="now-1h", step="1m"
+    )
+    meta, dist = svc.datasets.get_distribution(out["dataset"])
+    step = meta.step_ms
+    w = {"start_ms": meta.end_ms - 2 * step, "end_ms": meta.end_ms + 3 * step, "label": "over"}
+    panel = SimpleNamespace(spec={"layers": [{"mark": "histogram", "windows": [w]}]},
+                            to_dict=dict)  # fmt: skip
+    labels = series_labels(dist.series)
+    data = histogram_panel_data(panel, meta, dist, labels, [], 600)
+    for s in data["series"]:
+        [win] = s["windows"]
+        assert (win["columns"], win["expected_columns"]) == (2, 5)

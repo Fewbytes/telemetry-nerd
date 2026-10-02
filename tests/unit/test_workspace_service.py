@@ -509,5 +509,6 @@ async def test_panel_evidence_goes_through_the_coverage_check(tmp_path):
 async def test_distribution_evidence_is_skipped(tmp_path):
     svc = make_service(tmp_path)
     ds = (await svc.query_distribution("lat_bucket", start="now-2h", end="now-1h"))["dataset"]
+    assert svc.datasets.meta(ds).representation == "distribution"
     f = svc.ws.finding_create(claim_in(ds, 0, 60_000), "claude")
     assert f.caveats == []
