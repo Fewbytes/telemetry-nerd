@@ -4,7 +4,8 @@
   import { minSamples, timeColumns, valueAxis } from "../chart/heatmap";
   import { fmtValue, valueTicks } from "../chart/axis";
   import { bandRects, overlay, qKey, qLabel, QUANTILE_CHOICES, thinColumns } from "../chart/percentiles";
-  import { PALETTE, seriesName } from "../chart/toUplot";
+  import { seriesName, seriesPalette } from "../chart/toUplot";
+  import { theme } from "../lib/theme.svelte";
   import { fmtRange } from "../lib/format";
   import type { HeatmapPanelData, HeatSeries } from "../lib/api";
 
@@ -14,6 +15,8 @@
     onRendered: (ms: number, rects: number) => void;
     onBrush: (b: { x0: number; x1: number; left: number; width: number }) => void;
   } = $props();
+  // per-theme series colours: the light theme needs darker variants for 3:1 contrast
+  const palette = $derived(seriesPalette(theme.effective));
 
   const AXIS_LEFT = 64;
   const AXIS_BOTTOM = 16;
@@ -59,7 +62,7 @@
     let count = 0;
     series.forEach((s, si) => {
       for (const r of bandRects(s, qs, axis, cols.col, plotH)) {
-        const color = overlaid ? PALETTE[si % PALETTE.length] : qColor(r.q);
+        const color = overlaid ? palette[si % palette.length] : qColor(r.q);
         ctx.globalAlpha = 0.35;
         ctx.fillStyle = color;
         ctx.fillRect(r.x, r.y, Math.max(r.w, 1), Math.max(r.h, 1));
@@ -133,7 +136,7 @@
 <div class="facet">
   <div class="facet-label">
     {#if overlaid}
-      {#each series as s, i (s.id)}<span class="sw" style="background: {PALETTE[i % PALETTE.length]}"></span>{seriesName(s.labels)}{" "}{/each}
+      {#each series as s, i (s.id)}<span class="sw" style="background: {palette[i % palette.length]}"></span>{seriesName(s.labels)}{" "}{/each}
       · {qLabel(qs[0])}
     {:else}
       {seriesName(series[0].labels)}

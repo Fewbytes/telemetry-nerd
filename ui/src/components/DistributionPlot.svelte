@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { PALETTE, seriesName } from "../chart/toUplot";
+  import { seriesName, seriesPalette } from "../chart/toUplot";
+  import { theme } from "../lib/theme.svelte";
   import {
     bars, ecdf, exactWindow, fractionOver, maxEcdfGapAtEdges, quantileAxis, quantileBoxes, survival, type BarMode,
   } from "../chart/distribution";
@@ -17,6 +18,8 @@
     unit: string | null;
     onRendered: (ms: number, points: number) => void;
   } = $props();
+  // per-theme series colours: the light theme needs darker variants for 3:1 contrast
+  const palette = $derived(seriesPalette(theme.effective));
 
   const HEIGHT = 220;
   const AXIS_LEFT = 40;
@@ -67,7 +70,7 @@
       const qa = qAxisFor();
       const va = valueAxis(lo, hi, plotH, yMode === "auto" ? "auto" : yMode);
       exact.forEach((w, k) => {
-        const color = PALETTE[k % PALETTE.length];
+        const color = palette[k % palette.length];
         const { boxes, qMax } = quantileBoxes(w);
         for (const b of boxes) {
           const [p0, p1] = cellSpan(va, b.lo, b.hi);
@@ -92,7 +95,7 @@
     } else {
       const ha = valueAxis(lo, hi, plotW, "log");
       exact.forEach((w, k) => {
-        const color = PALETTE[k % PALETTE.length];
+        const color = palette[k % palette.length];
         const steps = survival(w);
         steps.forEach((st, i) => {
           if (!(st.s0 > 0)) return;
@@ -192,7 +195,7 @@
     let points = 0;
     spans = [];
     windows.forEach((w, k) => {
-      const color = PALETTE[k % PALETTE.length];
+      const color = palette[k % palette.length];
       ctx.strokeStyle = color;
       ctx.fillStyle = color;
       ctx.lineWidth = 1.5;
@@ -369,7 +372,7 @@
   <div class="legend">
     {#each windows as w, k (k)}
       <div>
-        <span class="sw" style="background: {PALETTE[k % PALETTE.length]}"></span>
+        <span class="sw" style="background: {palette[k % palette.length]}"></span>
         {w.label || `window ${k + 1}`} {fmtRange(w.start_ms, w.end_ms)} · n = {Number(w.n.toPrecision(4))} ({w.columns} steps){#if w.n > 0 && w.n < nMin}
           · low n{/if}
       </div>
