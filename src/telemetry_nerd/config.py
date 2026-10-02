@@ -15,7 +15,13 @@ def default_data_dir() -> Path:
     return Path.home() / ".local" / "share" / "telemetry-nerd"
 
 
+# The UI bundled into the wheel by hatch_build.py, else the repo checkout's ui/dist.
+_BUNDLED_UI = Path(__file__).resolve().parent / "ui_dist"
 _REPO_UI = Path(__file__).resolve().parents[2] / "ui" / "dist"
+
+
+def default_ui_dir() -> Path:
+    return _BUNDLED_UI if (_BUNDLED_UI / "index.html").exists() else _REPO_UI
 
 
 @dataclass
@@ -26,7 +32,7 @@ class Settings:
     resolution_ms: int = 15_000
     host: str = "127.0.0.1"
     port: int = 7070
-    ui_dir: Path | None = field(default=_REPO_UI)
+    ui_dir: Path | None = field(default_factory=default_ui_dir)
     allowed_hosts: list[str] = field(default_factory=lambda: list(DEFAULT_ALLOWED_HOSTS))
 
     @classmethod
@@ -35,6 +41,7 @@ class Settings:
         s.data_dir = default_data_dir()
         s.source_url = os.environ.get("TN_SOURCE_URL", s.source_url)
         s.source_flavor = os.environ.get("TN_SOURCE_FLAVOR", s.source_flavor)
+        s.host = os.environ.get("TN_HOST", s.host)
         raw_port = os.environ.get("TN_PORT")
         if raw_port is not None:
             try:
@@ -45,7 +52,9 @@ class Settings:
 
     @property
     def ui_url(self) -> str:
-        return f"http://{self.host}:{self.port}"
+        # A wildcard bind (container) is not a connectable address: advertise loopback.
+        host = {"0.0.0.0": "127.0.0.1", "::": "[::1]"}.get(self.host, self.host)
+        return f"http://{host}:{self.port}"
 
     @property
     def daemon_url(self) -> str:

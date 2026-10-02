@@ -52,3 +52,7 @@ e2e:
 # Render brand PNGs, favicon.ico and the social card from assets/brand/*.svg into assets/brand/dist.
 brand:
     uv run --script scripts/build_brand.py
+
+# Build the wheel (bundles the UI), install it into throwaway dirs, smoke-test serve.
+verify-install:
+    uv run scripts/verify_install.py
