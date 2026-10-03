@@ -18,13 +18,15 @@ import polars as pl
 from telemetry_nerd.analysis import sources
 from telemetry_nerd.analysis.exprkind import rate_interval_ms
 from telemetry_nerd.analysis.littles import (
+    PEAK_COMMON,
+    PROMOTE_ALPHA,
     Block,
     GroupResult,
     Substeps,
     check,
     combine,
 )
-from telemetry_nerd.analysis.sources import COMMON, MEASUREMENT, UNDETERMINED
+from telemetry_nerd.analysis.sources import COMMON, MEASUREMENT, SPECIAL, UNDETERMINED
 from telemetry_nerd.catalog.models import native_family
 from telemetry_nerd.catalog.relations import SUGGESTIONS
 from telemetry_nerd.core.uncertainty import mark_statistics
@@ -78,8 +80,13 @@ LEAK_HINT = (
 )
 TRANSIENT_HINTS = {
     "peak": (
-        "transient at a load peak: possible transition out of steady state (toward overload); "
-        "check saturation (USE) and whether lambda approached capacity in those windows"
+        "special cause at a load peak (beyond expected fluctuation, or promoted by evidence of "
+        "leaving steady state): possible transition toward overload; check saturation (USE) and "
+        "whether lambda approached capacity in those windows"
+    ),
+    "peak_common": (
+        f"{PEAK_COMMON}: re-run over a longer range or compare the next peaks; a growing backlog "
+        "or W rising window after window would make it a signal"
     ),
     "drain": "transient after a peak: a backlog draining (recovery), out of steady state",
     "other": (
@@ -449,11 +456,16 @@ class LittlesOps:
         n_win = max(1, (grid.size - cfg["skip"]) // cfg["k"])
         grouped = bool(by) and len(keys) > 1
         tests = n_win * ((len(matched) if grouped else 0) + 1)
+        arr = cfg["arrivals"]
         total = check(
-            combine(list(subs.values())) if keys else sub(()), cfg["k"], cfg["skip"], tests
-        )
+            combine(list(subs.values())) if keys else sub(()), cfg["k"], cfg["skip"], tests,
+            arrivals=arr,
+        )  # fmt: skip
         groups = (
-            [(names[k], check(subs[k], cfg["k"], cfg["skip"], tests)) for k in matched]
+            [
+                (names[k], check(subs[k], cfg["k"], cfg["skip"], tests, arrivals=arr))
+                for k in matched
+            ]
             if grouped
             else []
         )
@@ -579,8 +591,16 @@ class LittlesOps:
         for v in ("L_high", "L_low"):
             if v in directions:
                 hints += HINTS[v]
-        phases = {t["phase"] for g in groups for t in g["classification"]["transient"]}
-        hints += [TRANSIENT_HINTS[ph] for ph in ("peak", "drain", "other") if ph in phases]
+        phases = {
+            "peak" if t["phase"] == "peak" and t["source"] == SPECIAL
+            else "peak_common" if t["phase"] == "peak" else t["phase"]
+            for g in groups for t in g["classification"]["transient"]
+        }  # fmt: skip
+        if any(g["classification"]["promoted"] for g in groups):
+            phases.add("peak")
+        hints += [
+            TRANSIENT_HINTS[ph] for ph in ("peak", "peak_common", "drain", "other") if ph in phases
+        ]
         if any((g.get("growing") or {}).get("growing") for g in groups):
             hints.insert(0, LEAK_HINT)
         ratio = tot.pooled.ratio
@@ -654,8 +674,15 @@ class LittlesOps:
                     "reference": sig(g.reference),
                     "systematic": _systematic_wire(g),
                     "transient": [
-                        {"index": t["index"], "phase": t["phase"], "source": t["source"]}
+                        {"index": t["index"], "phase": t["phase"], "source": t["source"],
+                         "promoted": t["promoted"]}
                         for t in g.transient
+                    ],
+                    "promoted": [
+                        {"index": p["index"], "from": p["from"], "deviation": p["deviation"],
+                         "reason": p["reason"],
+                         "evidence": sorted({e["kind"] for e in p["evidence"] if e["significant"]})}
+                        for p in g.promoted
                     ],
                     "common_cause": _common_wire(g),
                 }
@@ -683,7 +710,16 @@ METHOD = (
     "off that level (or 1) beyond the measurement interval, Bonferroni over windows and groups "
     "at 2.5%; special cause when also beyond the common-cause envelope (small-system scale or "
     "3 robust sigma of the windows' own variation), else common cause. 5% false alarms overall "
-    "at most."
+    "at most. A window at a load peak inside the envelope (or the measurement interval) is "
+    "PROMOTED to special cause only on independent evidence of leaving steady state, with its "
+    f"own {100 * PROMOTE_ALPHA:.0f}% family-wise budget, a third each: (a) the backlog growing "
+    "(gauge N(end) - N(start); when the counter counts arrivals also arrivals - completions, and "
+    "the smaller of the two) beyond Cantelli's distribution-free bound on sqrt(2 var N), var N from the gauge "
+    "outside the peak's episode, Bonferroni over windows and groups; (b) W rising across two "
+    "consecutive windows into or through the peak, each rise beyond a t threshold on the "
+    "windows' standard errors around their own trend (n_eff df), Bonferroni over windows, "
+    "groups and the two triples; (c) the peak deviation growing across 3+ load episodes, "
+    "Kendall's S exact one-sided p, Bonferroni over groups."
 )
 
 
@@ -691,15 +727,27 @@ def _warnings(groups: list[dict], no_concurrency: bool) -> list[str]:
     out: list[str] = []
     if no_concurrency:
         out.append(NOT_POSSIBLE + ": the concurrency signal returned no data")
+    span = lambda w: f"{w[0]}–{w[1]}"
     for g in groups:
         name = _labels_text(g["labels"] or {})
-        peaks = [t for t in g["classification"]["transient"] if t["at_peak"]]
-        if peaks:
+        c = g["classification"]
+        peaks = [t for t in c["transient"] if t["at_peak"] and not t["promoted"]]
+        special = [t for t in peaks if t["source"] == SPECIAL]
+        common = [t for t in peaks if t["source"] != SPECIAL]
+        if special:
             out.append(
                 f"{name}: transient at a load peak in "
-                + ", ".join(f"{t['window'][0]}–{t['window'][1]}" for t in peaks[:4])
-                + ": possible transition out of steady state (toward overload)"
+                + ", ".join(span(t["window"]) for t in special[:4])
+                + ", beyond expected fluctuation (special cause): possible transition out of "
+                "steady state (toward overload)"
             )
+        for p in c["promoted"][:4]:
+            out.append(
+                f"{name}: {span(p['window'])} at a load peak, leaving steady state (special "
+                f"cause, promoted from {sources.text(p['from'])}): {p['reason']}"
+            )
+        if common:
+            out.append(f"{name}: {', '.join(span(t['window']) for t in common[:4])} {PEAK_COMMON}")
         w = g["common_cause"].get("warning")
         if w:
             out.append(f"{name}: {w}")
@@ -753,7 +801,9 @@ def _summary_text(cfg: dict, g: dict, warnings: list[str], no_concurrency: bool)
     if tr:
         items = "; ".join(
             f"{t['window'][0]}: L ÷ λW {_n(t['ratio'])} vs reference {_n(t['reference'])} "
-            f"({SOURCE_TEXT[t['source']]}, {t['phase']}"
+            f"({SOURCE_TEXT[t['source']]}"
+            + (" — promoted" if t["promoted"] else "")
+            + f", {t['phase']}"
             + (", AT A LOAD PEAK" if t["at_peak"] else "")
             + ")"
             for t in tr[:6]
@@ -762,6 +812,16 @@ def _summary_text(cfg: dict, g: dict, warnings: list[str], no_concurrency: bool)
         parts.append(f"Transient windows ({len(tr)}): {items}{more}.")
     else:
         parts.append("Transient windows: none.")
+    pr = c["promoted"]
+    if pr:
+        items = "; ".join(
+            f"{p['window'][0]} (L ÷ λW {_n(p['ratio'])}, {p['deviation'].replace('_', ' ')}): "
+            f"{p['reason']}"
+            for p in pr[:4]
+        )
+        parts.append(
+            f"Leaving steady state at a load peak — promoted to special cause ({len(pr)}): {items}."
+        )
     cc = g["common_cause"]
     parts.append(
         f"Common cause: at this traffic (N≈{cc['completions_per_window']:.0f} completions per "
@@ -854,7 +914,41 @@ def _transient_wire(g: GroupResult, t: dict) -> dict:
         "common_cause_rel95": sig(w.common), "source": t["source"], "phase": t["phase"],
         "at_peak": t["at_peak"],
         "load": {k: (sig(v) if isinstance(v, float) else v) for k, v in t["load"].items()},
-        "cause": t["cause"],
+        "cause": t["cause"], "promoted": t["promoted"],
+        **({"promotion": _promotion_wire(t["promotion"])} if t["promoted"] else {}),
+    }  # fmt: skip
+
+
+def _evidence_wire(e: dict) -> dict:
+    out: dict[str, Any] = {}
+    for k, v in e.items():
+        if isinstance(v, float):
+            out[k] = sig(v)
+        elif isinstance(v, tuple):
+            out[k] = sig_pair(v)
+        elif isinstance(v, list):
+            out[k] = [sig(x) if isinstance(x, float) else x for x in v]
+        else:
+            out[k] = v
+    return out
+
+
+def _promotion_wire(p: dict) -> dict:
+    return {
+        "from": p["from"], "reason": p["reason"],
+        "evidence": [_evidence_wire(e) for e in p["evidence"]],
+    }  # fmt: skip
+
+
+def _promoted_wire(g: GroupResult, p: dict) -> dict:
+    w = g.windows[p["index"]]
+    return {
+        "window": _span(w), "ratio": sig(w.ratio), "ci95": sig_pair(w.ci95) if w.ci95 else None,
+        "relative": sig((w.ratio or 0) - 1), "difference": sig(w.diff),
+        "reference": sig(g.references.get(p["index"], g.reference)),
+        "source": SPECIAL, "from": p["from"], "deviation": p["deviation"],
+        "reason": p["reason"], "evidence": [_evidence_wire(e) for e in p["evidence"]],
+        "load": {k: (sig(v) if isinstance(v, float) else v) for k, v in p["load"].items()},
     }  # fmt: skip
 
 
@@ -885,6 +979,14 @@ def _variation(g: dict, caveats: list[str]) -> list[dict]:
         )
         for t in g["classification"]["transient"]
     ]  # fmt: skip
+    out += [
+        sources.item(
+            SPECIAL, f"window {p['window'][0]} at a load peak, leaving steady state (promoted from "
+            f"{sources.text(p['from'])}): {p['reason']}", window=p["window"], promoted=True,
+        )
+        for p in g["classification"]["promoted"]
+        if p["deviation"] == "within_measurement"  # promoted transients are listed above
+    ]  # fmt: skip
     return out + sources.measurement_items(caveats)
 
 
@@ -902,6 +1004,7 @@ def _group(cfg: dict, L_ds: str, labels: dict, g: GroupResult) -> dict:
     judged = [w for w in g.windows if w.ratio is not None]
     ratios = [float(w.ratio) for w in judged]  # type: ignore[arg-type]
     transient = [_transient_wire(g, t) for t in g.transient]
+    promoted = [_promoted_wire(g, p) for p in g.promoted]
     discrepancy = {
         "L": sig(p.L), "lambda_W": sig(p.lambda_W), "difference": sig(p.diff),
         "difference_ci95": sig_pair(p.diff_ci) if p.diff_ci else None,
@@ -929,6 +1032,8 @@ def _group(cfg: dict, L_ds: str, labels: dict, g: GroupResult) -> dict:
             "reference": sig(g.reference),
             "systematic": _systematic_wire(g),
             "transient": transient,
+            "promoted": promoted,
+            "promotion": _evidence_wire(g.promotion) if g.promotion else None,
         },
         "common_cause": _common_wire(g),
         "ratio": sig(p.ratio),
@@ -1019,5 +1124,38 @@ def _group(cfg: dict, L_ds: str, labels: dict, g: GroupResult) -> dict:
                  "vs_reference": t["vs_reference"], "phase": t["phase"],
                  "common_cause_rel95": t["common_cause_rel95"]}, source=t["source"],
             ))  # fmt: skip
+        for p in promoted:
+            for e in p["evidence"]:
+                if not e["significant"]:
+                    continue
+                ev.append(statistic(
+                    L_ds, f"littles_law_{e['kind']}", e["value"], e["interval"],
+                    PROMOTION_METHOD[e["kind"]],
+                    {**params, "window": p["window"], "promoted_from": p["from"],
+                     **{k: v for k, v in e.items()
+                        if k not in ("kind", "value", "interval", "significant")}},
+                    source=SPECIAL,
+                ))  # fmt: skip
         out["evidence"] = ev
     return out
+
+
+PROMOTION_METHOD = {
+    "backlog_growth": (
+        "backlog change N(end) - N(start) over a load-peak window, requests (the gauge; with "
+        "arrivals - completions when the counter counts arrivals, the smaller); interval: the readings' "
+        "spread and counter scrape timing; promotion when z = value / sqrt(2 var N) clears "
+        "Cantelli's bound k (var N from the gauge outside the peak's episode); source: special "
+        "cause"
+    ),
+    "latency_rise": (
+        "rise of the mean latency W across two consecutive windows into or through a load peak, "
+        "seconds; interval from the windows' standard errors around their own trend; promotion "
+        "when both rises clear their t thresholds (n_eff df, Bonferroni); source: special cause"
+    ),
+    "peak_growth": (
+        "growth of |L / (lambda W) / reference - 1| from the first load peak to this one; "
+        "interval from the two windows' measurement sds; promotion when Kendall's S over the "
+        "peaks is significant (exact one-sided p, Bonferroni over groups); source: special cause"
+    ),
+}

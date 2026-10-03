@@ -4,7 +4,10 @@ Measured on littles_sim (150 seeds; FAR = verdict not consistent on consistent s
 (Poisson count errors in the interval) pointwise coverage 98.3-100%, FAR 0-2%; after (measurement
 terms only) coverage 97.3-100%, FAR 0-2%; a 1.05x gauge offset at lambda=9.5 found 19% of the
 time (5% before); a 5-minute load spike out of steady state is transient at exactly its windows
-75/75 (0/75 before). Table: docs/superpowers/specs/2026-10-02-littles-law-design.md."""
+75/75 (0/75 before). Load-peak promotion (83w, q2m; 75 seeds): the same spike with an arrivals
+counter is special cause at its peak 75/75 (1/75 before), with a completions counter 75/75 (49/75
+before: the rest common cause); consistent traffic, rho 0.95, load steps and low traffic: no
+promotion. Table: docs/superpowers/specs/2026-10-02-littles-law-design.md."""
 
 import math
 
@@ -12,13 +15,17 @@ import numpy as np
 import pytest
 
 from telemetry_nerd.analysis.littles import (
+    COMMON,
     MEASUREMENT,
+    PEAK_COMMON,
     SPECIAL,
     Substeps,
     _sampling_factor,
+    cantelli_k,
     check,
     combine,
     judge,
+    kendall_increasing_p,
 )
 
 from .littles_sim import simulate, substeps
@@ -36,6 +43,7 @@ def test_consistent_mmc_false_alarms_at_most_nominal():
         r = check(substeps(simulate(seed, rates=[(0.0, 2.0)])), k=20)
         alarms += r.verdict != "consistent"
         assert bool(r.systematic or r.transient) == (r.verdict != "consistent")
+        assert not r.promoted  # steady state: no evidence of leaving it
         for w in r.windows:
             windows += 1
             covered += w.ci95[0] <= 1 <= w.ci95[1]
@@ -218,3 +226,125 @@ def test_flow_balance_flags_a_counter_counting_more():
     r = check(doubled, k=20)
     assert "flow_imbalance" in r.pooled.flags
     assert "flow_imbalance" not in check(sub, k=20).pooled.flags
+
+
+# --- load-peak promotion (83w, q2m): option C ---------------------------------------------------
+OVERLOAD = [(0.0, 2.0), (1200.0, 4.2), (2100.0, 2.0)]  # rho 1.05 for 15 min (windows 4-6)
+
+
+def _repeated(lams):
+    """Peaks of 5 min every 20 min over 2 h, rho 0.5 between them."""
+    out = [(0.0, 2.0)]
+    for j, lam in enumerate(lams):
+        out += [(1200.0 * j + 600, lam), (1200.0 * j + 900, 2.0)]
+    return out
+
+
+def test_promotion_tools():
+    assert math.isclose(cantelli_k(0.05), math.sqrt(19))  # 1 / (1 + k^2) = alpha
+    assert kendall_increasing_p([1, 2, 3]) == (3, 1 / 6)
+    assert kendall_increasing_p([1, 2, 3, 4, 5]) == (10, 1 / 120)
+    s, p = kendall_increasing_p([2, 1, 3, 4, 5])  # one inversion: 1 + 4 orders of 120
+    assert s == 8 and math.isclose(p, 5 / 120)
+    assert kendall_increasing_p([1, 1, 1])[1] == 1.0  # ties count against the trend
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_spike_with_an_arrivals_counter_is_special_cause_at_the_peak(seed):
+    """q2m: with an arrivals counter the instruments partly compensate (L ~ lambda W in the peak
+    window), but the backlog grows by hundreds: promoted to special cause, saying why."""
+    r = check(substeps(simulate(600 + seed, rates=SPIKE)), k=20, arrivals="arrivals")
+    w = r.windows[5]
+    assert w.source == SPECIAL
+    if w.promotion is None:  # beyond the envelope already (seed 605)
+        assert [t["source"] for t in r.transient if t["index"] == 5] == [SPECIAL]
+        return
+    (p,) = [p for p in r.promoted if p["index"] == 5]
+    assert p["from"] in (COMMON, MEASUREMENT)
+    (e,) = [e for e in p["evidence"] if e["kind"] == "backlog_growth"]
+    assert e["significant"] and e["gauge"] > 200 and e["flow"] > 200 and e["flow_used"]
+    assert e["z"] >= e["k"] and e["interval"][0] <= e["value"] <= e["interval"][1]
+    assert e["value"] == min(e["gauge"], e["flow"])
+    assert "backlog grew" in p["reason"] and "Cantelli" in p["reason"]
+    assert [q["index"] for q in r.promoted] == [5]  # nothing else promoted
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_spike_with_a_completions_counter_is_special_cause_at_the_peak(seed):
+    """83w: inside the envelope the peak window used to stay common cause while the warning said
+    'transition out of steady state'; with a growing backlog it is promoted."""
+    r = check(substeps(simulate(600 + seed, rates=SPIKE, counter="completions")), k=20)
+    (t,) = [t for t in r.transient if t["index"] == 5]
+    assert t["source"] == SPECIAL and t["at_peak"]
+    assert t["promoted"] == (seed == 2)  # 602: the 83w case; the others beyond the envelope
+    if t["promoted"]:
+        assert t["promotion"]["from"] == COMMON
+        assert t["cause"].startswith("at a load peak, leaving steady state (promoted")
+        # completions counter: the counter is the latency count, no flow reading
+        (e,) = [e for e in t["promotion"]["evidence"] if e["kind"] == "backlog_growth"]
+        assert e["flow"] is None and e["significant"]
+
+
+@pytest.mark.parametrize("seed", [10, 28])
+def test_a_load_peak_inside_the_envelope_without_evidence_stays_common_cause(seed):
+    """rho 0.95 with queueing the timer misses: heavy-tailed excursions put some windows at a
+    'peak' (W well above the median) with a deviation inside the envelope; no backlog growth or
+    consecutive W rise: common cause, worded as not a signal by itself."""
+    r = check(substeps(simulate(seed, rates=[(0.0, 9.5)], c=10, timer="service_start")), k=20)
+    peaks = [t for t in r.transient if t["at_peak"] and t["source"] == COMMON]
+    assert peaks and not r.promoted
+    for t in peaks:
+        assert t["cause"] == PEAK_COMMON and not t["promoted"]
+        assert r.windows[t["index"]].source == COMMON
+
+
+def test_no_promotion_in_steady_state_heavy_load_steps_or_low_traffic():
+    """Promotion has its own 5% family-wise budget: steady state at rho 0.95 (heavy-tailed
+    excursions), a step to a higher steady load (W rises once, then holds) and a small system
+    must not be promoted."""
+    cases = [
+        *[{"rates": [(0.0, 9.5)], "c": 10, "seed": 40 + s} for s in range(15)],
+        *[{"rates": LOAD, "seed": 60 + s} for s in range(15)],
+        *[{"rates": [(0.0, 0.3)], "seed": 80 + s} for s in range(15)],
+    ]
+    promoted = 0
+    for kw in cases:
+        r = check(substeps(simulate(**kw)), k=20, arrivals="arrivals")
+        promoted += bool(r.promoted)
+        assert r.promotion["alpha"] == 0.05 and r.promotion["tests"] == 12
+    assert promoted <= 1
+
+
+@pytest.mark.parametrize("seed", [1, 7, 10])
+def test_overload_with_w_rising_across_consecutive_windows_is_promoted(seed):
+    """rho 1.05 for 15 min: W climbs window after window; (b) promotes on two consecutive rises,
+    each beyond its t threshold, with the path of W in the reason."""
+    r = check(substeps(simulate(800 + seed, rates=OVERLOAD)), k=20, arrivals="arrivals")
+    lr = [
+        (p, e) for p in r.promoted for e in p["evidence"]
+        if e["kind"] == "latency_rise" and e["significant"]
+    ]  # fmt: skip
+    assert lr
+    for p, e in lr:
+        assert 4 <= p["index"] <= 6
+        a, b, c = e["W"]
+        assert a < b < c and all(z >= k for z, k in zip(e["z"], e["k"], strict=True))
+        assert "rose across consecutive windows" in p["reason"]
+
+
+@pytest.mark.parametrize("seed", [4, 5, 7])
+def test_deviation_growing_across_repeated_peaks_is_promoted(seed):
+    """Six load peaks, rho 0.6 -> 0.9, queueing the timer misses: each peak's deviation is
+    inside its interval or envelope, but it grows peak after peak (Kendall's S, exact p)."""
+    m = simulate(
+        900 + seed, rates=_repeated([2.4, 2.64, 2.88, 3.12, 3.36, 3.6]), duration_s=7200.0,
+        timer="service_start", counter="completions",
+    )  # fmt: skip
+    r = check(substeps(m), k=20, arrivals="completions")
+    peaks = r.promotion["peaks"]
+    assert len(peaks["windows"]) == 6 and peaks["p"] <= r.promotion["alpha_peaks"]
+    assert r.promoted and all(p["index"] in peaks["windows"][1:] for p in r.promoted)
+    for p in r.promoted:
+        (e,) = [e for e in p["evidence"] if e["kind"] == "peak_growth"]
+        assert e["significant"] and e["deviation"] > e["deviation_first"]
+        assert "repeated load peaks" in p["reason"] and "Kendall" in p["reason"]

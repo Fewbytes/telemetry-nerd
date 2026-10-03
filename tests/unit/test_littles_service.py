@@ -59,7 +59,11 @@ def test_consistent_total_states_assumptions_and_cites_evidence(tmp_path):
     assert d["per_window"]["windows"] == 12 and d["common_cause_rel95"]["per_window"] > 0
     assert out["summary"].startswith("Discrepancy over the range: L − λ·W = ")
     assert out["summary"].index("Discrepancy") < out["summary"].index("Verdict consistent")
-    assert out["classification"] == {"reference": 1.0, "systematic": None, "transient": []}
+    c = out["classification"]
+    assert {k: c[k] for k in ("reference", "systematic", "transient", "promoted")} == {
+        "reference": 1.0, "systematic": None, "transient": [], "promoted": [],
+    }  # fmt: skip
+    assert c["promotion"]["alpha"] == 0.05
     names = [e["name"] for e in t["evidence"]]
     assert names[:2] == ["littles_law_ratio", "littles_law_discrepancy"]
     disc = t["evidence"][1]
@@ -153,9 +157,21 @@ def test_load_spike_is_called_out_as_transient_at_a_peak(tmp_path):
     tr = out["classification"]["transient"]
     peak = [t for t in tr if t["at_peak"]]
     assert [t["window"][0] for t in peak] == [iso(START + 1_500_000)]  # the 5 min at rho 1.25
-    assert any("transient at a load peak" in w for w in out["warnings"])
-    assert "AT A LOAD PEAK" in out["summary"]
-    assert any("transition out of steady state" in h for h in out["hints"])
+    # 83w: inside the common-cause envelope, but the backlog grew by hundreds: promoted to
+    # special cause, and the output says why, with the numbers
+    (t,) = peak
+    assert t["source"] == "special_cause" and t["promoted"]
+    assert t["promotion"]["from"] == "common_cause"
+    assert "backlog grew +" in t["promotion"]["reason"]
+    assert t["cause"].startswith("at a load peak, leaving steady state")
+    assert any("leaving steady state (special cause, promoted from common cause)" in w
+               for w in out["warnings"])  # fmt: skip
+    assert not any("not a signal by itself" in w for w in out["warnings"])
+    assert "AT A LOAD PEAK" in out["summary"] and "promoted to special cause" in out["summary"]
+    assert any("toward overload" in h for h in out["hints"])
+    (stat,) = [e for e in out["total"]["evidence"] if e["name"] == "littles_law_backlog_growth"]
+    assert stat["source"] == "special_cause" and stat["interval"][0] <= stat["value"]
+    assert stat["params"]["window"] == t["window"] and stat["params"]["z"] >= stat["params"]["k"]
     # the special-cause transient carries its label onto its evidence and the variation list
     ev = [e for e in out["total"]["evidence"] if e["name"] == "littles_law_transient"]
     assert {e["source"] for e in ev} == {t["source"] for t in tr}
@@ -344,3 +360,31 @@ def test_statistics_over_inputs_of_unknown_uncertainty_are_flagged(tmp_path):
     assert "input_uncertainty_unknown" in marked["caveats"]
     ev = marked["total"]["evidence"]
     assert ev and all(e["params"]["input_uncertainty"] == "unknown" for e in ev)
+
+
+def test_spike_with_an_arrivals_counter_is_promoted_at_the_peak(tmp_path):
+    """q2m: an arrivals counter partly compensates (L ~ lambda W in the peak window, within the
+    measurement interval), but the backlog — the gauge and arrivals - completions — grows:
+    special cause at the peak, the verdict about L = lambda W unchanged, the reason shown."""
+    spike = [(0.0, 2.0), (1500.0, 5.0), (1800.0, 2.0)]
+    sims = {"i0": simulate(602, rates=spike, c=4)}
+    svc = make_service(tmp_path, source=SimSource(sims, START))
+    out = _run(svc)
+    assert out["verdict"] == "consistent"  # Little's law holds within measurement
+    (p,) = out["classification"]["promoted"]
+    assert p["window"][0] == iso(START + 1_500_000) and p["source"] == "special_cause"
+    assert p["from"] == "measurement_system" and p["deviation"] == "within_measurement"
+    (e,) = [e for e in p["evidence"] if e["kind"] == "backlog_growth"]
+    assert e["significant"] and e["flow"] > 300 and e["gauge"] > 300  # both instruments see it
+    assert "arrivals − completions +" in p["reason"]
+    assert "Leaving steady state at a load peak — promoted to special cause (1)" in out["summary"]
+    assert any(v["source"] == "special_cause" and v.get("promoted") for v in out["variation"])
+    names = [e["name"] for e in out["total"]["evidence"]]
+    assert "littles_law_backlog_growth" in names
+    panel = svc.show(out["datasets"]["concurrency"], "q", mark="littles").panel
+    s0 = svc.panel_data(panel.id, 800)["series"][0]
+    assert s0["promoted"] == [{
+        "index": 5, "from": "measurement_system", "deviation": "within_measurement",
+        "reason": p["reason"], "evidence": ["backlog_growth"],
+    }]  # fmt: skip
+    assert s0["windows"][5]["source"] == "special_cause"

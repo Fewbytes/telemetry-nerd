@@ -14,7 +14,11 @@ Variation is labelled by source (SPC):
   unmeasured queueing, a missing instance, units, latency on a subset/superset);
 - common cause: within the small-system envelope (+-X per window): not to be chased;
 - special cause: TRANSIENT windows beyond both, against the systematic level (load peaks, leaving
-  steady state, a change in the instrumentation).
+  steady state, a change in the instrumentation); and a window at a LOAD PEAK inside the envelope
+  (or the measurement interval) PROMOTED by independent evidence of leaving steady state (83w,
+  q2m): the backlog growing (the gauge, and arrivals - completions when lambda counts arrivals),
+  W rising into / through the peak, or the deviation growing across repeated peaks. Without that
+  evidence a load-peak window inside the envelope stays common cause: not a signal by itself.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from telemetry_nerd.analysis.autocorr import n_eff, tau_int
 from telemetry_nerd.analysis.sources import COMMON, MEASUREMENT, SPECIAL
 from telemetry_nerd.analysis.stability import trend
 from telemetry_nerd.analysis.stats import t_quantile
@@ -35,6 +40,8 @@ COMMON_CAUSE_WARN = 0.10  # common-cause half-width (95%, relative) from which t
 PEAK_LAMBDA = 1.1  # a window's lambda this far above the median window: a load peak
 PEAK_W = 1.5  # a window's W this far above the median window: a latency surge
 MAX_ITER = 6
+PROMOTE_ALPHA = 0.05  # family-wise false promotions per check (its own budget, apart from alpha)
+MIN_BASELINE = 4  # windows outside a peak's episode needed to scale its backlog / W tests
 
 
 @dataclass(frozen=True)
@@ -95,6 +102,7 @@ class Block:
     flow: dict | None = None
     reason: str | None = None
     source: str | None = None  # deviation from the reference: MEASUREMENT | COMMON | SPECIAL
+    promotion: dict | None = None  # why a load-peak window was promoted to special cause
 
 
 @dataclass
@@ -110,6 +118,9 @@ class GroupResult:
     core: list[int] = field(default_factory=list)  # the windows of that pool
     transient: list[dict] = field(default_factory=list)
     common_cause: dict = field(default_factory=dict)
+    phases: dict[int, dict] = field(default_factory=dict)  # load context of every judged window
+    promoted: list[dict] = field(default_factory=list)  # load-peak windows promoted to special
+    promotion: dict = field(default_factory=dict)  # the promotion tests' levels and thresholds
 
 
 def _sampling_factor(dt_s: float, w_s: float) -> float:
@@ -310,13 +321,21 @@ def window_indexes(sub: Substeps, k: int, skip: int = 0) -> list[np.ndarray]:
 
 
 def check(
-    sub: Substeps, k: int, skip: int = 0, tests: int | None = None, alpha: float = ALPHA
+    sub: Substeps,
+    k: int,
+    skip: int = 0,
+    tests: int | None = None,
+    alpha: float = ALPHA,
+    arrivals: str = "unknown",
 ) -> GroupResult:
     """Windows of k sub-steps and the pooled span after `skip` sub-steps of warm-up.
 
     alpha is split: alpha/2 for the systematic offset (pooled over the windows that are not
     transient), alpha/2 family-wise (Bonferroni over `tests`, default this group's windows) for
-    the window tests (against 1 and against the systematic level)."""
+    the window tests (against 1 and against the systematic level). Promotion of load-peak
+    windows has its own family-wise budget, PROMOTE_ALPHA (see _promote). `arrivals`: what the
+    counter counts (arrivals | completions | unknown): with arrivals, arrivals - completions is a
+    second reading of the backlog."""
     wins = window_indexes(sub, k, skip)
     m = tests or max(1, len(wins))
     q_win = 1 - alpha / (4 * m)
@@ -332,6 +351,9 @@ def check(
         out.verdict = "no_traffic" if pooled.verdict == "no_traffic" else "insufficient"
         return out
     _classify(out, sub, wins, judged, q_win, alpha)
+    _promote(out, sub, wins, judged, m, arrivals)
+    for t in out.transient:
+        t["cause"] = _cause(t)
     if out.systematic is not None:
         out.verdict = out.systematic.verdict
     elif out.transient:
@@ -463,6 +485,8 @@ def _classify(
     L_med = float(np.median([ws[i].L for i in judged]))
     lam_q75 = float(np.quantile(lam, 0.75))
     for i in judged:
+        out.phases[i] = _load(ws[i], lam_med, lam_q75, W_med, L_med)
+    for i in judged:
         w = ws[i]
         assert w.ratio is not None and w.common is not None
         if i not in final:
@@ -470,14 +494,13 @@ def _classify(
             continue
         # beyond the measurement interval: is it also beyond the common-cause envelope?
         w.source = SPECIAL if abs(w.ratio / refs[i] - 1) > max(w.common, spread) else COMMON
-        out.transient.append(_transient(i, w, refs[i], lam_med, lam_q75, W_med, L_med))
+        out.transient.append(_transient(i, w, refs[i], out.phases[i]))
 
 
-def _transient(
-    i: int, w: Block, ref: float, lam_med: float, lam_q75: float, W_med: float, L_med: float
-) -> dict:
-    """A transient window with its load context: is it at a load peak, leaving steady state?"""
-    assert w.ratio is not None and w.lam is not None and w.W_s is not None and w.L is not None
+def _load(w: Block, lam_med: float, lam_q75: float, W_med: float, L_med: float) -> dict:
+    """A window's load context: at a load peak (lambda or W well above the median window, or a
+    backlog building), draining one, or neither."""
+    assert w.lam is not None and w.W_s is not None and w.L is not None
     l0, l1 = w.L_edges or (w.L, w.L)
     backlog = l1 - l0
     noise = 3 * math.sqrt(2 * max(w.L, 1.0))  # Poisson-occupancy noise of the two edge readings
@@ -488,42 +511,310 @@ def _transient(
     lam_up = bool((w.drift.get("lambda") or {}).get("significant")) and (
         w.drift["lambda"]["change"] > 0
     )
-    if draining and not building:
-        phase = "drain"
-        cause = (
-            "a backlog draining (after a peak): completions carry time spent before the window, "
-            "so λW exceeds L; out of steady state"
-        )
-    elif peak or building:
-        phase = "peak"
-        cause = (
-            "at a load peak: possible transition out of steady state (toward overload): "
-            "a backlog building inside the window puts in-flight time in L that completed "
-            "latencies (W) do not show yet"
-        )
-    else:
-        phase = "other"
-        cause = (
-            "not at a load peak (lambda and W near their medians): a change confined to these "
-            "windows — in-flight time the latency timer does not see (a queue excursion before "
-            "it), a deploy, an instance joining or leaving, a routing or instrumentation change"
-        )
+    phase = "drain" if draining and not building else "peak" if peak or building else "other"
     return {
-        "index": i,
-        "direction": "L_high" if w.ratio > ref else "L_low",
-        "ratio": w.ratio,
-        "vs_reference": w.ratio / ref,
-        "source": w.source,
         "phase": phase,
-        "at_peak": phase == "peak",
         "load": {
             "lambda_vs_median": lam_rel, "W_vs_median": W_rel,
             "L_vs_median": w.L / L_med if L_med > 0 else math.nan, "lambda_rising": lam_up,
             "L_start": l0, "L_end": l1, "backlog_change": backlog,
             "not_steady": "not_steady" in w.flags,
         },
-        "cause": cause,
     }  # fmt: skip
+
+
+def _transient(i: int, w: Block, ref: float, ctx: dict) -> dict:
+    """A transient window with its load context (its cause is worded after promotion)."""
+    assert w.ratio is not None
+    return {
+        "index": i,
+        "direction": "L_high" if w.ratio > ref else "L_low",
+        "ratio": w.ratio,
+        "vs_reference": w.ratio / ref,
+        "source": w.source,
+        "phase": ctx["phase"],
+        "at_peak": ctx["phase"] == "peak",
+        "load": dict(ctx["load"]),
+        "promoted": False,
+    }
+
+
+#: a load-peak window inside the common-cause envelope, without evidence of leaving steady state
+PEAK_COMMON = (
+    "at a load peak; inside expected fluctuation — not a signal by itself; watch if it repeats "
+    "or grows"
+)
+
+
+def _cause(t: dict) -> str:
+    if t["phase"] == "drain":
+        return (
+            "a backlog draining (after a peak): completions carry time spent before the window, "
+            "so λW exceeds L; out of steady state"
+        )
+    if t["phase"] == "peak":
+        if t["promoted"]:
+            reason = t["promotion"]["reason"]
+            return f"at a load peak, leaving steady state (promoted to special cause): {reason}"
+        if t["source"] == SPECIAL:
+            return (
+                "at a load peak, beyond expected fluctuation: possible transition out of steady "
+                "state (toward overload): a backlog building inside the window puts in-flight "
+                "time in L that completed latencies (W) do not show yet"
+            )
+        return PEAK_COMMON
+    return (
+        "not at a load peak (lambda and W near their medians): a change confined to these "
+        "windows — in-flight time the latency timer does not see (a queue excursion before "
+        "it), a deploy, an instance joining or leaving, a routing or instrumentation change"
+    )
+
+
+# promotion of load-peak windows (83w, q2m) ----------------------------------------------------
+def cantelli_k(alpha: float) -> float:
+    """Cantelli's (one-sided Chebyshev) inequality P(X - EX >= k sd) <= 1 / (1 + k^2) holds for
+    any distribution with that variance: the k it needs for a one-sided level alpha."""
+    return math.sqrt(1 / alpha - 1)
+
+
+def kendall_increasing_p(x: list[float]) -> tuple[int, float]:
+    """Kendall's S of x against its order, and the exact one-sided p of an S this large under
+    exchangeability (every order equally likely; heavy tails change nothing). Ties count
+    against the trend: conservative."""
+    n = len(x)
+    inv = sum(1 for a in range(n) for b in range(a + 1, n) if not x[b] > x[a])
+    counts = [1]  # Mahonian numbers: permutations of `size` items with j inversions
+    for size in range(2, n + 1):
+        new = [0] * (len(counts) + size - 1)
+        for j, c in enumerate(counts):
+            for add in range(size):
+                new[j + add] += c
+        counts = new
+    return n * (n - 1) // 2 - 2 * inv, sum(counts[: inv + 1]) / math.factorial(n)
+
+
+def _episodes(judged: list[int], phases: dict[int, dict]) -> list[list[int]]:
+    """Runs of consecutive windows at a load peak or draining one: one load episode each."""
+    out: list[list[int]] = []
+    for i in judged:
+        if phases[i]["phase"] not in ("peak", "drain"):
+            continue
+        if out and out[-1][-1] == i - 1:
+            out[-1].append(i)
+        else:
+            out.append([i])
+    return out
+
+
+def _dev(w: Block, ref: float) -> float:
+    return abs(float(w.ratio) / ref - 1)  # type: ignore[arg-type]
+
+
+def _backlog(
+    sub: Substeps, idx: np.ndarray, w: Block, flow: float | None, use_flow: bool, var_n: float,
+    k: float,
+) -> dict:  # fmt: skip
+    """(a) N(end) - N(start) over the window: the gauge's reading and, when the counter counts
+    arrivals, arrivals - completions; steady state: mean 0, variance <= 2 var(N). With both,
+    the smaller: the two instruments read the same backlog, and growth that only one of them
+    sees is a measurement question (flow_imbalance), not the system leaving steady state."""
+    before = idx[0] - 1
+    ok0 = before >= 0 and bool(np.isfinite(sub.conc[before]))
+    gauge = float(sub.conc[idx[-1]] - sub.conc[before if ok0 else idx[0]])
+    x = min(gauge, flow) if use_flow and flow is not None else gauge
+    scale = math.sqrt(2 * var_n)
+    # the readings' own error: counts between a window edge and the nearest scrape (Poisson)
+    T = w.n * sub.step_ms / 1000
+    gap_s = (sub.scrape_ms or sub.step_ms) / 1000
+    rates = float(w.lam or 0) + float(w.completions or 0) / max(T, 1e-9)
+    half = 1.96 * math.sqrt(2 * rates * gap_s)
+    reads = [gauge] + ([flow] if flow is not None else [])
+    z = x / scale
+    return {
+        "kind": "backlog_growth", "value": x, "unit": "requests",
+        "interval": (min(reads) - half, max(reads) + half),
+        "gauge": gauge, "flow": flow, "flow_used": use_flow and flow is not None,
+        "null_sd": scale, "z": z, "k": k, "p_bound": 1 / (1 + z * z) if z > 0 else 1.0,
+        "significant": z >= k,
+    }  # fmt: skip
+
+
+def _w_noise(sub: Substeps, idx: np.ndarray) -> tuple[float, float]:
+    """A window's mean latency: its standard error around the window's own linear trend (the
+    sub-step means' residual sd over sqrt(n_eff), n_eff from the residuals' integrated
+    autocorrelation time), never below the CV-1 sampling error W / sqrt(completions); and its df
+    (n_eff - 2)."""
+    s, c = sub.lat_sum[idx], sub.lat_count[idx]
+    ok = np.isfinite(s) & np.isfinite(c) & (c > 0)
+    if int(ok.sum()) < 5:
+        return math.inf, 1.0
+    w = s[ok] / c[ok]
+    x = ((sub.ts_ms[idx][ok] - sub.ts_ms[idx][0]) // sub.step_ms).astype(np.int64)
+    e = w - np.polyval(np.polyfit(x, w, 1), x)
+    ne = n_eff(w.size, tau_int(x, e))
+    W = float(s[ok].sum() / c[ok].sum())
+    floor = W / math.sqrt(max(float(c[ok].sum()) * sub.step_ms / 1000, 1.0))
+    return max(float(np.std(e, ddof=2)) / math.sqrt(ne), floor), max(ne - 2, 1.0)
+
+
+def _latency_rise(
+    i: int, ws: list[Block], noise: dict[int, tuple[float, float]], level: float
+) -> dict | None:
+    """(b) W rising across consecutive windows into the peak (i-2 -> i-1 -> i) or through it
+    (i-1 -> i -> i+1): both rises beyond their own t threshold (Welch over the two windows'
+    standard errors, df from n_eff) at `level`; the triple that clears its thresholds best."""
+    best = None
+    for which, tri in (("into", (i - 2, i - 1, i)), ("through", (i - 1, i, i + 1))):
+        if not all(j in noise for j in tri):
+            continue
+        W = [float(ws[j].W_s) for j in tri]  # type: ignore[arg-type]
+        zs, ks = [], []
+        for a, b in ((0, 1), (1, 2)):
+            (sa, da), (sb, db) = noise[tri[a]], noise[tri[b]]
+            se = math.hypot(sa, sb)
+            df = (sa**2 + sb**2) ** 2 / (sa**4 / da + sb**4 / db) if se > 0 else 1.0
+            zs.append((W[b] - W[a]) / se if se > 0 else 0.0)
+            ks.append(t_quantile(1 - level, df))
+        score = min(z / k for z, k in zip(zs, ks, strict=True))
+        if best is None or score > best[0]:
+            best = (score, which, tri, W, zs, ks)
+    if best is None:
+        return None
+    score, which, tri, W, zs, ks = best
+    half = 1.96 * math.hypot(noise[tri[0]][0], noise[tri[2]][0])
+    rise = W[2] - W[0]
+    return {
+        "kind": "latency_rise", "value": rise, "unit": "s",
+        "interval": (rise - half, rise + half), "contrast": which, "windows": list(tri),
+        "W": W, "z": zs, "k": ks, "level": level, "significant": score >= 1,
+    }  # fmt: skip
+
+
+def _promote(
+    out: GroupResult, sub: Substeps, wins: list[np.ndarray], judged: list[int], tests: int,
+    arrivals: str,
+) -> None:  # fmt: skip
+    """Option C (83w; user decision 2026-10-03). A window at a load peak whose deviation is inside
+    the common-cause envelope (or the measurement interval) keeps that label by default; it is
+    PROMOTED to special cause when independent evidence says the system is leaving steady state:
+
+    (a) the backlog growing over the window (the gauge; when the counter counts arrivals also
+        arrivals - completions, the flow balance of q2m, and the smaller of the two). Steady state: mean 0, variance <= 2 var(N), var(N) from
+        the gauge in the windows outside the peak's episode (and its neighbours), floored at
+        their mean (Poisson occupancy).
+    (b) W rising across consecutive windows into or through the peak: two successive rises
+        (i-2 -> i-1 -> i or i-1 -> i -> i+1), each beyond a t threshold on the two windows'
+        standard errors around their own within-window trend (n_eff df). A step to a higher
+        but steady load raises W once, then holds: one rise is not enough.
+    (c) the deviation |L / (lambda W) / reference - 1| growing across repeated load episodes:
+        Kendall's S over the episodes' largest peak deviations, exact under exchangeability.
+
+    None of them uses the deviation's envelope. Multiplicity: PROMOTE_ALPHA family-wise per
+    check, a third per evidence type: (a) Bonferroni over `tests` (windows x groups) at
+    Cantelli's distribution-free bound (queue excursions are heavy-tailed); (b) Bonferroni over
+    `tests` x 2 triples, both rises required (the intersection's level is at most either's);
+    (c) once per group (Bonferroni over groups)."""
+    ws = out.windows
+    phases = out.phases
+    a_each = PROMOTE_ALPHA / 3
+    k_a, level_b = cantelli_k(a_each / tests), a_each / (2 * tests)
+    a_c = a_each / max(1, round(tests / max(1, len(wins))))
+    out.promotion = {
+        "alpha": PROMOTE_ALPHA, "tests": tests, "k_backlog": k_a, "level_latency": level_b,
+        "alpha_peaks": a_c,
+    }  # fmt: skip
+    episodes = _episodes(judged, phases)
+    episode_of = {i: ep for ep in episodes for i in ep}
+    usable = sub.usable()
+    # flow balance: arrivals - completions, the counter scaled by the windows' median
+    # counter / count ratio (a counter counting a subset or superset is not a backlog)
+    A = {i: float(ws[i].arrivals or 0) for i in judged}
+    D = {i: float(ws[i].completions or 0) for i in judged}
+    same = all(abs(A[i] - D[i]) <= 1e-9 * max(A[i], 1.0) for i in judged)
+    r_hat = float(np.median([A[i] / D[i] for i in judged if D[i] > 0] or [1.0]))
+    use_flow = arrivals == "arrivals" and not same
+    noise = {j: _w_noise(sub, wins[j][usable[wins[j]]]) for j in judged}
+    evidence: dict[int, list[dict]] = {}
+    for i in judged:
+        if phases[i]["phase"] != "peak":
+            continue
+        ep = episode_of[i]
+        base = [j for j in judged if not ep[0] - 1 <= j <= ep[-1] + 1]
+        if len(base) < MIN_BASELINE:
+            continue
+        g = np.concatenate([sub.conc[wins[j][usable[wins[j]]]] for j in base])
+        var_n = max(float(np.var(g, ddof=1)), float(np.mean(g)), 1e-12)
+        flow = None if same else A[i] - r_hat * D[i]
+        idx = wins[i][usable[wins[i]]]
+        ev = [_backlog(sub, idx, ws[i], flow, use_flow, var_n, k_a)]
+        lr = _latency_rise(i, ws, noise, level_b)
+        ev += [lr] if lr else []
+        for e in ev:
+            e["baseline_windows"] = len(base)
+        evidence[i] = ev
+    # (c) repeated load episodes: each one's largest peak deviation, in time order
+    reps = []
+    for ep in episodes:
+        peaks = [i for i in ep if phases[i]["phase"] == "peak"]
+        if peaks:
+            reps.append(max(peaks, key=lambda i: _dev(ws[i], out.references[i])))
+    if len(reps) >= 3:
+        devs = [_dev(ws[i], out.references[i]) for i in reps]
+        s, p = kendall_increasing_p(devs)
+        out.promotion["peaks"] = {"windows": reps, "deviations": devs, "kendall_s": s, "p": p}
+        sd = lambda i: float(ws[i].sd or 0) / out.references[i]
+        for i, d in zip(reps[1:], devs[1:], strict=True):
+            half = 1.96 * math.hypot(sd(reps[0]), sd(i))
+            evidence.setdefault(i, []).append({
+                "kind": "peak_growth", "value": d - devs[0], "unit": "relative",
+                "interval": (d - devs[0] - half, d - devs[0] + half),
+                "first_peak": reps[0], "deviation_first": devs[0], "deviation": d,
+                "peaks": len(reps), "kendall_s": s, "p": p, "alpha": a_c,
+                "significant": p <= a_c and d > devs[0],
+            })  # fmt: skip
+    for i in sorted(evidence):
+        w, ev = ws[i], evidence[i]
+        hits = [e for e in ev if e["significant"]]
+        if not hits or w.source not in (COMMON, MEASUREMENT):
+            continue
+        prom = {"from": w.source, "evidence": ev, "reason": "; ".join(_reason(e) for e in hits)}
+        w.promotion = prom
+        out.promoted.append({
+            "index": i, "from": w.source,
+            "deviation": "within_envelope" if w.source == COMMON else "within_measurement",
+            "evidence": ev, "reason": prom["reason"], "load": phases[i]["load"],
+        })  # fmt: skip
+        w.source = SPECIAL
+        for t in out.transient:
+            if t["index"] == i:
+                t.update(source=SPECIAL, promoted=True, promotion=prom)
+
+
+def _reason(e: dict) -> str:
+    """Why a window was promoted, with the numbers."""
+    f = lambda v: f"{v:+.3g}"
+    if e["kind"] == "backlog_growth":
+        src = f"gauge {f(e['gauge'])}" + (
+            f", arrivals − completions {f(e['flow'])}" if e["flow"] is not None else ""
+        )
+        return (
+            f"backlog grew {f(e['value'])} requests in the window ({src}): {e['z']:.3g}× the "
+            f"steady-state scale √2·σ_N = {e['null_sd']:.3g} (threshold {e['k']:.3g}; Cantelli "
+            f"p ≤ {e['p_bound']:.2g})"
+        )
+    if e["kind"] == "latency_rise":
+        path = " → ".join(f"{w:.3g} s" for w in e["W"])
+        zs = ", ".join(f"{z:.3g}" for z in e["z"])
+        ks = ", ".join(f"{k:.3g}" for k in e["k"])
+        return (
+            f"mean latency W rose across consecutive windows {e['contrast']} the peak: {path} "
+            f"({f(e['value'])} s; each rise z = {zs} ≥ t thresholds {ks})"
+        )
+    return (
+        f"the deviation grows across {e['peaks']} repeated load peaks: |L ÷ λW vs reference − 1| "
+        f"{100 * e['deviation_first']:.0f}% at the first → {100 * e['deviation']:.0f}% here "
+        f"(Kendall S = {e['kendall_s']}, exact p = {e['p']:.2g} ≤ {e['alpha']:.2g})"
+    )
 
 
 def _common_cause(out: GroupResult, judged: list[int]) -> None:
