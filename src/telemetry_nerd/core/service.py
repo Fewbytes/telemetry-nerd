@@ -351,12 +351,15 @@ class TelemetryService:
             out = await self.seasonal_dist.compare(
                 dataset_id, cycles, tz, exclude, threshold, actor
             )
-            # the statistics rest on the dataset, the fresh "now" fetch and every cycle's
-            # histogram dataset: any of unknown uncertainty makes them a lower bound (8qt)
+            # the statistics rest on the dataset, the fresh "now" fetch and the cycles that
+            # feed the band (kept ones; excluded cycles do not, and a series missing from a
+            # cycle has a placeholder without a dataset): any of unknown uncertainty makes them
+            # a lower bound (8qt)
             used = [dataset_id, out["histogram"]["now"]] + [
                 c["dataset"]
                 for s in out["series"]
-                for c in (*s["reference"]["cycles"], *s["reference"]["excluded"])
+                for c in s["reference"]["cycles"]
+                if c.get("dataset")
             ]
             before = set(out["caveats"])
             mark_statistics(out, self.datasets, used)

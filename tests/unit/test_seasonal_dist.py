@@ -181,3 +181,47 @@ def test_statistics_over_inputs_of_unknown_uncertainty_are_marked(tmp_path):
         v.get("caveat") == "input_uncertainty_unknown" and v["source"] == "measurement_system"
         for v in marked["series"][0]["variation"]
     )
+
+
+def test_a_series_missing_from_one_cycle_does_not_crash_the_marking(tmp_path):
+    """8qt review: the placeholder for a series absent from a cycle has no dataset."""
+    svc = make_service(tmp_path, source=LatencySource())
+    d = _p99(svc, SAT)
+    real = svc.seasonal_dist._hists
+
+    def hists(ds, w0, w1, j):
+        return {} if j == 1 else real(ds, w0, w1, j)  # the series is missing from cycle 1
+
+    svc.seasonal_dist._hists = hists
+    out = asyncio.run(svc.compare_seasonal(d, cycles=["1w"]))
+    (s,) = out["series"]
+    assert [e["reason"] for e in s["reference"]["excluded"]] == ["missing"]
+    assert "input_uncertainty_unknown" not in out["caveats"]  # clean inputs stay unflagged
+
+
+@pytest.mark.parametrize("which", [[-1], [1, 2]])
+def test_one_or_several_cycle_datasets_of_unknown_uncertainty_mark_the_statistic(tmp_path, which):
+    """Only a cycle dataset (never the input or the now fetch) is of unknown uncertainty."""
+    from dataclasses import replace
+
+    svc = make_service(tmp_path, source=LatencySource())
+    d = _p99(svc, SAT)
+    fetched: list[str] = []
+    orig = svc.seasonal_dist._qd
+
+    async def qd(*a, **k):
+        out = await orig(*a, **k)
+        fetched.append(out["dataset"])
+        return out
+
+    svc.seasonal_dist._qd = qd
+    meta = svc.datasets.meta
+    svc.datasets.meta = lambda i: (  # fetched[0] is the now fetch; the rest are the cycles
+        replace(meta(i), source_caveats=["no_uncertainty"])
+        if i in {fetched[w] for w in which if -len(fetched) <= w < len(fetched)}
+        else meta(i)
+    )
+    out = asyncio.run(svc.compare_seasonal(d, cycles=["1w"]))
+    assert len(fetched) > 3
+    assert "input_uncertainty_unknown" in out["caveats"]
+    assert out["series"][0]["share_over"]["evidence"]["params"]["input_uncertainty"] == "unknown"
