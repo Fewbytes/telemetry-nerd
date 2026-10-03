@@ -1,0 +1,40 @@
+{
+ "_fixture": "Canned workspace snapshot of a good investigation of tests/fixtures/scenarios/payment-failure.json (hand-written for scoring tests; shape as live.collect writes it).",
+ "workspace": {
+  "panels": [
+   {"id": "p1", "question": "Which services' error span rate moved between 10:00 and 10:16Z?", "status": "ready", "spec": {}, "dataset_ids": ["ds1"], "created_at_ms": 1791023000000, "answered_by": null, "closed": false},
+   {"id": "p2", "question": "Payment error spans vs baseline", "status": "ready", "spec": {}, "dataset_ids": ["ds2"], "created_at_ms": 1791023010000, "answered_by": null, "closed": false},
+   {"id": "p3", "question": "Do cart, ad, product-catalog and shipping show errors?", "status": "ready", "spec": {}, "dataset_ids": ["ds3"], "created_at_ms": 1791023020000, "answered_by": null, "closed": false}
+  ],
+  "annotations": [
+   {"id": "a1", "kind": "event", "panel": "p1", "t_start_ms": 1791022125000, "t_end_ms": null, "value": null, "value_hi": null, "label": "onset: payment error spans leave the baseline", "links": [], "author": "claude", "created_at_ms": 1791023100000, "deleted": false},
+   {"id": "a2", "kind": "region", "panel": "p1", "t_start_ms": 1791021716000, "t_end_ms": 1791022016000, "value": null, "value_hi": null, "label": "baseline window", "links": [], "author": "claude", "created_at_ms": 1791023110000, "deleted": false},
+   {"id": "a3", "kind": "event", "panel": "p1", "t_start_ms": 1791022425000, "t_end_ms": null, "value": null, "value_hi": null, "label": "errors back to baseline", "links": [], "author": "claude", "created_at_ms": 1791023120000, "deleted": false}
+  ],
+  "hypotheses": [
+   {"id": "h1", "statement": "payment Charge failures cause the checkout and frontend /api/checkout errors from ~10:08Z", "status": "supported", "author": "claude", "evidence_for": ["f1", "f2"], "evidence_against": [], "created_at_ms": 1791023000000, "updated_at_ms": 1791023200000},
+   {"id": "h2", "statement": "a cart service fault causes the checkout errors", "status": "refuted", "author": "claude", "evidence_for": [], "evidence_against": ["f3"], "created_at_ms": 1791023000000, "updated_at_ms": 1791023200000}
+  ],
+  "findings": [
+   {"id": "f1", "claim": "payment error spans rose from 0.003/s in the baseline to 0.41/s between 10:08 and 10:12Z.", "scope": {"source": "default", "selector": "traces_span_metrics_calls_total{service_name=\"payment\",status_code=\"STATUS_CODE_ERROR\"}", "time_range": {"start_ms": 1791022016000, "end_ms": 1791022320000}, "step": "1m", "aggregation": "sum", "baseline_range": {"start_ms": 1791021716000, "end_ms": 1791022016000}}, "evidence": [{"kind": "statistic", "dataset": "ds2", "name": "mean error spans/s, fault window", "value": 0.41, "interval": [0.36, 0.46], "exact": false, "uncertainty_unknown": false, "method": "analyze shift", "params": {}, "source": "special_cause"}, {"kind": "panel", "panel": "p2"}, {"kind": "annotation", "annotation": "a1"}], "caveats": [], "hypothesis": "h1", "stance": "for", "answers_panel": null, "author": "claude", "created_at_ms": 1791023150000, "verdict": null, "verdict_comment": null, "evidence_flags": []},
+   {"id": "f2", "claim": "checkout and frontend error spans rose in step with payment (0.003/s to 0.41/s), same onset 10:08Z.", "scope": {"source": "default", "selector": "traces_span_metrics_calls_total{service_name=~\"checkout|frontend\",status_code=\"STATUS_CODE_ERROR\"}", "time_range": {"start_ms": 1791022016000, "end_ms": 1791022320000}, "step": "1m", "aggregation": "sum by (service_name)", "baseline_range": null}, "evidence": [{"kind": "statistic", "dataset": "ds1", "name": "checkout error spans/s, fault window", "value": 0.405, "interval": null, "exact": false, "uncertainty_unknown": true, "method": "mean", "params": {}, "source": "special_cause"}, {"kind": "panel", "panel": "p1"}], "caveats": ["uncertainty unknown for the checkout mean (autocorrelated series)"], "hypothesis": "h1", "stance": "for", "answers_panel": null, "author": "claude", "created_at_ms": 1791023160000, "verdict": null, "verdict_comment": null, "evidence_flags": [{"evidence": 0, "flag": "uncertainty_unknown", "message": "uncertainty unknown"}]},
+   {"id": "f3", "claim": "cart error spans stayed at 0 between 10:02 and 10:15Z: no change beyond common cause.", "scope": {"source": "default", "selector": "traces_span_metrics_calls_total{service_name=\"cart\",status_code=\"STATUS_CODE_ERROR\"}", "time_range": {"start_ms": 1791021716000, "end_ms": 1791022496000}, "step": "1m", "aggregation": "sum", "baseline_range": null}, "evidence": [{"kind": "statistic", "dataset": "ds3", "name": "cart error spans", "value": 0, "interval": null, "exact": true, "uncertainty_unknown": false, "method": "count", "params": {}, "source": "common_cause"}, {"kind": "panel", "panel": "p3"}], "caveats": [], "hypothesis": "h2", "stance": "against", "answers_panel": null, "author": "claude", "created_at_ms": 1791023170000, "verdict": null, "verdict_comment": null, "evidence_flags": []}
+  ],
+  "gaps": [],
+  "groups": [],
+  "code": [],
+  "threads": [],
+  "last_seq": 42
+ },
+ "exprs": {
+  "p1": ["sum by (service_name) (rate(traces_span_metrics_calls_total{status_code=\"STATUS_CODE_ERROR\"}[2m]))"],
+  "ds1": ["sum by (service_name) (rate(traces_span_metrics_calls_total{status_code=\"STATUS_CODE_ERROR\"}[2m]))"],
+  "p2": ["sum(rate(traces_span_metrics_calls_total{service_name=\"payment\",status_code=\"STATUS_CODE_ERROR\"}[2m]))"],
+  "ds2": ["sum(rate(traces_span_metrics_calls_total{service_name=\"payment\",status_code=\"STATUS_CODE_ERROR\"}[2m]))"],
+  "p3": ["sum by (service_name) (rate(traces_span_metrics_calls_total{service_name=~\"cart|ad|product-catalog|shipping\",status_code=\"STATUS_CODE_ERROR\"}[2m]))"],
+  "ds3": ["sum by (service_name) (rate(traces_span_metrics_calls_total{service_name=~\"cart|ad|product-catalog|shipping\",status_code=\"STATUS_CODE_ERROR\"}[2m]))"]
+ },
+ "transcript": {
+  "result": "Scope: order placement errors 10:01-10:15Z, source default. h1 (payment Charge failures cause the checkout errors) is supported by f1 and f2; h2 (cart) is refuted by f3. Onset 10:08Z (a1), recovery 10:13Z (a3). Unexplained: why payment started failing (no deploy or config signal in the metrics; g-none)."
+ }
+}

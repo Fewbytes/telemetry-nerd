@@ -1,0 +1,29 @@
+{
+ "_fixture": "Canned workspace snapshot of a good investigation of tests/fixtures/evals/overload_spike.truth.json (queue-sim; hand-written for scoring tests).",
+ "workspace": {
+  "panels": [
+   {"id": "p1", "question": "Does L = lambda W hold for checkout per pod 00:00-00:15Z?", "status": "ready", "spec": {}, "dataset_ids": ["ds1", "ds2", "ds3"], "created_at_ms": 1791031000000, "answered_by": null, "closed": false}
+  ],
+  "annotations": [
+   {"id": "a1", "kind": "region", "panel": "p1", "t_start_ms": 1791030320000, "t_end_ms": 1791030430000, "value": null, "value_hi": null, "label": "L and lambda W diverge: backlog builds and drains", "links": [], "author": "claude", "created_at_ms": 1791031100000, "deleted": false}
+  ],
+  "hypotheses": [
+   {"id": "h1", "statement": "an arrival-rate surge above capacity (overload) built a backlog on every checkout pod", "status": "supported", "author": "claude", "evidence_for": ["f1"], "evidence_against": [], "created_at_ms": 1791031000000, "updated_at_ms": 1791031200000},
+   {"id": "h2", "statement": "the latency timer misses part of the time in system (hidden queueing)", "status": "refuted", "author": "claude", "evidence_for": [], "evidence_against": ["f2"], "created_at_ms": 1791031000000, "updated_at_ms": 1791031200000}
+  ],
+  "findings": [
+   {"id": "f1", "claim": "On checkout-0, checkout-1 and checkout-2, L rose above lambda W only in the windows 00:05-00:07Z (ratio 1.9 [1.6, 2.2]): a transient overload, special cause; the arrival rate rose to 15/s per pod while capacity is 10/s.", "scope": {"source": "default", "selector": "http_server_active_requests{service=\"checkout\"}", "time_range": {"start_ms": 1791030020000, "end_ms": 1791030900000}, "step": "5s", "aggregation": "sum by (pod)", "baseline_range": null}, "evidence": [{"kind": "statistic", "dataset": "ds1", "name": "L / (lambda W), window 00:05-00:06Z", "value": 1.9, "interval": [1.6, 2.2], "exact": false, "uncertainty_unknown": false, "method": "check_littles_law", "params": {"window": "1m"}, "source": "special_cause"}, {"kind": "panel", "panel": "p1"}], "caveats": [], "hypothesis": "h1", "stance": "for", "answers_panel": null, "author": "claude", "created_at_ms": 1791031150000, "verdict": null, "verdict_comment": null, "evidence_flags": []},
+   {"id": "f2", "claim": "Outside 00:05-00:07Z L and lambda W agree within the interval on every pod: no systematic offset, so nothing the latency timer leaves out.", "scope": {"source": "default", "selector": "http_server_active_requests{service=\"checkout\"}", "time_range": {"start_ms": 1791030020000, "end_ms": 1791030900000}, "step": "5s", "aggregation": "sum by (pod)", "baseline_range": null}, "evidence": [{"kind": "statistic", "dataset": "ds1", "name": "systematic offset", "value": 1.0, "interval": [0.97, 1.03], "exact": false, "uncertainty_unknown": false, "method": "check_littles_law", "params": {}, "source": "common_cause"}], "caveats": [], "hypothesis": "h2", "stance": "against", "answers_panel": null, "author": "claude", "created_at_ms": 1791031160000, "verdict": null, "verdict_comment": null, "evidence_flags": []}
+  ],
+  "gaps": [],
+  "groups": [],
+  "code": [],
+  "threads": [],
+  "last_seq": 9
+ },
+ "exprs": {
+  "ds1": ["http_server_active_requests{service=\"checkout\"}"],
+  "p1": ["http_server_active_requests{service=\"checkout\"}", "http_requests_total{service=\"checkout\"}"]
+ },
+ "transcript": {"result": "h1 supported (f1): a transient overload 00:05-00:07Z (a1); h2 refuted (f2)."}
+}

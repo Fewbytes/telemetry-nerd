@@ -119,3 +119,10 @@ scenario-list:
 # Extra args: --scale 0.3 (shorter), --dry-run, --force.
 scenario name *args:
     uv run scripts/scenario.py run {{name}} {{args}}
+
+# --- Scenario evals (bead d77.3, spec §10): score an investigation against ground truth ---
+
+# Offline by default (canned snapshot fixture or --snapshot/--truth). --live runs the scenario
+# and an isolated daemon; --live --claude adds headless Claude Code (SPENDS TOKENS; never in CI).
+eval scenario *args:
+    uv run scripts/eval_scenario.py {{scenario}} {{args}}

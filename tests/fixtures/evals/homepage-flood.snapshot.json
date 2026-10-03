@@ -1,0 +1,32 @@
+{
+ "_fixture": "Canned workspace snapshot of a FLAWED investigation of tests/fixtures/scenarios/homepage-flood.json: blames payment (a control), cites no data for one finding, an unscoped claim, an off-target annotation, a common-cause label on the incident.",
+ "workspace": {
+  "panels": [
+   {"id": "p1", "question": "Frontend server request rate 10:28-10:44Z", "status": "ready", "spec": {}, "dataset_ids": ["ds1"], "created_at_ms": 1791025000000, "answered_by": null, "closed": false}
+  ],
+  "annotations": [
+   {"id": "a1", "kind": "event", "panel": "p1", "t_start_ms": 1791023400000, "t_end_ms": null, "value": null, "value_hi": null, "label": "incident start", "links": [], "author": "claude", "created_at_ms": 1791025100000, "deleted": false},
+   {"id": "a2", "kind": "note", "panel": "p1", "t_start_ms": null, "t_end_ms": null, "value": null, "value_hi": null, "label": "user note", "links": [], "author": "user", "created_at_ms": 1791025100000, "deleted": false}
+  ],
+  "hypotheses": [
+   {"id": "h1", "statement": "a payment outage caused the frontend slowdown", "status": "supported", "author": "claude", "evidence_for": ["f2"], "evidence_against": [], "created_at_ms": 1791025000000, "updated_at_ms": 1791025200000},
+   {"id": "h2", "statement": "a surge in traffic from the load generator drove the frontend load", "status": "proposed", "author": "claude", "evidence_for": [], "evidence_against": [], "created_at_ms": 1791025000000, "updated_at_ms": 1791025000000}
+  ],
+  "findings": [
+   {"id": "f1", "claim": "frontend request rate rose from 2.1/s to 40/s between 10:36 and 10:40Z.", "scope": {"source": "default", "selector": "traces_span_metrics_calls_total{service_name=\"frontend\",span_kind=\"SPAN_KIND_SERVER\"}", "time_range": {"start_ms": 1791023677000, "end_ms": 1791023977000}, "step": "1m", "aggregation": "sum", "baseline_range": null}, "evidence": [{"kind": "statistic", "dataset": "ds1", "name": "mean frontend req/s", "value": 40.2, "interval": [38.0, 42.5], "exact": false, "uncertainty_unknown": false, "method": "analyze shift", "params": {}, "source": "common_cause"}, {"kind": "panel", "panel": "p1"}], "caveats": [], "hypothesis": null, "stance": null, "answers_panel": null, "author": "claude", "created_at_ms": 1791025150000, "verdict": null, "verdict_comment": null, "evidence_flags": []},
+   {"id": "f2", "claim": "payment is the root cause: its errors increased during the incident.", "scope": {"source": "default", "selector": "traces_span_metrics_calls_total", "time_range": {"start_ms": 1791023677000, "end_ms": 1791023977000}, "step": "1m", "aggregation": "sum", "baseline_range": null}, "evidence": [{"kind": "annotation", "annotation": "a1"}], "caveats": [], "hypothesis": "h1", "stance": "for", "answers_panel": null, "author": "claude", "created_at_ms": 1791025160000, "verdict": null, "verdict_comment": null, "evidence_flags": []}
+  ],
+  "gaps": [],
+  "groups": [],
+  "code": [],
+  "threads": [],
+  "last_seq": 17
+ },
+ "exprs": {
+  "p1": ["sum(rate(traces_span_metrics_calls_total{service_name=\"frontend\",span_kind=\"SPAN_KIND_SERVER\"}[2m]))"],
+  "ds1": ["sum(rate(traces_span_metrics_calls_total{service_name=\"frontend\",span_kind=\"SPAN_KIND_SERVER\"}[2m]))"]
+ },
+ "transcript": {
+  "result": "The frontend slowdown was caused by payment failing. Product-catalog load rose as well (f1)."
+ }
+}
