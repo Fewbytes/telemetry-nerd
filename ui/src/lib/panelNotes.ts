@@ -85,6 +85,7 @@ const CAVEATS: Record<string, Describe> = {
   uncertainty_not_propagated: () => "The interval leaves out the inputs' own declared intervals (the code did not say it propagated them): a lower bound on the error.",
   counts_unknown: () => "The code gave no sample counts: coverage is unknown (not zero) and a coarser view averages the bucket values unweighted.",
   failed_spans: () => "An input of the code had spans the source could not return.",
+  series_cut: () => "More series than a line chart draws: the most outstanding are lines, the rest one grey 'others' band (their median and min–max); none is dropped.",
 };
 
 /** Plain-language caveat; unknown keys are shown as-is rather than hidden. */

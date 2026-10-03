@@ -57,8 +57,12 @@ def test_unknown_source_is_400_with_hint(client):
 
 
 def test_rejected_chart_is_422(tmp_path):
-    with TestClient(_app(make_service(tmp_path, FakeSource(n_series=9)))) as c:
-        resp = make_panel(c)
+    # percentiles over the line budget cannot be summarised (14y): still refused
+    src = FakeSource(n_series=9, values={"histogram_count": 250.0, "histogram_quantile": 0.4})
+    with TestClient(_app(make_service(tmp_path, src))) as c:
+        q = "histogram_quantile(0.9, sum by (le, instance) (rate(lat_bucket[5m])))"
+        ds = c.post("/api/query", json={"expr": q, "start": "now-2h", "end": "now-1h"}).json()
+        resp = c.post("/api/show", json={"dataset": ds["dataset"], "question": "Slow?"})
         assert resp.status_code == 422
         assert resp.json()["issues"][0]["rule"] == "series_budget"
 

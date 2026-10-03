@@ -1366,6 +1366,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         drawn from filter(): the default view (overlay | filtered | removed | raw).
         windows (histogram/ecdf): 1-4 [{start, end, label}] compared on one chart, e.g. the
         spike vs the preceding baseline; each window sums whole steps, n is shown per window.
+        More series than a line chart draws (5) are never dropped: members of one group (pods,
+        instances... of one metric) are drawn as a fleet (mark auto); other series as the 4 that
+        stand out most plus one grey "others" band (their median and min-max). `warnings` says
+        which, and names every summarised series. Percentiles over the budget are refused.
         A plain selector of a counter (a running total) is drawn as its rate, from a new dataset
         over the same window; the answer says so under `auto`. raw=true draws exactly the dataset.
         Code outputs (expr code:<node>/<name>) are fixed data: drawn as produced, unit as the code

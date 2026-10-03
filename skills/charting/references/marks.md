@@ -9,7 +9,7 @@ counter, the handle to analyse further.
 
 | Mark | Input | Preconditions | Say when citing |
 |---|---|---|---|
-| `mark="auto"` | series dataset | at most 5 series (the series budget) | step, envelope = min/max within each step, caveats (gaps, settling). A counter selector is drawn as its rate (`auto` says so); `raw=true` draws the running total |
+| `mark="auto"` | series dataset | at most 5 lines (the series budget); more: fleet view for members of one group, else 4 lines + an "others" band, said in `warnings` (percentiles refused) | step, envelope = min/max within each step, caveats (gaps, settling). A counter selector is drawn as its rate (`auto` says so); `raw=true` draws the running total |
 | `mark="spc"` | series, after `analyze` | at most 5 series; not a percentile, distribution or raw counter; `windows=[{start, end}]` is the baseline (at most one) | the baseline window, centre and limits, n_eff, which points are signals |
 | `mark="seasonal"` | series, after `compare_seasonal` on it (a latency comparison has no seasonal panel: each cycle lists its own distribution dataset for `mark="histogram"`) | enough history (3 usable cycles) | the reference chosen (cycles, timezone, excluded), the band, flagged points |
 | `mark="fleet"` | many series of one metric, after `fleet` (or directly) | at least 5 members, one unit, not percentiles | member count, the SPC band (median ± 2σ/3σ of the tests' pooled robust σ) and flag threshold, named outliers with kind and effect (transients: their episodes), churn, missing share; the quantile view's missing-member bounds |

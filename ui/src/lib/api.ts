@@ -57,6 +57,13 @@ export interface SeriesData {
   avg: (number | null)[]; min: (number | null)[]; max: (number | null)[]; count: (number | null)[];
   /** declared interval of a code output (DatasetMeta.uncertainty says what it is) */
   lo?: (number | null)[]; hi?: (number | null)[];
+  /** over the line budget (14y): this row summarises the series not drawn as lines */
+  summary?: OthersSummary;
+  /** summary rows: how many of the summarised series reported at each step */
+  reporting?: number[];
+}
+export interface OthersSummary {
+  kind: "others"; members: number; names: string[]; more: number; line: "median"; band: "min-max";
 }
 /** A tier-2 code output's producer (spec §5.2): the code node and its output name. */
 export interface Producer { kind: "code" | "binding"; node?: string; output?: string; op?: string; description?: string }

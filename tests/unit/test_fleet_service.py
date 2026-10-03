@@ -6,7 +6,6 @@ import numpy as np
 import pyarrow as pa
 import pytest
 
-from telemetry_nerd.core.service import ChartRejected
 from telemetry_nerd.model.series import (
     BUCKET_SCHEMA,
     SERIES_SCHEMA,
@@ -168,9 +167,9 @@ def test_show_fleet_panel_draws_band_n_and_at_most_six_outliers(tmp_path):
     svc = make_service(tmp_path)
     y, planted = fleet(16, m=100, plant=True)
     d = put(svc, y)
-    with pytest.raises(ChartRejected) as exc:
-        svc.show(d, "CPU of all api pods")  # 100 lines: refused, with the group hint
-    assert "fleet(dataset)" in exc.value.issues[0].message
+    auto = svc.show(d, "CPU of all api pods")  # 100 lines: drawn as the fleet, said (14y)
+    assert auto.panel.spec["layers"][0]["mark"] == "fleet"
+    assert any(i.rule == "series_budget_fleet" for i in auto.issues)
     svc.fleet(d, normalise="none")
     shown = svc.show(d, "CPU of all api pods: who is off?", mark="fleet")
     data = svc.panel_data(shown.panel.id, 800)

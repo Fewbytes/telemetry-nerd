@@ -53,7 +53,9 @@ from telemetry_nerd.charts.context_lines import (
 )
 from telemetry_nerd.charts.dataview import SignalViews, offered_views
 from telemetry_nerd.charts.derived_bounds import derive_bounds
+from telemetry_nerd.charts.series_cut import RANK_TEXT, cut_note, member_label, names, rank, split
 from telemetry_nerd.charts.spec import (
+    LINE_SERIES_BUDGET,
     SPECTRAL_MARKS,
     WINDOW_MARKS,
     AssertedBounds,
@@ -2024,11 +2026,20 @@ class TelemetryService:
             if quantiles is not None:
                 layer.quantiles = [float(q) for q in quantiles]
             spec.layers = [layer]
+        cut: list[ValidationIssue] = []
+        if (
+            mark in ("auto", "line+envelope")
+            and len(spec.layers) == 1
+            and spec.layers[0].mark == "line+envelope"
+            and self.datasets.series_count(dataset_id) > LINE_SERIES_BUDGET
+        ):
+            cut = self._over_line_budget(dataset_id, meta, spec, mark)
         issues = validate(
             spec,
             {d: self.datasets.series_count(d) for d in panel_datasets},
             {d: self.datasets.meta(d).representation for d in panel_datasets},
         )
+        issues += cut
         counters = (
             raw_counters(meta.expr, lambda m: self.ws.catalog_facts(meta.source, m))
             if spec.layers[0].mark == "line+envelope" and not meta.derived and not meta.code_node
@@ -2172,6 +2183,45 @@ class TelemetryService:
         )
         return {"panel": p.id, "overlays": p.spec["overlays"]}
 
+    def _over_line_budget(
+        self, dataset_id: str, meta: DatasetMeta, spec: ChartSpec, mark: str
+    ) -> list[ValidationIssue]:
+        """More series than a line chart draws (14y): members of one group become the fleet view
+        (mark auto only); otherwise the most outstanding series are lines and the rest one
+        "others" band (`series_cut`). Both are said in a warning. Percentiles and declared
+        intervals cannot be pooled into a band: the series_budget refusal then stands."""
+        if meta.representation == "quantile" or self.datasets.interval(dataset_id) is not None:
+            return []
+        _, result = self.datasets.get(dataset_id)
+        labels = series_labels(result.series)
+        sids = list(labels)
+        not_fleet = ""
+        member = member_label(list(labels.values()))
+        if mark == "auto" and member is not None:
+            cfg = self.fleets.last_config(dataset_id)
+            try:
+                self.fleets.panel(dataset_id, cfg)  # validates (percentiles, units, members)
+            except ValueError as e:
+                not_fleet = f" (not drawn as a fleet of {member}s: {e})"
+            else:
+                spec.layers = [Layer(mark="fleet", data=dataset_id, fleet=cfg)]
+                return [ValidationIssue(
+                    rule="series_budget_fleet", severity="warning",
+                    message=(
+                        f"{len(sids)} series exceed the line budget ({LINE_SERIES_BUDGET}) and "
+                        f"differ only by {member}: drawn as a fleet (spread band, median, "
+                        "outlying members as lines; every member is in the band). Run "
+                        f"fleet({dataset_id}) for the outlier tests and member counts"
+                    ),
+                )]  # fmt: skip
+        order = rank(result.buckets, sids)
+        keep, rest = order[: LINE_SERIES_BUDGET - 1], order[LINE_SERIES_BUDGET - 1 :]
+        named = dict(zip(sids, names(sids, labels), strict=True))
+        note = cut_note([named[s] for s in keep], [named[s] for s in rest], LINE_SERIES_BUDGET)
+        spec.layers[0].top = {"keep": keep, "total": len(sids), "rank": RANK_TEXT, "note": note,
+                              "others": [named[s] for s in rest]}  # fmt: skip
+        return [ValidationIssue(rule="series_cut", severity="warning", message=note + not_fleet)]
+
     def panel_data(self, panel_id: str, width_px: int) -> dict:
         panel = self.workspace.get_panel(panel_id)
         dataset_id = panel.dataset_ids[0]
@@ -2222,12 +2272,20 @@ class TelemetryService:
             )
         labels = series_labels(result.series)
         series = series_payload(table, labels, interval)
+        top = layer0.get("top")
+        if top:  # over the line budget (14y): kept lines, the rest as one "others" band
+            series = split(series, top["keep"], top.get("others", []))
         bundle = dataset_bundle(self.datasets, meta, result)
         caveats = self._time_summary(meta, result, self.clock(), bundle)["caveats"]
         states = bundle.companions.get("bucket_state")
         located = list(bundle.caveats)
         if meta.code_node:
             located.append(code_caveat(meta))
+        if top:
+            located.append(
+                Caveat(code="series_cut", severity="info", message=top["note"] + ".",
+                       source="validator")
+            )  # fmt: skip
         state_rows: list[dict] = []
         state_more = 0
         if states is not None:

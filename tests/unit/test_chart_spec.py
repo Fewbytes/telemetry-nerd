@@ -210,3 +210,11 @@ def test_quantile_curve_and_ccdf_compare_windows():
     for mark in ("quantile_curve", "ccdf"):
         assert _errors(ChartSpec(layers=[Layer(mark=mark, data="d")])) == {"windows"}
         assert _errors(ChartSpec(layers=[Layer(mark=mark, data="d", windows=w)])) == set()
+
+
+def test_a_cut_layer_counts_its_kept_lines_and_one_band():
+    # 14y: 9 series drawn as 4 lines + an "others" band fit the budget; 5 kept + band do not
+    cut = Layer(mark="line+envelope", data="d", top={"keep": ["a", "b", "c", "d"], "total": 9})
+    assert _errors(ChartSpec(layers=[cut]), rep="bucket_agg", n=9) == set()
+    wide = Layer(mark="line+envelope", data="d", top={"keep": list("abcde"), "total": 9})
+    assert _errors(ChartSpec(layers=[wide]), rep="bucket_agg", n=9) == {"series_budget"}

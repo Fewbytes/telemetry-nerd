@@ -18,7 +18,9 @@ The rules below apply principles 3, 10 and 11 (`docs/principles.md`).
 - **Histograms first** for latency: `query_distribution` then a heatmap; percentiles only on
   request, drawn as the bucket that holds q and only where n >= 10/(1-q).
 - **Series budget**: at most 5 lines; distributions as at most 12 small multiples; many members
-  of one metric is a fleet (band plus named outliers), never spaghetti.
+  of one metric is a fleet (band plus named outliers), never spaghetti. Over the budget, `show`
+  chooses and says so in `warnings`: the fleet view for members of one group, else the 4 most
+  outstanding series plus one grey "others" band (named). Repeat that cut in your answer.
 - **No dual y-axes**: series of different scales go to an indexed y-view or to two panels.
 - **Units and bounds are checked**: pass `unit` only when it can be vouched for (ratio vs %, s
   vs ms); fix a wrong unit with `catalog_write`, never by relabelling. `bounds_lo` /

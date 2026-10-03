@@ -1,7 +1,7 @@
 import pyarrow as pa
 import pytest
 
-from telemetry_nerd.core.service import ChartRejected, auto_step
+from telemetry_nerd.core.service import auto_step
 from telemetry_nerd.model.series import BUCKET_SCHEMA, FetchResult
 from telemetry_nerd.model.time import TimeRange
 from telemetry_nerd.sources.base import LimitExceeded, SourceError
@@ -101,12 +101,14 @@ async def test_show_creates_panel_and_publishes_event(tmp_path):
     assert (ev["type"], ev["object_id"], ev["actor"]) == ("panel.created", "p1", "claude")
 
 
-async def test_show_rejects_spaghetti(tmp_path):
+async def test_show_never_draws_spaghetti(tmp_path):
+    # over the line budget: members of one group become a fleet, said in a warning (14y;
+    # tests/unit/test_series_cut.py has the top-N + others band and the refusals left)
     svc = make_service(tmp_path, FakeSource(n_series=6))
     ds = (await svc.query("up", start="now-2h", end="now-1h"))["dataset"]
-    with pytest.raises(ChartRejected) as exc:
-        svc.show(ds, "Which instance is slow?")
-    assert exc.value.issues[0].rule == "series_budget"
+    res = svc.show(ds, "Which instance is slow?")
+    assert res.panel.spec["layers"][0]["mark"] == "fleet"
+    assert "series_budget_fleet" in [i.rule for i in res.issues]
 
 
 async def test_show_requires_question(tmp_path):

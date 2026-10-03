@@ -59,6 +59,9 @@ class Layer(BaseModel):
     spc: dict | None = None  # analyze reference baseline: scheme, tz, reference datasets
     fleet: dict | None = None  # fleet config: by, scale, normalise
     littles: dict | None = None  # check_littles_law config: datasets per role, grid, windows
+    #: over the line budget (14y): {"keep": [series ids drawn as lines], "total": n,
+    #: "rank": how they were chosen, "note": what was summarised}; the rest are one band
+    top: dict | None = None
 
 
 class YLimit(BaseModel):
@@ -325,7 +328,9 @@ def validate(
                     f"small multiples; at most {FACET_BUDGET}: group by fewer labels (by=[...])"
                 ),
             ))  # fmt: skip
-    total = sum(series_counts[d] for d in datasets)
+    tops = {layer.data: layer.top for layer in spec.layers if layer.top and layer.role == "main"}
+    # a cut layer draws its kept lines and one "others" band (14y)
+    total = sum(len(tops[d]["keep"]) + 1 if d in tops else series_counts[d] for d in datasets)
     if total > LINE_SERIES_BUDGET:
         issues.append(
             ValidationIssue(

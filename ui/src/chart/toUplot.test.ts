@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isolatedPointsFilter, seriesName, stepify, toUplot } from "./toUplot";
+import { REFERENCE_COLOR, isolatedPointsFilter, seriesName, stepify, toUplot } from "./toUplot";
 import type { SeriesData } from "../lib/api";
 import type uPlot from "uplot";
 
@@ -182,4 +182,21 @@ it("legend envelope reads the bucket under a stepped (doubled) index", () => {
   // bucket 3 (avg 30, min 29, max 31) occupies doubled indices 4 and 5
   for (const i of [4, 5]) expect(value({}, 30, 1, i)).toMatch(/29.*31/);
   for (const i of [0, 1]) expect(value({}, 10, 1, i)).toMatch(/9.*11/);
+});
+
+describe("others band (14y)", () => {
+  it("draws the summary of the series not drawn as lines in grey, dashed, saying what it pools", () => {
+    const others: SeriesData = {
+      ...s("others", {}, [1000, 2000], [2, 3]), reporting: [3, 3],
+      summary: { kind: "others", members: 3, names: ["cart", "ad", "email"], more: 0, line: "median", band: "min-max" },
+    };
+    const m = toUplot([s("a", { service: "checkout" }, [1000, 2000], [5, 6]), others], undefined, { palette: ["#111111"] });
+    const line = m.series[4];
+    expect(line.label).toBe("others (3 series): median, min–max");
+    expect(line.stroke).toBe(REFERENCE_COLOR);
+    expect(line.dash).toEqual([6, 3]);
+    expect(m.series[1].label).toBe('{service="checkout"}');
+    expect(m.series[1].dash).toBeUndefined();
+    expect(m.bands).toHaveLength(2); // the others keep their min–max envelope
+  });
 });

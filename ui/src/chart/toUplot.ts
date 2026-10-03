@@ -1,5 +1,5 @@
 import type uPlot from "uplot";
-import type { SeriesData } from "../lib/api";
+import type { OthersSummary, SeriesData } from "../lib/api";
 import type { OverlayDraw } from "./overlays";
 
 // Okabe-Ito: colorblind-safe categorical palette. The series budget (≤5) fits it.
@@ -114,6 +114,11 @@ export const LIMIT_COLOR = "#D55E00"; // Okabe-Ito vermilion: a hazard, not a se
 export const THRESHOLD_COLORS = { bad: "#C2185B", warn: "#B26B00", info: "#0072B2" } as const;
 export const REFERENCE_COLOR = "#7A7F87";
 
+/** Legend label of the "others" band: what it pools and how (14y). */
+export function othersLabel(o: OthersSummary): string {
+  return `others (${o.members} series): median, min–max`;
+}
+
 export function lineStyle(l: { kind?: string; tone?: string | null }): { stroke: string; width: number; dash: number[] } {
   if (l.kind === "threshold") return { stroke: THRESHOLD_COLORS[(l.tone as keyof typeof THRESHOLD_COLORS) ?? "info"] ?? THRESHOLD_COLORS.info, width: 1.5, dash: [3, 3] };
   if (l.kind === "reference") return { stroke: REFERENCE_COLOR, width: 1, dash: [2, 4] };
@@ -157,8 +162,9 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
   };
 
   series.forEach((s, k) => {
-    const color = palette[k % palette.length];
-    const base = s.labels ? seriesName(s.labels) : s.id;
+    // the "others" band (14y) is a summary, not a series: neutral grey, dashed, said in its label
+    const color = s.summary ? REFERENCE_COLOR : palette[k % palette.length];
+    const base = s.summary ? othersLabel(s.summary) : s.labels ? seriesName(s.labels) : s.id;
     const band = ov?.normal?.[s.id];
     if (band) {
       // the normal range for this hour: faint, underneath everything; the chips are its legend
@@ -196,7 +202,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
       });
       return out;
     };
-    const name = seriesName(s.labels);
+    const name = s.summary ? base : seriesName(s.labels);
     if (opts.quantile) {
       // Percentiles are never aggregated: no min/max envelope. Buckets with too few
       // observations are drawn faded so they are not read as real percentiles.
@@ -248,7 +254,10 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
     };
     legendHidden.push(avgIdx + 1, avgIdx + 2);
     uSeries.push(
-      { label: name, stroke: color, width: 1.5, spanGaps: false, value: withEnvelope, points: { filter: isolatedPointsFilter } },
+      {
+        label: name, stroke: color, width: 1.5, spanGaps: false, value: withEnvelope, points: { filter: isolatedPointsFilter },
+        ...(s.summary ? { dash: [6, 3] } : {}),
+      },
       { label: `${name} ${interval ? "lo" : "min"}`, stroke: rgba(color, 0.35), width: 0.5, spanGaps: false, points: { show: false } },
       { label: `${name} ${interval ? "hi" : "max"}`, stroke: rgba(color, 0.35), width: 0.5, spanGaps: false, points: { show: false } },
     );

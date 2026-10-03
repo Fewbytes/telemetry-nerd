@@ -56,9 +56,20 @@ async def test_show_with_agent_learned_unit(tmp_path):
     assert panel.spec["y"]["unit_provenance"] == "provided by claude"
 
 
-async def test_rejected_chart_explains_rule(tmp_path):
+async def test_over_budget_chart_is_drawn_and_says_how(tmp_path):
+    # 14y: no refusal for many members of one group; the warning says it became a fleet
     mcp = build_mcp(make_service(tmp_path, FakeSource(n_series=8)), "http://x")
     await call(mcp, "query", {"expr": "up", "start": "now-2h", "end": "now-1h"})
+    s = await call(mcp, "show", {"dataset": "d1", "question": "Which is slow?"})
+    assert not s.is_error
+    assert any("drawn as a fleet" in w for w in json.loads(text_of(s))["warnings"])
+
+
+async def test_rejected_chart_explains_rule(tmp_path):
+    src = FakeSource(n_series=8, values={"histogram_count": 250.0, "histogram_quantile": 0.4})
+    mcp = build_mcp(make_service(tmp_path, src), "http://x")
+    q = "histogram_quantile(0.9, sum by (le, instance) (rate(lat_bucket[5m])))"
+    await call(mcp, "query", {"expr": q, "start": "now-2h", "end": "now-1h"})
     s = await call(mcp, "show", {"dataset": "d1", "question": "Which is slow?"})
     assert s.is_error
     assert "series_budget" in text_of(s)

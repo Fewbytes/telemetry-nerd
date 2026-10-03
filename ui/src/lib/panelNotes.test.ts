@@ -42,6 +42,13 @@ describe("panelNotes", () => {
     expect(notes.map((n) => n.key)).toEqual(["settling", "missing_data:0"]);
     expect(notes[1]).toMatchObject({ kind: "caveat", text: "i1: no samples for 3m.", where: { series: ["s1"] } });
   });
+  it("shows the line-budget cut: what is drawn and what the others band summarises (14y)", () => {
+    const msg = "7 series exceed the line budget (5): drawn as lines are the 4 ... the other 3 (cart, ad, email) are one grey 'others' band.";
+    const located = [{ code: "series_cut", severity: "info" as const, message: msg, where: null, source: "validator" }];
+    const notes = panelNotes([], { yScaledToData: false, nMin: null, located });
+    expect(notes).toEqual([{ kind: "info", key: "series_cut:0", text: msg, where: null }]);
+    expect(caveatText("series_cut")).toContain("others");
+  });
   it("has no notes when there is nothing to warn about", () => {
     expect(panelNotes([], { yScaledToData: false, nMin: null })).toEqual([]);
   });
