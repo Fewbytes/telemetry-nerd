@@ -145,10 +145,46 @@ Primary label, in priority order, with every other label that applies in `also`:
 | `insufficient_data` (also) | n_eff < 10 after removing structure (near-unit-root series) |
 | `level_shifted` | significant changepoint(s) (p < 0.01), \|δ\| ≥ 0.25 σ_within, step model has the lowest BIC |
 | `level_shifted` (departure) | an event count (rate/increase of a counter) whose stated baseline (≥ 8 points) saw no events: exact conditional Poisson test p = (n_judged/n)^events < 0.01 (`stability.departure`, evidence `departure_from_zero`; dispersion from the baseline, none in an all-zero one; bead 7thi) |
+| `level_shifted` / `transient` (excursion) | no control chart judges the judged points (baseline < 30 points or n_eff < 10) or n_eff < 10: the contiguous run of judged points whose mean departs most from the baseline median is significant under the cautious model (`stability.excursion`, evidence `excursion`, bead 7f15; below). `transient` when the last judged point is back inside the cautious 3σ envelope, else `level_shifted` (still away at the end) |
+| `undetermined` | the judged points were tested against the baseline (excursion, or a departure from a zero baseline) and only the optimistic model calls it a change: both p values in the reasons, never `stable`, never `insufficient_data` |
 | `drifting` | 99% slope interval excludes 0, change ≥ 0.25 σ_resid, trend model has the lowest BIC |
 | `periodic` | ≥ 1 period confirmed against red noise |
 | `noisy` | none of the above, but heteroscedastic, heavy-tailed (kurtosis interval > 1) or SPC out of control |
 | `stable` | none of the above |
+
+**Excursion** (bead 7f15, `analysis/excursion.py`). A short series (round 5's shipping: 24
+points at 2 m, ~1 ms → ~260 ms for four steps) has too few baseline points for control limits,
+and an episode that departs and returns fits neither the step nor the trend model: its rise
+and fall stay in the residuals, so τ estimated on them is the episode itself and the n_eff gate
+said `insufficient_data`. The excursion test estimates the common-cause variation where the
+episode is not. Scan: every contiguous run of judged samples, mean minus the baseline median,
+variance σ² min(L, τ)/L + (π/2) σ² τ / n_b, σ at its one-sided 95% upper bound from the
+baseline's n_eff (1.4826 MAD, var(log σ) = 1.3605 / n_eff), Bonferroni over n_j(n_j+1)/2
+runs. Two models (principle 16): **baseline** (σ, τ of the baseline deviations, normal noise)
+and **cautious** (τ = max(baseline, the whole series' residuals after fitting the run), σ =
+max(baseline, robust σ of every residual outside the run), Student-t4 tails); the label rests
+on the cautious one: special cause when p < 0.01, undetermined when only the baseline model's
+is, else common cause. When it is special cause and n_eff < 10, the structure is `excursion`:
+τ, n_eff and σ_within are re-estimated from the residuals with the run fitted. Calibration
+(`scripts/calibrate_excursion.py`, `tests/unit/test_excursion.py`; 24 / 31 / 60 points, half
+baseline, 4000 trials): cautious false alarms ≤ 0.12% for white, AR(1) 0.5 / 0.8, a 2-step
+rate window, t3 and lognormal(0.5) noise, 0.88-1.0% for lognormal(1) (per-point skew 6, the
+binding case); the baseline model: 0.7-4.8% for Gaussian noise at 24-31 points, 10-20% under
+t3, 32-62% for lognormal(1). Power for a 4-step episode in 24 points (cautious): 20σ 60%
+(white) / 23% (rate window) / 28% (AR 0.5), 30σ 90% / 61% / 60%, 100σ ≥ 99%; one isolated
+point needs ≳ 30σ (a 15σ spike is `undetermined`). The price of holding under heavy tails and
+skew on a 12-point baseline: a 10σ episode is mostly `undetermined`.
+
+**Ratios over a born counter** (bead wr6j). `sum(rate(err[w])) / sum(rate(calls[w]))` with
+`err` an outcome child born on its first event: PromQL's division drops every step where the
+error series does not exist yet, so the ratio is born at the fault like its counter (7thi).
+analyze fetches the numerator and denominator (same grid) and computes the ratio at each step
+where the denominator > 0, the numerator read as 0 outside its observed lifetime there
+(`born_counters.fill_ratio`; interior gaps stay gaps; caveat `absent_as_zero`, `ratio` in the
+output). The departure from a zero baseline is then tested on the numerator's events with the
+denominator as exposure (its judged share replaces n_judged / n) and as the sibling dispersion
+source. Without the parts (fetch failed, coarsened, another shape), skipped series carry the
+exact rewrite `(A or B * 0) / (B)`.
 
 Materiality (0.25 σ; "small" below 1 σ) is a stated parameter: smaller significant shifts and
 trends are reported as `minor`; an out-of-control chart explained by a (minor) shift or trend is

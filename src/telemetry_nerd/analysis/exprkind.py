@@ -349,6 +349,33 @@ def has_division(expr: str) -> bool:
     return "/" in _mask_strings(_strip_comments(expr))
 
 
+_MATCHING = re.compile(
+    r"^\s*(?:bool\b|on\s*\(|ignoring\s*\(|group_left|group_right)", re.IGNORECASE
+)
+
+
+def split_ratio(expr: str) -> tuple[str, str] | None:
+    """(numerator, denominator) text of an expression with exactly one top-level `/` and no
+    vector-matching modifier on it; None otherwise. The parts are not validated: a caller
+    checks their shape (e.g. counter_rate_source), which also rejects any other operator."""
+    text = _peel_parens(_strip_comments(expr))
+    masked = _mask_strings(text)
+    depth, cut = 0, -1
+    for i, c in enumerate(masked):
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
+        elif depth == 0 and c == "/":
+            if cut >= 0:
+                return None
+            cut = i
+    if cut < 0 or _MATCHING.match(masked[cut + 1 :]):
+        return None
+    a, b = text[:cut].strip(), text[cut + 1 :].strip()
+    return (a, b) if a and b else None
+
+
 def counter_rate_source(expr: str) -> tuple[str, tuple[str, ...]] | None:
     """(selector, grouping labels) of `[sum [by (L)]] (rate|increase(SEL[w]))`, or None for any
     other shape. Grouping is ("*",) for a bare rate/increase (every label kept)."""
@@ -356,6 +383,11 @@ def counter_rate_source(expr: str) -> tuple[str, tuple[str, ...]] | None:
 
 
 _RATE_FN = re.compile(r"\b(rate|increase)\s*\(", re.IGNORECASE)
+
+
+def rate_functions(expr: str) -> set[str]:
+    """The windowed counter functions (rate, increase) an expression calls, lower case."""
+    return {m.group(1).lower() for m in _RATE_FN.finditer(_mask_strings(_strip_comments(expr)))}
 
 
 def events_per_step(expr: str, step_ms: int) -> float | None:

@@ -5,6 +5,7 @@ interpolated; results carry intervals and an `evidence` statistic ready for find
 
 from __future__ import annotations
 
+import json
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -14,8 +15,8 @@ import polars as pl
 import pyarrow.compute as pc
 
 from telemetry_nerd.analysis import born_counters
-from telemetry_nerd.analysis.born_counters import BornCounter, Filled
-from telemetry_nerd.analysis.exprkind import counter_rate_source, events_per_step
+from telemetry_nerd.analysis.born_counters import BornCounter, BornRatio, Filled
+from telemetry_nerd.analysis.exprkind import counter_rate_source, events_per_step, split_ratio
 from telemetry_nerd.analysis.filters import FilterSpec, filter_buckets
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.analysis.spectrum import (
@@ -53,6 +54,9 @@ class Prepared:
     #: per series, its live siblings' counts summed per step (ts, y), raw (not cut to
     #: min_points): the traffic a born series' events are a thinning of
     sibling_counts: dict[str, tuple[np.ndarray, np.ndarray]] | None = None
+    #: a ratio over a born counter computed from its parts (wr6j): numerator / denominator
+    #: datasets and expressions; absent_zero then holds what the numerator read as 0
+    ratio: dict | None = None
 
 
 def human_period(seconds: float) -> str:
@@ -118,6 +122,52 @@ class SignalOps:
             return None
         return born_counters.born_counter(meta.expr, lambda m: self._facts(meta.source, m).type)
 
+    def born_ratio(self, dataset_id: str) -> BornRatio | None:
+        """The born-numerator reading of a source dataset's ratio expression, if any (wr6j)."""
+        meta = self._datasets.meta(dataset_id)
+        if meta.code_node or meta.derived:
+            return None
+        return born_counters.born_ratio(meta.expr, lambda m: self._facts(meta.source, m).type)
+
+    def ratio_hint(self, dataset_id: str) -> str | None:
+        """The exact rewrite for a ratio whose numerator is a born counter (wr6j), when analyze
+        cannot compute it from its parts."""
+        meta = self._datasets.meta(dataset_id)
+        if meta.code_node or meta.derived:
+            return None
+        parts = split_ratio(meta.expr)
+        if parts is None:
+            return None
+        if born_counters.born_counter(parts[0], lambda m: self._facts(meta.source, m).type) is None:  # fmt: skip
+            return None
+        return born_counters.rewrite_hint(*parts)
+
+    def _ratio_series(
+        self, meta: DatasetMeta, labels: dict[str, dict], ratio: tuple[str, str]
+    ) -> tuple[dict, dict[str, Filled], dict]:
+        """The ratio from its parts (born_counters.fill_ratio), keyed by this dataset's series
+        ids where the labels match."""
+        parts = []
+        for d in ratio:
+            pm, pres = self._datasets.get(d)
+            if not same_grid(pm, meta):
+                raise ValueError(f"ratio part {d} does not share {meta.id}'s step grid")
+            ts_col = pc.field("ts_ms")
+            t = pres.buckets.filter((ts_col >= meta.start_ms) & (ts_col <= meta.end_ms))
+            parts.append((pm, _grouped(t, _labels(pres.series))))
+        series, filled, behind = born_counters.fill_ratio(parts[0][1], parts[1][1])
+        own = {json.dumps(lab, sort_keys=True): sid for sid, lab in labels.items()}
+        ids = {sid: own.get(json.dumps(lab, sort_keys=True), sid) for sid, (lab, _, _) in series.items()}  # fmt: skip
+        info = {
+            "numerator": {"dataset": ratio[0], "expr": parts[0][0].expr},
+            "denominator": {"dataset": ratio[1], "expr": parts[1][0].expr},
+            # per series id: (numerator, denominator) behind each ratio point
+            "values": {ids[s]: v for s, v in behind.items()},
+        }
+        return (
+            {ids[s]: v for s, v in series.items()}, {ids[s]: f for s, f in filled.items()}, info,
+        )  # fmt: skip
+
     def events_scale(self, dataset_id: str, step_ms: int) -> float | None:
         """Value x this = events per step, for `[sum [by]] (rate|increase(counter[w]))`; None for
         any other expression (a gauge, a ratio, a code output)."""
@@ -141,11 +191,14 @@ class SignalOps:
         allow_empty: bool = False,
         sibling: str | None = None,
         min_points: int = MIN_POINTS,
+        ratio: tuple[str, str] | None = None,
     ) -> Prepared:
         """Series that qualify for `op`. `sibling`: a dataset of the live-sibling expression
         (born_counters complement), same range and step, fetched by the caller. `min_points`:
         the fewest points (after the born-counter fill) the op can use; the spectrum's
-        MIN_POINTS by default."""
+        MIN_POINTS by default. `ratio` (numerator, denominator datasets, same grid): the
+        expression is a ratio over a born counter (born_ratio); its series are computed from the
+        parts, the numerator read as 0 where the denominator reports (wr6j)."""
         meta = self.check(dataset_id, op)
         meta, result = self._datasets.get(dataset_id)
         table, step = result.buckets, meta.step_ms
@@ -160,7 +213,14 @@ class SignalOps:
         born = self.born(dataset_id)
         filled: dict[str, Filled] = {}
         sib_counts: dict[str, tuple[np.ndarray, np.ndarray]] | None = None
-        if born is not None:
+        ratio_info = None
+        if ratio is not None and step == meta.step_ms:
+            raw, filled, ratio_info = self._ratio_series(meta, labels, ratio)
+            br = self.born_ratio(dataset_id)
+            born = br.born if br is not None else None
+            if filled:
+                caveats.append(born_counters.CAVEAT)
+        elif born is not None:
             siblings = None
             if sibling is not None:
                 smeta, sres = self._datasets.get(sibling)
@@ -182,6 +242,7 @@ class SignalOps:
         series: dict[str, tuple[dict, np.ndarray, np.ndarray]] = {}
         skipped: list[dict] = []
         expected = (meta.end_ms - meta.start_ms) // step + 1
+        rewrite = self.ratio_hint(dataset_id) if ratio_info is None else None
         gappy = False
         for sid, (lab, ts, y) in raw.items():
             gaps = 1 - ts.size / max(expected, 1)
@@ -194,10 +255,13 @@ class SignalOps:
                 reason = "constant"
             if reason:
                 item = {"labels": lab, "reason": reason}
-                if (
+                if rewrite is not None and reason != "constant":
+                    item["hint"] = rewrite
+                elif (
                     born is not None
                     and born.complement
                     and sibling is None
+                    and ratio_info is None
                     and reason != "constant"
                 ):
                     item["hint"] = (
@@ -224,7 +288,7 @@ class SignalOps:
         return Prepared(
             meta, step, caveats, series, skipped, born,
             {sid: f for sid, f in filled.items() if sid in series},
-            {sid: c for sid, c in (sib_counts or {}).items() if sid in series},
+            {sid: c for sid, c in (sib_counts or {}).items() if sid in series}, ratio_info,
         )  # fmt: skip
 
     # spectrum -----------------------------------------------------------

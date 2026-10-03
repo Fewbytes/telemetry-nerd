@@ -31,7 +31,12 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from telemetry_nerd.analysis.exprkind import counter_rate_source
+from telemetry_nerd.analysis.exprkind import (
+    counter_rate_source,
+    range_windows_ms,
+    rate_functions,
+    split_ratio,
+)
 
 #: outcome labels: their values partition one instrument's events into outcomes (status codes,
 #: error/ok, result). A child per value is created on that value's first event.
@@ -189,3 +194,98 @@ def sibling_counts(
         uniq, inv = np.unique(ts_all, return_inverse=True)
         out[sid] = (uniq, np.bincount(inv, weights=y_all, minlength=uniq.size))
     return out
+
+
+# ratios over a born counter (eval finding wr6j) ------------------------------------------------
+RATIO_ASSUMPTION = (
+    "measurement-system assumption: the numerator, a counter series born on its first event, is "
+    "read as 0 events at steps where the denominator (the same instrument's events, every "
+    "outcome or the others) reports > 0, outside the numerator's observed lifetime; there the "
+    "ratio is 0, not missing. PromQL's division drops every step where the numerator series "
+    "does not exist yet, so the ratio would be born at the fault like its counter"
+)
+
+
+@dataclass(frozen=True)
+class BornRatio:
+    """`A / B` over one counter: A selects one outcome (born on its first event), B the same
+    instrument's events with the same grouping, function and window (all outcomes, or the
+    other ones). B reporting at a step proves A's instrument alive there."""
+
+    numerator: str
+    denominator: str
+    born: BornCounter  # the numerator's reading
+
+
+def _matchers(sel: str) -> list[tuple[str, str, str]]:
+    brace = sel.find("{")
+    if brace < 0:
+        return []
+    return [(m.group(1), m.group(2), m.group(3)) for m in _MATCHER.finditer(sel[brace:])]
+
+
+def rewrite_hint(numerator: str, denominator: str) -> str:
+    """The exact rewrite that reads a born numerator as 0 where the denominator reports."""
+    return (
+        f"rewrite the ratio so the numerator is 0 where its series does not exist yet: "
+        f"({numerator} or {denominator} * 0) / ({denominator}); or analyze the numerator alone "
+        f"({numerator}): analyze reads a born counter as 0 against its live sibling"
+    )
+
+
+def born_ratio(expr: str, type_of: Callable[[str], str | None]) -> BornRatio | None:
+    """The born-numerator reading of `A / B` (see BornRatio); None for any other expression."""
+    parts = split_ratio(expr)
+    if parts is None:
+        return None
+    a, b = parts
+    sa, sb = counter_rate_source(a), counter_rate_source(b)
+    born = born_counter(a, type_of)
+    if sa is None or sb is None or born is None or born.complement is None:
+        return None
+    if set(sa[1]) != set(sb[1]) or range_windows_ms(a) != range_windows_ms(b):
+        return None
+    metric_b = sb[0].split("{", 1)[0].strip()
+    if rate_functions(a) != rate_functions(b) or metric_b != born.metric:
+        return None
+    ma, mb = _matchers(sa[0]), _matchers(sb[0])
+    if {m for m in ma if m[0] not in OUTCOME_LABELS} != {m for m in mb if m[0] not in OUTCOME_LABELS}:  # fmt: skip
+        return None
+    outcome_a = {m for m in ma if m[0] in OUTCOME_LABELS}
+    outcome_b = {m for m in mb if m[0] in OUTCOME_LABELS}
+    if outcome_b and outcome_b != {(k, _NEGATE[op], v) for k, op, v in outcome_a if op in _NEGATE}:
+        return None  # the denominator is neither every outcome nor the complement
+    return BornRatio(a, b, born)
+
+
+def fill_ratio(
+    num: Series, den: Series
+) -> tuple[Series, dict[str, Filled], dict[str, tuple[np.ndarray, np.ndarray]]]:
+    """The ratio per denominator series (keyed and labelled as the denominator's), the
+    numerator read as 0 outside its observed lifetime where the denominator reports > 0
+    (fill_absent; its interior gaps stay gaps), at the steps where both are known and the
+    denominator > 0. Also per series the (numerator, denominator) values behind each ratio
+    point: the events and the traffic they are a share of."""
+    by_key = {sibling_key(lab): (ts, y) for lab, ts, y in num.values()}
+    out: Series = {}
+    filled: dict[str, Filled] = {}
+    behind: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    for sid, (labels, tb, yb) in den.items():
+        yb = np.asarray(yb, float)
+        ok = np.isfinite(yb) & (yb > 0)
+        alive = np.asarray(tb)[ok]
+        if not alive.size:
+            continue
+        got = by_key.get(sibling_key(labels))
+        if got is None or not got[0].size:  # never born in the range: 0 wherever it reports
+            f = Filled(alive, np.zeros(alive.size), int(alive.size), 0)
+        else:
+            f = fill_absent(np.asarray(got[0]), np.asarray(got[1], float), alive)
+        common, ia, ib = np.intersect1d(f.ts, alive, return_indices=True)
+        keep = np.isfinite(f.y[ia])
+        a, b = f.y[ia][keep], yb[ok][ib][keep]
+        out[sid] = (labels, common[keep], a / b)
+        behind[sid] = (a, b)
+        if f.lead or f.trail:
+            filled[sid] = f
+    return out, filled, behind

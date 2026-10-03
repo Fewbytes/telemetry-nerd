@@ -21,7 +21,8 @@ from telemetry_nerd.analysis.diagnostics import (
     diagnose,
     violation_sources,
 )
-from telemetry_nerd.analysis.exprkind import range_windows_ms, rate_interval_ms
+from telemetry_nerd.analysis.excursion import METHOD as EXCURSION_METHOD
+from telemetry_nerd.analysis.exprkind import events_per_step, range_windows_ms, rate_interval_ms
 from telemetry_nerd.analysis.profile import seasonal_shape
 from telemetry_nerd.analysis.seasonal import DEFAULT_K, cycle_shifts
 from telemetry_nerd.analysis.sources import COMMON, SPECIAL
@@ -117,6 +118,12 @@ def absent_as_zero(prep: Prepared, sid: str, sibling: str | None) -> dict | None
     f = (prep.absent_zero or {}).get(sid)
     if f is None or prep.born is None:
         return None
+    if prep.ratio is not None:  # the ratio's numerator, against its denominator (wr6j)
+        return {
+            "steps": f.lead + f.trail, "before_first_point": f.lead, "after_last_point": f.trail,
+            "of": "numerator", "live_sibling": prep.ratio["denominator"],
+            "assumption": born_counters.RATIO_ASSUMPTION, "onset_bias": born_counters.ONSET_BIAS,
+        }  # fmt: skip
     return {
         "steps": f.lead + f.trail, "before_first_point": f.lead, "after_last_point": f.trail,
         "live_sibling": (
@@ -163,6 +170,7 @@ class SeriesDiagnostics:
         self._memo: Memo[Run] = Memo()
         self._last: dict[str, dict | None] = {}  # dataset -> reference config of the last analyze
         self._siblings: dict[str, str] = {}  # dataset -> its live-sibling dataset (born_counters)
+        self._ratios: dict[str, tuple[str, str]] = {}  # dataset -> (numerator, denominator) (wr6j)
 
     # live siblings of counters born on their first event (born_counters) ------------------------
     def sibling_of(self, dataset_id: str) -> str | None:
@@ -203,6 +211,56 @@ class SeriesDiagnostics:
             return None
         self._siblings[dataset_id] = sib
         return sib
+
+    # ratios over a born counter (wr6j) ---------------------------------------------------------
+    def ratio_of(self, dataset_id: str) -> tuple[str, str] | None:
+        """The fetched (numerator, denominator) datasets of a ratio over a born counter:
+        remembered, or found in the store (same source, the parts' expressions, same grid)."""
+        if (hit := self._ratios.get(dataset_id)) is not None:
+            return hit
+        br = self._signal.born_ratio(dataset_id)
+        if br is None:
+            return None
+        meta = self._signal.datasets.meta(dataset_id)
+        found = []
+        for expr in (br.numerator, br.denominator):
+            m = next(
+                (m for m in self._signal.datasets.list_metas()
+                 if m.expr == expr and same_grid(m, meta) and not m.code_node),
+                None,
+            )  # fmt: skip
+            if m is None:
+                return None
+            found.append(m.id)
+        self._ratios[dataset_id] = (found[0], found[1])
+        return self._ratios[dataset_id]
+
+    async def fetch_ratio(self, dataset_id: str, actor: str) -> tuple[str, str] | None:
+        """Fetch the numerator and denominator of a ratio over a born counter (same range and
+        step) so analyze computes the ratio with the numerator read as 0 where the denominator
+        reports: PromQL's division drops those steps (wr6j). None when the expression has no
+        such reading or the parts cannot be fetched (the skipped series then carry the rewrite
+        hint)."""
+        if (hit := self.ratio_of(dataset_id)) is not None:
+            return hit
+        br = self._signal.born_ratio(dataset_id)
+        if br is None or self._query is None:
+            return None
+        meta = self._signal.datasets.meta(dataset_id)
+        got = []
+        for expr in (br.numerator, br.denominator):
+            try:
+                out = await self._query(
+                    expr, start=str(meta.start_ms), end=str(meta.end_ms),
+                    step=format_duration(meta.step_ms), source=meta.source, actor=actor,
+                )  # fmt: skip
+            except (SourceError, ValueError):
+                return None
+            if not same_grid(self._signal.datasets.meta(out["dataset"]), meta):
+                return None
+            got.append(out["dataset"])
+        self._ratios[dataset_id] = (got[0], got[1])
+        return self._ratios[dataset_id]
 
     async def fetch_reference(
         self, dataset_id: str, baseline: str, cycles: int, tz: str, actor: str
@@ -270,10 +328,12 @@ class SeriesDiagnostics:
         )
         ref_ds = [r["dataset"] for r in sorted(ref["refs"], key=lambda r: -r["shift_ms"])] if ref else []  # fmt: skip
         siblings = {d: self.sibling_of(d) for d in [dataset_id, *ref_ds]}
+        ratios = {d: self.ratio_of(d) for d in [dataset_id, *ref_ds]}
         key = (
             dataset_id, start_ms, end_ms, json.dumps(ref, sort_keys=True) if ref else None,
             (shapes.profile_id, shapes.computed_at_ms) if shapes else None,
             tuple(sorted((k, v) for k, v in siblings.items() if v)),
+            tuple(sorted((k, v) for k, v in ratios.items() if v)),
         )  # fmt: skip
         if (hit := self._memo.get(key)) is not None:
             return hit
@@ -281,12 +341,14 @@ class SeriesDiagnostics:
         def prepare(d: str) -> Prepared:
             return self._signal._prepare(
                 d, "analyze", SPECTRUM_CAP, allow_empty=True, sibling=siblings[d],
-                min_points=MIN_DIAGNOSE_POINTS,
+                min_points=MIN_DIAGNOSE_POINTS, ratio=ratios[d],
             )  # fmt: skip
 
         prep = prepare(dataset_id)
         refs = [prepare(d) for d in ref_ds]
         scale = self._signal.events_scale(dataset_id, prep.step_ms)
+        if prep.ratio is not None:  # the departure is tested on the numerator's events (wr6j)
+            scale = events_per_step(prep.ratio["numerator"]["expr"], prep.step_ms)
         out: dict[str, Diagnosis] = {}
         used: dict[str, dict] = {}
         for sid, (labels, ts, y) in prep.series.items():
@@ -307,9 +369,14 @@ class SeriesDiagnostics:
             if seas is not None and shapes is not None:
                 at = np.r_[reference[0], ts] if reference is not None else ts
                 profile = (seasonal_shape(seas, at - prep.step_ms // 2), shapes.cycle_s(seas))
+            counts = exposure = None
+            sibling = (prep.sibling_counts or {}).get(sid)
+            if prep.ratio is not None and sid in prep.ratio["values"]:
+                counts, exposure = prep.ratio["values"][sid]
+                sibling = (ts, exposure)  # the traffic the errors are a share of
             d = diagnose(
                 ts, y, prep.step_ms, mask, sp, lambda v: f"{v:.3g}", iso, reference, profile,
-                events_scale=scale, sibling=(prep.sibling_counts or {}).get(sid),
+                events_scale=scale, sibling=sibling, counts=counts, exposure=exposure,
             )  # fmt: skip
             out[sid] = d
             if d.chart is not None and "profile" in d.chart.seasonal and shapes and seas:
@@ -367,8 +434,17 @@ class SeriesDiagnostics:
             series.append({
                 "labels": sk["labels"], "verdict": "insufficient_data",
                 "reasons": [f"skipped: {sk['reason']}"],
+                **({"hint": sk["hint"]} if sk.get("hint") else {}),
             })  # fmt: skip
         baseline: dict = {"start": iso(base[0]), "end": iso(base[1]), "basis": base[2]}
+        ratio = None
+        if prep.ratio is not None:
+            ratio = {k: v for k, v in prep.ratio.items() if k != "values"} | {
+                "computed": "from its parts: numerator / denominator at each step where the "
+                "denominator > 0, the numerator read as 0 outside its observed lifetime there "
+                "(PromQL's division drops the steps where the numerator series does not exist)",
+                "assumption": born_counters.RATIO_ASSUMPTION,
+            }
         if ref:
             baseline |= {
                 "kind": "reference",
@@ -380,6 +456,7 @@ class SeriesDiagnostics:
             "effective_step": eff,
             "baseline": baseline,
             "series": series,
+            **({"ratio": ratio} if ratio else {}),
             "caveats": caveats,
             # spec §5.4: dataset-wide measurement-system items; per series in series[].variation
             "variation": sources.measurement_items(prep.caveats + measurement_caveats(prep.meta)),
@@ -487,6 +564,41 @@ class SeriesDiagnostics:
                     p_clustered=dep.p_clustered, dispersion=sig(dep.dispersion, 3),
                     dispersion_source=dep.dispersion_source, events=dep.events,
                     n_baseline=dep.n_baseline, n_judged=dep.n_judged,
+                ),
+            }  # fmt: skip
+        if (ex := d.excursion) is not None:
+            src = ex.status
+
+            def model(m, noise: str, sources_: str) -> dict:
+                return {
+                    "p": sig(m.p, 2), "sigma": sig(m.sigma), "sigma_used": sig(m.sigma_used),
+                    "tau": sig(m.tau, 3), "noise": noise, "assumes": sources_,
+                }  # fmt: skip
+
+            stability["excursion"] = {
+                "start": iso(ex.start_ms), "end": iso(ex.end_ms), "points": ex.points,
+                "returned": ex.returned, "mean": sig(ex.mean), "baseline_median": sig(ex.centre),
+                "delta": sig(ex.delta), "interval": sig_pair(ex.interval),
+                **({"ratio": sig(ex.mean / ex.centre, 3)} if ex.centre > 0 else {}),
+                "p": sig(ex.p, 2), "p_cautious": sig(ex.p_cautious, 2),
+                "models": {
+                    "baseline": model(
+                        ex.baseline, "normal",
+                        "sigma and autocorrelation of the baseline deviations only",
+                    ),
+                    "cautious": model(
+                        ex.cautious, "Student t4 (heavy tails)",
+                        "sigma and autocorrelation also from the residuals outside the run",
+                    ),
+                },
+                "label_rests_on": "cautious", "runs_scanned": ex.runs,
+                "n_baseline": ex.n_baseline, "n_judged": ex.n_judged, "source": src,
+                "evidence": ev(
+                    "excursion", ex.delta, ex.interval, EXCURSION_METHOD, source=src,
+                    start=iso(ex.start_ms), end=iso(ex.end_ms), points=ex.points,
+                    p=ex.p_cautious, p_baseline_model=ex.p, p_cautious=ex.p_cautious,
+                    baseline_median=sig(ex.centre), mean=sig(ex.mean),
+                    n_baseline=ex.n_baseline, n_judged=ex.n_judged,
                 ),
             }  # fmt: skip
         if d.kpss is not None:

@@ -1676,6 +1676,7 @@ class TelemetryService:
         ref = await self.diagnostics.fetch_reference(dataset_id, baseline, cycles, tz, actor)
         for d in [dataset_id, *(r["dataset"] for r in ref["refs"])]:
             await self.diagnostics.fetch_sibling(d, actor)
+            await self.diagnostics.fetch_ratio(d, actor)
 
         def run() -> dict:
             out = self.diagnostics.summary(dataset_id, ref=ref)
@@ -1694,6 +1695,7 @@ class TelemetryService:
         seasonal shape and none is cached (telemetry-nerd-3af). A counter series born on its
         first event gets its live sibling fetched first (absence read as 0 where it reports)."""
         await self.diagnostics.fetch_sibling(dataset_id, "claude")
+        await self.diagnostics.fetch_ratio(dataset_id, "claude")
         out = self.analyze(dataset_id, baseline_start, baseline_end)
         return await self._seasonal_centre(
             dataset_id, out, lambda: self.analyze(dataset_id, baseline_start, baseline_end)

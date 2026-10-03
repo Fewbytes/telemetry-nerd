@@ -14,6 +14,7 @@ from itertools import pairwise
 import numpy as np
 
 from telemetry_nerd.analysis.autocorr import dispersion, n_eff, positions, tau_int
+from telemetry_nerd.analysis.excursion import Excursion, excursion
 from telemetry_nerd.analysis.sources import COMMON, SPECIAL, UNDETERMINED, item
 from telemetry_nerd.analysis.spc import DECIDING, ControlChart, control_chart
 from telemetry_nerd.analysis.spectrum import MIN_POINTS, WINDOW_ARTIFACT, Peak, Spectrum
@@ -47,7 +48,10 @@ MIN_DIAGNOSE_POINTS = 2 * MIN_SEGMENT
 MAX_PERIODS = 3
 VARIANCE_MATERIAL = 1.5
 SIGNAL_P = SPC_ALPHA / len(DECIDING)  # a detector's count is significant below this (in_control)
-VERDICTS = ("insufficient_data", "level_shifted", "drifting", "periodic", "noisy", "stable")
+VERDICTS = (
+    "insufficient_data", "level_shifted", "transient", "drifting", "periodic", "undetermined",
+    "noisy", "stable",
+)  # fmt: skip
 
 
 @dataclass
@@ -69,12 +73,16 @@ class Diagnosis:
     variance: VarianceRatio | None = None
     shape: Shape | None = None
     chart: ControlChart | None = None
-    model: str = "none"  # which structure explains the series best: none | trend | step
+    #: which structure explains the series best: none | trend | step | excursion (a run of
+    #: judged points away from the baseline, the centre elsewhere: 7f15)
+    model: str = "none"
     caveats: list[str] = field(default_factory=list)
     #: labelled findings (spec §5.4): {source, finding}; measurement-system items are added
     #: from the caveats by the op
     variation: list[dict] = field(default_factory=list)
     departure: Departure | None = None  # events after an all-zero baseline (event counts only)
+    #: judged points against the baseline when no control chart judges them or n_eff < 10
+    excursion: Excursion | None = None
 
     @property
     def shifted_from(self) -> int | None:
@@ -285,12 +293,15 @@ def departure_from_zero(
     reference: np.ndarray | None = None,
     sibling: tuple[np.ndarray, np.ndarray] | None = None,
     step_ms: int | None = None,
+    exposure: np.ndarray | None = None,
 ) -> Departure | None:
     """`events_scale`: events per step = value x events_scale. `baseline`: bool per sample;
     `reference`: values of a separately fetched baseline (then every sample is judged).
     `sibling` (ts_ms, y): the live sibling's counts (same instrument, another outcome; the
-    series' units). None unless the baseline holds >= MIN_SEGMENT points, all exactly 0, and the
-    judged steps an event."""
+    series' units). `exposure`: per sample, the traffic the events are a share of (a ratio's
+    denominator, wr6j): the judged share of it replaces n_judged / n (one error probability per
+    call across baseline and judged steps; ignored with a reference). None unless the baseline
+    holds >= MIN_SEGMENT points, all exactly 0, and the judged steps an event."""
     y = np.asarray(y, float)
     ts_ms = np.asarray(ts_ms, np.int64)
     if reference is not None:
@@ -316,7 +327,13 @@ def departure_from_zero(
     src = max(cands, key=cands.__getitem__)
     d = cands[src]
     clusters = max(1.0, events / d)
-    log_f = math.log(nj / (nb + nj))
+    share = nj / (nb + nj)
+    if exposure is not None and reference is None:
+        ex = np.asarray(exposure, float)
+        tot = float(ex.sum())
+        if tot > 0 and float(ex[~baseline].sum()) > 0:
+            share = float(ex[~baseline].sum()) / tot
+    log_f = math.log(share)
     p = math.exp(events * log_f)
     p_c = math.exp(clusters * log_f)
     lo, hi = poisson_interval(events, SPC_ALPHA)
@@ -340,6 +357,8 @@ def diagnose(
     profile: tuple[np.ndarray, float] | None = None,
     events_scale: float | None = None,
     sibling: tuple[np.ndarray, np.ndarray] | None = None,
+    counts: np.ndarray | None = None,
+    exposure: np.ndarray | None = None,
 ) -> Diagnosis:
     """`baseline`: bool per sample (SPC limits come only from these). `sp`: the series'
     spectrum, or None when the range is too short to resolve any period.
@@ -351,7 +370,9 @@ def diagnose(
     `events_scale`: the series counts events (value x events_scale = events per step, e.g.
     increase() of a counter); then a baseline that saw none is tested for a departure from
     zero (`Departure`); `sibling` (ts_ms, y): the live sibling's counts, a dispersion source
-    for its cautious model.
+    for its cautious model. `counts` (per sample): the event series behind `y` when `y` is a
+    ratio of them (its numerator, wr6j): the departure is tested on it, `events_scale` its
+    scale and `exposure` (the denominator, per sample) the traffic it is a share of.
 
     Periods and structure confound each other (a step has 1/f^2 power; a slow cycle looks like
     a shift), so: structure on the raw series -> periods confirmed against red noise on what
@@ -400,26 +421,60 @@ def diagnose(
     dep = (
         departure_from_zero(
             ts_ms,
-            y,
+            y if counts is None else np.asarray(counts, float),
             baseline,
             events_scale,
             None if reference is None else reference[1],
             sibling,
             step_ms,
+            exposure,
         )
-        if events_scale
+        # a ratio's numerator has no reference counts to test against
+        if events_scale and (counts is None or reference is None)
         else None
     )
     departed = dep is not None and dep.significant
     # a departure only the Poisson model sees: not labelled, but not stable or noise either
     undecided = dep is not None and dep.status == UNDETERMINED
+    # no chart judges the judged points (short baseline), or the series' residuals look too
+    # dependent: test them against the baseline's own variation (an episode that fits neither
+    # step nor trend inflates tau through its own rise and fall, 7f15)
+    exc = None
+    if chart.mode == "insufficient_data" or ne < MIN_N_EFF:
+        ref = None
+        if reference is not None:
+            rts = np.asarray(reference[0], np.int64)
+            ref = (positions(rts, step_ms) if rts.size else rts, reference[1])
+        exc = excursion(ts_ms, pos, y, baseline, ref)
+    exc_special = exc is not None and exc.significant
+    exc_undecided = exc is not None and exc.status == UNDETERMINED
+    if exc is not None and exc_special and ne < MIN_N_EFF:
+        # the excursion is the structure the residuals still held: their autocorrelation and
+        # sigma from what it leaves
+        run = np.zeros(n, bool)
+        run[exc.start : exc.end] = True
+        if reference is None:
+            run &= ~baseline
+        fitted = np.full(n, exc.centre)
+        fitted[run] = float(yd[run].mean())
+        resid = yd - fitted
+        model = "excursion"
+        sigma_within = robust_sigma(resid) or float(np.std(resid))
+        tau = tau_int(pos, resid)
+        ne = n_eff(n, tau)
     if ne < MIN_N_EFF:
+        # the judged points were tested against the baseline (a departure from zero or an
+        # excursion, under two models): that is not "insufficient data", whatever the label
+        tested = departed or undecided or exc_special or exc_undecided
         reasons.append(
             f"n_eff {ne:.1f} < {MIN_N_EFF}: {n} points but autocorrelation time {tau:.1f} steps"
             + (": trend, shift and period tests are unreliable; the departure from the zero "
-               "baseline rests on the event counts alone" if departed else "")
+               "baseline rests on the event counts alone" if departed or undecided else "")
+            + (": trend, shift and period tests are unreliable; the excursion test judges the "
+               "judged points against the baseline's own variation"
+               if (exc_special or exc_undecided) and not (departed or undecided) else "")
         )  # fmt: skip
-        if not departed:
+        if not tested:
             labels.append("insufficient_data")
     material = [s for s in shifts if abs(s.delta) >= MATERIAL * sigma_within]
     if material and model == "step":
@@ -453,7 +508,9 @@ def diagnose(
         what = (
             f"{dep.events} events in {dep.n_judged} judged steps after {dep.n_baseline} baseline "
             f"steps with none (first at {fmt_ts(dep.ts_ms)}; mean {fmt(dep.mean)} "
-            f"[{fmt(dep.interval[0])}, {fmt(dep.interval[1])}] per step); {dep.describe(fmt)}"
+            f"[{fmt(dep.interval[0])}, {fmt(dep.interval[1])}] per step"
+            f"{' in the numerator units of the ratio' if counts is not None else ''}); "
+            f"{dep.describe(fmt)}"
         )
         if departed:
             if "level_shifted" not in labels:
@@ -470,6 +527,32 @@ def diagnose(
         else:
             reasons.append(f"events after a zero baseline, within what one rate explains: {what}")
             var.append(item(COMMON, reasons[-1]))
+    if exc is not None:
+        what = (
+            f"{exc.points} judged point(s) {fmt_ts(exc.start_ms)}..{fmt_ts(exc.end_ms)} "
+            f"{'then back' if exc.returned else '(still away at the end of the range)'}: mean "
+            f"{fmt(exc.mean)} "
+            f"vs baseline median {fmt(exc.centre)}, delta {fmt(exc.delta)} "
+            f"[{fmt(exc.interval[0])}, {fmt(exc.interval[1])}] ({exc.sigmas:.3g} sigma); "
+            f"{exc.describe()}"
+        )
+        if exc_special:
+            lab = "transient" if exc.returned else "level_shifted"
+            if lab not in labels:
+                labels.append(lab)
+            reasons.append(f"excursion from the baseline under both models: {what}")
+            var.append(item(SPECIAL, reasons[-1]))
+        elif exc_undecided:
+            reasons.append(
+                f"excursion from the baseline under the baseline model only: {what}; the "
+                "cautious model (heavier tails, the residuals' own autocorrelation and spread) "
+                "explains it as common cause, so the source is not decided (a longer baseline, "
+                "e.g. a range starting earlier, would decide it)"
+            )
+            var.append(item(UNDETERMINED, reasons[-1]))
+        else:
+            reasons.append(f"judged points within the baseline's common-cause variation: {what}")
+            var.append(item(COMMON, reasons[-1]))
     if peaks:
         labels.append("periodic")
         reasons.append(
@@ -482,6 +565,8 @@ def diagnose(
     structured = (
         departed
         or undecided
+        or exc_special
+        or exc_undecided
         or bool({"level_shifted", "drifting"} & set(labels))
         or ((model == "step" and bool(shifts)) or (model == "trend" and tr.significant))
     )
@@ -507,8 +592,9 @@ def diagnose(
         labels.append("noisy")
         reasons += [r for _, r in noisy]
         var += [item(src, r) for src, r in noisy]
-    if not labels and undecided:
-        labels.append("insufficient_data")  # the cautious model cannot decide: not "stable"
+    changed = {"insufficient_data", "level_shifted", "transient", "drifting"}
+    if (undecided or exc_undecided) and not changed & set(labels):
+        labels.append("undetermined")  # tested, the models disagree: not "stable"
     if not labels:
         labels.append("stable")
         reasons.append(
@@ -529,5 +615,5 @@ def diagnose(
     order = sorted(labels, key=VERDICTS.index)
     return Diagnosis(
         order[0], order[1:], reasons, n, tau, ne, peaks, confirmed, cands, harm if peaks else None, tr, shifts,
-        sigma_within, stationarity, vr, sh, chart, model, caveats, var, dep,
+        sigma_within, stationarity, vr, sh, chart, model, caveats, var, dep, exc,
     )  # fmt: skip

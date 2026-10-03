@@ -112,8 +112,9 @@ def test_round4_born_error_series_are_analyzed(tmp_path):
         assert s["absent_as_zero"]["before_first_point"] == (BORN - LIVE) // M
         dep = s["stability"]["departure"]
         assert dep["models"]["clustered"]["dispersion_sibling"] is not None  # sibling read
-        # undecided under the cautious model: neither labelled a shift nor called stable
-        assert s["verdict"] == "insufficient_data" and "level_shifted" not in s["also"], s
+        # undecided under the cautious model: neither labelled a shift nor called stable; it
+        # was tested, so not "insufficient data" either (7f15): the models disagree
+        assert s["verdict"] == "undetermined" and "level_shifted" not in s["also"], s
         und = [v for v in s["variation"] if v["source"] == "undetermined"]
         assert und and "under a Poisson model" in und[0]["finding"], s
     for lb in LONERS:  # no sibling: never read as 0, still too few points

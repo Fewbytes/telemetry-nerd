@@ -497,6 +497,14 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         read as 0 where its live sibling reports: a measurement-system assumption stated in
         the series' `absent_as_zero` and `variation`; report it with any claim on that series).
         Refused with a hint on percentile series, distributions and raw counters (use a rate).
+        Verdicts: stable, drifting, level_shifted, transient (a run of judged points away from
+        the baseline, then back), periodic, noisy, undetermined (tested against the baseline,
+        but only the optimistic model calls it a change: both p values in the reasons), or
+        insufficient_data. With too short a baseline for control limits, or n_eff < 10,
+        `stability.excursion` tests the judged points against the baseline (baseline model and
+        cautious model; the label rests on the cautious one; cite its `evidence`). A ratio
+        A / B over one counter whose A outcome series is born on its first event (errors /
+        calls) is computed from its parts, A read as 0 where B reports (`ratio`).
         Sources of variation (`variation` per series and dataset-wide, `source` on items and
         evidence): limits / centre / sigma = common cause (the envelope; never chase points in
         it); shifts, drift, significant detectors = special cause; gaps, partial / untrusted
