@@ -2052,6 +2052,14 @@ class WorkspaceService:
         self.log.append(actor, "panel.overlays_set", p.id, spec.overlays.model_dump())
         return p
 
+    def open_threads(self) -> list[dict]:
+        """Threads whose last message is the user's, newest first."""
+        return [
+            {"id": t.id, "anchor": t.anchor, "last": t.messages[-1].text[:200]}
+            for t in reversed(self.objects.list_threads())
+            if t.messages and t.messages[-1].author == "user"
+        ]
+
     def brief(self) -> dict:
         """Compact state for Claude: newest first, truncated to BRIEF_BUDGET_BYTES."""
         hyps = [
@@ -2080,11 +2088,7 @@ class WorkspaceService:
             }
             for f in reversed(self.objects.list_findings())
         ]
-        open_threads = [
-            {"id": t.id, "anchor": t.anchor, "last": t.messages[-1].text[:200]}
-            for t in reversed(self.objects.list_threads())
-            if t.messages and t.messages[-1].author == "user"
-        ]
+        open_threads = self.open_threads()
         panels = [
             {
                 "id": p.id,

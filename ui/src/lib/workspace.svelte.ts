@@ -39,11 +39,9 @@ export function createWorkspace() {
     fetchWorkspaces().then((l) => { workspaces = l.workspaces; }).catch(() => { /* the list is a convenience; the next switch refetches */ });
 
   // a switch invalidates everything the board shows: highlights belong to the old workspace
-  const onSwitched = (reload: boolean) => {
+  const clearHighlights = () => {
     highlights = new Map();
     armExpiry();
-    refreshList();
-    if (reload) load();
   };
 
   const load = (): Promise<void> =>
@@ -54,7 +52,10 @@ export function createWorkspace() {
           const switched = workspaceChanged(snapshot, s);
           snapshot = s;
           error = null;
-          if (switched) onSwitched(false);
+          if (switched) {
+            clearHighlights();
+            refreshList();
+          }
         }
         lastSeq = Math.max(lastSeq, s.last_seq);
         failures = 0;
@@ -114,8 +115,16 @@ export function createWorkspace() {
           if (needsReload(e)) schedule();
         }, () => lastSeq, {
           onPresence: (p) => (presence = p),
-          // a rename/archive of another workspace changes only the list; the board is untouched
-          onWorkspace: (f) => (f.active.id === snapshot?.workspace.id ? refreshList() : onSwitched(true)),
+          // a rename/archive of another workspace changes only the list; the board is untouched.
+          // On a switch, the reloaded snapshot refreshes the list once it lands.
+          onWorkspace: (f) => {
+            if (f.active.id === snapshot?.workspace.id) {
+              refreshList();
+            } else {
+              clearHighlights();
+              load();
+            }
+          },
           onOpen: () => {
             daemon = "connected";
             // resync after an outage: the daemon may have restarted with other state

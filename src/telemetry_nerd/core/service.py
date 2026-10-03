@@ -322,7 +322,7 @@ class TelemetryService:
         self.ws.current = self._current_workspace
         self.workspaces = WorkspaceOps(
             self.registry, self.active, self.log, self.sources, self.source_connect,
-            self._open_threads,
+            self.ws.open_threads,
         )  # fmt: skip
         self.bindings = BindingOps(self)
         self.verdicts = VerdictOps(self)
@@ -355,13 +355,6 @@ class TelemetryService:
     def _current_workspace(self) -> dict:
         info = self.registry.get(self.active.active)
         return {"id": info.id, "title": info.title, "question": info.question}
-
-    def _open_threads(self) -> list[dict]:
-        return [
-            {"id": t.id, "anchor": t.anchor, "last": t.messages[-1].text[:200]}
-            for t in reversed(self.ws.objects.list_threads())
-            if t.messages and t.messages[-1].author == "user"
-        ]
 
     def _littles_binding(self, source: str, key: str):
         found = self.ws.relations.bindings("catalog", source, kind="littles_law")

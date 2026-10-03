@@ -8,7 +8,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from telemetry_nerd.model.errors import NotFound
+from telemetry_nerd.model.errors import NotFound, WrongWorkspace
 
 _COLS = "id, title, question, created_at_ms, opened_at_ms, archived"
 
@@ -26,6 +26,12 @@ class WorkspaceInfo:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+def wrong_workspace(con: sqlite3.Connection, obj_id: str, wid: str) -> WrongWorkspace:
+    """The refusal for updating `obj_id` (in workspace `wid`) from another workspace."""
+    row = con.execute("SELECT title FROM workspaces WHERE id = ?", (wid,)).fetchone()
+    return WrongWorkspace(obj_id, wid, row[0] if row is not None else None)
 
 
 class WorkspaceRegistry:
@@ -140,7 +146,8 @@ class WorkspaceRegistry:
     def _info(self, row: tuple) -> WorkspaceInfo:
         wid = row[0]
         # Derived, never stored (spec): open panels, live hypotheses/findings, and open
-        # threads (the last message is the user's: the brief's definition).
+        # threads (the last message is the user's: WorkspaceService.open_threads, in SQL so
+        # every workspace counts without a scope switch).
         (panels,) = self._con.execute(
             "SELECT COUNT(*) FROM panels WHERE workspace = ? AND closed = 0", (wid,)
         ).fetchone()

@@ -27,7 +27,7 @@ from telemetry_nerd.workspace.models import (
     TimeSpan,
     Verdict,
 )
-from telemetry_nerd.workspace.store import wrong_workspace
+from telemetry_nerd.workspace.registry import wrong_workspace
 
 M = TypeVar("M", bound=BaseModel)
 

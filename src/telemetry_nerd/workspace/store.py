@@ -7,14 +7,11 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
 
-from telemetry_nerd.model.errors import NotFound, WrongWorkspace
+from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.time import now_ms
 from telemetry_nerd.workspace.db import open_workspace_db
-
-if TYPE_CHECKING:
-    from telemetry_nerd.workspace.registry import WorkspaceRegistry
+from telemetry_nerd.workspace.registry import WorkspaceRegistry, wrong_workspace
 
 _PANEL_COLS = "id, question, status, spec, dataset_ids, created_at_ms, answered_by, closed"
 
@@ -32,12 +29,6 @@ class Panel:
 
     def to_dict(self) -> dict:
         return asdict(self)
-
-
-def wrong_workspace(con: sqlite3.Connection, obj_id: str, wid: str) -> WrongWorkspace:
-    """The refusal for updating `obj_id` (in workspace `wid`) from another workspace."""
-    row = con.execute("SELECT title FROM workspaces WHERE id = ?", (wid,)).fetchone()
-    return WrongWorkspace(obj_id, wid, row[0] if row is not None else None)
 
 
 class WorkspaceStore:
