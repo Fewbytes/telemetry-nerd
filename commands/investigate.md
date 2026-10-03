@@ -17,8 +17,13 @@ instructions apply throughout.
    window), the symptom (latency, errors, saturation, throughput, missing data), and the source.
    Ask the user for whatever you cannot infer; at most one short round of questions. State the
    resulting scope in one line.
-3. **Hypothesis.** `hypothesis_create` with a falsifiable statement that names the scope. The user
-   sees it in the workspace; keep its status current with `hypothesis_update` as evidence arrives.
+3. **Hypothesis.** `hypothesis_create` with a falsifiable statement that names the scope and the
+   suspected service or resource (a label value or metric you will query, not "a service on the
+   order path"). The user sees it in the workspace; keep its status current with
+   `hypothesis_update` as evidence arrives. `supported` is refused unless the statement names a
+   concrete subject, at least one finding with stance=for backs it, and an alternative was
+   considered: another hypothesis refuted or inconclusive, or `alternatives_considered` saying
+   which alternatives and how they were ruled out.
 4. **Triage** per the `triage` skill: blast radius, RED/USE per service, changepoints against the
    baseline, rule things out. Every panel answers an explicit question.
    **Annotate as you go** (the user reads the chart, not the log): once the evidence places the
@@ -30,7 +35,12 @@ instructions apply throughout.
    if there are none, say so.
 5. **Never claim without evidence.** (A signal you wish existed: `gap_create`.) A claim becomes `finding_create` with scope (source,
    selector, range, step) and evidence (cite the annotation id for an onset or window), and attaches to a hypothesis with its stance. Refuting
-   evidence is recorded too. If the data cannot answer (gaps, settling data, too few samples),
-   say so as the finding.
-6. **Report** in a few lines: scope, hypotheses with status, findings with ids (f1, p3 ...) and
-   what remains unexplained or unmeasurable. Share the workspace URL.
+   evidence is recorded too. Name only the entities (services, pods, jobs) your cited evidence
+   covers: a claim naming one outside it is refused with the datasets that hold it, so cite
+   those; only when the claim must reach beyond its evidence pass `scope_note` saying why (the
+   finding is flagged beyond_evidence). The result's `scope` (covered, beyond_evidence,
+   undetermined) and `source_flags` (variation source derived from an op, or undetermined) are
+   part of the finding: report them. If the data cannot answer (gaps, settling data, too few
+   samples), say so as the finding.
+6. **Report** in a few lines: scope, hypotheses with status, findings with ids (f1, p3 ...) with
+   their scope status and source flags, and what remains unexplained or unmeasurable. Share the workspace URL.

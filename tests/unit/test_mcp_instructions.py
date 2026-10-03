@@ -26,3 +26,22 @@ def test_instructions_put_tier1_first_and_inputs_up_front_for_run_code():
 def test_instructions_point_to_the_tier2_skill_and_code_get():
     text = " ".join(INSTRUCTIONS.split())
     assert "tier2-code" in text and "code_get" in text
+
+
+def test_instructions_state_claim_scope_and_supported_hypothesis_rules():
+    """bvx: after qxp the daemon refuses claims beyond evidence and unsupported 'supported'."""
+    text = " ".join(INSTRUCTIONS.split())
+    for word in ("scope_note", "alternatives_considered", "source_flags", "beyond_evidence",
+                 "claim_beyond_evidence", "concrete subject"):  # fmt: skip
+        assert word in text, word
+
+
+async def test_analyze_docstring_names_the_absent_as_zero_caveat(tmp_path):
+    from mcp import Client
+
+    from telemetry_nerd.mcp.server import build_mcp
+    from tests.unit.fakes import make_service
+
+    async with Client(build_mcp(make_service(tmp_path), "http://x")) as c:
+        tools = {t.name: t for t in (await c.list_tools()).tools}
+    assert "absent_as_zero" in (tools["analyze"].description or "")

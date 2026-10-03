@@ -97,6 +97,10 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
 - Scope every claim: source, selector, time range, step. Do not generalize beyond it.
 - `workspace_get` shows open threads (user questions awaiting you), hypotheses, findings.
   `reply` answers a thread. `hypothesis_create`/`hypothesis_update` track explanations.
+- `hypothesis_create` names the suspected service/resource (a label value or metric you query).
+  `hypothesis_update(status="supported")` is refused unless the statement names a concrete
+  subject, a finding with stance=for backs it, and an alternative was considered (another
+  hypothesis refuted/inconclusive, or `alternatives_considered`: which ones, how ruled out).
 - A thread reply cannot be evidence. When data or a user reply contradicts a hypothesis,
   also call `finding_create(hypothesis=<id>, stance="against", ...)` and, if the verdict
   changes, `hypothesis_update`: that is how the contradiction surfaces on the hypothesis.
@@ -107,6 +111,11 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   A tier-1 op over data of unknown uncertainty (a code output) still gives evidence with its
   own interval, marked `params.input_uncertainty` + caveat `input_uncertainty_unknown`: that
   interval is a lower bound; pass the statistic as is and say so.
+- A claim names only entities (service, pod, job values) its cited evidence covers; otherwise
+  finding_create refuses it (claim_beyond_evidence) and lists the datasets that hold them: cite
+  those. Only when the claim must reach further, pass `scope_note` with why (flagged
+  beyond_evidence). Report the result's `scope` status (covered | beyond_evidence |
+  undetermined) and `source_flags` (variation source derived from the op, or undetermined).
 - Summaries carry `coverage` per series (share of expected samples, longest gap; `pct` is null when nothing could be judged: all unknown or source-filled) and `unknown_spans` ([start, end, reason]); `silent_members` (alive but no samples; top few named, `silent_more` counts the rest; may be the sick ones); missing data is evidence too — scope claims around it.
 - `gap_create` records a signal you wish existed. `annotate` marks events/regions/thresholds.
 - When you tell the user to look at an object ("see p5"), also call `highlight(object, note?)`
@@ -364,7 +373,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         computed_now, not_seasonal, pending (re-run shortly) or unavailable (why).
         Returns per series: verdict, also, reasons (with numbers), and the sections; headline
         numbers carry an `evidence` statistic for finding_create. Caveats: coarsened, gaps,
-        red_noise, short_baseline, near_random_walk, seasonal_not_in_baseline.
+        red_noise, short_baseline, near_random_walk, seasonal_not_in_baseline, absent_as_zero
+        (an error/outcome counter series born on its first event, e.g. status_code=ERROR, was
+        read as 0 where its live sibling reports: a measurement-system assumption stated in
+        the series' `absent_as_zero` and `variation`; report it with any claim on that series).
         Refused with a hint on percentile series, distributions and raw counters (use a rate).
         Sources of variation (`variation` per series and dataset-wide, `source` on items and
         evidence): limits / centre / sigma = common cause (the envelope; never chase points in

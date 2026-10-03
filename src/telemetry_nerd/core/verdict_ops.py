@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import polars as pl
 
-from telemetry_nerd.analysis import sources
+from telemetry_nerd.analysis import born_counters, sources
 from telemetry_nerd.analysis.exprkind import rate_interval_ms
 from telemetry_nerd.analysis.seasonal import DEFAULT_K, cycle_shifts
 from telemetry_nerd.analysis.seasonal_dist import Hist, common_edges, distance, expit, pool
@@ -89,6 +89,8 @@ class _Role:
     notes: list[str] = field(default_factory=list)
     threshold: dict | None = None
     inputs: list[str] = field(default_factory=list)  # datasets the statistics are computed from
+    #: an absent error series was read as 0 errors where requests report (born_counters)
+    absent_as_zero: bool = False
 
 
 def _labels_key(labels: str) -> str:
@@ -221,6 +223,14 @@ class VerdictOps:
     @staticmethod
     def _ratio_stats() -> dict:
         return {"zero_now": set(), "zero_ref": set(), "gaps_now": 0, "gaps_ref": 0}
+
+    @staticmethod
+    def _read_absent_as_zero(stats: dict) -> bool:
+        """Whether any member's absent error series was counted as 0 errors (now or reference)."""
+        return bool(
+            stats.get("all_absent_now") or stats.get("all_absent_ref")
+            or stats["zero_now"] or stats["zero_ref"]
+        )  # fmt: skip
 
     @staticmethod
     def _ratio_notes(stats: dict, notes: list[str]) -> None:
@@ -488,6 +498,7 @@ class VerdictOps:
             now_c = self._ratio_counts(st.now, grid, 0, step_s, stats)
             ref_c = [self._ratio_counts(d, grid, s, step_s, stats) for d, s in ok_refs]
             self._ratio_notes(stats, st.notes)
+            st.absent_as_zero = self._read_absent_as_zero(stats)
             return RoleInput("share", now_c, ref_c, lookback_ms=look)
         st.inputs = [st.now, *(d for d, _ in ok_refs)]
         if p.form == "distribution":
@@ -646,6 +657,8 @@ class VerdictOps:
         if j.reasons:
             d["reasons"] = j.reasons
         cav = list(dict.fromkeys(j.caveats))
+        if st.absent_as_zero:
+            cav.append(born_counters.CAVEAT)
         if cav:
             d["caveats"] = cav
         if st.notes:
@@ -659,7 +672,11 @@ class VerdictOps:
             *d.get("caveats", []),
             *(c for did in st.inputs for c in measurement_caveats(self.svc.datasets.meta(did))),
         ])  # fmt: skip
-        src = {"changed": UNDETERMINED if meas else SPECIAL, "no_change": COMMON}.get(j.status)
+        # absent_as_zero is a stated assumption about how the counter is born, not untrusted
+        # data: it is reported as a measurement-system item but does not blur the attribution
+        # (as in analyze)
+        blurred = [c for c in meas if c != born_counters.CAVEAT]
+        src = {"changed": UNDETERMINED if blurred else SPECIAL, "no_change": COMMON}.get(j.status)
         for e in evidence:
             if e.pop("_varies", False) and src:
                 e["source"] = src
@@ -671,7 +688,12 @@ class VerdictOps:
                 ": the data has measurement-system issues, so special cause and measurement "
                 "cannot be told apart" if src == UNDETERMINED else ""
             ))] if src else []
-        ) + sources.measurement_items(meas)  # fmt: skip
+        ) + sources.measurement_items(blurred)  # fmt: skip
+        if st.absent_as_zero:
+            d["variation"].append(sources.item(
+                sources.MEASUREMENT, "an absent error series was counted as 0 errors where its "
+                "requests report: " + born_counters.ASSUMPTION, caveat=born_counters.CAVEAT,
+            ))  # fmt: skip
         return d
 
     def _summary(self, roles: dict[str, dict], results: dict[str, RoleResult], order) -> dict:

@@ -179,7 +179,15 @@ class ScenarioSource(FakeSource):
     """Seeded values keyed by (minute, member): any window is reproducible. Per-hour level
     jitter, per-minute noise; scenario changes at absolute times inside now's window."""
 
-    def __init__(self, seed=0, error_burst=None, latency_shift=None, saturation=None, members=2):
+    def __init__(
+        self,
+        seed=0,
+        error_burst=None,
+        latency_shift=None,
+        saturation=None,
+        members=2,
+        errorless=(),
+    ):
         ms = tuple(DiscoveredMetric(n, t, None, None) for n, t in METRICS)
         hist = {n: "classic" for n, t in METRICS if t == "histogram"}
         super().__init__(
@@ -188,6 +196,9 @@ class ScenarioSource(FakeSource):
         )  # fmt: skip
         self.seed, self.members = seed, members
         self.burst, self.shift, self.sat = error_burst, latency_shift, saturation
+        # members that never had an error: no error series (born on the first error, like
+        # span-metrics STATUS_CODE_ERROR or a {code="500"} child)
+        self.errorless = errorless
         self.exprs: list[str] = []
 
     def _rng(self, t: int, m: int, salt: int, hourly=False):
@@ -232,9 +243,10 @@ class ScenarioSource(FakeSource):
         self.exprs.append(expr)
         label = "instance" if "node_" in expr else "service_name"
         tss = list(range(rng.start_ms, rng.end_ms + 1, step_ms))
-        labels = [{label: f"s{k}"} for k in range(self.members)]
+        ms = [m for m in range(self.members) if not ("5.." in expr and m in self.errorless)]
+        labels = [{label: f"s{k}"} for k in ms]
         sids = [series_id(self.name, lb) for lb in labels]
-        rows = [(t, sids[m], self._value(expr, t, m)) for m in range(self.members) for t in tss]
+        rows = [(t, sids[i], self._value(expr, t, m)) for i, m in enumerate(ms) for t in tss]
         buckets = pa.table(
             {"ts_ms": [r[0] for r in rows], "series_id": [r[1] for r in rows],
              "avg": [r[2] for r in rows], "min": [r[2] for r in rows], "max": [r[2] for r in rows],
@@ -360,6 +372,34 @@ async def test_a_change_on_data_with_measurement_issues_is_source_undetermined(
     assert {v["source"] for v in e["variation"]} == {"undetermined", "measurement_system"}
     assert "source undetermined" in e["text"]
     assert out["roles"]["rate"]["source"] == "common_cause"  # no change: still the envelope
+
+
+async def test_absent_error_series_read_as_zero_is_a_stated_measurement_assumption(tmp_path):
+    """vv0: a member without an error series counts 0 errors where its requests report (born
+    on the first error, as analyze reads it via born_counters): the role carries the
+    absent_as_zero caveat and a measurement-system item, but the burst is still a special cause
+    (a stated assumption, not untrusted data)."""
+    svc = await _svc(tmp_path, seed=3, error_burst=(40, 47), members=3, errorless=(2,))
+    out = await svc.binding_verdict(
+        source="default", suggestion="RED:otel_http", reference="previous", **RANGE
+    )
+    e = out["roles"]["errors"]
+    assert e["status"] == "changed" and e["source"] == "special_cause"
+    assert "absent_as_zero" in e["caveats"] and "absent_as_zero" in out["caveats"]
+    [item] = [v for v in e["variation"] if v.get("caveat") == "absent_as_zero"]
+    assert item["source"] == "measurement_system" and "live sibling" in item["finding"]
+    assert any("without an error series counted as 0 errors" in n for n in e["notes"])
+    assert "absent_as_zero" not in out["roles"]["rate"].get("caveats", [])
+
+
+async def test_error_series_present_everywhere_carries_no_absent_as_zero(tmp_path):
+    svc = await _svc(tmp_path, seed=3, error_burst=(40, 47))
+    out = await svc.binding_verdict(
+        source="default", suggestion="RED:otel_http", reference="previous", **RANGE
+    )
+    e = out["roles"]["errors"]
+    assert "absent_as_zero" not in e.get("caveats", [])
+    assert not any(v.get("caveat") == "absent_as_zero" for v in e["variation"])
 
 
 async def test_use_saturation_episode_is_at_capacity_and_annotates_the_group(tmp_path):

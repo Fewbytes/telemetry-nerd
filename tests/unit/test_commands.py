@@ -77,3 +77,12 @@ def test_investigate_annotates_and_can_call_what_triage_uses():
     assert "annotate(" in body and 'kind="region"' in body
     for name in ("analyze", "compare_seasonal", "fleet", "binding_verdict", "check_littles_law"):
         assert name in triage and name in allowed
+
+
+def test_investigate_states_claim_scope_and_supported_rules():
+    """bvx: the command tells Claude what finding_create / hypothesis_update now enforce."""
+    _, body = parse(ROOT / "commands" / "investigate.md")
+    flat = " ".join(body.split())
+    for word in ("scope_note", "alternatives_considered", "source_flags", "`scope`",
+                 "concrete subject", "stance=for"):  # fmt: skip
+        assert word in flat, word
