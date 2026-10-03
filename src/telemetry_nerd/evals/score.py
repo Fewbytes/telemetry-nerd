@@ -126,8 +126,6 @@ _MEASURES = (
     ),
 )
 _SENTENCES = re.compile(r"(?<=[.;!?])\s+|\n+")
-#: clauses of a sentence: "X returned 422s from 13:24 to 13:28, then zero" asserts a change in
-#: its first clause even though the second says what it returned to
 #: a Little's law finding reporting special-cause windows (vayr): the clause must not negate it
 _SPECIAL_WINDOWS = re.compile(
     r"special[- _]cause|transient|promot\w*|load[- ]peak|(?:left|leaving|leaves) steady state|"
@@ -135,6 +133,8 @@ _SPECIAL_WINDOWS = re.compile(
     re.IGNORECASE,
 )
 _NEGATION = re.compile(r"\b(no|not|none|never|without|cannot|nor)\b", re.IGNORECASE)
+#: clauses of a sentence: "X returned 422s from 13:24 to 13:28, then zero" asserts a change in
+#: its first clause even though the second says what it returned to
 _CLAUSES = re.compile(r",\s*(?:then|and then|and|after which|before|until)\b|;|\(")
 #: a heading or label line over a list of what is not known ("**Not established**",
 #: "Unknowns:"): the items under it name open questions, not claims (eval round 3)
@@ -157,13 +157,15 @@ def _variants(entity: str) -> list[str]:
     return sorted(out, key=len, reverse=True)
 
 
+def _entity_pattern(entity: str) -> str:
+    """`entity` as a word in any of its spellings, optionally followed by "service"."""
+    alts = "|".join(re.escape(v) for v in _variants(entity))
+    return rf"(?<![A-Za-z0-9_])(?:{alts})(?:service)?(?![A-Za-z0-9_])"
+
+
 def mentions(text: str, entity: str) -> bool:
     """Does `text` name `entity` (payment, product-catalog / product catalog, checkout-2)?"""
-    alts = "|".join(re.escape(v) for v in _variants(entity))
-    return (
-        re.search(rf"(?<![A-Za-z0-9_])(?:{alts})(?:service)?(?![A-Za-z0-9_])", text, re.IGNORECASE)
-        is not None
-    )
+    return re.search(_entity_pattern(entity), text, re.IGNORECASE) is not None
 
 
 def named(text: str, entities: tuple[str, ...] | frozenset[str]) -> set[str]:
@@ -200,10 +202,9 @@ _ENTITY_NEGATOR = re.compile(
 
 def _names_entity(text: str, entity: str) -> bool:
     """`entity` is named at least once other than right after a negation."""
-    alts = "|".join(re.escape(v) for v in _variants(entity))
-    rx = rf"(?<![A-Za-z0-9_])(?:{alts})(?:service)?(?![A-Za-z0-9_])"
     return any(
-        not _ENTITY_NEGATOR.search(text[: m.start()]) for m in re.finditer(rx, text, re.IGNORECASE)
+        not _ENTITY_NEGATOR.search(text[: m.start()])
+        for m in re.finditer(_entity_pattern(entity), text, re.IGNORECASE)
     )
 
 
@@ -493,18 +494,46 @@ def score_finding(
         and any(asserts_change(c) for c in [s, *_CLAUSES.split(s)])
         for s in sentences(claim)
     )
+    sources, source_ok, honest_undetermined = _score_sources(
+        f, truth, incident, ents, text, problems
+    )
+    return FindingScore(
+        id=f.get("id", "?"),
+        claim=claim,
+        scoped=scoped,
+        evidenced=evidenced,
+        uncertainty_honest=honest,
+        in_window=in_window,
+        names_root_cause=rc,
+        incident=incident,
+        entities=ents,
+        uncovered=uncovered,
+        blames_control=blames,
+        direction_errors=dir_errs,
+        sources=sources,
+        source_ok=source_ok,
+        problems=problems,
+        honest_undetermined=honest_undetermined,
+    )
+
+
+def _score_sources(
+    f: dict, truth: Truth, incident: bool, ents: list[str], text: str, problems: list[str]
+) -> tuple[list[str], bool | None, bool]:
+    """(the variation sources the finding's statistics carry, whether they fit the ground truth,
+    whether a mismatch is an op's own honest undetermined); appends what is wrong to `problems`."""
     sflags = f.get("source_flags") or []
     # a label no op stands behind (`source_unverified`, i6y5) is not trusted: undetermined
     unverified = {x.get("evidence") for x in sflags if x.get("flag") == "source_unverified"}
     sources = list(
         dict.fromkeys(
             UNDETERMINED if i in unverified else e["source"]
-            for i, e in enumerate(ev)
+            for i, e in enumerate(f.get("evidence", []))
             if e.get("kind") == "statistic" and e.get("source")
         )
     )
     if any(x.get("flag") == "source_undetermined" for x in sflags):
-        sources = list(dict.fromkeys([*sources, "undetermined"]))  # as the daemon lists them
+        sources = list(dict.fromkeys([*sources, UNDETERMINED]))  # as the daemon lists them
     source_ok: bool | None = None
     if incident and sources:
         source_ok = any(s in truth.expected_sources for s in sources)
@@ -525,24 +554,7 @@ def score_finding(
         problems.append("claims special cause where the ops labelled the statistic undetermined")
     elif source_ok is False:
         problems.append(f"source label {sources} not in {list(truth.expected_sources)}")
-    return FindingScore(
-        id=f.get("id", "?"),
-        claim=claim,
-        scoped=scoped,
-        evidenced=evidenced,
-        uncertainty_honest=honest,
-        in_window=in_window,
-        names_root_cause=rc,
-        incident=incident,
-        entities=ents,
-        uncovered=uncovered,
-        blames_control=blames,
-        direction_errors=dir_errs,
-        sources=sources,
-        source_ok=source_ok,
-        problems=problems,
-        honest_undetermined=honest_undetermined,
-    )
+    return sources, source_ok, honest_undetermined
 
 
 _BASELINE = re.compile(r"baseline|reference|normal|before|pre-?incident|healthy", re.IGNORECASE)
@@ -712,16 +724,20 @@ def op_undetermined(f: dict) -> bool:
     )
 
 
+def _asserted_in(sentence: str, rx: re.Pattern) -> bool:
+    """Does a clause of `sentence` say `rx` without a negation before it?"""
+    for c in re.split(r"[,;:(]|\bbut\b|\bwhile\b", sentence):
+        if (m := rx.search(c)) and not _NEGATION.search(c[: m.start()]):
+            return True
+    return False
+
+
 def claims_special_cause(text: str) -> bool:
     """A clause calling the variation special (assignable) cause, not negated, in a sentence
     that does not leave it open."""
-    for s in sentences(text):
-        if _OPEN_LABEL.search(s):
-            continue
-        for c in re.split(r"[,;:(]|\bbut\b|\bwhile\b", s):
-            if (m := _SPECIAL_CAUSE.search(c)) and not _NEGATION.search(c[: m.start()]):
-                return True
-    return False
+    return any(
+        _asserted_in(s, _SPECIAL_CAUSE) for s in sentences(text) if not _OPEN_LABEL.search(s)
+    )
 
 
 def reports_special_windows(f: dict) -> bool:
@@ -731,12 +747,7 @@ def reports_special_windows(f: dict) -> bool:
     cause at a load peak" does)."""
     if any(e.get("source") == SPECIAL for e in _littles_statistics(f)):
         return True
-    text = f.get("claim", "")
-    for s in sentences(text):
-        for c in re.split(r"[,;:(]|\bbut\b|\bwhile\b", s):
-            if (m := _SPECIAL_WINDOWS.search(c)) and not _NEGATION.search(c[: m.start()]):
-                return True
-    return False
+    return any(_asserted_in(s, _SPECIAL_WINDOWS) for s in sentences(f.get("claim", "")))
 
 
 def _c(cid: str, ok: bool | None, detail: str, objs: list[str] | None = None) -> Check:
