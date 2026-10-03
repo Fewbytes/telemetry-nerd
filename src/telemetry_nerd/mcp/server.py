@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
-from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 from pydantic import ConfigDict, TypeAdapter, ValidationError, model_validator
 
 from telemetry_nerd.charts.spec import Window
@@ -279,8 +280,37 @@ def _fail(e: Exception) -> ToolError:
     return ToolError(f"{e} (hint: check the arguments)")
 
 
+log = logging.getLogger(__name__)
+
+
+def crash_message(name: str, e: BaseException) -> str:
+    """What Claude reads when a tool crashed (an exception no tool anticipated): the tool, the
+    exception type and its message. The SDK withholds a crash's text (UnexpectedToolError carries
+    only 'Error executing tool <name>'), which left Claude a bare error with nothing to act on
+    (gzrz); this is a local daemon, its own exception text is safe to show."""
+    root = e.__cause__ if isinstance(e, UnexpectedToolError) and e.__cause__ else e
+    while isinstance(root, UnexpectedToolError) and root.__cause__ is not None:
+        root = root.__cause__
+    return (
+        f"internal error in {name}: {type(root).__name__}: {root or '(no message)'} "
+        "(a telemetry-nerd bug, not your arguments: retrying the same call will fail the same "
+        "way; reach the data another way, e.g. query, and mention the error to the user)"
+    )
+
+
+class TelemetryMCP(MCPServer):
+    """MCPServer whose crashes reach Claude as a message naming the tool and the exception."""
+
+    async def call_tool(self, name: str, arguments: dict[str, Any], context: Any = None) -> Any:
+        try:
+            return await super().call_tool(name, arguments, context)
+        except UnexpectedToolError as e:
+            log.error("tool %s crashed", name, exc_info=e.__cause__ or e)
+            raise ToolError(crash_message(name, e)) from e.__cause__
+
+
 def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
-    mcp = MCPServer("telemetry-nerd", instructions=INSTRUCTIONS)
+    mcp = TelemetryMCP("telemetry-nerd", instructions=INSTRUCTIONS)
 
     @mcp.tool()
     async def query(

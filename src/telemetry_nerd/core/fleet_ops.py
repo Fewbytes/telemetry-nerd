@@ -400,6 +400,13 @@ class FleetOps:
                 item["band"] = self._band_summary(gf, gb, ts)
         if len(ranked) > MAX_LISTED:
             out["more_outliers"] = len(ranked) - MAX_LISTED
+        if f.departing:  # named, not judged: no noise scale exists to judge them by
+            out["members"]["departing_from_constant"] = {
+                "members": [names[i] for i in f.departing[:MAX_LISTED]],
+                "note": "every other member reports one value at every step (e.g. 0 errors): "
+                "these depart from it; with no spread among the others there is no noise scale "
+                "to test the departure against, so they are named here, not judged as outliers",
+            }
         out["variation"] = self._variation(out, caveats + measurement_caveats(run.meta))
         return out
 

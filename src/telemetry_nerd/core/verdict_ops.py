@@ -34,7 +34,7 @@ from telemetry_nerd.analysis.verdicts import (
     share_threshold,
 )
 from telemetry_nerd.catalog.relations import BINDING_ROLES
-from telemetry_nerd.core.binding_ops import ROLE_FAILURES, BindingOps, parse_range
+from telemetry_nerd.core.binding_ops import ROLE_FAILURES, BindingOps, parse_range, role_crash
 from telemetry_nerd.core.binding_view import RolePlan, natural_bound
 from telemetry_nerd.core.events import Actor
 from telemetry_nerd.core.littles_ops import NOT_POSSIBLE
@@ -411,6 +411,8 @@ class VerdictOps:
                 inputs[r] = self._input(st, grid, shifts, step_s, m0.step_ms, res_ms, scheme)
             except ROLE_FAILURES as e:
                 st.error = str(e)
+            except Exception as e:  # noqa: BLE001 - a bug: this role reports it, the others are judged
+                st.error = role_crash(r, e, "judging")
         results, fam, order = judge_roles(inputs, grid, m0.step_ms, alpha)
 
         model = None
@@ -490,9 +492,13 @@ class VerdictOps:
         )
         for st, x in zip(roles.values(), got, strict=True):
             if isinstance(x, BaseException):
-                if not isinstance(x, ROLE_FAILURES):
+                if not isinstance(x, Exception):
                     raise x
-                st.error = str(x)
+                st.error = (
+                    str(x)
+                    if isinstance(x, ROLE_FAILURES)
+                    else role_crash(st.plan.role, x, "fetching")
+                )
             else:
                 st.now = x
 
@@ -517,6 +523,9 @@ class VerdictOps:
             try:
                 return (await self.svc.bindings.fetch(source, p, w, actor))["dataset"]
             except ROLE_FAILURES:
+                return None
+            except Exception as e:  # noqa: BLE001 - a bug: logged; the window counts as not fetched (noted)
+                role_crash(p.role, e, "fetching a reference window of")
                 return None
 
         fetched = await asyncio.gather(*(ref_ds(st.plan, s) for st in live for s in shifts))
@@ -620,6 +629,8 @@ class VerdictOps:
             out = await self.svc.bindings.check_littles(source, b, infos, mt, rng, actor)
         except ROLE_FAILURES as e:
             return {"error": str(e)}
+        except Exception as e:  # noqa: BLE001 - a bug: the model reports it, the roles are still judged
+            return {"error": role_crash("check", e, "checking")}
         t = out["total"]
         return {
             "summary": out["summary"], "discrepancy": out["discrepancy"],

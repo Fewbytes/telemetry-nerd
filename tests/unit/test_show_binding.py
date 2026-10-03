@@ -656,3 +656,52 @@ def test_error_ratio_names_absent_members_with_a_cap():
     [n] = [x for x in notes if "no error series" in x]
     assert n.startswith("4 member(s)") and "(+1)" in n
     assert n.count("service") == 3
+
+
+async def test_red_over_13_services_with_one_erroring_draws_errors_as_a_fleet(tmp_path):
+    """gzrz: 13 services, errors only on one: the errors role is a fleet of exact zeros plus one
+    member, which divided by zero in the fleet analysis and failed the whole call."""
+    svc, _ = await _svc(tmp_path, members=13)
+    g = await svc.show_binding(source="default", suggestion="RED:otel_http", start="now-1h")
+    roles = {r.role: r for r in g.roles}
+    assert all(r.panel for r in roles.values()), [r.error for r in roles.values()]
+    assert roles["errors"].view == "fleet"
+    out = svc.fleet(svc.workspace.get_panel(roles["errors"].panel).dataset_ids[0])
+    assert out["members"]["departing_from_constant"]["members"] == ["service_name=s0"]
+    assert "constant_reference" in out["caveats"]
+
+
+async def test_a_role_that_crashes_is_reported_with_its_role_and_the_rest_draw(tmp_path, caplog):
+    svc, _ = await _svc(tmp_path)
+    show = svc.show
+
+    def crashing_show(ds, question, *a, **kw):
+        if kw.get("group") is not None and kw["group"].role == "errors":
+            raise ZeroDivisionError("division by zero")
+        return show(ds, question, *a, **kw)
+
+    svc.show = crashing_show
+    g = await svc.show_binding(source="default", suggestion="RED:otel_http", start="now-2h")
+    roles = {r.role: r for r in g.roles}
+    err = roles["errors"].error or ""
+    assert roles["errors"].view == "error"
+    assert "errors role" in err and "ZeroDivisionError: division by zero" in err
+    assert roles["rate"].panel and roles["duration"].panel
+    assert any("errors role" in r.getMessage() and r.exc_info for r in caplog.records)
+
+
+async def test_mcp_tool_crash_reaches_claude_with_tool_and_exception(tmp_path):
+    """A crash inside a tool used to reach Claude as 'Error executing tool show_binding' and
+    nothing else (the SDK withholds unexpected exceptions' text)."""
+    svc, _ = await _svc(tmp_path)
+
+    async def boom(**kw):
+        raise ZeroDivisionError("division by zero")
+
+    svc.show_binding = boom
+    async with Client(build_mcp(svc, "http://ui")) as c:
+        res = await c.call_tool("show_binding", {"suggestion": "RED:otel_http"})
+    assert res.is_error
+    text = res.content[0].text
+    assert "internal error in show_binding: ZeroDivisionError: division by zero" in text
+    assert "not your arguments" in text

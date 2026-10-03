@@ -12,6 +12,7 @@ Design: docs/superpowers/specs/2026-10-02-fleet-analysis-design.md.
 
 from __future__ import annotations
 
+import functools
 import math
 import warnings
 from dataclasses import dataclass, field
@@ -68,7 +69,16 @@ def _pooled(others: np.ndarray, half: int = POOL_HALF) -> tuple[np.ndarray, np.n
     """Per step: median of the members, and a robust sigma of their deviations from the per-step
     median pooled over +-half steps (local heteroscedasticity; far more values than one
     step's members, so the z threshold is not dominated by MAD noise). Returns (centre, sigma,
-    values pooled); NaN where fewer than MIN_OTHERS members report."""
+    values pooled); NaN where fewer than MIN_OTHERS members report.
+
+    Zero local spread (gzrz): sparse counters (error rates, mostly exact zeros) leave every
+    deviation in the +-half window at 0, so MAD and mean-AD are 0 and no z exists there. Such a
+    step takes the window-wide sigma (the same estimator over every step's deviations): the
+    local pool only tracks heteroscedasticity, and where it is degenerate the whole window's
+    spread is the best estimate of the members' noise the data holds. A count floor was not used:
+    the fleet gets rates and ratios already divided (and extrapolated), so it has no event
+    quantum to floor at. Still NaN when the whole window has no spread (the members are equal at
+    every step: see constant_reference)."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
         n = np.sum(~np.isnan(others), axis=0)
@@ -89,15 +99,30 @@ def _pooled(others: np.ndarray, half: int = POOL_HALF) -> tuple[np.ndarray, np.n
             mean[a:b] = np.nanmean(flat, axis=1)
         mad = med * MAD_SCALE * mad_factor(cnt)
         meanad = mean * MEANAD_SCALE
-    s = np.where(mad > 0, mad, meanad)
+        s = np.where(mad > 0, mad, meanad)
+        flat_steps = (n >= MIN_OTHERS) & ~(s > 0)
+        if flat_steps.any():
+            every = np.abs(dev[:, n >= MIN_OTHERS])
+            n_all = int(np.sum(~np.isnan(every)))
+            if n_all:
+                s_all = float(np.nanmedian(every)) * MAD_SCALE * float(mad_factor(n_all))
+                if not s_all > 0:
+                    s_all = float(np.nanmean(every)) * MEANAD_SCALE
+                if s_all > 0:
+                    s = np.where(flat_steps, s_all, s)
+                    cnt = np.where(flat_steps, n_all, cnt)
     bad = (n < MIN_OTHERS) | ~(s > 0)
-    return np.where(bad, np.nan, c), np.where(bad, np.nan, s), np.where(bad, 0, cnt)
+    # the centre stands wherever enough members report, even with no spread (constant_reference)
+    few = n < MIN_OTHERS
+    return np.where(few, np.nan, c), np.where(bad, np.nan, s), np.where(bad, 0, cnt)
 
 
-def loo_deviations(y: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
+def loo_deviations(
+    y: np.ndarray, const: np.ndarray | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, bool]:
     """d_it = y_it - median of the other members at t; z_it = d_it / their pooled robust sigma.
     Exact leave-one-out for <= LOO_MAX members; the full fleet beyond (stated).
-    Also returns the number of deviations behind each sigma."""
+    Also returns the number of deviations behind each sigma. const: constant_reference(y)."""
     m_ = y.shape[0]
     if m_ <= LOO_MAX:
         d, s, cnt = np.full_like(y, np.nan), np.full_like(y, np.nan), np.zeros(y.shape)
@@ -112,7 +137,31 @@ def loo_deviations(y: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, b
         loo = False
     with np.errstate(invalid="ignore", divide="ignore"):
         z = d / s
+    # a member equal to a reference with no spread at all is exactly typical (z 0); one that
+    # departs from it has no noise scale to be judged by and stays NaN (constant_reference)
+    z = np.where((constant_reference(y) if const is None else const) & (d == 0), 0.0, z)
     return d, z, cnt, loo
+
+
+def constant_reference(y: np.ndarray) -> np.ndarray:
+    """Member-steps whose reference (the other members; the whole fleet beyond LOO_MAX) has no
+    spread anywhere in the window: at every step with >= MIN_OTHERS of them reporting they all
+    report one value (e.g. every other service's error rate is exactly 0 for the whole window).
+    True at those steps of such a member."""
+    m_ = y.shape[0]
+    out = np.zeros(y.shape, bool)
+    rows = range(m_) if m_ <= LOO_MAX else [None]
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        for i in rows:
+            o = y if i is None else np.delete(y, i, axis=0)
+            ok = np.sum(~np.isnan(o), axis=0) >= MIN_OTHERS
+            if ok.any() and np.all(np.nanmax(o[:, ok], axis=0) == np.nanmin(o[:, ok], axis=0)):
+                if i is None:
+                    out[:, ok] = True
+                else:
+                    out[i, ok] = True
+    return out
 
 
 def typical_tau(d: np.ndarray, sample: int = 40) -> float:
@@ -210,6 +259,8 @@ class Fleet:
     z: np.ndarray  # members x steps deviations in fleet-sigma units
     d: np.ndarray  # members x steps deviations in scale units (log ratio or difference)
     values: np.ndarray  # members x steps in the band's units (raw, or relative to own median)
+    # members departing from a reference with no spread (constant_reference): named, not judged
+    departing: list[int] = field(default_factory=list)
 
 
 def choose_scale(y: np.ndarray, scale: str = "auto") -> Scale:
@@ -576,20 +627,34 @@ def analyse(
     # the band in the units the user reads: raw, or normalised (ratio / difference to own median)
     band_y = y_raw if normalise == "none" else (np.exp(y) if sc == "log" else y)
     sp = spread(band_y, unknown)
-    d, z, cnt, loo = loo_deviations(y)
+    const = constant_reference(y)
+    d, z, cnt, loo = loo_deviations(y, const)
     caveats: list[str] = []
     known = np.ones((m_, t_), bool) if unknown is None else ~unknown
     alive_steps = np.array([int(known[i, f:].sum()) if f >= 0 else 0 for i, f in enumerate(first)])
     nz = np.sum(~np.isnan(z), axis=1)
-    tested = [i for i in range(m_) if nz[i] >= MIN_OBS and nz[i] >= 0.5 * alive_steps[i]]
+    # departing from an exactly constant reference: no noise scale exists to judge the departure
+    # by (the others never vary), and a z of 0 at the agreeing steps must not pass the member as
+    # calm. Named with their own caveat, never tested, never dropped silently.
+    with np.errstate(invalid="ignore"):
+        departs = np.isnan(z) & ~np.isnan(d) & const & (d != 0)
+    departing = [i for i in range(m_) if departs[i].any()]
+    tested = [
+        i for i in range(m_)
+        if nz[i] >= MIN_OBS and nz[i] >= 0.5 * alive_steps[i] and i not in departing
+    ]  # fmt: skip
     untested = [i for i in range(m_) if i not in tested]
     thresholds: dict[str, float] = {}
     outliers: list[Outlier] = []
+    if departing:
+        caveats.append("constant_reference")
+    elif const.any() and const[:, const.any(axis=0)].all():
+        caveats.append("no_spread")  # every member reports one value at every step
     if len(tested) < MIN_TESTED:
         caveats.append("too_few_members_for_outliers")
         return Fleet(sc, normalise, sp, loo, tested, untested, [], thresholds, caveats,
-                     first, last, z, d, band_y)  # fmt: skip
-    if untested:
+                     first, last, z, d, band_y, departing)  # fmt: skip
+    if set(untested) - set(departing):
         caveats.append("members_skipped")
     k = len(tested)
     a_test = alpha / N_TESTS
@@ -618,7 +683,7 @@ def analyse(
         caveats.append("many_outliers")
     outliers.sort(key=lambda o: -o.score)
     return Fleet(sc, normalise, sp, loo, tested, untested, outliers, thresholds, caveats,
-                 first, last, z, d, band_y)  # fmt: skip
+                 first, last, z, d, band_y, departing)  # fmt: skip
 
 
 def _level_change_tests(zt: np.ndarray, normalise: Normalise) -> dict[str, np.ndarray]:
@@ -680,8 +745,12 @@ def _excursion_bars(
         if name == "spike":
             unit = np.ones(zz.shape)
         else:  # the rolling median's own scale relative to single steps (pool members)
-            pool = zz[calm]
-            ratio = float(np.nanmedian(np.abs(pool))) / float(np.nanmedian(np.abs(zt[calm])))
+            ratio = _median_scale_ratio(zz[calm], zt[calm], EXCURSIONS[name])
+            if ratio is None:
+                ratio = median_ratio_iid(EXCURSIONS[name])
+                thresholds[f"{name}_scale_from_model"] = 1.0
+                if "degenerate_excursion_scale" not in caveats:
+                    caveats.append("degenerate_excursion_scale")
             unit = np.full(zz.shape, ratio)
         tdf = np.vectorize(lambda v, q=p: t_isf(q / 2, float(round(v, 1))), otypes=[float])(df)
         bar = tdf * unit
@@ -693,15 +762,17 @@ def _excursion_bars(
         inherits = math.ceil(EXCURSIONS[name] / (2 * max(tau_ep, 1.0))) < MIN_EXCEEDING
         if own or (spike_heavy and inherits):
             thresholds[f"{name}_heavy_tails"] = 1.0
-            if "heavy_tailed_noise" not in caveats:
-                caveats.append("heavy_tailed_noise")
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
                 peaks = np.nanmax(np.abs(zz), axis=1)
             gb = gumbel_bars(peaks, calm, a_test / n_scales / k)
-            thresholds[f"{name}_tail_threshold"] = (
-                float(np.median(gb[np.isfinite(gb)])) if np.isfinite(gb).any() else math.inf
-            )
+            # the caveat says the bars follow the other members' peaks: only when one did
+            if not np.all(gb == -math.inf) and "heavy_tailed_noise" not in caveats:
+                caveats.append("heavy_tailed_noise")
+            if np.isfinite(gb).any():
+                thresholds[f"{name}_tail_threshold"] = float(np.median(gb[np.isfinite(gb)]))
+            elif not np.all(gb == -math.inf):  # -inf: no Gumbel fit (gumbel_bars), t bar stands
+                thresholds[f"{name}_tail_threshold"] = math.inf
             bar = np.maximum(bar, gb[:, None])
         bars[name] = bar
     return scans, bars
@@ -735,6 +806,37 @@ def _member_tests(
             exceed |= ex
             ratio = max(ratio, float(np.nanmax(r)))
     return fired, zs, exceed, ratio
+
+
+def _median_scale_ratio(pool: np.ndarray, single: np.ndarray, w: int) -> float | None:
+    """Typical |rolling median| over typical |single step| in the calm pool (median |.|), or None
+    when either is 0 or undefined: a pool of mostly exact zeros (sparse counters) has no
+    median scale, and its ratio is 0/0 (gzrz)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        num = float(np.nanmedian(np.abs(pool))) if np.isfinite(pool).any() else math.nan
+        den = float(np.nanmedian(np.abs(single))) if np.isfinite(single).any() else math.nan
+    if not (num > 0 and den > 0):
+        return None
+    return num / den
+
+
+@functools.cache
+def median_ratio_iid(w: int) -> float:
+    """median |median of w iid N(0, 1)| / median |N(0, 1)|: the rolling median's scale relative
+    to single steps for independent normal innovations (what the prewhitened scan holds when the
+    AR(1) model is right). Exact: P(median <= x) = P(Bin(w, Phi(x)) >= (w + 1) / 2) = 0.75.
+    Used when the pool's own ratio is degenerate (mostly exact zeros): a zero-inflated series'
+    rolling median sits at 0 more often than a normal one's, so this bar is conservative there."""
+    k = (w + 1) // 2
+    lo, hi = 0.0, 3.0
+    for _ in range(60):
+        x = (lo + hi) / 2
+        if binom_sf(k, w, 0.5 * math.erfc(-x / math.sqrt(2))) < 0.75:
+            lo = x
+        else:
+            hi = x
+    return (lo + hi) / 2 / 0.6744897501960817
 
 
 def fleet_phi(z: np.ndarray) -> float:
@@ -816,6 +918,10 @@ def gumbel_noise(n: int, g: float) -> float:
     return v / n
 
 
+ZERO_PEAK_VALUE = 1e-12
+ZERO_PEAK = math.log(ZERO_PEAK_VALUE)
+
+
 def gumbel_bars(peaks: np.ndarray, pool_rows: np.ndarray, p: float) -> np.ndarray:
     """Per member: the peak exceeded with probability p by a Gumbel fitted to the OTHER (pool)
     members' log peaks by their quartiles (beta = IQR / 1.5725, mu = q25 + 0.3266 beta).
@@ -824,7 +930,7 @@ def gumbel_bars(peaks: np.ndarray, pool_rows: np.ndarray, p: float) -> np.ndarra
     is exceeded more often on average (convexity: E[p e^-eps] = p e^(s^2/2)), so the bar is
     raised by beta s^2 / 2: the false alarm rate averaged over the fit's noise is then p."""
     g = -math.log(-math.log1p(-p))
-    lp = np.log(np.maximum(peaks, 1e-12))
+    lp = np.log(np.maximum(peaks, ZERO_PEAK_VALUE))
     out = np.empty(peaks.size)
     for i in range(peaks.size):
         keep = pool_rows.copy()
@@ -835,6 +941,14 @@ def gumbel_bars(peaks: np.ndarray, pool_rows: np.ndarray, p: float) -> np.ndarra
             continue
         q25, q75 = np.quantile(o, [0.25, 0.75])
         beta = (q75 - q25) / 1.5725
+        if not beta > 0 or q25 <= ZERO_PEAK:
+            # a quarter or more of the pool never moved at this scale (peak exactly 0: sparse
+            # counters), or the peaks are tied: the quartiles sit on a point mass, not on a
+            # maximum's distribution, so no Gumbel can be fitted. No Gumbel bar: the t bar
+            # stands (a fit anchored at log 1e-12 would put the bar at ~1e20, never reached;
+            # one at the tied peak would name every member that moves at all)
+            out[i] = -math.inf
+            continue
         out[i] = math.exp(q25 + 0.3266 * beta + beta * (g + gumbel_noise(o.size, g) / 2))
     return out
 

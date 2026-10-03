@@ -9,6 +9,7 @@ instrumentation that would fill it. The group is a workspace object; its panels 
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -42,6 +43,21 @@ if TYPE_CHECKING:
 
 #: what fetching or drawing one role may fail with: the role shows the error, the rest still draw
 ROLE_FAILURES = (SourceError, ValueError, NotFound, LookupError)
+
+log = logging.getLogger(__name__)
+
+
+def role_crash(role: str, e: BaseException, doing: str = "drawing") -> str:
+    """A role failed with something that is not an anticipated ROLE_FAILURE: a bug in
+    telemetry-nerd (gzrz: a fleet of mostly-zero members divided by zero). Logged with its
+    traceback; the role carries a message naming the role and the exception, and the other roles
+    still draw, so one role's crash never empties the whole call."""
+    log.error("%s the %s role failed", doing, role, exc_info=e)
+    return (
+        f"internal error {doing} the {role} role: {type(e).__name__}: {e or '(no message)'} "
+        "(a telemetry-nerd bug, not your arguments; the other roles are unaffected; query this "
+        "role's metric directly meanwhile)"
+    )
 
 
 def parse_range(start: str, end: str, now_ms: int) -> TimeRange:
@@ -258,13 +274,17 @@ class BindingOps:
                 "role": "check", "form": "littles",
                 "why": f"{NOT_POSSIBLE}; L is not estimated. Instrument: {g.why}",
             }))  # fmt: skip
-        await asyncio.gather(
-            *(
-                svc.y_context(r.panel, actor)
-                for r in roles
-                if r.panel and r.view in ("lines", "fleet")
-            )
+        drawn = [i for i, r in enumerate(roles) if r.panel and r.view in ("lines", "fleet")]
+        ctx = await asyncio.gather(
+            *(svc.y_context(roles[i].panel or "", actor) for i in drawn), return_exceptions=True
         )
+        for i, x in zip(drawn, ctx, strict=True):
+            if isinstance(x, BaseException):  # the axis context is a refinement: the panel stands
+                if not isinstance(x, Exception):
+                    raise x
+                r = roles[i]
+                msg = role_crash(r.role, x, "setting the y axis context of")
+                roles[i] = r.model_copy(update={"notes": [*r.notes, msg]})
         notes = (
             [f"join_on {', '.join(b.join_on)}: label names are conventions"] if b.join_on else []
         )
@@ -293,6 +313,8 @@ class BindingOps:
             )  # fmt: skip
         except ROLE_FAILURES as e:
             return GroupRole(**base, view="error", error=str(e))
+        except Exception as e:  # noqa: BLE001 - a bug: the check shows it, the roles still draw
+            return GroupRole(**base, view="error", error=role_crash("check", e))
         notes = [f"verdict: {out['verdict']} (check_littles_law, window {out['window']})"]
         return GroupRole(**base, panel=res.panel.id, view="model", notes=notes)
 
@@ -384,9 +406,12 @@ class BindingOps:
         svc = self.svc
         base: dict[str, Any] = {"role": p.role, "metric": p.metric, "form": p.form}
         if isinstance(got, BaseException):
-            if not isinstance(got, ROLE_FAILURES):
+            if not isinstance(got, Exception):  # cancellation, interrupts: not the role's
                 raise got
-            return GroupRole(**base, view="error", error=str(got), notes=list(p.notes))
+            err = (
+                str(got) if isinstance(got, ROLE_FAILURES) else role_crash(p.role, got, "fetching")
+            )
+            return GroupRole(**base, view="error", error=err, notes=list(p.notes))
         ds = got["dataset"]
         notes = [*p.notes, *got.get("notes", [])]
         ref = GroupRef(id=group.id, role=p.role)
@@ -418,6 +443,8 @@ class BindingOps:
             )
         except (ValueError, LookupError, ChartRejected) as e:
             return GroupRole(**base, view="error", error=str(e), notes=notes)
+        except Exception as e:  # noqa: BLE001 - a bug: this role shows it, the others still draw
+            return GroupRole(**base, view="error", error=role_crash(p.role, e), notes=notes)
         if mark == "fleet":
             notes.append(f"{n} members: drawn as a fleet (spread band, median, outliers)")
         return GroupRole(
