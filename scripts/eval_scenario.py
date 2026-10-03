@@ -208,13 +208,16 @@ def live_run(a: argparse.Namespace) -> int:
             print(f"claude ({a.model}, <= {a.max_turns} turns, <= ${a.max_budget_usd}): "
                   f"{question}", flush=True)  # fmt: skip
             res = live.run_claude(
-                cmd, live.claude_env(ROOT, url), work, d / "transcript.jsonl", a.timeout_s
-            )
+                cmd, live.claude_env(ROOT, url), work, d / "transcript.jsonl", a.timeout_s,
+                max_turns=a.max_turns, max_budget_usd=a.max_budget_usd,
+            )  # fmt: skip
             run.update(res)
             run["model"] = a.model
             print(
-                f"claude done: cost ${res.get('total_cost_usd')}, turns {res.get('num_turns')}, "
-                f"{res['duration_s']}s, aborted={res['aborted']}",
+                f"claude done: cost ${res.get('total_cost_usd')}, tool rounds "
+                f"{res.get('tool_rounds')}/{a.max_turns} (num_turns {res.get('num_turns')}), "
+                f"{res['duration_s']}s, stopped by {res['caps']['stopped_by']}, "
+                f"aborted={res['aborted']}",
                 flush=True,
             )
         else:

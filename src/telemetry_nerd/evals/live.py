@@ -201,47 +201,119 @@ def claude_env(root: Path, daemon_url: str) -> dict:
     return env
 
 
-def parse_stream(lines: Iterable[str]) -> dict:
-    """Summarise a stream-json transcript: init (tools, MCP servers), tool calls, denials, the
-    final result (text, cost, turns)."""
-    out: dict = {"tool_calls": [], "mcp_servers": [], "tools": [], "result": "", "errors": []}
-    for raw in lines:
+class StreamTally:
+    """`parse_stream`, one line at a time, so `run_claude` can act while the run goes on.
+
+    Turn counts (zqa). Claude Code's result `num_turns` counted the prompt plus every tool result
+    in both live runs of 2026-10-03 (46 = 1 + 45 results, 37 = 1 + 36), so with parallel tool
+    calls it exceeds `--max-turns`, which limits tool-use round trips (model responses that call
+    tools). `tool_rounds` counts those: the distinct assistant message ids holding a tool_use
+    (stream-json emits each content block of one response as its own event, same id)."""
+
+    def __init__(self) -> None:
+        self.out: dict = {"tool_calls": [], "mcp_servers": [], "tools": [], "result": "",
+                          "errors": [], "tool_results": 0}  # fmt: skip
+        self._messages: set[str] = set()
+        self._rounds: set[str] = set()
+        self._anon = 0
+
+    @property
+    def tool_rounds(self) -> int:
+        return len(self._rounds)
+
+    def feed(self, raw: str) -> dict | None:
+        """Count one stream-json line; returns the event, or None when it is not JSON."""
+        out = self.out
         raw = raw.strip()
         if not raw:
-            continue
+            return None
         try:
             ev = json.loads(raw)
         except ValueError:
-            continue
+            return None
+        if not isinstance(ev, dict):
+            return None
         t = ev.get("type")
         if t == "system" and ev.get("subtype") == "init":
             out["mcp_servers"] = ev.get("mcp_servers", [])
             out["tools"] = ev.get("tools", [])
             out["model"] = ev.get("model")
         elif t == "assistant":
-            for block in (ev.get("message") or {}).get("content", []) or []:
+            msg = ev.get("message") or {}
+            mid = msg.get("id")
+            if not isinstance(mid, str):
+                self._anon += 1
+                mid = f"_anon{self._anon}"
+            self._messages.add(mid)
+            for block in msg.get("content", []) or []:
                 if isinstance(block, dict) and block.get("type") == "tool_use":
                     out["tool_calls"].append(block.get("name"))
+                    self._rounds.add(mid)
         elif t == "user":
             for block in (ev.get("message") or {}).get("content", []) or []:
-                if (
-                    isinstance(block, dict)
-                    and block.get("type") == "tool_result"
-                    and block.get("is_error")
-                ):
-                    c = block.get("content")
-                    text = c if isinstance(c, str) else json.dumps(c)[:300]
-                    out["errors"].append(text[:300])
+                if isinstance(block, dict) and block.get("type") == "tool_result":
+                    out["tool_results"] += 1
+                    if block.get("is_error"):
+                        c = block.get("content")
+                        text = c if isinstance(c, str) else json.dumps(c)[:300]
+                        out["errors"].append(text[:300])
         elif t == "result":
             for k in ("result", "total_cost_usd", "num_turns", "duration_ms", "is_error",
                       "subtype", "stop_reason", "permission_denials", "usage"):  # fmt: skip
                 if k in ev:
                     out[k] = ev[k]
-    out["tool_counts"] = {n: out["tool_calls"].count(n) for n in dict.fromkeys(out["tool_calls"])}
-    out["outside_plugin"] = sorted(
-        {n for n in out["tool_calls"] if n and not n.startswith(PLUGIN_MCP) and n != "Skill"}
-    )
-    return out
+        return ev
+
+    def summary(self) -> dict:
+        out = dict(self.out)
+        out["assistant_messages"] = len(self._messages)
+        out["tool_rounds"] = self.tool_rounds
+        out["tool_counts"] = {
+            n: out["tool_calls"].count(n) for n in dict.fromkeys(out["tool_calls"])
+        }
+        out["outside_plugin"] = sorted(
+            {n for n in out["tool_calls"] if n and not n.startswith(PLUGIN_MCP) and n != "Skill"}
+        )
+        return out
+
+
+def parse_stream(lines: Iterable[str]) -> dict:
+    """Summarise a stream-json transcript: init (tools, MCP servers), tool calls, denials, turn
+    counts (`StreamTally`), the final result (text, cost, turns)."""
+    tally = StreamTally()
+    for raw in lines:
+        tally.feed(raw)
+    return tally.summary()
+
+
+def caps(run: dict, max_turns: int | None, max_budget_usd: float | None) -> dict:
+    """The run against its caps: tool-use rounds against --max-turns (Claude Code's num_turns is
+    not that count, see `StreamTally`), cost against --max-budget-usd (checked by the CLI after
+    a turn, so it can overshoot by one), and what stopped it."""
+    rounds, cost = run.get("tool_rounds"), run.get("total_cost_usd")
+    subtype, aborted = run.get("subtype"), run.get("aborted")
+    stopped = (
+        "max_turns" if subtype == "error_max_turns"
+        else "max_budget" if subtype == "error_max_budget_usd"
+        else "harness" if aborted
+        else "finished" if subtype == "success"
+        else subtype
+    )  # fmt: skip
+    return {
+        "max_turns": max_turns,
+        "tool_rounds": rounds,
+        "num_turns_reported": run.get("num_turns"),
+        "tool_results": run.get("tool_results"),
+        "turns_exceeded": None if max_turns is None or rounds is None else rounds > max_turns,
+        "max_budget_usd": max_budget_usd,
+        "cost_usd": cost,
+        "budget_exceeded": (
+            None if max_budget_usd is None or cost is None else cost > max_budget_usd
+        ),
+        "stopped_by": stopped,
+        "note": "num_turns (Claude Code) counts the prompt and each tool result; --max-turns "
+        "limits tool-use rounds",
+    }
 
 
 def mcp_connected(init_servers: list[dict]) -> bool:
@@ -255,10 +327,20 @@ _DENIED_RX = re.compile(r"permission|haven't granted|not allowed|denied", re.IGN
 MAX_DENIALS = 3
 
 
-def run_claude(cmd: list[str], env: dict, cwd: Path, transcript: Path, timeout_s: float) -> dict:
+def run_claude(
+    cmd: list[str],
+    env: dict,
+    cwd: Path,
+    transcript: Path,
+    timeout_s: float,
+    max_turns: int | None = None,
+    max_budget_usd: float | None = None,
+) -> dict:
     """Run headless Claude, streaming its transcript to a file. Stops it at once when the init
     event shows the telemetry-nerd MCP server is not connected (nothing to evaluate: no tokens
-    spent past the first request), and after `timeout_s` wall-clock seconds."""
+    spent past the first request), after `timeout_s` wall-clock seconds, and when the stream
+    shows more than `max_turns` tool-use rounds (a backstop to the CLI's --max-turns, counted
+    the way it counts). The result's `caps` records rounds and cost against the caps."""
     t0 = time.time()
     proc = subprocess.Popen(
         cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -267,6 +349,7 @@ def run_claude(cmd: list[str], env: dict, cwd: Path, transcript: Path, timeout_s
     lines: list[str] = []
     aborted = None
     denials = 0
+    tally = StreamTally()
     assert proc.stdout is not None
     with transcript.open("w") as fh:
         import selectors
@@ -289,14 +372,22 @@ def run_claude(cmd: list[str], env: dict, cwd: Path, transcript: Path, timeout_s
             fh.write(line)
             fh.flush()
             lines.append(line)
-            if '"subtype":"init"' in line.replace(" ", ""):
-                init = parse_stream([line])
-                if not mcp_connected(init["mcp_servers"]):
-                    aborted = f"telemetry-nerd MCP server not connected: {init['mcp_servers']}"
-                    break
-            denials += sum(_DENIED_RX.search(e) is not None for e in parse_stream([line])["errors"])
+            errors_before = len(tally.out["errors"])
+            ev = tally.feed(line)
+            init = bool(ev) and ev.get("type") == "system" and ev.get("subtype") == "init"
+            if init and not mcp_connected(tally.out["mcp_servers"]):
+                aborted = f"telemetry-nerd MCP server not connected: {tally.out['mcp_servers']}"
+                break
+            new_errors = tally.out["errors"][errors_before:]
+            denials += sum(_DENIED_RX.search(e) is not None for e in new_errors)
             if denials >= MAX_DENIALS:
                 aborted = f"{denials} permission denials: the tool allowlist does not match"
+                break
+            if max_turns is not None and tally.tool_rounds > max_turns:
+                aborted = (
+                    f"turn cap: {tally.tool_rounds} tool-use rounds > max_turns {max_turns} "
+                    "(harness guard; the CLI did not stop it)"
+                )
                 break
     if proc.poll() is None:
         os.killpg(proc.pid, signal.SIGTERM)
@@ -307,6 +398,7 @@ def run_claude(cmd: list[str], env: dict, cwd: Path, transcript: Path, timeout_s
     err = proc.stderr.read() if proc.stderr else ""
     out = parse_stream(lines)
     out["aborted"] = aborted
+    out["caps"] = caps(out, max_turns, max_budget_usd)
     out["exit_code"] = proc.returncode
     out["stderr_tail"] = err[-2000:]
     out["duration_s"] = round(time.time() - t0, 1)

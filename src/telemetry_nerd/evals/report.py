@@ -37,6 +37,14 @@ def markdown(r: Report, run: dict | None = None) -> str:
     if run:
         bits = [f"{k}: {run[k]}" for k in ("model", "num_turns", "total_cost_usd", "duration_s",
                                             "stop_reason", "is_error") if k in run]  # fmt: skip
+        if c := run.get("caps"):
+            bits.append(
+                f"tool rounds {c.get('tool_rounds')}/{c.get('max_turns')} (--max-turns; "
+                f"num_turns counts prompt + tool results), cost {c.get('cost_usd')}/"
+                f"{c.get('max_budget_usd')} USD, stopped by {c.get('stopped_by')}"
+                + (" — TURN CAP EXCEEDED" if c.get("turns_exceeded") else "")
+                + (" — BUDGET EXCEEDED" if c.get("budget_exceeded") else "")
+            )
         if bits:
             out.append("Run: " + "; ".join(bits))
     out += ["", "## Criteria", "", "| criterion | result | detail | objects |", "|---|---|---|---|"]

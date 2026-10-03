@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -621,3 +623,98 @@ def test_queue_sim_live_run_scores_as_observed():
     assert f1.sources == ["measurement_system"] and not f1.incident
     assert [h.status for h in rep.hypotheses] == ["refuted"]
     assert (rep.passed, rep.applicable) == (8, 9) and rep.acceptance
+
+
+# --- turn and budget caps (zqa) ---------------------------------------------------------------
+
+
+def _assistant(mid, *names, text=None):
+    content = [{"type": "tool_use", "name": n, "input": {}} for n in names]
+    if text:
+        content.append({"type": "text", "text": text})
+    # stream-json emits each content block of one response as its own event, same message id
+    return [json.dumps({"type": "assistant", "message": {"id": mid, "content": [c]}})
+            for c in content]  # fmt: skip
+
+
+def _results(k):
+    return [json.dumps({"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": f"t{i}", "content": "ok"}]}}) for i in range(k)]  # fmt: skip
+
+
+def _stream(rounds: list[int], num_turns: int, subtype="success", cost=0.5) -> list[str]:
+    lines = []
+    for i, k in enumerate(rounds):
+        lines += _assistant(f"msg_{i}", *[f"{live.PLUGIN_MCP}__query"] * k) + _results(k)
+    lines += _assistant("msg_last", text="done")
+    lines.append(json.dumps({"type": "result", "subtype": subtype, "num_turns": num_turns,
+                             "total_cost_usd": cost, "result": "done"}))  # fmt: skip
+    return lines
+
+
+def test_num_turns_is_prompt_plus_tool_results_not_rounds():
+    """The payment run: 46 num_turns with --max-turns 40 and subtype success. Claude Code's
+    num_turns counted 1 + 45 tool results; with parallel calls the tool-use rounds that
+    --max-turns limits are fewer. Here 45 results in 38 rounds (7 rounds of two calls)."""
+    out = live.parse_stream(_stream([2] * 7 + [1] * 31, num_turns=46))
+    assert out["tool_results"] == 45 and out["num_turns"] == 1 + out["tool_results"]
+    assert out["tool_rounds"] == 38 and out["assistant_messages"] == 39
+    c = live.caps({**out, "aborted": None}, max_turns=40, max_budget_usd=5.0)
+    assert c["turns_exceeded"] is False and c["budget_exceeded"] is False
+    assert (c["tool_rounds"], c["num_turns_reported"], c["stopped_by"]) == (38, 46, "finished")
+
+
+@pytest.mark.parametrize(
+    ("run", "stopped"),
+    [
+        ({"subtype": "error_max_turns"}, "max_turns"),
+        ({"subtype": "error_max_budget_usd"}, "max_budget"),
+        ({"aborted": "turn cap: 41 tool-use rounds > max_turns 40"}, "harness"),
+        ({"subtype": "success"}, "finished"),
+    ],
+)
+def test_caps_say_what_stopped_the_run(run, stopped):
+    assert live.caps(run, 40, 5.0)["stopped_by"] == stopped
+
+
+def test_caps_flag_exceeded_turns_and_budget():
+    c = live.caps({"tool_rounds": 41, "total_cost_usd": 5.2}, 40, 5.0)
+    assert c["turns_exceeded"] and c["budget_exceeded"]
+    assert live.caps({}, None, None)["turns_exceeded"] is None
+
+
+def test_stream_without_message_ids_counts_each_tool_event_as_a_round():
+    lines = [json.dumps({"type": "assistant", "message": {"content": [
+        {"type": "tool_use", "name": "x", "input": {}}]}})] * 3  # fmt: skip
+    assert live.parse_stream(lines)["tool_rounds"] == 3
+
+
+def test_report_shows_rounds_against_the_cap():
+    c = live.caps({"tool_rounds": 41, "num_turns": 50, "total_cost_usd": 0.5}, 40, 5.0)
+    rep = score(snap("payment-failure.live-sonnet-2"),
+                load_truth(EV / "payment-failure.live-sonnet-2.truth.json"))  # fmt: skip
+    md = markdown(rep, {"num_turns": 50, "caps": c})
+    assert "tool rounds 41/40" in md and "TURN CAP EXCEEDED" in md
+
+
+@pytest.mark.slow
+def test_run_claude_stops_a_run_past_max_turns(tmp_path):
+    """A fake `claude` that never stops calling tools: the harness kills it after max_turns
+    rounds, whatever the CLI does with --max-turns."""
+    lines = [json.dumps({"type": "system", "subtype": "init", "mcp_servers": [
+        {"name": "plugin:telemetry-nerd:telemetry-nerd", "status": "connected"}]})]  # fmt: skip
+    for i in range(10):
+        lines += _assistant(f"m{i}", f"{live.PLUGIN_MCP}__query") + _results(1)
+    script = tmp_path / "fake_claude.py"
+    script.write_text(
+        "import sys, time\n"
+        f"for line in {lines!r}:\n"
+        "    print(line, flush=True)\n"
+        "    time.sleep(0.01)\n"
+        "time.sleep(30)\n"
+    )
+    out = live.run_claude([sys.executable, str(script)], dict(os.environ), tmp_path,
+                          tmp_path / "t.jsonl", timeout_s=20, max_turns=3, max_budget_usd=1.0)  # fmt: skip
+    assert out["aborted"].startswith("turn cap: 4 tool-use rounds > max_turns 3")
+    assert out["caps"]["stopped_by"] == "harness" and out["caps"]["turns_exceeded"]
+    assert out["duration_s"] < 15

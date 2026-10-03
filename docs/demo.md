@@ -188,7 +188,11 @@ tests or ground truth), `--setting-sources project`, `--permission-mode dontAsk`
 MCP tools (+ Skill, ToolSearch) allowed and Bash/Read/Write/Web denied; the bridge reaches the eval
 daemon via `TN_DAEMON_URL`. Caps: `--model sonnet`, `--max-turns 40` (hard cap), `--max-budget-usd
 5`, `--timeout-s 1800`; a run whose init shows the MCP server not connected is stopped at once.
-Never part of `just test`.
+`--max-turns` limits tool-use rounds (model responses that call tools); Claude Code's reported
+`num_turns` counts the prompt plus every tool result, so with parallel calls it can exceed 40
+(46 in the 2026-10-03 payment run) without the cap being broken. The harness counts rounds
+itself, stops a run past the cap (backstop), and records `caps` (rounds, num_turns, cost against
+both caps, what stopped the run) in run.json and the report. Never part of `just test`.
 
 Criteria (pass/fail/n/a each; report.md + report.json in `build/evals/<scenario>-<ts>/`):
 findings present, **scoped** (source, selector, step, aggregation, time range in the run, every
