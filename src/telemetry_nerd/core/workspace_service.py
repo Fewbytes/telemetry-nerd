@@ -6,7 +6,7 @@ import functools
 import inspect
 import json
 from collections import Counter
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -91,6 +91,7 @@ from telemetry_nerd.core.coverage_check import (
 )
 from telemetry_nerd.core.events import Actor, Event, EventLog, check_actor
 from telemetry_nerd.core.evidence_discipline import (
+    Cover,
     Fetched,
     Listing,
     check_claim,
@@ -348,20 +349,16 @@ class WorkspaceService:
             st["dataset"], st["name"], st.get("method") or "", st["value"]
         )
 
-    def _claim_scope(self, data: FindingIn) -> dict | None:
-        """The claim's scope against its evidence (`evidence_discipline.check_claim`); refuses a
-        claim naming entities its evidence does not cover unless it carries a scope_note.
-        None when no data is cited."""
-        dids = self._evidence_datasets(data)
-        if not dids:
-            return None
+    def _evidence_covers(self, dids: Sequence[str]) -> dict[str, dict[str, Cover]]:
+        """Per evidence dataset, what it covers of each entity label (`evidence_cover`), with
+        single-value witnesses (other datasets, `entities` listings) for pooled series (q1p)."""
         by_dataset = self.datasets.series_labels_by_dataset()
-        metas = self.datasets.list_metas()
         fetched = [
-            Fetched(m.id, m.expr, m.source, m.start_ms, m.end_ms, by_dataset.get(m.id, []))
-            for m in metas
+            Fetched(m.id, m.expr, m.source, m.start_ms, m.end_ms, by_dataset.get(m.id, []),
+                    m.step_ms)
+            for m in self.datasets.list_metas()
             if _readable(m) and m.expr
-        ]
+        ]  # fmt: skip
         covers = {}
         for did in dids:
             meta = self.datasets.meta(did)
@@ -372,13 +369,59 @@ class WorkspaceService:
             ]  # fmt: skip
 
             def single(leaf: str, meta: DatasetMeta = meta, listings: list = listings) -> dict:
-                pooled = Fetched(meta.id, leaf, meta.source, meta.start_ms, meta.end_ms, [])
+                pooled = Fetched(
+                    meta.id, leaf, meta.source, meta.start_ms, meta.end_ms, [], meta.step_ms
+                )
                 return single_values(pooled, fetched, listings)
 
             covers[did] = evidence_cover(
                 meta.expr, by_dataset.get(did, []), _readable(meta),
                 single if _readable(meta) and meta.expr else None,
             )  # fmt: skip
+        return covers
+
+    def _witnessed_scope(self, dids: Sequence[str], selector: str) -> dict[str, tuple[bool, str]]:
+        """For evidence none of whose series carries the labels scope.selector names: does a
+        single-value witness (`single_values`) show its pooled series hold the claimed values?
+        did -> (True, how it was witnessed) | (False, why the witness contradicts the claim);
+        datasets with no witness for some claimed label are left out (still unchecked)."""
+        read = read_expr(selector)
+        if read.alternatives is None:
+            return {}
+        covers = self._evidence_covers(dids)
+        out: dict[str, tuple[bool, str]] = {}
+        for did in dids:
+            cover = covers[did]
+            contra = ""
+            for alt in read.alternatives:
+                wanted = [m for m in alt if m.label != "__name__" and not m.matches("")]
+                seen = [(m, cover.get(m.label)) for m in wanted]
+                if not wanted or any(c is None or c.kind != "values" or not c.via
+                                     for _, c in seen):  # fmt: skip
+                    continue
+                bad = [(m, c) for m, c in seen if not all(m.matches(v) for v in c.values)]
+                if not bad:
+                    out[did] = (True, "scope.selector checked through a single-value witness: "
+                                + "; ".join(c.describe(m.label) for m, c in seen))  # fmt: skip
+                    break
+                m, c = bad[0]
+                contra = (f"scope.selector names {m}, but this evidence pools "
+                          f"{c.describe(m.label)}")  # fmt: skip
+            else:
+                if contra:
+                    out[did] = (False, contra)
+        return out
+
+    def _claim_scope(self, data: FindingIn) -> dict | None:
+        """The claim's scope against its evidence (`evidence_discipline.check_claim`); refuses a
+        claim naming entities its evidence does not cover unless it carries a scope_note.
+        None when no data is cited."""
+        dids = self._evidence_datasets(data)
+        if not dids:
+            return None
+        by_dataset = self.datasets.series_labels_by_dataset()
+        metas = self.datasets.list_metas()
+        covers = self._evidence_covers(dids)
         known = known_entities(by_dataset, {m.id: m.expr for m in metas if _readable(m)})
         metrics_of = {m.id: expr_metrics(m.expr) for m in metas if _readable(m)}
         read = read_expr(data.scope.selector)
@@ -432,6 +475,16 @@ class WorkspaceService:
                 (blocking if c.severity == "blocks_claim" else warnings).append(
                     f"{did}: {c.message}"
                 )
+        if unchecked and data.scope.selector:
+            # pooled evidence whose series hold one value of the claimed label (a single-value
+            # witness, q1p/ipqy): every series is that value's, so the check above judged them
+            for did, (ok, why) in self._witnessed_scope(unchecked, data.scope.selector).items():
+                if ok:
+                    unchecked.remove(did)
+                    scope_notes.setdefault(why, []).append(did)
+                elif why:
+                    unchecked.remove(did)
+                    blocking.append(f"{did}: {why}")
         if mismatched and len(mismatched) == checked:
             blocking = mismatched + blocking
         else:
@@ -440,7 +493,10 @@ class WorkspaceService:
                 blocking.append(
                     f"{', '.join(unchecked)}: no evidence carries the labels scope.selector names "
                     "(none of its label matchers applies to any evidence series), so nothing "
-                    "checked the claimed series."
+                    "checked the claimed series. Pooled evidence counts as one label value's only "
+                    "when a witness shows the pooled series hold that value alone: a dataset of "
+                    "the same metric by that label, or an entities listing over the range finding "
+                    "one value."
                 )
         warnings += [f"{', '.join(dids)}: {msg}" for msg, dids in scope_notes.items()]
         if blocking:

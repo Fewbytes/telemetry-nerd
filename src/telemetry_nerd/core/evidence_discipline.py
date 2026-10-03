@@ -206,6 +206,9 @@ class Fetched:
     start_ms: int
     end_ms: int
     series: Sequence[Mapping[str, str]]
+    #: the dataset's resolution: a witness window may fall short of its range by up to one step
+    #: (a listing taken "now" ends a scrape before a range rounded up to the next step, ipqy)
+    step_ms: int = 0
 
 
 @dataclass(frozen=True)
@@ -234,7 +237,10 @@ def single_values(
     whole source or of the same metric, complete (not truncated). When every witness shows the
     same single value, the pooled series hold that value only (`sum(x)` over x{service="checkout"}
     alone is about checkout; a source whose service label has one value in the window is about
-    that service). No witness, or two values: nothing (the pooled cover stays pooled).
+    that service). "Holding the range" allows one step of the pooled dataset at either edge
+    (`Fetched.step_ms`): a range rounded to its step may start or end a scrape interval past a
+    window ending "now", and that edge bucket is one sample (ipqy). No witness, or two values:
+    nothing (the pooled cover stays pooled).
     `others` must be datasets whose expr is the query that produced them."""
     read = read_selector(pooled.expr)
     if read.matchers is None:
@@ -243,12 +249,14 @@ def single_values(
     if len(names) != 1 or any(m.label == "__name__" and m.op != "=" for m in read.matchers):
         return {}
     rest = {m for m in read.matchers if m.label != "__name__"}
+    tol = max(pooled.step_ms, 0)
+    lo, hi = pooled.start_ms + tol, pooled.end_ms - tol  # a witness window must hold [lo, hi]
     seen: dict[str, set[str]] = {}
     via: dict[str, list[str]] = {}
     for w in others:
         if w.id == pooled.id or w.source != pooled.source or not w.series:
             continue
-        if w.start_ms > pooled.start_ms or w.end_ms < pooled.end_ms:
+        if w.start_ms > lo or w.end_ms < hi:
             continue
         wr = read_selector(w.expr)
         if wr.matchers is None:
@@ -273,7 +281,7 @@ def single_values(
             continue
         if not li.values or any(m.label == li.label for m in rest):
             continue
-        if li.start_ms > pooled.start_ms or li.end_ms < pooled.end_ms:
+        if li.start_ms > lo or li.end_ms < hi:
             continue
         if li.metric is not None and base_name(li.metric) != base_name(name):
             continue

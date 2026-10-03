@@ -286,3 +286,91 @@ async def test_service_reads_the_entities_listing_as_witness(tmp_path, services,
     f = svc.ws.finding_create(_f3(), "claude")
     assert f.scope_check is not None and f.scope_check.status == "covered"
     assert "entities(service: one value over" in f.scope_check.message
+
+
+# --- ipqy: eval round 4 (overload_spike.live-sonnet-4) -----------------------------------------
+# check_littles_law pooled concurrency as d4 = `sum (http_server_active_requests)` (no labels)
+# over 16:24:00-16:36:00 at 5 s; entities(kind=service) had listed one service (checkout) and one
+# job over 15:35:58-16:35:58, a window ending 2 s before the range. Four finding_create calls
+# scoped {service="checkout"} / {job="qs-overload_spike"} were refused by the coverage check
+# ("no evidence carries the labels scope.selector names").
+
+RUN4 = json.loads(
+    (Path(__file__).parents[1] / "fixtures/evals/overload_spike.live-sonnet-4.snapshot.json")
+    .read_text()
+)  # fmt: skip
+D4 = RUN4["exprs"]["d4"][0]
+JOB = "qs-overload_spike"
+F4_CLAIM = ("Over 16:24-16:36 checkout's mean in-flight L=110.9 (CI 106.4-115.4) matches "
+            "lambda*W=110.4 (ratio 1.005)")  # fmt: skip
+
+
+class RoundFourSource(OneServiceIndex):
+    """One service (or several), one job, as the round-4 queue-sim exporter."""
+
+    async def label_values(self, label, match=(), rng=None, limit=None):
+        if label == "job":
+            return [JOB]
+        return await super().label_values(label, match, rng, limit)
+
+
+def _f4(selector: str, claim: str = F4_CLAIM) -> FindingIn:
+    return FindingIn.model_validate({
+        "claim": claim,
+        "scope": {"source": "default", "selector": selector,
+                  "time_range": {"start_ms": NOW - 720_000, "end_ms": NOW}, "step": "5s",
+                  "aggregation": "sum"},
+        "evidence": [{"kind": "statistic", "dataset": "d1", "name": "mean", "value": 3.0,
+                      "method": "mean of buckets", "interval": [2.9, 3.1]}],
+    })  # fmt: skip
+
+
+async def _round4(tmp_path, services=("checkout",), listing_end="now-2s"):
+    assert D4 == "sum (http_server_active_requests)"
+    svc = make_service(tmp_path, RoundFourSource(services))
+    await svc.entity_index.entities(source="default", kind="service", window="1h", end=listing_end)
+    # d1: the pooled dataset cited; d2: another metric naming the service (the claim names a
+    # value the workspace has seen) over a range too short to witness d1
+    await svc.query(D4, start="now-12m", end="now", step="5s")
+    await svc.query("up", start="now-2m", end="now", step="5s")
+    return svc
+
+
+@pytest.mark.parametrize("selector", ['{service="checkout"}', f'{{job="{JOB}"}}'])
+async def test_round4_pooled_littles_dataset_covers_the_one_service(tmp_path, selector):
+    svc = await _round4(tmp_path)
+    f = svc.ws.finding_create(_f4(selector), "claude")
+    assert f.scope_check is not None and f.scope_check.status == "covered"
+    assert "single-value witness" in f.scope_check.message
+    # the coverage check says how it judged the claimed label: never silently
+    assert any("checked through a single-value witness" in c and "entities(" in c
+               for c in f.caveats), f.caveats  # fmt: skip
+
+
+async def test_round4_two_services_still_refused(tmp_path):
+    svc = await _round4(tmp_path, services=("checkout", "cart"))
+    with pytest.raises(ValueError, match="no evidence carries the labels scope.selector names"):
+        svc.ws.finding_create(_f4('{service="checkout"}'), "claude")
+
+
+async def test_round4_listing_ending_well_before_the_range_is_no_witness(tmp_path):
+    # one step (5 s) of tolerance, not a minute: the source may have changed since
+    svc = await _round4(tmp_path, listing_end="now-1m")
+    with pytest.raises(ValueError, match="insufficient coverage"):
+        svc.ws.finding_create(_f4('{service="checkout"}'), "claude")
+
+
+async def test_round4_witness_naming_another_service_is_a_contradiction(tmp_path):
+    svc = await _round4(tmp_path, services=("cart",))
+    with pytest.raises(ValueError, match=r'service="cart" \(pooled over its only service value'):
+        svc.ws.finding_create(_f4('{service="checkout"}', "the pool held 3 requests"), "claude")
+
+
+def test_listing_tolerates_one_step_of_the_pooled_range():
+    pooled = Fetched("d4", D4, "default", 100_000, 820_000, [], 5_000)
+    assert single_values(pooled, [], [listing(start_ms=0, end_ms=818_000)]) == {
+        "service": ("checkout", ["entities(service)"])
+    }
+    assert single_values(pooled, [], [listing(start_ms=0, end_ms=814_000)]) == {}
+    assert single_values(pooled, [], [listing(start_ms=105_000, end_ms=900_000)]) != {}
+    assert single_values(pooled, [], [listing(start_ms=106_000, end_ms=900_000)]) == {}
