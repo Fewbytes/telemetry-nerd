@@ -46,7 +46,7 @@ what a tier-1 tool returned.
    (`d3`). Look at a panel before computing: a chart catches wrong joins and gaps.
 3. **Declare inputs up front**: `run_code(code, inputs=["d3", "d5"])`. They are exported before
    the run; reading an undeclared handle fails.
-4. **Never paste bulk data** into code or the answer, and never print rows. Read with
+4. **Never paste bulk data** into code or the answer, and never print rows (principle 6). Read with
    `tn.dataset`, print a few aggregate numbers, store results with `tn.put`.
 5. **Declare uncertainty or exactness on every output** (next section).
 6. **Draw the result** with `show(dataset)` using `outputs[].dataset` from the result. Name the
@@ -57,6 +57,9 @@ Defaults: `timeout_s` 120 s (a larger value has a maximum). The result lists `is
 that were not ingested (uncommitted, invalid): read them before assuming the output exists.
 
 ## Declaring uncertainty
+
+Principle 4 (`docs/principles.md`): unknown is citable but flagged, errors propagate maximally,
+derive before giving up.
 
 | Output | Declare | How |
 |---|---|---|
@@ -146,7 +149,7 @@ as a panel). Uncertainty problems come back as flags in the result
 (`uncertainty: [{evidence, flag, message}]`: `uncertainty_unknown`, `input_uncertainty_unknown`,
 `uncertainty_not_propagated`), are stored on the finding and shown to the user: quote them.
 
-**When code reports variation or a deviation, declare its source** (spec §5.4) on the cited
+**When code reports variation or a deviation, declare its source** (principle 8; spec §5.4) on the cited
 statistic, `"source": ...`, and in the claim: `common_cause` (the system's inherent spread: a
 fit's residual scatter, a prediction band, a fleet or cycle-to-cycle spread), `special_cause`
 (beyond that envelope: a shift, an outlier, a trend break), `measurement_system` (error the

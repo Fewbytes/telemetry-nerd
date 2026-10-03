@@ -8,9 +8,9 @@ description: This skill should be used when recording or stating any conclusion 
 A claim in Telemetry Nerd is a **finding**: a scoped statement backed by evidence objects the
 user can open. Hypotheses are explanations under test; gaps are signals that would be needed but
 do not exist. The rules below are binding: correct over conventional, never what a dashboard
-habit suggests.
+habit suggests. They apply the project's principles (`docs/principles.md`, cited by number).
 
-## What counts as evidence
+## What counts as evidence (principle 1)
 
 | Evidence item | Shape in `finding_create` | Counts when |
 |---|---|---|
@@ -24,7 +24,7 @@ statistic, a percentile without its sample count, an averaged percentile, a fit 
 `weak_fit`. Prefer the op's own `evidence` statistic over restating its numbers: it carries the
 method, the interval, the dataset and the source label.
 
-## Scope every claim
+## Scope every claim (principle 2)
 
 `scope` is required: `{source, selector, start, end, step, aggregation, baseline_start?,
 baseline_end?}`. `step` is the dataset's resolved step from its summary (`1m`), never `auto`
@@ -50,9 +50,9 @@ series are never finite, so scope every negative claim to the interval and membe
 never extend it to the series, the service or the future. A series silent until the window end
 is "no samples since 10:45Z", not "left"; a gap with samples on both sides is an observed
 disconnect. When the negative question matters, name the wider check that would test it (for
-example: is the set of `pod` values per bucket the same over the previous day).
+example: is the set of `pod` values per bucket the same over the previous day). Principle 9.
 
-## Uncertainty policy
+## Uncertainty policy (principle 4)
 
 1. **Every statistic states its uncertainty**: an interval, `exact`, or
    `uncertainty_unknown: true`. Derive an interval before giving up (Wilson for shares, Poisson
@@ -67,12 +67,12 @@ example: is the set of `pod` values per bucket the same over the previous day).
 4. **Read the `finding_create` result.** Its `uncertainty` list names flags the server derived
    per evidence item; repeat them when reporting the finding.
 
-Percentiles: never average them across series or time, never cite one without its n
+Percentiles (principle 10): never average them across series or time, never cite one without its n
 (n >= 10/(1-q): p95 ~200, p99 ~1000), and prefer the share of requests above a stated edge
 (`fraction_over`, exact at bucket edges) as the statistic. A percentile statistic needs
 `params.q` and `params.n`; the server refuses it without n, or with n below 10/(1-q).
 
-## Sources of variation
+## Sources of variation (principle 8)
 
 Every variation gets a source label (wire values in backticks). Ops assign them: `source` on
 items and on `evidence` statistics, `variation` lists in results.
@@ -90,15 +90,15 @@ Separate measurement-system findings from process findings: "the gauge misses in
 its own finding, not a caveat on a latency claim. A `common_cause` result supports "nothing
 beyond normal variation was detected", which can rule a hypothesis out.
 
-## Always show the discrepancy
+## Always show the discrepancy (principle 12)
 
 A verdict is context, never a replacement for the measured numbers. Lead with the measured
 difference and its interval (L − λW, a ratio, a share before and after), then the verdict.
 "Consistent", "usual" and "no change" mean "nothing detected at this precision against this
 reference", not "healthy" or "correct". Every re-run with another range, reference or alpha is
-another look; count the looks.
+another look; count the looks (principle 14).
 
-## Hypotheses: for, against, ruled out
+## Hypotheses: for, against, ruled out (principle 13)
 
 1. `hypothesis_create(statement)` as soon as an explanation is entertained, and record the
    competing ones too (load, saturation, one bad member, the daily peak, a dependency, the

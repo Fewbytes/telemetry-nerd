@@ -144,7 +144,7 @@ accepts both shapes during migration.
 |---|---|
 | `observed` | samples in the bucket (today's `count`) |
 | `expected` | step / series' own sample interval (see below) |
-| `state` | `ok` · `partial` (observed/expected < 0.9) · `empty` (alive, 0 samples) · `absent` (outside first/last seen) · `unknown` (fetch failed, outside retention, source can't tell) |
+| `state` | `ok` · `partial` (observed/expected < 0.9) · `empty` (alive, 0 samples) · `absent` (before the first sample in the window: not alive yet; trailing silence is `empty`, principle 9) · `unknown` (fetch failed, outside retention, source can't tell) |
 | `flags` | bitmask: `reset`, `interval_change`, `stale_marker`, `source_filled` |
 | `reason` | for `unknown`/`source_filled`: short code from the source profile or error |
 
@@ -227,7 +227,8 @@ Dataset level: failed spans with error text (never cached; retried on next read)
 - `coverage` = Σobserved / Σexpected over alive members that are not `unknown`: `unknown` is
   neither present nor missing (no trustworthy information), so it is out of numerator and
   denominator (1 unknown member of 44: coverage of the other 43)
-- `silent` = alive members that are `empty` → join the outlier set
+- `silent` = alive members that are `empty` → listed beside the outliers (source undetermined,
+  principles 8 and 11)
 - state: `unknown` if any member `unknown`; else `ok` if reporting = alive; else `partial`
   (`empty` if reporting = 0); flags OR-ed
 - values computed over reporting < alive carry a `missing_data` caveat ("band over 41/44")

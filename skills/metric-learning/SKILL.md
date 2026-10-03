@@ -13,8 +13,9 @@ becomes a wrong axis.
 
 ## Precedence
 
-user > **claude (you)** > stats > pack > metadata > rule. You outrank packs, metadata and name
-rules; you never outrank the user, and you do not try. If your write comes back
+user > **claude (you)** > stats > context (repo code, docs, dashboards) > pack > metadata > rule
+(principle 15, `docs/principles.md`). You outrank packs, metadata and name rules; you never
+outrank the user, and you do not try. If your write comes back
 `effective: false`, someone outranks you: accept it.
 
 ## Procedure
@@ -45,7 +46,7 @@ Read the findings before overriding a pack or the source's declaration, and cite
 
 What a scan and the catalog record about the instruments (resets, a counter that decreases, the
 scrape interval, units, which members report) is the **measurement system**, one of the three
-sources of variation the analysis ops label (spec §5.4). Analyses lean on it to tell instrument
+sources of variation the analysis ops label (principle 8; spec §5.4). Analyses lean on it to tell instrument
 error apart from process variation, so a wrong unit or interval claim moves variation into the
 wrong source: record such facts with evidence, and say when they are unknown.
 

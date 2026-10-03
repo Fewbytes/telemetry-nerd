@@ -8,16 +8,18 @@ semantics of the series-bundles spec (§5.2, §7.1: alive / reporting / silent).
 
 ## Principles
 
-- **Never aggregate percentiles across members.** Percentile datasets (representation `quantile`,
+Principles 4, 8, 9, 10, 11 and 14 apply (`docs/principles.md`). Consequences for this op:
+
+- **No percentile aggregation across members** (principle 10). Percentile datasets (representation `quantile`,
   `histogram_quantile` / `quantile_over_time` expressions, summary series with a `quantile` label)
   are refused with a hint: compare per-member *rates* or *threshold fractions* (fraction_over), or
   the histograms. The median of member p99s is not the fleet p99.
 - The fleet at a step is a **population, not a sample**: per-step quantiles across members are
   descriptive (no interval), computed only over members that reported at that step. Missing members
-  reduce n; nothing is imputed, interpolated or carried forward. n per step is returned and drawn.
+  reduce n; nothing is imputed, interpolated or carried forward (principle 11). n per step is returned and drawn.
 - Outliers are judged **relative to the fleet**, with robust statistics that the outliers cannot
   move (median / MAD, leave-one-out), and with the multiple comparisons across members x tests x
-  steps controlled (family-wise 1%).
+  steps controlled (family-wise 1%; principle 14).
 - Units must agree across members (one metric, or names whose catalog units agree); else refused.
 - Distributions and raw counters are refused as for every time op.
 
@@ -207,7 +209,8 @@ dataset whose op drops it) the fleet falls back to presence from values and says
   only.
 - `stopped_reporting`: last seen before the end (same tolerance, known steps), with `since` and
   `state`: `ended` when a staleness marker (bucket_state flag `stale_marker`) is on its buckets
-  from the last sample on (the source says the target or series went away), else `silent`
+  from the last sample on (the source marked the target or series stale; principle 9: report it
+  as "marked stale since T", not as "left": a wider window may show it return), else `silent`
   (alive, no samples, spec §5.2: listed next to the outliers, never silently dropped). Today no
   adapter sets `stale_marker`: Prometheus-family range queries never carry staleness markers
   (`stale_marker_visible` is false for Prometheus, Thanos, Mimir; VictoriaMetrics shows them only

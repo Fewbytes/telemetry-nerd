@@ -5,12 +5,13 @@ description: This skill should be used when choosing how to draw telemetry in Te
 
 # Charting: which view answers which question
 
-Every panel answers one explicit question (`show(dataset, question)`); phrase the question
-first, then pick the view that answers it. The chart is evidence only for that question.
+Every panel answers one explicit question (`show(dataset, question)`, principle 5); phrase the
+question first, then pick the view that answers it. The chart is evidence only for that question.
+The rules below apply principles 3, 10 and 11 (`docs/principles.md`).
 
 ## Binding rules
 
-- **Never average percentiles**, across series or time. Aggregate the histogram, then draw
+- **Never average percentiles** (principle 10), across series or time. Aggregate the histogram, then draw
   the distribution or take the quantile once. A percentile series is refused by fleet, SPC
   (`analyze`), spectrum and filters; `compare_seasonal` re-fetches the histogram per cycle
   (summary quantiles are refused).
@@ -70,7 +71,8 @@ wiggle on a large signal looks small. Offer other views; the user picks:
   and limit default to on where the data exists, ghost to off (it fetches last week).
 - `reframe(panel, index)`: accept a proposed reframing (available instead of free memory, used
   as a share of its limit). Propose it in the reply first.
-- Never re-query to hide an outlier: change the view, keep the data.
+- Never re-query to hide an outlier: change the view, keep the data. Gaps stay gaps (principle
+  11).
 
 ## Panel groups and fleet views
 

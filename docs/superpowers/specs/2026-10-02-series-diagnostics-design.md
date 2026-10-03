@@ -7,12 +7,15 @@ run rules and EWMA/CUSUM on per-series deviations.
 
 ## Principles (carried over)
 
+Principles 4, 10, 11 and 14 apply (`docs/principles.md`). Consequences for this op:
+
 - Preconditions as for `spectrum`: percentile series, distributions and raw counters are refused
-  with hints (`time_op_problem`); gaps are never interpolated: autocorrelation uses only pairs
+  with hints (`time_op_problem`; principle 10); gaps are not interpolated (principle 11): autocorrelation uses only pairs
   of observed points `k` steps apart, run rules break at gaps.
 - Every statistic carries an interval or a stated n (exact counts). Intervals use the
   **effective sample size** (n_eff = n / τ_int), never the raw n.
-- SPC limits come from a **stated baseline window**, never from the data being judged. Default
+- SPC limits come from a **stated baseline window**, never from the data being judged
+  (principle 14). Default
   baseline: the first half of the dataset range; the judged window is everything outside it.
 - Verdict says `insufficient_data` instead of guessing.
 - No scipy: numpy + `statistics.NormalDist` + small closed forms (documented below).

@@ -7,14 +7,16 @@ autocorrelation / n_eff (lkn.1) and the red-noise spectrum (lkn.4).
 
 ## Principles
 
+Principles 4, 10, 11 and 14 apply (`docs/principles.md`). Consequences for this op:
+
 - The reference is chosen from the data and **stated**: which cycles, how many, how they are
   aligned (UTC or a named timezone), which were excluded and why.
 - Uncertainty comes from what previous cycles actually did at the same phase (leave-one-cycle-out
   residuals), not from within-window noise and not from one reference cycle.
-- Percentiles are never aggregated across cycles: for a percentile series with a known histogram,
+- Percentiles are not aggregated across cycles (principle 10): for a percentile series with a known histogram,
   or a distribution dataset, the histogram is compared per cycle (see Latency, lkn.7); summary
   quantiles are refused with a hint. Raw counters are refused as for other time ops.
-- Gaps are never interpolated: a phase is compared only where now and >= 3 cycles have data.
+- Gaps are not interpolated (principle 11): a phase is compared only where now and >= 3 cycles have data.
 - Fewer than 3 usable cycles -> `insufficient_history`, saying what was found.
 
 ## References (schemes)

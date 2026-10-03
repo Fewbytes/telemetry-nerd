@@ -36,6 +36,9 @@ Telemetry Nerd draws telemetry the way a careful scientist would:
 - **Claims are scoped.** Hypotheses and findings are typed objects with the evidence attached,
   so you can check what Claude concluded and why.
 
+The full set of design principles, with the decisions behind them, is in
+[`docs/principles.md`](docs/principles.md).
+
 ## It knows what your metrics mean
 
 A metric name is not enough to draw or analyse it correctly. A counter, a gauge and a

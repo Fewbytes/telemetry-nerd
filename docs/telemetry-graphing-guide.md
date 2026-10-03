@@ -5,12 +5,13 @@ How Telemetry Nerd draws telemetry. Distilled from two research reports
 `research-docs/Telemetry Data UX Design Guide - gemini research.md`, cited as **[G]**),
 two Heinrich Hartmann sources (SREcon19 "Latency SLOs Done Right" slides **[H]**, the
 Statistics-for-Engineers workshop notebooks **[SfE]**), and design decisions made while
-reviewing them (**TN**). Filtered through this project's principles (MVP spec §1.2, §6)
+reviewing them (**TN**). Filtered through this project's principles (`docs/principles.md`;
+MVP spec §6)
 and checked against the current UI code.
 
 This is not a dashboard guide. Telemetry Nerd is an **investigation workspace**: every
 panel answers one explicit question, every claim is scoped and evidence-backed, and
-*correct beats conventional* (spec §1.2.3). Rules that only make sense for NOC wallboards
+*correct beats conventional* (principle 3). On any conflict, `docs/principles.md` wins. Rules that only make sense for NOC wallboards
 are dropped (see §9).
 
 **We are not limited to common chart types.** Panels render on canvas. When a
@@ -87,14 +88,14 @@ Hard rules are enforced by the validator (`src/telemetry_nerd/charts/spec.py`) a
 errors; overriding needs `override: {rule, reason}` and renders a caveat (spec §6.3).
 
 1. **Quantities by position on a common scale.** [E, C rule 1]
-2. **Every panel answers one question**, shown in its header. [TN §1.2.5]
+2. **Every panel answers one question**, shown in its header. [TN principle 5]
 3. **Mean never alone for latency-like data.** Distribution or tail must be visible. [P, C rule 10, D2]
-4. **Never average percentiles.** Not across time, not across series, not in captions. [P2, C P8; TN]
+4. **Never average percentiles.** Not across time, not across series, not in captions. [P2, C P8; TN principle 10]
 5. **Downsampling must preserve extremes.** Mean line + min/max envelope; never
    peak-eroding averages or LTTB for evidence views. [P, C R5; M4 via G]
 6. **Missing data is shown, not just omitted.** "No info" is information. No
    interpolation, no zero-fill; "no data" ≠ 0 ≠ "don't know". Gaps, partial buckets,
-   series lifetimes and failed fetches are drawn (§5a). [P2, C G1–G4; SfE; TN]
+   series lifetimes and failed fetches are drawn (§5a). [P2, C G1–G4; SfE; TN principle 11]
 7. **No dual y-axes.** Small multiples with shared x, or an indexed (ratio) chart. [TN; G]
 8. **No stacking of non-additive quantities** (gauges, ratios, percentiles). Stacked
    areas also hurt individual-series reading even when additive. [TN; E2, C §2]
@@ -102,7 +103,7 @@ errors; overriding needs `override: {rule, reason}` and renders a caveat (spec �
    honestly). [TN]
 10. **Colour carries meaning, never alone.** Pair with position, shape, label or order. [P, C rule 8]
 11. **Uncertainty and aggregation travel with the number** (count, n_min, CIs, step,
-    representation in the provenance footer). [TN §1.2.4]
+    representation in the provenance footer). [TN principle 4]
 12. **Lines are stepped by default.** Each plotted value stands for its bucket's interval;
     connecting bucket values "adds the illusion of continuity". Connected lines only on
     explicit request, with a caveat. [P, SfE; TN]
@@ -113,7 +114,7 @@ errors; overriding needs `override: {rule, reason}` and renders a caveat (spec �
     clean panel carries no caveat chrome. [TN]
 14. **Only mergeable statistics are aggregated** (count, sum, min, max; mean and ratios
     only with their counts). Percentiles, medians, MAD/IQR and pre-computed quantiles are
-    recomputed from merged histograms or raw data, never combined. [P, SfE; H]
+    recomputed from merged histograms or raw data, never combined. [P, SfE; H; TN principle 10]
 
 ---
 
@@ -324,7 +325,7 @@ state means something different and must look different:
 | `ok` | observed ≈ expected samples | (no rug if every bucket is ok) | normal |
 | `partial` | observed/expected < 0.9 | grey fill ∝ missing share | faded |
 | `empty` | series alive, 0 samples | solid grey | dot texture |
-| `absent` | series not alive (before first / after last seen) | dotted line | — |
+| `absent` | series not alive yet (before its first sample in the window; trailing silence is `empty`, principle 9) | dotted line | — |
 | `unknown` | fetch failed, outside retention, source can't tell | hatch | hatch texture |
 
 Flags on top of the states: `reset` (↺ on the plot), `interval_change` (axis tick),
@@ -339,8 +340,9 @@ Flags on top of the states: `reset` (↺ on the plot), `interval_change` (axis t
 - **Missing is rarely random.** The member that stops reporting is often the sick one
   (OOM-killed, saturated, partitioned), so a band over the survivors looks healthy *because*
   the sick ones dropped out.
-  - A member that goes silent while still alive is an **outlier**: it is listed and drawn
-    with the value outliers.
+  - A member that goes silent while still alive is listed and drawn **beside** the value
+    outliers, labelled source undetermined (gone or sick: the data cannot tell; principle 8).
+    Report it as "no samples since T", never as "left" (principle 9).
   - The group cloud normalizes intensity by **alive** members, so silent members visibly
     thin it.
   - Values over buckets where reporting < alive carry a caveat ("band over 41/44").

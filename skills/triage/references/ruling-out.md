@@ -19,4 +19,4 @@ with `stance` for or against, then `hypothesis_update`.
 
 Notes: "not refuted" is not "supported", timing is not cause, and an `undetermined` result is
 neither for nor against. Ruling out is a negative claim: it holds for the window and members
-examined, not beyond ("no deploy event in 09:50-10:05Z", not "no deploy"). Status rules and wording: the `evidence` skill.
+examined, not beyond ("no deploy event in 09:50-10:05Z", not "no deploy"; principle 9). Status rules and wording: the `evidence` skill.

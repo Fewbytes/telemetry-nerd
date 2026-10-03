@@ -20,46 +20,14 @@ conclusions.
 
 ### 1.2 Design principles
 
-1. **Evidence first.** Every claim links to evidence (panel, dataset statistic,
-   annotation). Claims without evidence cannot be recorded as findings.
-2. **Scoped claims.** Every finding carries an explicit scope (source, selector, time
-   range, step, aggregation, optional baseline). Claude must not generalize beyond scope.
-   Enforced by schema, not by prompting.
-3. **Correct over conventional.** When industry-standard practice is wrong or misleading
-   (averaging percentiles, peak-eroding downsampling, autoscaled axes, spaghetti charts,
-   dual y-axes), we do the right thing and explain why. We model on scientific
-   computing (MATLAB, R, epidemiology, physics), not on dashboard tools. Conventional
-   views are available only on explicit user request and carry a caveat.
-4. **Every number carries its uncertainty and its aggregation.** Intervals, counts,
-   min/max envelopes, and representation metadata travel with the data. Where the
-   uncertainty is not known it is said to be unknown, visibly — never treated as zero
-   (§5.3).
-5. **Every graph answers an explicit question.** Panels cannot be created without one.
-6. **Bulk data never enters Claude's context.** Claude works with handles and compact
-   summaries; the server holds the data.
-7. **The workspace is the single source of truth.** Claude, the UI, and tier-2 code all
-   mutate the same object model through the same operation layer.
-8. **Every variation is labelled with its source** (SPC's central insight; user decision
-   2026-10-03). Variance, noise and error do not share one cause: **common cause** (the
-   system's inherent variability; the limits/bands are its envelope; act by changing the
-   system, never chase a point inside it), **special cause** (assignable: out-of-limit points,
-   run-rule signals, shifts, transients, leaving steady state; investigate) and the
-   **measurement system** (instrumentation error and bias: sampling, edges, unmeasured
-   segments, units, missing members, partial or untrusted data). When the data cannot tell
-   them apart the label is **source undetermined** — never a guess. Labels add context; they
-   never hide or replace the measured numbers (§5.4).
-9. **Positive claims vs negative claims** (user decision 2026-10-03). A positive claim says
-   something *was observed* ("pod x had no samples 10:20–10:45", "p99 exceeded 2 s in 14 of 60
-   buckets"); one observation proves it. A negative or universal claim says something is
-   *absent* or *complete* ("nothing is missing", "every member reported", "pod x left", "it never
-   recurred"); it holds only over a finite set we have fully examined. Telemetry is never such a
-   set: a time series keeps growing, members join and leave, sources drop and backfill. So
-   negative claims are made only about the scoped past interval and the members actually
-   analyzed ("no gap in the 6 h examined, for the 20 pods returned"), never about the series,
-   the service or the future. Trailing silence is "no samples since T", not "left" or "ended" —
-   a wider window may show it return; a gap bounded by samples is a positively observed
-   disconnect. Where a negative question matters, say what wider check would test it (e.g. is
-   set(pod) per bucket consistent over a longer window) instead of asserting it.
+Canonical text, decision dates and enforcement: **[`docs/principles.md`](../../principles.md)**
+(it wins on any conflict with this spec). Numbers are stable: 1 evidence first · 2 scoped claims ·
+3 correct over conventional · 4 every number carries its uncertainty and aggregation (§5.3) ·
+5 every graph answers an explicit question · 6 bulk data never enters Claude's context · 7 the
+workspace is the single source of truth · 8 every variation is labelled with its source (§5.4) ·
+9 positive vs negative claims · 10 only mergeable statistics are aggregated · 11 missing data is
+information · 12 show the discrepancy · 13 hypotheses, not verdicts · 14 decide before looking ·
+15 learned facts carry their origin.
 
 ### 1.3 Personas
 
@@ -317,7 +285,7 @@ CIs and tests use block bootstrap or effective sample size by default.
 
 **Uncertainty defaults:** Wilson intervals for ratios, Poisson intervals for small counts,
 bucket-edge bounds for histogram quantiles, cross-series spread for aggregates. Every op
-derives an interval for what it reports (§5.3, principle 3); an op over a dataset whose
+derives an interval for what it reports (principle 4; §5.3 rule 3); an op over a dataset whose
 uncertainty is unknown still reports its own interval, flagged `input_uncertainty_unknown`.
 
 **Histograms first:** when histograms exist, latency is analysed as a distribution
@@ -438,21 +406,19 @@ thread cannot be reliably timed out.
 
 ### 5.3 Uncertainty policy
 
-**Decision (2026-10-02, user; beads x2x, x2x.1, dl7, 4jk).** Three principles:
+**Decision (2026-10-02, user; beads x2x, x2x.1, dl7, 4jk).** Principle 4 and its three rules
+(unknown is unknown, not zero and not forbidden; error aggregation is maximalist; derive before
+giving up) are stated in `docs/principles.md`. Consequences specific to this spec:
 
-1. **Unknown is unknown, not zero and not forbidden.** A value without a known uncertainty
-   (`no_uncertainty`) has *unknown* trust. It may be cited, but everything that cites it
-   says "uncertainty unknown" visibly; it is never silently treated as exact, and never
-   refused for that reason alone. Refusals are kept for fabrication only (a fit parameter
-   not cited exactly as stored, a fit cited as a panel).
-2. **Error aggregation is maximalist.** Errors propagate through transforms (delta method /
-   derivatives, residuals, interval arithmetic, Monte Carlo over input intervals); where
-   propagation is not possible the worst case (the max) is taken. A later step's declared
-   interval never shrinks the error below what propagation implies: an interval that left
-   out its inputs' error is marked as a lower bound.
-3. **Derive before giving up.** External tools and transforms often report no uncertainty;
-   derive one where possible (bootstrap, effective n, bucket bounds, Wilson/Poisson,
-   propagation) before falling back to "unknown".
+1. A value without a known uncertainty (`no_uncertainty`) is never refused for that reason
+   alone. Refusals are kept for fabrication only (a fit parameter not cited exactly as stored,
+   a fit cited as a panel).
+2. Propagation methods: delta method / derivatives, residuals, interval arithmetic, Monte Carlo
+   over input intervals, else the max. A later step's declared interval never shrinks the
+   error below what propagation implies: an interval that left out its inputs' error is marked
+   as a lower bound (the statuses below).
+3. Derivation before "unknown": bootstrap, effective n, bucket bounds, Wilson/Poisson,
+   propagation.
 
 **Dataset uncertainty status** (caveat codes, `exchange.fmt.UNCERTAINTY_STATUS`; at most
 one per dataset; recomputed for each output, never inherited from a parent as is):
@@ -530,7 +496,7 @@ changed by a label; a verdict stays context.
 |---|---|---|---|---|
 | `analyze` (SPC) | control limits (centre ± 3σ from the baseline), stable / periodic structure, wandering or heavy-tailed noise | points beyond limits, run rules, EWMA/CUSUM signals when the chart is out of control; level shifts; drift; variance change | gaps, partial / missing / untrusted data, post-gap spikes, coarsening, unknown input uncertainty | violations no more frequent than the chart's false-alarm expectation (in control) |
 | `compare_seasonal` | the cycle-to-cycle spread (normal band) and a usual window | an unusual level, extremes, too many points outside the band; atypical reference cycles (a special cause in the history) | cycles excluded as missing; data caveats | cycles the user excluded (reason not stated) |
-| `fleet` | the fleet's per-step spread; behaviour groups (systemic structure: strata of the fleet) | outlying members (persistent, shifted, drifting, transient) | unknown spans, members missing / skipped, ended members | a member that went silent (ended or sick); an outlier episode on partial buckets |
+| `fleet` | the fleet's per-step spread; behaviour groups (systemic structure: strata of the fleet) | outlying members (persistent, shifted, drifting, transient) | unknown spans, members missing / skipped, members the source marked stale (wire state `ended`) | a member with no samples since T (gone or sick: the data cannot tell; principle 9); an outlier episode on partial buckets |
 | `binding_verdict` | a role with no change against its reference cycles | a role that changed (level / episode) and its onset | data caveats per role | a change on data with measurement-system caveats |
 | `check_littles_law` | the small-system envelope; windows inside it (a load-peak window inside it: "not a signal by itself") | transient windows beyond measurement interval and envelope; load-peak windows promoted on independent evidence of leaving steady state (backlog growth, W rising across consecutive windows, peak-to-peak growth; own 5% FWER; 83w) | the measurement interval; a systematic offset | — |
 

@@ -31,8 +31,9 @@ change that matches it.
   finding; `no_change` means no detected change at this power; the others are about the data.
 - `direction`: higher / lower than the reference.
 - `pattern`: `level` (window differs, no onset inside it), `shift` (one change point), `burst`
-  (an episode that ended), `blip` (a short episode that ended), `sustained` (still open at the
-  end).
+  (an episode that ended inside the window: blocks after it show the return), `blip` (a short
+  episode that ended inside the window), `sustained` (still open at the window end; principle 9:
+  not "it never recovered").
 - `onset`: `at` plus `interval` and `basis` (an episode's CUSUM, or a change point with an interval
   from the data). The interval is the claim; `at` alone is not. `level` pattern has no onset.
 - `level`: now vs reference with intervals. `threshold` (latency): the bucket edge, the

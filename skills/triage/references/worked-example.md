@@ -81,8 +81,8 @@ member (histograms first) and compare it with the same hour on the 7 previous da
 ```
 
 Read: both members are `unusual`, `higher`, source special cause: the share above 0.25 s is
-outside the band of 7 previous days for s0 and for s1. Blast radius: every member in this source,
-not one bad instance (with 5 or more members, `fleet` on a per-member rate or share series
+outside the band of 7 previous days for s0 and for s1. Blast radius: both members the query
+returned (s0, s1), not one bad instance (with 5 or more members, `fleet` on a per-member rate or share series
 would name outliers; it does not take a distribution).
 
 ## 5. Hypotheses and ruling out
@@ -153,7 +153,7 @@ The order supports the hypothesis only as timing; it stays `proposed`. `split_ou
 of failed vs successful requests) is deferred on purpose: the latency shift began 20 minutes
 before the errors, so fast or slow errors cannot explain it; it is the test for the burst.
 
-Stop here: a special cause is localised (onset, scope: both members, all of this source), the
+Stop here: a special cause is localised (onset, scope: both members the query returned), the
 two cheap alternatives are ruled out, and what would separate the remaining hypothesis (failed-request latency with
 `split_outcome`, deploy or dependency events at 10:00Z) is the next step to offer.
 

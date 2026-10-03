@@ -88,8 +88,9 @@ role `status`, `direction`, `pattern`, `onset`, and `evidence`. Report:
    reference. `reference="profile"` needs `operating_profile` first (it is refused otherwise);
    `auto` falls back to `previous`, which is weak for daily rhythms: say so.
 2. **Per role, with the pattern.** `level` = the window differs but no onset is inside it (do not
-   claim a start time). `shift` = one change point. `burst` / `blip` = an episode that ended.
-   `sustained` = still going at the end. `insufficient` and `gap` are not "healthy".
+   claim a start time). `shift` = one change point. `burst` / `blip` = an episode that ended
+   inside the window (observed: data after it shows the return). `sustained` = still going at the
+   end of the window. `insufficient` and `gap` are not "healthy".
 3. **Ordering only as far as the intervals allow.** `summary.first` is null when onset intervals
    overlap: write "simultaneous within +-X", not "A caused B". "First" is first among roles that
    have an onset: a `level`-pattern role cannot be ordered and may have moved earlier. The
@@ -104,7 +105,8 @@ role `status`, `direction`, `pattern`, `onset`, and `evidence`. Report:
    is reported, not counted in the family.
 6. **Cite the evidence** objects as they are in `finding_create` (the statistic, its interval, the
    dataset), and carry their uncertainty flags: `input_uncertainty` / `input_uncertainty_unknown`
-   mean the interval is a lower bound; say so (the finding carries "uncertainty unknown").
+   mean the interval is a lower bound; say so (the finding carries the `input_uncertainty_unknown`
+   or `uncertainty_not_propagated` flag; principle 4).
 7. **Caveats** (`overdispersed`, `heavy_tails`, `noisier_than_reference`) go into the sentence,
    not into a footnote.
 8. **The source of each change** (`roles.<role>.source`, also on the level and onset evidence and
@@ -116,7 +118,8 @@ role `status`, `direction`, `pattern`, `onset`, and `evidence`. Report:
 
 Absence of a flag is "no change detected against this reference at this power", not "healthy".
 Choose the range before looking at the verdict: every re-run with another range, reference or
-alpha is another look that the family alpha does not cover; state how many looks were taken.
+alpha is another look that the family alpha does not cover; state how many looks were taken
+(principle 14).
 Detail, field meanings and wording templates: `references/verdicts.md`.
 
 ## Little's law check
@@ -125,7 +128,7 @@ Detail, field meanings and wording templates: `references/verdicts.md`.
 end, window, warmup, latency_unit, arrivals)` (defaults: last 6h, `window="auto"` about range/12) tests L (the in-flight gauge, time-averaged) against
 lambda x W (arrival rate times MEAN latency from histogram `_sum` / `_count`).
 
-- Report the discrepancy FIRST, whatever the verdict: `discrepancy` (L - lambda W and R - 1 =
+- Report the discrepancy FIRST, whatever the verdict (principle 12): `discrepancy` (L - lambda W and R - 1 =
   L / (lambda W) - 1, whole range and per window, with the measurement interval); `summary` is that
   sentence ready-made. Then the verdict (`consistent`, `L_high`, `L_low`,
   `inconsistent_in_windows`), `classification` (systematic offset, transient windows), then
@@ -157,7 +160,7 @@ Assumptions, what each violation implies, hints and worked reading: `references/
 
 ## Sources of variation
 
-Every op that reports variation labels each finding (spec §5.4): `source` on items and on
+Every op that reports variation labels each finding (principle 8; spec §5.4): `source` on items and on
 `evidence` statistics, and a `variation` list of `{source, finding}` in the result.
 
 - **common cause**: the system's inherent variability (control limits, the seasonal band, the
@@ -165,8 +168,10 @@ Every op that reports variation labels each finding (spec §5.4): `source` on it
   chase points inside it; the lever is changing the system.
 - **special cause**: assignable (SPC signals of a significant detector, shifts, drift, an unusual
   window or member, a changed role, a transient). Investigate.
-- **measurement system**: the instruments (gaps, partial / untrusted data, churn and missing
-  members, units, unknown input uncertainty, a systematic Little's law offset). Fix or qualify
+- **measurement system**: the instruments (gaps, partial / untrusted data, missing members (alive
+  but not reporting), units, unknown input uncertainty, a systematic Little's law offset).
+  Members joining or leaving inside the window are normal lifecycle, not missing data
+  (principle 11). Fix or qualify
   them before reading the process.
 - **source undetermined**: the data cannot tell them apart (run rules on an out-of-control chart
   without their own evidence, an outlier episode on partial buckets, a silent member, a
@@ -177,7 +182,7 @@ Report the label with the number, never instead of it, and pass `source` through
 
 ## Gaps and instrumentation
 
-A role with no signal is a gap, not a zero. Report it as: what is missing, what cannot be
+A role with no signal is a gap, not a zero (principles 4, 11). Report it as: what is missing, what cannot be
 concluded without it, the instrumentation that fills it (the `suggest` text: a latency histogram
 instead of a percentile gauge, an in-flight gauge, a saturation or queue-depth metric, a
 status-labelled request counter). Create it with `gap_create` when the user is likely to want it.
