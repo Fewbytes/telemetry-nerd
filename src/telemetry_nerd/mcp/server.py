@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
@@ -315,11 +317,18 @@ def crash_message(name: str, e: BaseException) -> str:
 
 
 class TelemetryMCP(MCPServer):
-    """MCPServer whose crashes reach Claude as a message naming the tool and the exception."""
+    """MCPServer whose crashes reach Claude as a message naming the tool and the exception.
+
+    Every call runs pinned to one workspace (spec D4): `pin` is entered at call entry, and the
+    pin is a ContextVar, so sync tools (anyio worker threads) and tasks the tool spawns keep it.
+    """
+
+    pin: Callable[[], AbstractContextManager[Any]] = nullcontext
 
     async def call_tool(self, name: str, arguments: dict[str, Any], context: Any = None) -> Any:
         try:
-            return await super().call_tool(name, arguments, context)
+            with self.pin():
+                return await super().call_tool(name, arguments, context)
         except UnexpectedToolError as e:
             log.error("tool %s crashed", name, exc_info=e.__cause__ or e)
             raise ToolError(crash_message(name, e)) from e.__cause__
@@ -327,6 +336,7 @@ class TelemetryMCP(MCPServer):
 
 def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     mcp = TelemetryMCP("telemetry-nerd", instructions=INSTRUCTIONS)
+    mcp.pin = service.active.pinned
 
     @mcp.tool()
     async def query(
@@ -1942,7 +1952,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     def reply(thread: str, text: str) -> str:
         """Answer a user thread. Returns {message: id}."""
         try:
-            return _dump({"message": ws.post_message(thread, text, "claude").id})
+            # channel delivery is global: the question may come from a workspace the user has
+            # since switched away from; the answer joins its thread's own workspace
+            with service.active.using(ws.objects.owner(thread) or service.active()):
+                return _dump({"message": ws.post_message(thread, text, "claude").id})
         except (ValidationError, NotFound, ValueError) as e:
             raise _fail(e) from e
 

@@ -23,6 +23,8 @@ from telemetry_nerd.sources.registry import SourceRegistry
 from telemetry_nerd.sources.spec import SourceSpec
 from telemetry_nerd.workspace.db import open_workspace_db
 from telemetry_nerd.workspace.objects import ObjectStore
+from telemetry_nerd.workspace.registry import WorkspaceRegistry
+from telemetry_nerd.workspace.scope import ActiveWorkspace
 from telemetry_nerd.workspace.store import WorkspaceStore
 
 NOW = 6_000_000_000
@@ -152,10 +154,12 @@ def make_service(
     source = source or FakeSource()
     con = open_duckdb(tmp_path / "series.duckdb")
     wcon = open_workspace_db(tmp_path / "workspace.db")
-    workspace = WorkspaceStore(wcon, clock=clock)
+    registry = WorkspaceRegistry(wcon, lambda prefix: workspace.next_id(prefix), clock)
+    active = ActiveWorkspace(registry.active_id())
+    workspace = WorkspaceStore(wcon, clock=clock, scope=active, registry=registry)
     datasets = DatasetStore(con, workspace.next_id, clock=clock)
-    log = EventLog(wcon, clock=clock)
-    objects = ObjectStore(wcon, workspace.next_id, clock=clock)
+    log = EventLog(wcon, clock=clock, scope=active)
+    objects = ObjectStore(wcon, workspace.next_id, clock=clock, scope=active)
     sources = SourceRegistry(wcon, factory, clock=clock)
     if source.name == "fake":
         source.name = "default"  # dataset.source is looked up by registry name, as in production
@@ -177,6 +181,8 @@ def make_service(
             FamilyStore(wcon),
             clock,
         ),
+        active=active,
+        registry=registry,
         clock=clock,
         kernels=kernels,
         runs_root=runs_root,

@@ -21,6 +21,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse as _JSONResponse
 from starlette.routing import Mount, Route, WebSocketRoute
 from starlette.staticfiles import StaticFiles
+from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from telemetry_nerd.analysis.distlod import PX_PER_CELL
@@ -36,6 +37,7 @@ from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.jsonsafe import finite
 from telemetry_nerd.sources.base import SourceError
 from telemetry_nerd.workspace.models import AnnotationIn, HypothesisStatus, TimeSpan, Verdict
+from telemetry_nerd.workspace.scope import ActiveWorkspace
 
 log = logging.getLogger(__name__)
 
@@ -155,6 +157,23 @@ def mcp_transport_security(allowed_hosts: Sequence[str]) -> TransportSecuritySet
             for port in (":*", "")
         ],
     )
+
+
+class PinWorkspace:
+    """Pure ASGI middleware: each HTTP request runs pinned to the workspace active when it
+    arrived (spec D4). WebSocket scopes pass through unpinned: `/ws` and `/ws/bridge` are
+    long-lived and read the active id per frame."""
+
+    def __init__(self, app: ASGIApp, active: ActiveWorkspace) -> None:
+        self.app = app
+        self.active = active
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        with self.active.pinned():
+            await self.app(scope, receive, send)
 
 
 def create_app(
@@ -924,5 +943,8 @@ def create_app(
     return Starlette(
         routes=routes,
         lifespan=lifespan,
-        middleware=[Middleware(TrustedHostMiddleware, allowed_hosts=list(allowed_hosts))],
+        middleware=[
+            Middleware(TrustedHostMiddleware, allowed_hosts=list(allowed_hosts)),
+            Middleware(PinWorkspace, active=service.active),
+        ],
     )

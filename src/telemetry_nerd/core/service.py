@@ -160,6 +160,8 @@ from telemetry_nerd.sources.base import LimitExceeded, Source, SourceError, Sour
 from telemetry_nerd.sources.registry import SourceRegistry
 from telemetry_nerd.sources.spec import RESERVED_NAMES, SourceSpec
 from telemetry_nerd.workspace.models import PanelGroup
+from telemetry_nerd.workspace.registry import WorkspaceRegistry
+from telemetry_nerd.workspace.scope import ActiveWorkspace
 from telemetry_nerd.workspace.store import Panel, WorkspaceStore
 
 _NICE_STEPS = [
@@ -289,6 +291,9 @@ class TelemetryService:
     workspace: WorkspaceStore
     log: EventLog
     ws: WorkspaceService
+    #: the daemon's active workspace; the scope every workspace store reads (spec D4)
+    active: ActiveWorkspace
+    registry: WorkspaceRegistry
     clock: Callable[[], int] = now_ms
     presence: PresenceRegistry = field(default_factory=PresenceRegistry)
     signal: SignalOps = field(init=False)
