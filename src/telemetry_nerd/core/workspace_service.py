@@ -86,10 +86,12 @@ from telemetry_nerd.core.coverage_check import (
 )
 from telemetry_nerd.core.events import Actor, Event, EventLog, check_actor
 from telemetry_nerd.core.evidence_discipline import (
+    Fetched,
     check_claim,
     derive_sources,
     evidence_cover,
     known_entities,
+    single_values,
     subjects,
     support_problems,
 )
@@ -303,10 +305,24 @@ class WorkspaceService:
             return None
         by_dataset = self.datasets.series_labels_by_dataset()
         metas = self.datasets.list_metas()
+        fetched = [
+            Fetched(m.id, m.expr, m.source, m.start_ms, m.end_ms, by_dataset.get(m.id, []))
+            for m in metas
+            if _readable(m) and m.expr
+        ]
         covers = {}
         for did in dids:
             meta = self.datasets.meta(did)
-            covers[did] = evidence_cover(meta.expr, by_dataset.get(did, []), _readable(meta))
+            single = (
+                single_values(
+                    Fetched(did, meta.expr, meta.source, meta.start_ms, meta.end_ms, []), fetched
+                )
+                if _readable(meta) and meta.expr
+                else None
+            )
+            covers[did] = evidence_cover(
+                meta.expr, by_dataset.get(did, []), _readable(meta), single
+            )
         known = known_entities(by_dataset, {m.id: m.expr for m in metas if _readable(m)})
         read = read_selector(data.scope.selector)
         why = undetermined_note(read.why) if read.matchers is None else None

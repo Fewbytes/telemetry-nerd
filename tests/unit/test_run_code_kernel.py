@@ -164,3 +164,16 @@ async def test_no_uncertainty_output_is_citable_but_flagged(env):
     assert not f.is_error, text_of(f)
     flags = json.loads(text_of(f))["uncertainty"]
     assert [u["flag"] for u in flags] == ["input_uncertainty_unknown"]
+
+
+@module_loop
+async def test_tn_pl_np_are_bound_without_imports(env):
+    """1w7: the live run's code used tn.* without importing it and failed with NameError."""
+    _, mcp = env
+    out = await run(mcp, 'print(tn.dataset("d1").height, pl.__name__, np.__name__)', inputs=["d1"])
+    assert out["status"] == "ok", out
+    assert out["stdout"].split()[1:] == ["polars", "numpy"]
+    # a name the code rebinds stays rebound in later runs
+    await run(mcp, "np = 'mine'")
+    out = await run(mcp, "print(np)")
+    assert out["stdout"].strip() == "mine"

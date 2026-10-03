@@ -1550,7 +1550,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         they are exported before the run, the code cannot query sources. Not percentile
         datasets (query the histogram). timeout_s: wall clock (default 120 s); a timeout or
         crash fails the node and may restart the kernel (variables are lost, datasets kept).
-        In the code:
+        In the code (tn, pl = polars and np = numpy are already bound; importing is fine):
             import telemetry_nerd.tn as tn
             df = tn.dataset("d3")  # polars: ts_ms, series_id, avg, min, max, count
             tn.meta("d3")          # unit, step_ms, representation, caveats, ...

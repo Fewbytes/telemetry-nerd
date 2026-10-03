@@ -71,6 +71,8 @@ class Cover:
     kind: Literal["values", "matchers", "pooled", "undetermined"]
     values: frozenset[str] = frozenset()
     matchers: tuple[Matcher, ...] = ()
+    #: datasets showing that a pooled dataset's series hold only `values` (see `single_values`)
+    via: tuple[str, ...] = ()
 
     def covers(self, value: str) -> bool | None:
         if self.kind == "values":
@@ -80,6 +82,10 @@ class Cover:
         return None if self.kind == "undetermined" else False
 
     def describe(self, label: str) -> str:
+        if self.kind == "values" and self.via:
+            (v,) = self.values
+            return (f'{label}="{v}" (pooled over its only {label} value, per '
+                    f"{', '.join(self.via)})")  # fmt: skip
         if self.kind == "values":
             return ", ".join(f'{label}="{v}"' for v in sorted(self.values)[:6]) + (
                 ", ..." if len(self.values) > 6 else ""
@@ -92,10 +98,15 @@ class Cover:
 
 
 def evidence_cover(
-    expr: str | None, series: Sequence[Mapping[str, str]], readable: bool = True
+    expr: str | None,
+    series: Sequence[Mapping[str, str]],
+    readable: bool = True,
+    single: Mapping[str, tuple[str, Sequence[str]]] | None = None,
 ) -> dict[str, Cover]:
     """Per entity label, what a dataset with these series (labels) and expression covers.
-    `readable`: the expression is the query (not a code output or a filter)."""
+    `readable`: the expression is the query (not a code output or a filter). `single`: label ->
+    (the one value, witness datasets) where the pooled series are known to hold a single value
+    of the label (`single_values`): pooling over one value covers that value."""
     read = read_selector(expr) if readable and expr else None
     out: dict[str, Cover] = {}
     for label in ENTITY_LABELS:
@@ -104,10 +115,74 @@ def evidence_cover(
             out[label] = Cover("values", frozenset(vals))
         elif read is not None and read.matchers is not None:
             ms = tuple(m for m in read.matchers if m.label == label)
-            out[label] = Cover("matchers", matchers=ms) if ms else Cover("pooled")
+            if ms:
+                out[label] = Cover("matchers", matchers=ms)
+            elif single and label in single:
+                v, via = single[label]
+                out[label] = Cover("values", frozenset({v}), via=tuple(via))
+            else:
+                out[label] = Cover("pooled")
         else:
             out[label] = Cover("undetermined")
     return out
+
+
+@dataclass(frozen=True)
+class Fetched:
+    """A dataset as `single_values` needs it: its query, where and when, its series' labels."""
+
+    id: str
+    expr: str
+    source: str
+    start_ms: int
+    end_ms: int
+    series: Sequence[Mapping[str, str]]
+
+
+def single_values(pooled: Fetched, others: Iterable[Fetched]) -> dict[str, tuple[str, list[str]]]:
+    """Entity labels a pooled dataset aggregated away whose pooled series hold exactly one value,
+    read from witnesses: other datasets of the same source and the same metric, over at least the
+    same time range, selected with no matcher the pooled query lacks (so they hold at least its
+    series) and keeping the label on every series. When every witness shows the same single value,
+    the pooled series hold that value only (`sum(x)` over x{service="checkout"} alone is about
+    checkout). No witness, or two values: nothing (the pooled cover stays pooled).
+    `others` must be datasets whose expr is the query that produced them."""
+    read = read_selector(pooled.expr)
+    if read.matchers is None:
+        return {}
+    names = {m.value for m in read.matchers if m.label == "__name__" and m.op == "="}
+    if len(names) != 1 or any(m.label == "__name__" and m.op != "=" for m in read.matchers):
+        return {}
+    rest = {m for m in read.matchers if m.label != "__name__"}
+    seen: dict[str, set[str]] = {}
+    via: dict[str, list[str]] = {}
+    for w in others:
+        if w.id == pooled.id or w.source != pooled.source or not w.series:
+            continue
+        if w.start_ms > pooled.start_ms or w.end_ms < pooled.end_ms:
+            continue
+        wr = read_selector(w.expr)
+        if wr.matchers is None:
+            continue
+        w_names = {m.value for m in wr.matchers if m.label == "__name__" and m.op == "="}
+        w_rest = {m for m in wr.matchers if m.label != "__name__"}
+        if w_names != names or len(w_names) != sum(m.label == "__name__" for m in wr.matchers):
+            continue
+        if not w_rest <= rest:
+            continue
+        for label in ENTITY_LABELS:
+            if any(m.label == label for m in rest):
+                continue
+            vals = {lb.get(label) for lb in w.series}
+            if None in vals:
+                continue  # aggregated away (or absent on some series): says nothing
+            seen.setdefault(label, set()).update(v for v in vals if v is not None)
+            via.setdefault(label, []).append(w.id)
+    return {
+        label: (next(iter(vals)), sorted(via[label]))
+        for label, vals in seen.items()
+        if len(vals) == 1
+    }
 
 
 def known_entities(

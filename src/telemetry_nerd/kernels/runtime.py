@@ -10,11 +10,15 @@ that cache per-run state (the `tn` client) either read `os.environ` lazily or re
     @on_run
     def _reset() -> None: ...
 
-Stdlib only: it is imported inside the kernel.
+Each run also finds `tn`, `pl` (polars) and `np` (numpy) bound (`provide`), so code that
+forgets `import telemetry_nerd.tn as tn` still runs.
+
+Stdlib only at import: it is imported inside the kernel.
 """
 
 from __future__ import annotations
 
+import importlib
 import json
 import os
 from collections.abc import Callable
@@ -45,11 +49,29 @@ def begin_run(payload: str) -> None:
         hook()
 
 
+#: names every run finds bound in the kernel (unless the code rebound them): run_code without
+#: `import telemetry_nerd.tn as tn` failed with NameError in a live eval (1w7)
+PROVIDED = {"tn": "telemetry_nerd.tn", "pl": "polars", "np": "numpy"}
+
+
+def provide(ns: dict) -> None:
+    """Bind `PROVIDED` names in the user namespace `ns` where they are not bound yet; a module
+    that cannot be imported is left out (the code's own import then says why)."""
+    for name, module in PROVIDED.items():
+        if name in ns:
+            continue
+        try:
+            ns[name] = importlib.import_module(module)
+        except ImportError:
+            pass
+
+
 def preamble(env: dict[str, str], cwd: str | None) -> str:
     """The code the daemon runs before a user cell."""
     payload = json.dumps({"env": env, "cwd": cwd})
     return (
         "import telemetry_nerd.kernels.runtime as _tn_runtime\n"
         f"_tn_runtime.begin_run({payload!r})\n"
+        "_tn_runtime.provide(globals())\n"
         "del _tn_runtime\n"
     )
