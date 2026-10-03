@@ -18,7 +18,9 @@ import polars as pl
 from telemetry_nerd.analysis import sources
 from telemetry_nerd.analysis.exprkind import rate_interval_ms
 from telemetry_nerd.analysis.littles import (
+    MIN_SPREAD,
     PEAK_COMMON,
+    PEAK_UNDETERMINED,
     PROMOTE_ALPHA,
     Block,
     GroupResult,
@@ -88,6 +90,10 @@ TRANSIENT_HINTS = {
     "peak_common": (
         f"{PEAK_COMMON}: re-run over a longer range or compare the next peaks; a growing backlog "
         "or W rising window after window would make it a signal"
+    ),
+    "peak_undetermined": (
+        f"{PEAK_UNDETERMINED}: re-run over a range of {MIN_SPREAD}+ windows (the process's own "
+        "window-to-window variation then sets the envelope) before calling it a signal"
     ),
     "drain": "transient after a peak: a backlog draining (recovery), out of steady state",
     "other": (
@@ -702,13 +708,16 @@ class LittlesOps:
                 hints += HINTS[v]
         phases = {
             "peak" if t["phase"] == "peak" and t["source"] == SPECIAL
+            else "peak_undetermined" if t["phase"] == "peak" and t["source"] == UNDETERMINED
             else "peak_common" if t["phase"] == "peak" else t["phase"]
             for g in groups for t in g["classification"]["transient"]
         }  # fmt: skip
         if any(g["classification"]["promoted"] for g in groups):
             phases.add("peak")
         hints += [
-            TRANSIENT_HINTS[ph] for ph in ("peak", "peak_common", "drain", "other") if ph in phases
+            TRANSIENT_HINTS[ph]
+            for ph in ("peak", "peak_undetermined", "peak_common", "drain", "other")
+            if ph in phases
         ]
         if any((g.get("growing") or {}).get("growing") for g in groups):
             hints.insert(0, LEAK_HINT)
@@ -823,7 +832,12 @@ METHOD = (
     "weights, its error the larger of measurement and window spread, at 2.5%. Transient windows: "
     "off that level (or 1) beyond the measurement interval, Bonferroni over windows and groups "
     "at 2.5%; special cause when also beyond the common-cause envelope (small-system scale or "
-    "3 robust sigma of the windows' own variation), else common cause. 5% false alarms overall "
+    "3 robust sigma of the windows' own variation), else common cause. With fewer than 5 "
+    "windows (no estimate of their own variation) the label rests on a cautious envelope: the "
+    "small-system terms inflated by the window's own sub-steps (sqrt of the arrivals' long-run "
+    "variance-to-mean ratio; the effective latency CV from latency-seconds - W x completions), "
+    "around the window's linear trend, x autocorrelation time, never below Poisson; beyond the "
+    "Poisson envelope only: undetermined, both shown. 5% false alarms overall "
     "at most. A window at a load peak inside the envelope (or the measurement interval) is "
     "PROMOTED to special cause only on independent evidence of leaving steady state, with its "
     f"own {100 * PROMOTE_ALPHA:.0f}% family-wise budget, a third each: (a) the backlog growing "
@@ -847,7 +861,8 @@ def _warnings(groups: list[dict], no_concurrency: bool) -> list[str]:
         c = g["classification"]
         peaks = [t for t in c["transient"] if t["at_peak"] and not t["promoted"]]
         special = [t for t in peaks if t["source"] == SPECIAL]
-        common = [t for t in peaks if t["source"] != SPECIAL]
+        undecided = [t for t in peaks if t["source"] == UNDETERMINED]
+        common = [t for t in peaks if t["source"] not in (SPECIAL, UNDETERMINED)]
         if special:
             out.append(
                 f"{name}: transient at a load peak in "
@@ -859,6 +874,10 @@ def _warnings(groups: list[dict], no_concurrency: bool) -> list[str]:
             out.append(
                 f"{name}: {span(p['window'])} at a load peak, leaving steady state (special "
                 f"cause, promoted from {sources.text(p['from'])}): {p['reason']}"
+            )
+        if undecided:
+            out.append(
+                f"{name}: {', '.join(span(t['window']) for t in undecided[:4])} {PEAK_UNDETERMINED}"
             )
         if common:
             out.append(f"{name}: {', '.join(span(t['window']) for t in common[:4])} {PEAK_COMMON}")
@@ -967,6 +986,12 @@ def _summary_text(cfg: dict, g: dict, warnings: list[str], no_concurrency: bool)
         + (
             f"; the windows' own variation spans ±{100 * cc['spread_rel']:.0f}%"
             if cc.get("spread_rel") else ""
+        ) + (
+            f"; with {pw['windows']} window(s) (< {MIN_SPREAD}) their own variation cannot be "
+            f"estimated, so special cause rests on the cautious envelope ±"
+            f"{100 * cc['cautious_rel95']:.0f}% (the windows' own arrival bursts and latency "
+            "variation); beyond the Poisson one only: undetermined"
+            if cc.get("cautious_rel95") is not None else ""
         ) + "."
     )  # fmt: skip
     if warnings:
@@ -1036,6 +1061,8 @@ def _common_wire(g: GroupResult) -> dict:
         "rel95": sig(c.get("rel95")),
         "pooled_rel95": sig(c.get("pooled_rel95")),
         "spread_rel": sig(c.get("spread_rel")),
+        "envelope": c.get("envelope"),
+        **({"cautious_rel95": sig(c["cautious_rel95"])} if "cautious_rel95" in c else {}),
         "warning": c.get("warning"),
         "source": COMMON,
     }
@@ -1070,12 +1097,35 @@ def _transient_wire(g: GroupResult, t: dict) -> dict:
         "difference": sig(w.diff), "difference_ci95": sig_pair(w.diff_ci) if w.diff_ci else None,
         "reference": sig(ref), "vs_reference": sig(t["vs_reference"]),
         "common_cause_rel95": sig(w.common), "source": t["source"], "phase": t["phase"],
+        **({"envelope": _envelope_wire(w, t["envelope"])} if t.get("envelope") else {}),
         "at_peak": t["at_peak"],
         "load": {k: (sig(v) if isinstance(v, float) else v) for k, v in t["load"].items()},
         "cause": t["cause"], "promoted": t["promoted"],
         **({"promotion": _promotion_wire(t["promotion"])} if t["promoted"] else {}),
         **_grid(t),
     }  # fmt: skip
+
+
+def _envelope_wire(w: Block, e: dict) -> dict:
+    """The deviation against each envelope (principle 16: the label rests on `label_rests_on`)."""
+    out = {
+        "deviation": sig(e["deviation"]),
+        "small_system": {"rel95": sig(e["small_system"]),
+                         "assumes": "Poisson arrivals and completions, latency CV 1"},
+        "label_rests_on": e["label_rests_on"],
+    }  # fmt: skip
+    if e.get("spread") is not None:
+        out["spread"] = {"rel95": sig(e["spread"]),
+                         "assumes": "3 robust sigma of the windows' own variation"}  # fmt: skip
+    if e.get("cautious") is not None:
+        out["cautious"] = {
+            "rel95": sig(e["cautious"]),
+            "k_arrivals": sig(w.common_terms.get("k_arrivals")),
+            "k_latency": sig(w.common_terms.get("k_latency")),
+            "assumes": "the small-system terms inflated by the window's own sub-step arrival "
+            "dispersion and effective latency CV (around its linear trend; never below Poisson)",
+        }
+    return out
 
 
 def _evidence_wire(e: dict) -> dict:

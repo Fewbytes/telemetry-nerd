@@ -13,6 +13,10 @@ Variation is labelled by source (SPC):
 - measurement system: the measurement interval, and a SYSTEMATIC offset (persistent L != lambda W:
   unmeasured queueing, a missing instance, units, latency on a subset/superset);
 - common cause: within the small-system envelope (+-X per window): not to be chased;
+- undetermined: with fewer than MIN_SPREAD windows (no estimate of the process's own variation),
+  beyond the small-system (Poisson) envelope but not the cautious one (its two terms inflated by
+  the window's own sub-step arrival dispersion and latency variation): principle 16, the label
+  rests on the cautious model, both are reported;
 - special cause: TRANSIENT windows beyond both, against the systematic level (load peaks, leaving
   steady state, a change in the instrumentation); and a window at a LOAD PEAK inside the envelope
   (or the measurement interval) PROMOTED by independent evidence of leaving steady state (83w,
@@ -29,7 +33,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from telemetry_nerd.analysis.autocorr import n_eff, tau_int
-from telemetry_nerd.analysis.sources import COMMON, MEASUREMENT, SPECIAL
+from telemetry_nerd.analysis.sources import COMMON, MEASUREMENT, SPECIAL, UNDETERMINED
 from telemetry_nerd.analysis.stability import trend
 from telemetry_nerd.analysis.stats import t_quantile
 
@@ -42,6 +46,9 @@ PEAK_W = 1.5  # a window's W this far above the median window: a latency surge
 MAX_ITER = 6
 PROMOTE_ALPHA = 0.05  # family-wise false promotions per check (its own budget, apart from alpha)
 MIN_BASELINE = 4  # windows outside a peak's episode needed to scale its backlog / W tests
+#: judged windows needed to estimate the process's own window-to-window variation (`spread`);
+#: fewer: the cautious envelope (Block.common_cautious) carries the special-cause label (4ahp)
+MIN_SPREAD = 5
 
 
 @dataclass(frozen=True)
@@ -89,6 +96,10 @@ class Block:
     diff: float | None = None  # L - lambda W, requests
     diff_ci: tuple[float, float] | None = None
     common: float | None = None  # common-cause half-width of L and lambda W, relative, 95%
+    #: the same under the cautious model (4ahp): each term inflated by the window's own
+    #: sub-steps (arrivals' long-run dispersion, completions' effective latency CV), >= common
+    common_cautious: float | None = None
+    common_terms: dict = field(default_factory=dict)  # k_arrivals, k_latency (1: Poisson)
     sd: float | None = None
     sd_source: str | None = None  # empirical | floor: which bounds the gauge sampling error
     sd_terms: dict = field(default_factory=dict)  # each measurement component's sd, ratio units
@@ -101,7 +112,8 @@ class Block:
     drift: dict = field(default_factory=dict)
     flow: dict | None = None
     reason: str | None = None
-    source: str | None = None  # deviation from the reference: MEASUREMENT | COMMON | SPECIAL
+    #: deviation from the reference: MEASUREMENT | COMMON | UNDETERMINED | SPECIAL
+    source: str | None = None
     promotion: dict | None = None  # why a load-peak window was promoted to special cause
     L_correction: float = 0.0  # added to the gauge average: its end-of-interval reading (trapezoid)
 
@@ -157,6 +169,37 @@ def _drift(pos: np.ndarray, ts: np.ndarray, y: np.ndarray, span_ms: int) -> dict
         "significant": tr.significant,
         "material": tr.significant and lo > STEADY_CHANGE,
     }
+
+
+def _own_scale(
+    pos: np.ndarray, a: np.ndarray, s: np.ndarray, c: np.ndarray, W: float, CT: float,
+    step_s: float,
+) -> tuple[float, float]:  # fmt: skip
+    """The small-system envelope's two terms as the window's own sub-steps show them, relative
+    to the Poisson model (1 = Poisson arrivals, latency CV 1; never below: it can only widen the
+    envelope). Arrivals: sqrt of the counts' long-run variance-to-mean ratio (clustered or bursty
+    arrivals). Latency: the window mean W's long-run relative sd from e = latency-seconds - W x
+    completions per sub-step (slow requests in bursts) x sqrt(completions): the effective latency
+    CV. Both around the window's own linear trend (a load or latency ramp inside the window is
+    the change being judged, not its noise; `not_steady` flags it), x the residuals'
+    autocorrelation time."""
+    t = pos.astype(float)
+
+    def long_run_var(x: np.ndarray) -> float:
+        if x.size < 3:
+            return 0.0
+        r = x - np.polyval(np.polyfit(t, x, 1), t)
+        return float(r @ r) / (x.size - 2) * tau_int(pos, r)
+
+    n = a.size
+    events = a * step_s
+    k_lam = 1.0
+    if events.sum() > 0:
+        k_lam = max(1.0, math.sqrt(long_run_var(events) / float(events.mean())))
+    k_w = 1.0
+    if W > 0 and CT > 0:
+        k_w = max(1.0, math.sqrt(long_run_var((s - W * c) * step_s) * n / CT) / W)
+    return k_lam, k_w
 
 
 def _endpoint_shift(sub: Substeps, ok: np.ndarray) -> float:
@@ -300,6 +343,11 @@ def judge(
     # COMMON CAUSE: a small system's per-window L and lambda W fluctuate with the number of
     # requests behind them (Poisson counts, latency CV 1): not measurement error, reported apart
     blk.common = q95 * (1 / math.sqrt(max(lam * T, 1.0)) + 1 / math.sqrt(max(C * T, 1.0)))
+    k_lam, k_w = _own_scale(pos, a, s, c, W, C * T, step_s)
+    blk.common_terms = {"k_arrivals": k_lam, "k_latency": k_w}
+    blk.common_cautious = q95 * (
+        k_lam / math.sqrt(max(lam * T, 1.0)) + k_w / math.sqrt(max(C * T, 1.0))
+    )
 
     # assumptions
     span = end - start
@@ -565,11 +613,20 @@ def _classify(
     # measurement interval already explains), whichever is wider
     dev = np.array([ratio[i] / refs[i] - 1 for i in judged], float)
     spread = 0.0
-    if dev.size >= 5:
+    few = dev.size < MIN_SPREAD
+    if not few:
         mad_sd = 1.4826 * float(np.median(np.abs(dev - np.median(dev))))
         meas_sd = float(np.median([ws[i].sd / refs[i] for i in judged]))  # type: ignore[operator]
         spread = 3 * math.sqrt(max(0.0, mad_sd**2 - meas_sd**2))
     out.common_cause["spread_rel"] = spread
+    # 4ahp: too few windows for the process's own variation: the special-cause label rests on
+    # the cautious envelope (the window's own sub-step variation), the Poisson one alone gives
+    # undetermined (principle 16)
+    out.common_cause["envelope"] = "cautious" if few else "small_system_or_spread"
+    if few:
+        out.common_cause["cautious_rel95"] = float(
+            np.median([ws[i].common_cautious for i in judged])  # type: ignore[misc]
+        )
     lam = np.array([ws[i].lam for i in judged], float)
     W = np.array([ws[i].W_s for i in judged], float)
     lam_med, W_med = float(np.median(lam)), float(np.median(W))
@@ -584,8 +641,17 @@ def _classify(
             w.source = MEASUREMENT
             continue
         # beyond the measurement interval: is it also beyond the common-cause envelope?
-        w.source = SPECIAL if abs(w.ratio / refs[i] - 1) > max(w.common, spread) else COMMON
-        out.transient.append(_transient(i, w, refs[i], out.phases[i]))
+        d = abs(w.ratio / refs[i] - 1)
+        env = max(w.common, spread)
+        cautious = max(env, w.common_cautious or 0.0) if few else env
+        w.source = SPECIAL if d > cautious else UNDETERMINED if d > env else COMMON
+        t = _transient(i, w, refs[i], out.phases[i])
+        t["envelope"] = {
+            "deviation": d, "small_system": w.common, "spread": spread if not few else None,
+            "cautious": cautious if few else None, "label_rests_on": "cautious" if few else
+            "small_system_or_spread",
+        }  # fmt: skip
+        out.transient.append(t)
 
 
 def _load(w: Block, lam_med: float, lam_q75: float, W_med: float, L_med: float) -> dict:
@@ -637,6 +703,20 @@ PEAK_COMMON = (
 )
 
 
+#: beyond the small-system (Poisson) envelope, inside the cautious one (fewer than MIN_SPREAD
+#: windows: the process's own variation cannot be estimated)
+PEAK_UNDETERMINED = (
+    "at a load peak; beyond the small-system (Poisson) envelope but inside the cautious one (the "
+    "window's own arrival bursts and latency variation): too few windows to estimate the "
+    "process's own variation — undetermined; a longer range or a growing backlog would decide it"
+)
+UNDETERMINED_TEXT = (
+    "beyond the small-system (Poisson) envelope but inside the cautious one (the window's own "
+    "arrival bursts and latency variation; too few windows to estimate the process's own "
+    "variation): undetermined"
+)
+
+
 def _cause(t: dict) -> str:
     if t["phase"] == "drain":
         return (
@@ -647,6 +727,8 @@ def _cause(t: dict) -> str:
         if t["promoted"]:
             reason = t["promotion"]["reason"]
             return f"at a load peak, leaving steady state (promoted to special cause): {reason}"
+        if t["source"] == UNDETERMINED:
+            return PEAK_UNDETERMINED
         if t["source"] == SPECIAL:
             return (
                 "at a load peak, beyond expected fluctuation: possible transition out of steady "
@@ -654,6 +736,8 @@ def _cause(t: dict) -> str:
                 "time in L that completed latencies (W) do not show yet"
             )
         return PEAK_COMMON
+    if t["source"] == UNDETERMINED:
+        return UNDETERMINED_TEXT
     return (
         "not at a load peak (lambda and W near their medians): a change confined to these "
         "windows — in-flight time the latency timer does not see (a queue excursion before "
@@ -866,13 +950,15 @@ def _promote(
     for i in sorted(evidence):
         w, ev = ws[i], evidence[i]
         hits = [e for e in ev if e["significant"]]
-        if not hits or w.source not in (COMMON, MEASUREMENT):
+        if not hits or w.source not in (COMMON, MEASUREMENT, UNDETERMINED):
             continue
         prom = {"from": w.source, "evidence": ev, "reason": "; ".join(_reason(e) for e in hits)}
         w.promotion = prom
         out.promoted.append({
             "index": i, "from": w.source,
-            "deviation": "within_envelope" if w.source == COMMON else "within_measurement",
+            "deviation": {COMMON: "within_envelope", UNDETERMINED: "beyond_small_system_only"}.get(
+                w.source, "within_measurement"
+            ),
             "evidence": ev, "reason": prom["reason"], "load": phases[i]["load"],
         })  # fmt: skip
         w.source = SPECIAL

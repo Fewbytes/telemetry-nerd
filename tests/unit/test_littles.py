@@ -19,7 +19,9 @@ from telemetry_nerd.analysis.littles import (
     MEASUREMENT,
     PEAK_COMMON,
     SPECIAL,
+    UNDETERMINED,
     Substeps,
+    _cause,
     _sampling_factor,
     cantelli_k,
     check,
@@ -390,3 +392,55 @@ def test_gauge_end_of_interval_reading_is_corrected_to_the_trapezoid():
     assert math.isclose(b.L, exact, rel_tol=1e-12)
     assert math.isclose(b.L_correction, -(N[39] - N[19]) * 15 / 2 / (20 * 15))
     assert b.bias == {"alignment": 0.0}
+
+
+# --- 4ahp: fewer than MIN_SPREAD windows: the special-cause label rests on the cautious envelope
+def _steady(n: int = 80, lam: float = 10.0) -> dict[str, np.ndarray]:
+    """Noise-free steady traffic: lambda = 10/s, W = 1 s, L = 10 (Little's law exact)."""
+    return {
+        "arrivals": np.full(n, lam), "lat_sum": np.full(n, lam), "lat_count": np.full(n, lam),
+        "conc": np.full(n, lam),
+    }  # fmt: skip
+
+
+def _sub(d: dict[str, np.ndarray]) -> Substeps:
+    n = d["arrivals"].size
+    ts = (np.arange(1, n + 1) * 15_000).astype(np.int64)
+    return Substeps(ts, d["arrivals"], d["lat_sum"], d["lat_count"], d["conc"], np.ones(n), 15_000)
+
+
+def test_few_windows_a_deviation_beyond_the_cautious_envelope_is_special_cause():
+    d = _steady()
+    d["conc"][40:60] *= 1.5  # window 2 of 4: L 50% above lambda W
+    r = check(_sub(d), k=20, offset=False)
+    w = r.windows[2]
+    assert w.source == SPECIAL and w.common_cautious == pytest.approx(w.common)
+    (t,) = r.transient
+    assert t["envelope"]["label_rests_on"] == "cautious" and t["envelope"]["spread"] is None
+    assert r.common_cause["envelope"] == "cautious" and r.common_cause["spread_rel"] == 0.0
+
+
+def test_few_windows_beyond_the_poisson_envelope_only_is_undetermined():
+    """Arrivals in bursts inside the window (0 and 20 per second, sub-step to sub-step): the
+    Poisson envelope (~8%) is far below the deviation, the cautious one (the window's own
+    arrival dispersion) above it: no estimate of the process's own variation from 4 windows, so
+    no special-cause label (principle 16), both envelopes reported."""
+    d = _steady()
+    d["conc"][40:60] *= 1.5
+    d["arrivals"][40:60] = np.where(np.arange(20) % 2 == 0, 0.0, 20.0)
+    r = check(_sub(d), k=20, offset=False)
+    w = r.windows[2]
+    assert w.source == UNDETERMINED
+    env = r.transient[0]["envelope"]
+    assert env["small_system"] < env["deviation"] < env["cautious"]
+    assert w.common_terms["k_arrivals"] > 5 and w.common_terms["k_latency"] == 1.0
+    assert "undetermined" in _cause({**r.transient[0], "phase": "other"})
+
+
+def test_with_five_windows_the_spread_still_decides():
+    d = _steady(n=100)
+    d["conc"][40:60] *= 1.5
+    d["arrivals"][40:60] = np.where(np.arange(20) % 2 == 0, 0.0, 20.0)
+    r = check(_sub(d), k=20, offset=False)
+    assert r.windows[2].source == SPECIAL  # MIN_SPREAD windows: the Poisson / spread envelope
+    assert r.common_cause["envelope"] == "small_system_or_spread"

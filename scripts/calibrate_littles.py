@@ -5,7 +5,9 @@
 Rows of the validation table in docs/superpowers/specs/2026-10-02-littles-law-design.md: false
 alarms (verdict not consistent) and pointwise 95% coverage of 1 on consistent traffic, detection
 of a gauge offset, a load spike's peak window (special cause: beyond the envelope or promoted)
-with a completions and an arrivals counter, and promotions where there must be none. Seeds are
+with a completions and an arrivals counter, and promotions where there must be none. With
+fewer than 5 windows (4ahp): false special-cause labels on steady traffic with Poisson or
+clustered arrivals and heavy-tailed service, and a spike's peak window. Seeds are
 fixed, so a run on another commit is directly comparable.
 """
 
@@ -21,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from telemetry_nerd.analysis.littles import SPECIAL, check
+from telemetry_nerd.analysis.sources import UNDETERMINED
 from tests.unit.littles_sim import simulate, substeps
 
 LOAD = [(0.0, 2.0), (1200.0, 3.7), (2400.0, 2.0)]
@@ -95,6 +98,30 @@ def spike(seed: int, counter: str) -> dict:
             "transient_peak": any(t["index"] == 5 for t in r.transient)}  # fmt: skip
 
 
+FEW_SPIKE = [(0.0, 2.0), (600.0, 5.0), (900.0, 2.0)]  # rho 1.25 in window 2 of 4
+
+
+def few_windows(seed: int, lam: float, c: int, batch: float, cv: float) -> dict:
+    """Four 5-minute windows (< 5: no estimate of the process's own window-to-window variation,
+    4ahp) of steady traffic, Poisson or clustered arrivals (batches) and service-time CV: any
+    special-cause label is a false one; undetermined: beyond the Poisson envelope only."""
+    m = simulate(seed, duration_s=1200.0, rates=[(0.0, lam)], c=c, batch=batch, service_cv=cv)
+    r = check(substeps(m), k=20, arrivals="arrivals")
+    srcs = [w.source for w in r.windows] + [t["source"] for t in r.transient]
+    return {"special": SPECIAL in srcs or bool(r.promoted), "undetermined": UNDETERMINED in srcs}
+
+
+def few_spike(seed: int, batch: float, counter: str) -> dict:
+    """rho 1.25 for 5 minutes in window 2 of 4. With an arrivals counter the window's ratio
+    stays near 1 (its special cause is a promotion, which needs 4 baseline windows); with a
+    completions counter the backlog's in-flight time shows as L > lambda W."""
+    m = simulate(seed, duration_s=1200.0, rates=FEW_SPIKE, batch=batch, counter=counter)
+    r = check(substeps(m), k=20, arrivals=counter)
+    peak = r.windows[2]
+    return {"peak_special": peak.source == SPECIAL, "peak_undetermined": peak.source == UNDETERMINED,
+            "promoted": bool(r.promoted)}  # fmt: skip
+
+
 def run(cases: list[tuple]) -> list[dict]:
     with ProcessPoolExecutor() as ex:
         futs = [ex.submit(f, *a) for f, *a in cases]
@@ -155,6 +182,16 @@ def main() -> int:
         row(f"spike rho 1.25 5 min, {counter} counter",
             [(spike, 6000 + s, counter) for s in range(q(75))],
             "peak_special", "transient_peak", "promoted")  # fmt: skip
+    for lam, c, batch, cv in ((2.0, 4, 1.0, 1.0), (9.5, 10, 1.0, 1.0), (2.0, 4, 5.0, 1.0),
+                              (9.5, 10, 5.0, 1.0), (2.0, 4, 1.0, 3.0)):  # fmt: skip
+        row(f"4 windows, lambda={lam} c={c}, arrival batches ~{batch:g}, service CV {cv:g}",
+            [(few_windows, 10_000 + s, lam, c, batch, cv) for s in range(q(150))],
+            "special", "undetermined")  # fmt: skip
+    for batch in (1.0, 5.0):
+        row(f"4 windows, spike rho 1.25 5 min in window 2, completions counter, arrival "
+            f"batches ~{batch:g}",
+            [(few_spike, 11_000 + s, batch, "completions") for s in range(q(75))],
+            "peak_special", "peak_undetermined", "promoted")  # fmt: skip
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(json.dumps(table, indent=2))
     return 0

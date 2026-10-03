@@ -13,7 +13,7 @@ from itertools import pairwise
 
 import numpy as np
 
-from telemetry_nerd.analysis.autocorr import n_eff, positions, tau_int
+from telemetry_nerd.analysis.autocorr import dispersion, n_eff, positions, tau_int
 from telemetry_nerd.analysis.sources import COMMON, SPECIAL, UNDETERMINED, item
 from telemetry_nerd.analysis.spc import DECIDING, ControlChart, control_chart
 from telemetry_nerd.analysis.spectrum import MIN_POINTS, WINDOW_ARTIFACT, Peak, Spectrum
@@ -275,17 +275,6 @@ DEPARTURE_METHOD = (
     "label rests on (b): special cause when p_clustered < 0.01, undetermined when only (a) is; "
     "judged mean with its exact Poisson (Garwood) 99% interval"
 )
-
-
-def dispersion(pos: np.ndarray, events: np.ndarray) -> float | None:
-    """Long-run variance-to-mean ratio of event counts per step: quasi-Poisson phi (sample
-    variance / mean) x the integrated autocorrelation time, so a sum over k steps has variance
-    ~ D x its mean. None with fewer than 2 points or no events."""
-    x = np.asarray(events, float)
-    m = float(x.mean()) if x.size else 0.0
-    if x.size < 2 or m <= 0:
-        return None
-    return float(x.var(ddof=1)) / m * tau_int(np.asarray(pos), x)
 
 
 def departure_from_zero(

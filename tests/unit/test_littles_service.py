@@ -466,3 +466,22 @@ def test_an_empty_scrape_tile_is_an_increase_of_zero_not_missing_data():
     assert np.array_equal(c, [np.nan, 3, 0, 7, np.nan, np.nan, 2], equal_nan=True)
     assert np.array_equal(g, [np.nan, 3, 3, 7, np.nan, np.nan, 2], equal_nan=True)
     assert np.array_equal(gn, n)  # no sample was read there
+
+
+def test_few_windows_rest_the_special_cause_label_on_the_cautious_envelope(tmp_path):
+    """4ahp: 4 windows give no estimate of the process's own window-to-window variation: the
+    transient's label rests on the cautious envelope, both envelopes reported, and the summary
+    says so."""
+    m = simulate(20, rates=[(0.0, 6.0)], c=10)
+    m["gauge"] = m["gauge"].astype(float)
+    m["gauge"][-60:-40] *= 2.5  # one of the last four 5-minute windows
+    svc = make_service(tmp_path, source=SimSource({"i0": m}, START))
+    out = asyncio.run(svc.check_littles_law(start="now-20m", end="now", window="5m", **ROLES))
+    assert out["total"]["common_cause"]["envelope"] == "cautious"
+    assert out["total"]["common_cause"]["cautious_rel95"] >= out["total"]["common_cause"]["rel95"]
+    (t,) = [t for t in out["classification"]["transient"] if t["envelope"]["deviation"] > 0.5]
+    env = t["envelope"]
+    assert env["label_rests_on"] == "cautious" and "spread" not in env
+    assert env["cautious"]["rel95"] >= env["small_system"]["rel95"]
+    assert t["source"] in ("special_cause", "undetermined")
+    assert "cautious envelope" in out["summary"]

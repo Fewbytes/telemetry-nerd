@@ -73,6 +73,16 @@ Every reported variation is labelled with its source:
   the windows' own variation around the reference (3 robust sigma of the window ratios, less what
   the measurement interval explains); the envelope is the wider of the two. Windows inside it are
   not to be chased.
+- **undetermined** (4ahp, principle 16): with fewer than 5 judged windows the windows' own
+  variation cannot be estimated, so the small-system scale alone would rest on Poisson arrivals
+  and latency CV 1 (optimistic under bursty arrivals or slow requests in clusters). The label
+  then rests on a **cautious envelope**: each small-system term inflated by the window's own
+  sub-steps — sqrt of the arrival counts' long-run variance-to-mean ratio, and the effective
+  latency CV from e = latency-seconds − W × completions per sub-step — around the window's linear
+  trend (a ramp inside the window is the change judged, not its noise; `not_steady` flags it),
+  × the residuals' autocorrelation time, never below Poisson. Beyond it: special cause; beyond
+  the Poisson envelope only: undetermined, both envelopes in the transient's `envelope`
+  (`label_rests_on: cautious`); option C promotions may still make it special.
 - **special cause** (assignable): **transient** windows beyond the measurement interval around
   the reference AND beyond the common-cause envelope — load peaks, leaving steady state, a change
   confined to those windows; and load-peak windows **promoted** on independent evidence of
@@ -297,6 +307,25 @@ the tiles are not in it — the sim's counters are exact per scrape already):
 | ρ 1.25 spike 5 min, completions counter (75): peak window special | 75 | 75 |
 | ρ 1.25 spike 5 min, arrivals counter (75): peak window special (promoted) | 75 (75) | 75 (75) |
 | six peaks ρ 0.6→0.9, queueing the timer misses (seeds 900-949): promoted on peak-to-peak growth | 10/50 | 8/50 (part of it was the gauge's end-of-interval bias) |
+
+Fewer than 5 windows (4ahp; `calibrate_littles.py`, four 5-minute windows on 20 minutes of
+M/M/c; before = the Poisson small-system envelope alone, after = the cautious envelope; ≥ 5
+windows unchanged, every row above identical):
+
+| scenario (seeds) | before: special | after: special / undetermined |
+|---|---|---|
+| steady λ=2 c=4, Poisson arrivals, service CV 1 (150) | 0 | 0 / 0 |
+| steady λ=9.5 c=10, Poisson (150) | 0 | 0 / 0 |
+| steady λ=2 c=4, arrivals in batches of ~5 (index of dispersion ~9) (150) | 9 (6%) | 3 / 2 |
+| steady λ=9.5 c=10, batches of ~5 (150) | 0 | 0 / 0 |
+| steady λ=2 c=4, service CV 3 (lognormal) (150) | 1 | 0 / 0 |
+| ρ 1.25 spike 5 min in window 2, completions counter (75): peak special | 73 | 69 / 4 |
+| same, arrivals in batches of ~5 (75) | 60 | 50 / 10 |
+
+(With an arrivals counter the spike's window stays near R = 1 and its special cause is a
+promotion, which needs 4 baseline windows: not possible with 4 windows, before or after.)
+The real-VM integration tests (`tests/integration/test_queue_sim_vm.py`, 1m / auto windows,
+≥ 5 per grid) pass before and after (19/19).
 
 **Real VictoriaMetrics validation** (bead 317; `scripts/validate_queue_sim.py`: VM v1.137.0 scraping
 the queue-sim exporters every 5 s over HTTP, 3 pods, `by=["pod"]`, 20 s warm-up excluded; "exact

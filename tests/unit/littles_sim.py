@@ -9,6 +9,7 @@ and the in-flight gauge are read; sub-step quantities are their per-second incre
 from __future__ import annotations
 
 import heapq
+import math
 
 import numpy as np
 
@@ -24,16 +25,25 @@ def simulate(
     scrape_s: float = 15.0,
     timer: str = "arrival",  # arrival | service_start
     counter: str = "arrivals",  # arrivals | completions: when the request counter increments
+    batch: float = 1.0,  # mean arrivals per batch (geometric sizes, one instant): clustered
+    service_cv: float = 1.0,  # service-time CV (1: exponential; else lognormal, mean 1 / mu)
 ) -> dict[str, np.ndarray]:
     rng = np.random.default_rng(seed)
     rates = rates or [(0.0, 2.0)]
     edges = [r[0] for r in rates] + [duration_s]
     arr: list[np.ndarray] = []
     for (a, lam), b in zip(rates, edges[1:], strict=True):
-        n = rng.poisson(lam * (b - a))
-        arr.append(np.sort(rng.uniform(a, b, n)))
+        n = rng.poisson(lam * (b - a) / batch)
+        t = np.sort(rng.uniform(a, b, n))
+        if batch > 1:  # overdispersed arrivals: index of dispersion 2 batch - 1
+            t = np.repeat(t, rng.geometric(1 / batch, n))
+        arr.append(t)
     t_arr = np.concatenate(arr)
-    service = rng.exponential(1 / mu, t_arr.size)
+    if service_cv == 1.0:
+        service = rng.exponential(1 / mu, t_arr.size)
+    else:
+        s2 = math.log(1 + service_cv**2)
+        service = rng.lognormal(-math.log(mu) - s2 / 2, math.sqrt(s2), t_arr.size)
     free = [0.0] * c
     start = np.empty_like(t_arr)
     for i, t in enumerate(t_arr):

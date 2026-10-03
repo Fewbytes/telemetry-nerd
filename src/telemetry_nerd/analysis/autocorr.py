@@ -102,3 +102,15 @@ def ar1_residuals(pos: np.ndarray, d: np.ndarray, phi: float) -> tuple[np.ndarra
     prev = np.r_[np.nan, dense[:-1]][pos]
     ok = ~np.isnan(prev)
     return ok, (d - phi * np.nan_to_num(prev))[ok]
+
+
+def dispersion(pos: np.ndarray, events: np.ndarray) -> float | None:
+    """Long-run variance-to-mean ratio of event counts per step: quasi-Poisson phi (sample
+    variance / mean) x the integrated autocorrelation time, so a sum over k steps has variance
+    ~ D x its mean. None with fewer than 2 points or no events. (analyze's departure test, the
+    Little's law cautious envelope.)"""
+    x = np.asarray(events, float)
+    m = float(x.mean()) if x.size else 0.0
+    if x.size < 2 or m <= 0:
+        return None
+    return float(x.var(ddof=1)) / m * tau_int(np.asarray(pos), x)
