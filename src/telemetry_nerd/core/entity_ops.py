@@ -199,25 +199,10 @@ class EntityOps:
         )
         model = KIND_MODEL.get(kind)
         bindings = self._bindings(source, model, primary) if model else []
-        rows = []
-        for v, metrics in zip(names, per_value, strict=True):
-            bases = sorted({base_name(m) for m in metrics})
-            series_names = set(metrics) | set(bases)
-            row: dict[str, Any] = {
-                "label": primary,
-                "value": v,
-                "active_recent": v in active,
-                "families": sorted({family_prefix(b) for b in bases}),
-                "metrics": bases[:MAX_METRICS_SHOWN],
-            }
-            if len(bases) > MAX_METRICS_SHOWN:
-                row["metrics_more"] = len(bases) - MAX_METRICS_SHOWN
-            if model:
-                fits = [b for b in bindings if b["metrics"] & series_names]
-                row["bindings"] = [b["id"] for b in fits]
-                if fits:
-                    row["next"] = f'binding_suggest(kind="{model}", key="{v}")'
-            rows.append(row)
+        rows = [
+            _entity_row(primary, v, metrics, v in active, model, bindings)
+            for v, metrics in zip(names, per_value, strict=True)
+        ]
         if any(r["value"] not in active for r in rows):
             coverage["silent"] = (
                 "active_recent=false: samples in the window but none in the last "
@@ -236,3 +221,31 @@ class EntityOps:
             ms = {m for m in s["roles"].values() if m}
             out.append({"id": s["id"], "metrics": ms})
         return out
+
+
+def _entity_row(
+    label: str,
+    value: str,
+    metrics: Sequence[str],
+    active: bool,
+    model: str | None,
+    bindings: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """One entity: its metric families, and the binding proposals its series fit."""
+    bases = sorted({base_name(m) for m in metrics})
+    row: dict[str, Any] = {
+        "label": label,
+        "value": value,
+        "active_recent": active,
+        "families": sorted({family_prefix(b) for b in bases}),
+        "metrics": bases[:MAX_METRICS_SHOWN],
+    }
+    if len(bases) > MAX_METRICS_SHOWN:
+        row["metrics_more"] = len(bases) - MAX_METRICS_SHOWN
+    if model:
+        series_names = set(metrics) | set(bases)
+        fits = [b for b in bindings if b["metrics"] & series_names]
+        row["bindings"] = [b["id"] for b in fits]
+        if fits:
+            row["next"] = f'binding_suggest(kind="{model}", key="{value}")'
+    return row
