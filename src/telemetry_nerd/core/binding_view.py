@@ -314,9 +314,9 @@ def error_ratio(num: FetchResult, den: FetchResult, step_ms: int) -> tuple[Fetch
 
     Counts are the mean per-second rate times the step (`n = rate x step`), so the interval is the
     sampling uncertainty of a share of that many requests. A step with no requests has no share
-    (left out, never 0). A member whose error series is absent entirely reads as 0 errors, and so does a step with
-    no error value; both are disclosed in the notes (error counters usually appear only after the
-    first error)."""
+    (left out, never 0). A member whose error series is absent entirely reads as 0 errors (disclosed; error counters
+    usually appear only after the first error). A step with no error value inside an existing
+    series is lost data: excluded from numerator and denominator, disclosed."""
     step_s = step_ms / 1000
 
     def by_labels(r: FetchResult) -> tuple[dict[str, str], dict[str, str]]:
@@ -344,9 +344,10 @@ def error_ratio(num: FetchResult, den: FetchResult, step_ms: int) -> tuple[Fetch
             absent.add(lab)
         k = num_vals.get((lab, row["ts_ms"]))
         if k is None:
-            if lab in num_ids:  # the series exists but has no value here: still 0, but disclosed
+            if lab in num_ids:  # the series exists but has no value here: lost data, not 0
                 gap_steps += 1
-            k = 0.0  # no error value: 0 errors, disclosed in the notes below
+                continue
+            k = 0.0  # no error series at all for this member: 0, disclosed in the notes below
         if k < 0:
             k = 0.0
         k *= step_s
@@ -369,10 +370,7 @@ def error_ratio(num: FetchResult, den: FetchResult, step_ms: int) -> tuple[Fetch
             "counters usually appear only after the first error)"
         )
     if gap_steps:
-        notes.append(
-            f"{gap_steps} step(s) had requests but no error value (the member's error series has "
-            "no sample there): counted as 0 errors, which may understate the error share"
-        )
+        notes.append(f"error series has no value at {gap_steps} steps: excluded, not counted as 0")
     if clipped:
         notes.append(
             f"{clipped} step(s) had more errors than requests (rates sampled apart): clipped to 1"

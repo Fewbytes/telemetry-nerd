@@ -509,14 +509,25 @@ def test_verdict_error_step_without_a_value_stays_unknown_not_zero():
     den = [(a_, 60_000, 10.0), (a_, 120_000, 10.0)]
     a, n, notes = _ratio(num, den, [60_000, 120_000])
     assert a[0] == pytest.approx(30.0) and math.isnan(a[1])
-    assert n[1] == 600.0  # the requests are known; the errors are not
-    assert not notes  # a present series is not disclosed as "absent"
+    assert math.isnan(n[1])  # excluded from both sides
+    assert any("no value at 1 steps: excluded" in x for x in notes)
 
 
-def test_error_ratio_step_gap_in_an_existing_error_series_is_disclosed():
+def test_error_ratio_step_gap_in_an_existing_error_series_is_excluded_and_disclosed():
     a = {"service": "a"}
     num = _result([(a, 60_000, 0.5)])
     den = _result([(a, 60_000, 10.0), (a, 120_000, 10.0)])
     out, notes = error_ratio(num, den, 60_000)
-    assert {r["ts_ms"]: r["avg"] for r in out.buckets.to_pylist()}[120_000] == 0.0
-    assert any("no error value" in x for x in notes)
+    assert 120_000 not in {r["ts_ms"] for r in out.buckets.to_pylist()}  # excluded, not 0
+    assert any("no value at 1 steps: excluded" in x for x in notes)
+
+
+def test_verdict_members_without_an_error_series_are_named_and_gaps_excluded():
+    a_, b_ = {"service": "a"}, {"service": "b"}
+    num = [(a_, 60_000, 0.5), (a_, 120_000, float("nan"))]
+    den = [(a_, 60_000, 10.0), (a_, 120_000, 10.0), (b_, 60_000, 5.0), (b_, 120_000, 5.0)]
+    a, n, notes = _ratio(num, den, [60_000, 120_000])
+    assert a[0] == pytest.approx(30.0) and n[0] == pytest.approx(900.0)
+    assert n[1] == pytest.approx(300.0) and a[1] == 0.0  # a's gap step is out of both sides
+    assert any("without an error series counted as 0 errors" in x and "service" in x for x in notes)
+    assert any("no value at 1 steps: excluded" in x for x in notes)

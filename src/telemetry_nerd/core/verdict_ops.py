@@ -158,13 +158,42 @@ class VerdictOps:
             nan = np.full(grid.size, np.nan)
             return nan, nan
         num, den = self.svc.datasets.meta(ds).parents[:2]
-        n = self._total(den, grid, shift) * step_s
-        a = self._total(num, grid, shift) * step_s
-        if num is None or not self._values(num, shift):
-            a = np.zeros(grid.size)  # no error series at all: 0 errors, disclosed
+        dv = self._values(den, shift)
+        nv = self._values(num, shift) if num is not None else {}
+        a = np.full(grid.size, np.nan)
+        n = np.full(grid.size, np.nan)
+        zero_members: list[str] = []
+        gaps = 0
+        for mem, dpts in dv.items():
+            d = self._arr(dpts, grid)
+            if nv and mem not in nv:
+                zero_members.append(mem)  # no error series for this member: 0, disclosed
+                e = np.zeros(grid.size)
+            elif nv:
+                e = self._arr(nv[mem], grid)
+            else:
+                e = np.zeros(grid.size)
+            ok = ~np.isnan(d)
+            gap = ok & np.isnan(e)  # requests but no error value: lost data, out of both sides
+            gaps += int(gap.sum())
+            ok &= ~np.isnan(e)
+            a = np.where(ok, np.where(np.isnan(a), 0.0, a) + e, a)
+            n = np.where(ok, np.where(np.isnan(n), 0.0, n) + d, n)
+        a, n = a * step_s, n * step_s
+        if not nv:
             if _ABSENT_ERRORS_NOTE not in notes:
                 notes.append(_ABSENT_ERRORS_NOTE)
-        a = np.where(np.isnan(n), np.nan, np.clip(a, 0, None))  # NaN (unknown step) stays NaN
+        elif shift == 0:
+            if zero_members:
+                shown = ", ".join(zero_members[:3]) + (
+                    f" (+{len(zero_members) - 3})" if len(zero_members) > 3 else ""
+                )
+                notes.append(f"members without an error series counted as 0 errors: {shown}")
+            if gaps:
+                notes.append(
+                    f"error series has no value at {gaps} steps: excluded, not counted as 0"
+                )
+        a = np.clip(a, 0, None)
         return np.minimum(a, n), n
 
     def _hist(self, ds: str, j: int, shift: int) -> tuple[Hist, pl.DataFrame, pl.DataFrame]:
