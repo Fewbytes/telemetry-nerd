@@ -22,6 +22,9 @@ from telemetry_nerd.workspace.models import AnnotationIn, FindingIn, GapIn, Hypo
 
 INSTRUCTIONS = """\
 Telemetry Nerd: an evidence-first telemetry workspace shared with the user's browser.
+- Load the `triage` skill for an incident (slow, errors, what changed): the flow and when to stop.
+- Load the `evidence` skill before finding_create or hypotheses: scope, uncertainty, sources.
+- Load the `charting` skill to pick the view (mark, y-view, overlay) that answers a question.
 - `query` fetches a PromQL/MetricsQL expression as min/max/avg/count buckets and returns a
   dataset handle plus a compact summary. Write native PromQL/MetricsQL.
 - Sources: `source_list` shows what is connected. To look at other data, `source_connect`
