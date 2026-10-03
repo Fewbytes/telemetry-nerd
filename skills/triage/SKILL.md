@@ -32,7 +32,7 @@ Which services, instances, regions carry the symptom?
 - Latency per member: `fraction_over(dataset, x, by_series=true)` or per-member
   `compare_seasonal(dataset)` on the distribution. Five or more members of a rate or share
   series (not a distribution): `fleet(dataset)` names outliers (one bad pod) against the
-  fleet's own spread. Every member moving together points away from a single instance.
+  fleet's own SPC band (median ± robust σ; flags from its family-wise tests, not the zones). Every member moving together points away from a single instance.
 - Read `coverage`, `unknown_spans`, `silent_members`: a member with no samples since T may be the
   sick one (source undetermined, not healthy; "no samples since T", never "left": principle 9).
 
@@ -95,7 +95,7 @@ Stop and report when any holds:
 - **Localised**: a special cause with an onset interval and a scope (which members, which
   signal), and the cheap alternatives refuted or explicitly left open.
 - **Normal**: the symptom is inside the common-cause envelope (seasonal band, control limits,
-  fleet spread): say so with the envelope; the lever is the system, not a root cause.
+  fleet SPC band): say so with the envelope; the lever is the system, not a root cause.
 - **Cannot tell**: the source is undetermined or a needed signal is missing: say what would
   separate the readings; record an undetermined source as a finding carrying its label, and a
   missing signal with `gap_create`.

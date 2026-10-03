@@ -83,8 +83,15 @@ test("fleet panel: band, 3 planted outliers labelled, heatmap and small multiple
     await expect(el.locator(".y-views")).toHaveCount(1);
     const plot = el.locator(".u-over");
     await expect(plot).toBeVisible();
-    await expect(el.locator("[data-fleet-encoding]")).toContainText("spread across 100 members (bands: 25–75, 10–90, min–max)");
-    await expect(el.locator("[data-fleet-key] li")).toHaveCount(5);
+    // SPC band (nq6): the reference the tests use, the flag threshold, distinct marks per mode
+    await expect(el.locator("[data-fleet-encoding]")).toContainText("median ± 2σ/3σ (robust, pooled ±6 steps, log scale: multiplicative) across 100 members");
+    for (const id of ["z3", "z2", "median", "flag", "outlier", "transient"]) await expect(el.locator(`[data-fleet-key-id=${id}]`)).toHaveCount(1);
+    await expect(el.locator("[data-fleet-legend]")).toContainText("fleet-wide 1%");
+    await expect(el.locator("[data-fleet-legend]")).toContainText("member measurement error not propagated");
+    await expect(el.locator("[data-fleet-band]")).toHaveAttribute("data-fleet-band", "spc");
+    await expect(el.locator(`.outliers li[data-fleet-kind=transient]`)).toContainText(/(spike|episode) [\d.]+σ/);
+    await expect(el.locator(`.outliers li[data-fleet-kind=persistent]`)).toContainText(/[+×][\d.]+%? since/);
+    expect(Number(await el.locator("[data-fleet-brackets]").getAttribute("data-fleet-brackets"))).toBeGreaterThanOrEqual(1);
     for (const rgb of OUTLIER_RGB) {
       await expect.poll(() => pixels(page, `[data-panel-id="${panel.id}"] canvas`, rgb)).toBeGreaterThan(20);
     }
@@ -97,6 +104,14 @@ test("fleet panel: band, 3 planted outliers labelled, heatmap and small multiple
       for (const b of boxes.slice(i + 1))
         expect(a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3], JSON.stringify(boxes)).toBe(false);
     await el.screenshot({ path: `${SHOTS}/fleet-band-${mode}.png` });
+
+    // quantile toggle: the descriptive spread, with missing-member bounds where pod 40 was silent
+    await fleet.locator("[data-fleet-view-btn=quantiles]").click();
+    await expect(el.locator("[data-fleet-encoding]")).toContainText("spread across 100 members (bands: 25–75, 10–90, min–max)");
+    await expect(el.locator("[data-fleet-key-id=bounds]")).toContainText("missing-member bounds");
+    await expect(el.locator("[data-fleet-band]")).toHaveAttribute("data-fleet-band", "quantiles");
+    await expect(el).toHaveAttribute("data-budget-exceeded", "false");
+    await el.screenshot({ path: `${SHOTS}/fleet-quantiles-${mode}.png` });
 
     // member x time heatmap: all 100 rows, outlier rows labelled, textured gap, no budget breach
     await fleet.locator("[data-fleet-view-btn=heat]").click();
@@ -149,7 +164,7 @@ test("fleet panel with 6 members: band view screenshot", async ({ page, request 
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.goto("/");
   const el = page.locator(`[data-panel-id="${panel.id}"]`);
-  await expect(el.locator("[data-fleet-encoding]")).toContainText("spread across 6 members");
+  await expect(el.locator("[data-fleet-encoding]")).toContainText("across 6 members");
   for (const mode of ["light", "dark"] as const) {
     await page.getByLabel("Theme").selectOption(mode);
     await expect(page.locator("html")).toHaveAttribute("data-theme", mode);

@@ -10,6 +10,9 @@ semantics of the series-bundles spec (§5.2, §7.1: alive / reporting / silent).
 
 Principles 4, 8, 9, 10, 11 and 14 apply (`docs/principles.md`). Consequences for this op:
 
+- **The band is an SPC reference** (principle 8): stable, robust, pooled, the centre and sigma the
+  tests use; flags come only from the family-wise tests (principle 14), never from the zones. The
+  quantile view is descriptive with missing-member bounds (principles 9, 11).
 - **No percentile aggregation across members** (principle 10). Percentile datasets (representation `quantile`,
   `histogram_quantile` / `quantile_over_time` expressions, summary series with a `quantile` label)
   are refused with a hint: compare per-member *rates* or *threshold fractions* (fraction_over), or
@@ -34,7 +37,38 @@ are averaged per member to a coarser step first (caveat `coarsened`; per-member 
 gauge are honest, unlike means of percentiles). The source caps a query at 500 series; analysis
 cost is O(members x steps), the panel draws aggregates plus at most 6 members.
 
-## Spread (per step, raw units)
+## Band: the SPC reference (default view; bead nq6)
+
+User decision 2026-10-03: the band must be **stable** to be usable; it need not be "accurate"
+(any envelope of a population is somewhat arbitrary). So the drawn band is not the raw per-step
+quantiles (they jitter with n and are not what the tests use) but the reference the outlier tests
+judge against:
+
+- **Centre** c_t: the per-step median of all members (the tests' centre, full fleet for drawing).
+- **Zones** c_t +- 2 sigma_t and +- 3 sigma_t, sigma_t = the tests' robust sigma (1.4826 MAD x the
+  small-sample factor, mean-AD fallback) of the members' deviations from c_t **pooled over +-6
+  steps**. On the scale the analysis chose: log scale (every value > 0) makes the band
+  multiplicative, c_t x exp(+-k sigma_t), linear additive. Stated in the legend:
+  "median ± 2σ/3σ (robust, pooled ±6 steps, log scale: multiplicative)".
+- **`band_window`** (odd steps >= 13, default 13 = the tests' pool): larger pools sigma over
+  +-band_window // 2 steps and smooths the centre by a centred moving median over band_window steps
+  (a calmer band for long windows). Flags are unchanged.
+- **Flags are not the zones.** A member is flagged only by the family-wise tests (below). The
+  dashed flag line is the single-step (spike) threshold, `excursion_thresholds_z.spike` x sigma_t
+  around the tests' own centre and pool (whatever band_window); level, change and episode tests
+  flag members whose single steps stay inside it. Member-steps beyond the drawn 3 sigma that no
+  test flagged are counted per step (`outside_3sigma_unflagged`; a rug in the panel) with the note
+  "outside 3σ, not significant at fleet-wide 1% (k members tested)". In a normal fleet about 0.27%
+  of member-steps lie there by chance: at Bonferroni levels that is not evidence.
+- **Behaviour groups**: each group's zones from its own analysis (its own centre and sigma).
+- **Measurement error** of each member's value is not propagated into sigma (principle 4): the
+  band and the tests treat reported values as exact; stated in both views and the summary.
+
+Summary `band`: basis (the legend text, plus the smoothing when band_window > 13), window_steps,
+sigma_median (ratio or difference), flag_threshold_z, outside_3sigma_unflagged {member_steps,
+members, note}, caveat, source `common_cause`.
+
+## Spread (per step, raw units; the panel's quantile view)
 
 Over the members reporting at the step (n_t): median, quartiles (n_t >= 5), 10/90% (n_t >= 10),
 min/max envelope. Quantiles: linear interpolation between order statistics (Hyndman-Fan 7).
@@ -42,8 +76,18 @@ Quantiles commute with monotone transforms, so the band is the same on a log or 
 `alive_t` = members seen at or before t (a member that stops reporting stays alive: silent);
 coverage `n_t / alive_t`, and `missing_share` = 1 - sum n_t / sum alive_t.
 
+Descriptive: the fleet is the population, so no sampling interval (principle 9: the claims are
+about these members only). **Missing-member bounds** at steps with n_t < alive_t: each quantile of
+all alive members is recomputed with the m = alive_t - n_t missing values at -inf (lower bound)
+and at +inf (upper bound), Hyndman-Fan 7 over n_t + m values. A bound whose order statistics
+reach into the missing ranks is unbounded (m >= the quantile's rank: e.g. 2 of 7 missing leave
+q25 unbounded below and q75 unbounded above). The min / max envelope is unbounded on the missing
+side ("unknown beyond", never a fake limit). Payload `band_bounds.{q}_lo/_hi` (None = unbounded
+where the quantile is drawn and n_t < alive_t).
+
 Summary: median relative spread (IQR / median on log scale as q75/q25), spread in the last vs the
-first third, time of the widest spread, min/median n per step.
+first third, time of the widest spread, min/median n per step, missing_member_bounds (how many
+steps carry them), caveat (member error not propagated).
 
 ## Outliers
 
@@ -138,6 +182,13 @@ noise down to t(3) (1.3% at 300 seeds, 1.6% at 1000). See Calibration.
 - `transient` (only excursions fired): episodes = runs of steps beyond the threshold, merged
   across gaps shorter than the member's autocorrelation time tau; an episode is `sustained` when
   longer than tau steps (more than one noise excursion can explain), else `momentary`.
+- **Both modes**: a level or change outlier can also have excursions beyond its own level. Its z
+  minus its own baseline (persistent: 20% trimmed mean; shifted: trimmed means before / after
+  `at`; drifting: its least-squares line) is scanned with the same excursion scans and bars;
+  runs beyond them are its `episodes` (`beyond_own_level`, peak z relative to that level). The
+  plain excursion tests fire on such members trivially (an offset member is beyond every bar), so
+  without this a persistent member would carry one window-long "episode". These extra scans run
+  only on already-flagged members (a looser look, stated).
 `since`: start of the final stretch where the member's rolling median z (window max(5, 2 tau))
 stays beyond 2 in the outlier's direction; `since_window_start` when it covers the window start
 (the member was off at least since then). `score` = the largest |statistic| / threshold (>= 1).
@@ -226,9 +277,9 @@ dataset whose op drops it) the fleet falls back to presence from values and says
 
 ## API
 
-- MCP `fleet(dataset, by=None, scale="auto", normalise="none")` ->
+- MCP `fleet(dataset, by=None, scale="auto", normalise="none", band_window=None)` ->
   `{dataset, effective_step, members: {count, tested, untested, named_by, never_reported},
-  scale, normalise, spread: {...}, coverage: {n_per_step, alive_max, missing_share},
+  scale, normalise, band: {...}, spread: {...}, coverage: {n_per_step, alive_max, missing_share},
   churn: {appeared, stopped_reporting: [{member, last_seen, state}], note?}, outliers: [{member,
   labels, kind, direction, score, tests, z, since, since_window_start, offset, change?, at?,
   episodes?, evidence, partial_buckets?, episode_partial_buckets?, cluster?}], located, tests: {
@@ -238,12 +289,28 @@ dataset whose op drops it) the fleet falls back to presence from values and says
   null_cluster_index_median, p, accepted}], groups: [{id, size, members, level_vs_fleet, tested,
   outliers, caveats, label_values}], fleet_level_outliers, explained_by: [{label, adjusted_rand}],
   note?, assigned_by_label?, unassigned?}`; each outlier then has `cluster`.
-- `show(dataset, question, mark="fleet")` (uses the latest `fleet` options, else defaults): band
-  (min-max, 10-90, 25-75 as nested grey fills: spread is intensity, no boundary lines), median
-  line, outlier members drawn and labelled (<= 6, Okabe-Ito), a coverage strip at steps where
-  alive members did not report (darker = more missing), the legend "100 members · 3 outliers ·
-  92-100 reporting per step · shading ..." and one line per drawn outlier (kind, direction,
-  since).
+- `show(dataset, question, mark="fleet")` (uses the latest `fleet` options incl. band_window,
+  else defaults). Payload: `spc` {centre, lo2, hi2, lo3, hi3, threshold_z, threshold_lo/hi,
+  window, pool_half, legend, outside3, outside3_note, tested, note}, `band` (quantiles),
+  `band_bounds`, per drawn outlier `episodes` [{start_ms, end_ms, peak_z, sustained,
+  beyond_own_level}] and `effect` {as: ratio | difference, offset, change?, at_ms?,
+  change_per_hour?}; per group `spc` zones.
+  - **SPC band + outliers** (default view): +-3 sigma and +-2 sigma as nested fills of one hue
+    (outer lighter), the median line, the flag threshold thin dashed on both sides, a rug of
+    unflagged member-steps beyond 3 sigma along the top (hover: the note).
+  - **Marks per mode** (<= 6 drawn, Okabe-Ito): persistent / shifted / drifting: the whole member
+    line coloured, end label kind + effect ("+38% since 09:10", "shifted +41% at 10:07",
+    "drifting +2%/h"). Transient: the line grey (3:1 muted) where inside, only its episode
+    segments coloured, each episode bracketed on the time axis, peak z in the label ("spike 6.1σ
+    10:22–10:25 (momentary)"; a sustained run is an "episode"). Both: the coloured line plus
+    episode brackets, the label names both ("+38% since 09:10 · spike 4σ beyond own level ...").
+  - **Spread (quantiles)** (toggle): min-max, 10-90, 25-75 as nested fills, median line,
+    missing-member bounds as lighter cells at steps with members missing (unbounded to the plot
+    edge; hover lists each quantile's bounds and "min / max: unknown beyond").
+  - Both views: a coverage strip at steps where alive members did not report (darker = more
+    missing), the legend "100 members · 3 outliers · 92-100 reporting per step · zones ..." with
+    "member measurement error not propagated", and one line per drawn outlier (kind, direction,
+    effect or episode).
 - The chart validator's `series_budget` refusal for line charts now suggests `fleet`.
 
 ## Calibration (seeded simulation)

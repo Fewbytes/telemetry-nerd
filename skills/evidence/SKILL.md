@@ -79,7 +79,7 @@ items and on `evidence` statistics, `variation` lists in results.
 
 | Label | Meaning | Action |
 |---|---|---|
-| `common_cause` | the system's inherent variability: control limits, seasonal band, fleet spread, small-system envelope | do not chase points inside it; the lever is changing the system |
+| `common_cause` | the system's inherent variability: control limits, seasonal band, fleet SPC band and spread, small-system envelope | do not chase points inside it; the lever is changing the system |
 | `special_cause` | assignable: shifts, drift, out-of-limit signals, an unusual window or member, a changed role, a transient | investigate; this is what an incident finding is about |
 | `measurement_system` | the instruments: gaps, partial or untrusted data, units, missing members, unknown input uncertainty, a systematic Little's law offset | fix or qualify the instrument before reading the process |
 | `undetermined` | the data cannot tell them apart (a signal on partial data, a silent member, run rules on an out-of-control chart) | say so; name what would separate them |

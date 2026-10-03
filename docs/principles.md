@@ -114,10 +114,22 @@ sampling, edges, unmeasured segments, units, missing members, partial or untrust
 data cannot tell them apart the label is **source undetermined**, never a guess, and never
 upgraded to special cause. Labels add context; they never hide or replace the measured numbers.
 
-- Decided: 2026-10-03, user (beads 60j, gkk).
+The common-cause envelope that is drawn is a **reference**, so it must be stable (user decision
+2026-10-03, fleet band: "stable to be usable; it need not be accurate"). The fleet band is an SPC
+reference: per-step median ± 2σ/3σ with the robust σ the outlier tests use, pooled over
+neighbouring steps, on the analysis scale. Points are named special causes only by the
+family-wise tests (principle 14), never because they leave a zone: a point beyond 3σ that no test
+flagged is shown as "not significant at fleet-wide 1%". A descriptive view (the per-step
+quantiles across members) is a separate toggle and carries missing-member bounds (principles 9,
+11), never a sampling interval. (Here, not in 14: the band's job is to be the envelope this
+principle names; 14 governs the flags drawn against it.)
+
+- Decided: 2026-10-03, user (beads 60j, gkk); fleet band 2026-10-03 (bead nq6).
 - Enforced by: MVP spec §5.4 (vocabulary and per-op mapping); `src/telemetry_nerd/analysis/sources.py`;
   `source` on `StatisticRef` and `FindingIn.sources` in `src/telemetry_nerd/workspace/models.py`;
-  `skills/evidence/SKILL.md` and `skills/evidence/references/sources-of-variation.md`.
+  `skills/evidence/SKILL.md` and `skills/evidence/references/sources-of-variation.md`; fleet
+  band: `control_band` / `missing_bounds` in `src/telemetry_nerd/analysis/fleet.py`, fleet spec
+  "Band: the SPC reference".
 
 ## 9. Positive claims vs negative claims
 

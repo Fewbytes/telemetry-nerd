@@ -78,9 +78,15 @@ wiggle on a large signal looks small. Offer other views; the user picks:
 
 `show_binding` draws a RED / USE / Little's law binding as one group (`pgN`): one range and step,
 linked crosshair, each role in its natural form (rates, error ratio with a Wilson band, latency
-heatmap, utilization on 0..1, saturation with its limit). A fleet panel offers the user three
-views: band + outliers (default), member x time heatmap, small multiples of the top outliers;
-say which one shows the point being made.
+heatmap, utilization on 0..1, saturation with its limit). A fleet panel offers the user four
+views: SPC band + outliers (default), spread (quantiles), member x time heatmap, small multiples
+of the top outliers; say which one shows the point being made. The SPC band is the reference the
+outlier tests use (median ± 2σ/3σ, robust σ pooled ±6 steps; `band_window` for a calmer band):
+cite flags from the `fleet` summary, never "outside the band" (a point beyond 3σ that no test
+flagged is not significant at fleet-wide 1%, and the panel says so). A coloured member line is
+consistently off, shifted or drifting; a grey line with coloured, bracketed segments is a
+transient. The quantile view is descriptive, with missing-member bounds where members did not
+report (principles 8, 9, 11; `docs/principles.md`).
 
 ## Render budget
 

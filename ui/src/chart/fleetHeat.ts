@@ -102,6 +102,10 @@ export function heatTip(r: FleetHeatRow, z: number | null | undefined, at: strin
   return `${r.id} · ${at} · z ${z > 0 ? "+" : ""}${z.toFixed(1)}`;
 }
 
+const LINES = new Set(["outlier", "muted", "episode"]);
+const lowEdge = (r: string) => r === "lo" || r === "lo3" || r === "lo2" || r === "thrlo";
+const highEdge = (r: string) => r === "hi" || r === "hi3" || r === "hi2" || r === "thrhi";
+
 /** Decimate fleet columns to <= maxPts points: band edges keep min/max, an outlier keeps its farthest point from the median. */
 export function decimate(cols: (number | null)[][], roles: string[], maxPts: number): (number | null)[][] {
   const n = cols[0].length;
@@ -120,15 +124,15 @@ export function decimate(cols: (number | null)[][], roles: string[], maxPts: num
         const v = col[i];
         if (v === null) continue;
         sum += v; cnt++;
-        if (role === "lo") pick = pick === null ? v : Math.min(pick, v);
-        else if (role === "hi") pick = pick === null ? v : Math.max(pick, v);
-        else if (role === "outlier") {
+        if (lowEdge(role)) pick = pick === null ? v : Math.min(pick, v);
+        else if (highEdge(role)) pick = pick === null ? v : Math.max(pick, v);
+        else if (LINES.has(role)) {
           const m = cols[medIdx][i];
           const dev = m === null ? 0 : Math.abs(v - m);
           if (dev > bestDev) { bestDev = dev; pick = v; }
         }
       }
-      out.push(role === "lo" || role === "hi" || role === "outlier" ? pick : cnt ? sum / cnt : null);
+      out.push(lowEdge(role) || highEdge(role) || LINES.has(role) ? pick : cnt ? sum / cnt : null);
     }
     return out;
   });

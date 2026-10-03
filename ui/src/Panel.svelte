@@ -71,7 +71,7 @@
   });
   $effect(() => {
     // the fleet's member x time view has its own rows: no crosshair there
-    if (link && data?.kind === "fleet" && fleetView !== "band") area = null;
+    if (link && data?.kind === "fleet" && fleetView !== "band" && fleetView !== "quantiles") area = null;
   });
   const onLinkedMove = (e: MouseEvent) => {
     if (!link || !area) return;
@@ -263,7 +263,7 @@
     setMarginal(panel.id, ref).catch((e) => (error = String(e))).finally(() => (margBusy = false));
   };
 
-  let fleetView = $state<"band" | "heat" | "multiples">("band");
+  let fleetView = $state<"band" | "quantiles" | "heat" | "multiples">("band");
   // the heat view's y axis is members, not values: no y-view chips, badge, context strip or y notes there
   const yIsValues = $derived(!(data?.kind === "fleet" && fleetView === "heat"));
   const notes = $derived(

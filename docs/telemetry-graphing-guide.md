@@ -142,12 +142,27 @@ The catalog's auto-chart (`show(signal)`) picks the form; explicit specs overrid
 past ~8 series, and no tested form keeps individual series readable beyond that ([C] M5,
 M7, C4). A pile of lines is not evidence.
 
-- **Group of series** (pods, instances, endpoints) → a **density cloud**, a canvas mark:
-  x is time, y is value, and colour intensity is how many members sit at that value
-  (heatmap-like, perceptually uniform colormap). The mean (or median) is drawn on top, and
-  only the outliers are drawn as lines and labelled ("44 pods · 3 outliers · 2 silent").
-  Spread is intensity, never upper/lower boundary lines. Outliers use robust rules
-  (median + MAD / Tukey fences), never σ. [TN; P, SfE; P, C M5]
+- **Group of series** (pods, instances, endpoints) → a **fleet band**: the members' spread as
+  nested fills of one hue, the median on top, and only the outliers drawn as lines and labelled
+  ("44 pods · 3 outliers · 2 silent"). Spread is intensity, never upper/lower boundary lines.
+  Outliers use robust rules (median + MAD), never the sample σ. [TN; P, SfE; P, C M5]
+  - **Default: the SPC reference band** (principle 8, user decision 2026-10-03: stable beats
+    "accurate"). Median ± 2σ/3σ with σ the *robust* (MAD-based) sigma the outlier tests use,
+    pooled over ±6 steps, on the analysis scale (log: multiplicative); `band_window` pools
+    wider and smooths the centre for a calmer band. Raw per-step quantiles jitter with n and are
+    not what the tests judge against.
+  - **Flags are the tests', not the zones** (principle 14): the family-wise single-step
+    threshold is a thin dashed line; a point beyond 3σ that no test flagged is marked "not
+    significant at fleet-wide 1% (n members tested)", never highlighted as an outlier.
+  - **Two outlier modes, two marks.** Consistently off / shifted / drifting: the whole member
+    line coloured, labelled kind + effect ("+38% since 09:10", "drifting +2%/h"). Transient:
+    the line grey where inside, only its episodes coloured and bracketed on the time axis,
+    labelled with the peak ("spike 6.1σ 10:22–10:25"). Both: coloured line plus brackets.
+  - **Quantile view** (toggle): the descriptive per-step quantiles (min–max, 10–90, 25–75),
+    with missing-member bounds where alive members did not report (the missing values at ±∞;
+    unbounded once they reach a quantile's rank; min/max "unknown beyond"). No sampling
+    interval: the fleet is the population (principle 9).
+  - Both views say that member measurement error is not propagated (principle 4).
 - **A few named series that are the question itself** (≤5, e.g. read vs write, prod vs
   canary) → lines in one plot. Shared space wins for *local* comparisons. [E, C M1]
 - **Comparing aggregates across a few groups** (per region, per service) → small multiples
