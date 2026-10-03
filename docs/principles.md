@@ -218,7 +218,8 @@ plainly.
 
 - Decided: 2026-10-03, user (bead 60j).
 - Enforced by: `src/telemetry_nerd/analysis/littles.py`, `src/telemetry_nerd/core/littles_ops.py`
-  (`summary` leads with the discrepancy); `docs/superpowers/specs/2026-10-02-littles-law-design.md`
+  (`summary` leads with the discrepancy, after the special-cause windows when there are any:
+  the verdict answers only whether L = λW holds overall, bead vayr); `docs/superpowers/specs/2026-10-02-littles-law-design.md`
   ("Discrepancy first"); `skills/evidence/SKILL.md` ("Always show the discrepancy");
   `skills/model-views/SKILL.md`.
 

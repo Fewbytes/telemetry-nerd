@@ -87,13 +87,20 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   the bucket holding q, only where n is enough. For tails use `show(mark="ccdf", windows=[...])`.
 - "What fraction was slower than X?" is `fraction_over` on a distribution dataset: exact at
   bucket edges, bounded inside a bucket; cite its `evidence` statistic.
-- Write $__rate_interval as the rate window for quantiles so each value covers one display step.
+- Write rate(x[$__rate_interval]) (quantiles too), not a fixed [1m]/[5m], before analyze, verdicts
+  or charts: it is the shortest window the source's resolution allows at this step. A window
+  spanning many steps makes neighbouring points share data, so a 10-minute range at a 5s
+  resolution under [1m] holds ~10 independent values (effective n), and analyze reports
+  insufficient_data (its `hint` says so) or misses a short surge.
 - Never look at latency alone: show it with throughput, and with concurrency when relevant
   (Little's law: mean concurrency L = throughput λ x mean latency W; W from
   histogram_sum/histogram_count, not from a percentile). "Do concurrency, throughput and latency
   agree?" is `check_littles_law(binding=... | arrival_rate, latency, concurrency)`, then
-  `show(<its concurrency dataset>, question, mark="littles")`. Report the discrepancy first
-  (L − λW and L/(λW) − 1 with the measurement interval, whatever the verdict), then the verdict
+  `show(<its concurrency dataset>, question, mark="littles")`. Special-cause windows first when
+  the summary opens with them: the verdict answers only whether L = λW holds overall, so
+  `consistent` with promoted load-peak windows is an incident at those windows, not "nothing
+  happened". Then the discrepancy (L − λW and L/(λW) − 1 with the measurement interval, whatever
+  the verdict), then the verdict
   with each variation's source — measurement system (interval; systematic offset), common cause
   (small-system ±X% per window), special cause (transient windows; say "at a load peak"
   explicitly) — then warnings, every assumption marked flagged/assumed, the hints; cite
@@ -347,7 +354,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         pre-computed p90s across 24 hours overstated it by 68.5% in the canonical example —
         recompute from the merged histogram/raw data instead). Such a dataset still cannot go
         through fleet, compare_seasonal, analyze, spectrum or filter: those refuse a percentile.
-        $__rate_interval expands to max(4 x scrape interval, step + scrape interval).
+        $__rate_interval expands to max(4 x scrape interval, step + scrape interval); prefer it
+        over a fixed [1m]/[5m] for every rate (a window spanning many steps cuts the effective n).
         Returns {dataset, summary}. The summary is compact; raw series stay on the server.
         """
         try:
@@ -521,7 +529,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         window: judged span (default ~range/12); warmup: excluded from the start (e.g. "10m");
         latency_unit: s|ms|us|ns when the catalog does not know it (else ASSUMED s, flagged);
         arrivals: auto|arrivals|completions — what the counter counts (stated in assumptions).
-        Result leads with `summary` (text: discrepancy, verdict, warnings), `discrepancy` (L − λW
+        Result leads with `summary` (text: special-cause windows when any — the verdict answers
+        only whether L = λW holds overall, so `consistent` + promoted windows is not "nothing
+        happened" — then discrepancy, verdict, warnings), `discrepancy` (L − λW
         and L/(λW) − 1, whole range and per window, with the MEASUREMENT interval: gauge sampling
         floored by a Poisson-occupancy process, steady-state edge straddle, counter scrape timing,
         rate lookback bound when counters are read with rate() (on VictoriaMetrics they are read as

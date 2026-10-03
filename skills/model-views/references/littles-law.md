@@ -13,7 +13,10 @@ R = L / (lambda x W). The check ALWAYS reports the discrepancy first: `discrepan
 absolute L - lambda W (requests) and the relative R - 1, whole range and per window, each with its
 MEASUREMENT interval. Report those numbers whatever the verdict: a `consistent` verdict is context,
 never a reason to leave the discrepancy out. `summary` is a ready sentence in that order
-(discrepancy, verdict and classification, warnings).
+(special-cause windows when there are any, discrepancy, verdict and classification, warnings).
+The verdict answers only whether L = lambda W holds over the range: `consistent` with promoted
+load-peak windows is a valid, intended outcome (an arrivals counter partly compensates in the
+peak window) and the promoted windows are the incident; lead with them.
 
 ## Sources of variation: say which one
 
@@ -132,7 +135,8 @@ say that the check cannot be run and record a gap.
 
 ## Reporting
 
-Discrepancy first, then verdict with its source, then warnings: "Over the hour L - lambda W =
+Special-cause windows first when there are any (below: a promoted load peak), then the
+discrepancy, the verdict with its source, then warnings: "Over the hour L - lambda W =
 +13.3 requests (L 22.9 vs lambda x W 9.54; L / (lambda W) 2.40, +140%, measurement interval +127%
 to +152%). Verdict `L_high`: a systematic offset of 2.03 (1.76-2.30) in 10 of 12 five-minute
 windows — measurement system: the instruments do not describe the same requests. If the excess is
@@ -145,8 +149,9 @@ accept queue." Cite `evidence` (`littles_law_discrepancy`, `littles_law_ratio`,
 `littles_law_systematic_offset`, each `littles_law_transient`, and the promotion statistics) in
 `finding_create`, with any `input_uncertainty` flag.
 
-A promoted load peak: "Over the hour L − λW = −0.10 requests (L ÷ λW 0.997, measurement interval
-−3% to +3%); verdict `consistent`. But the 25–30 min window is special cause, promoted from
-measurement system: at a load peak the backlog grew +376 requests (gauge +376, arrivals −
-completions +377), 155× the steady-state scale (threshold 27, Cantelli): leaving steady state
-toward overload. Check saturation (USE) in that window." 
+A promoted load peak: "Special cause at 25–30 min, promoted from measurement system: at a load
+peak the backlog grew +376 requests (gauge +376, arrivals − completions +377), 155× the
+steady-state scale (threshold 27, Cantelli): leaving steady state toward overload. Over the hour
+L − λW = −0.10 requests (L ÷ λW 0.997, measurement interval −3% to +3%); verdict `consistent`:
+Little's law holds overall, which does not make the peak harmless. Check saturation (USE) in that
+window." 

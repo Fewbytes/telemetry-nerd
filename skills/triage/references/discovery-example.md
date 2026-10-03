@@ -55,7 +55,7 @@ at once.
 
 <!-- call: scenario=payment id=errors -->
 ```json
-{"tool": "query", "args": {"source": "default", "expr": "sum by (service_name) (rate(traces_span_metrics_calls_total{status_code=\"STATUS_CODE_ERROR\"}[1m]))", "start": "now-1h", "end": "now", "step": "1m"}}
+{"tool": "query", "args": {"source": "default", "expr": "sum by (service_name) (rate(traces_span_metrics_calls_total{status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval]))", "start": "now-1h", "end": "now", "step": "1m"}}
 ```
 
 Read: three services carry error spans: checkout, frontend and payment. The other twelve have no
@@ -66,7 +66,7 @@ non-error series report).
 
 <!-- call: scenario=payment id=pay -->
 ```json
-{"tool": "query", "args": {"source": "default", "expr": "sum by (status_code) (rate(traces_span_metrics_calls_total{service_name=\"payment\"}[1m]))", "start": "now-1h", "end": "now", "step": "1m"}}
+{"tool": "query", "args": {"source": "default", "expr": "sum by (status_code) (rate(traces_span_metrics_calls_total{service_name=\"payment\"}[$__rate_interval]))", "start": "now-1h", "end": "now", "step": "1m"}}
 ```
 
 <!-- call: scenario=payment id=an -->
@@ -109,7 +109,7 @@ fail as often as payment's own charge spans.
 
 <!-- call: scenario=payment id=kinds -->
 ```json
-{"tool": "query", "args": {"source": "default", "expr": "sum by (service_name, span_kind) (rate(traces_span_metrics_calls_total{status_code=\"STATUS_CODE_ERROR\",service_name=~\"payment|checkout\"}[1m]))", "start": "now-1h", "end": "now", "step": "1m"}}
+{"tool": "query", "args": {"source": "default", "expr": "sum by (service_name, span_kind) (rate(traces_span_metrics_calls_total{status_code=\"STATUS_CODE_ERROR\",service_name=~\"payment|checkout\"}[$__rate_interval]))", "start": "now-1h", "end": "now", "step": "1m"}}
 ```
 
 <!-- call: scenario=payment id=panel2 -->

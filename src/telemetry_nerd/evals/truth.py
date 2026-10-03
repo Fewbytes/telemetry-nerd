@@ -10,6 +10,11 @@ the faulted instances are the origin, the others controls. Expected sources of v
 the fault kind: an overload is a special cause; hidden queueing and a missing gauge are the
 measurement system (the instrument, not the process); a leak shows as a drifting offset that is
 both a process problem and invisible to the latency timer, so either label is accepted.
+A fault expecting a `transient` classification (an overload) is met by special-cause windows over
+its episode (fault start to drain end), whatever the Little's law verdict word: the verdict
+answers only whether L = lambda W holds overall, and `consistent` + promoted load-peak windows is
+a valid outcome (vayr, option C of 83w/60j). Older truth files say `verdict:
+inconsistent_in_windows` there; the word is ignored the same way.
 """
 
 from __future__ import annotations
@@ -94,6 +99,9 @@ class Truth:
     sole: str | None = None
     #: the label naming the sole entity
     sole_label: str = "service"
+    #: queue-sim: Little's law should show special-cause windows (transient or promoted) over
+    #: [fault_start_ms, fault_end_ms]; the verdict word is not judged
+    expect_special_windows: bool = False
     raw: dict = field(default_factory=dict, compare=False, repr=False)
 
     @property
@@ -188,6 +196,9 @@ def from_queue_sim(gt: dict, tolerance_s: float | None = None) -> Truth:
     if origin and set(origin) != set(instances):
         terms = [*origin, *terms]
     service = gt.get("service")
+    special_windows = any(
+        (x.get("expect") or {}).get("classification") == "transient" for x in (gt, *faults)
+    )
     # the service is the faulted entity when every instance is: claims about "checkout" are
     # claims about the origin (eval round 3: they were invisible to scope and source checks)
     if service and origin and set(origin) == set(instances):
@@ -212,6 +223,7 @@ def from_queue_sim(gt: dict, tolerance_s: float | None = None) -> Truth:
         no_onset=whole or not faults,
         extra_labels=("instance",),
         sole=service or None,
+        expect_special_windows=special_windows,
         raw=gt,
     )
 

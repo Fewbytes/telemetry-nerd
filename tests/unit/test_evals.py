@@ -615,17 +615,20 @@ def test_rerun_after_eval_fixes_scores_as_observed():
 def test_queue_sim_live_run_scores_as_observed():
     """Live queue-sim run (d77.3): Little's law checked and the episode annotated within
     tolerance; acceptance passes. No hypothesis about the spike's cause was opened (h1 framed
-    the question, 'L exceeds λW', and was refuted), so root_cause_hypothesis_supported fails."""
+    the question, 'L exceeds λW', and was refuted), so root_cause_hypothesis_supported fails.
+    f1 reads the check as 'no transient windows' over the episode: special_cause_windows fails
+    (vayr; at the 15s configured resolution the check flagged no window, fixed in wbw)."""
     t = load_truth(EV / "overload_spike.live-sonnet.truth.json", extra_terms("overload_spike"))
     rep = score(snap("overload_spike.live-sonnet"), t)
     st = {c.id: c.status for c in rep.checks}
-    assert [k for k, v in st.items() if v == "fail"] == ["root_cause_hypothesis_supported"]
+    assert [k for k, v in st.items() if v == "fail"] == [
+        "special_cause_windows", "root_cause_hypothesis_supported"]  # fmt: skip
     assert st["annotation_onset"] == st["zero_unscoped_claims"] == "pass"
     assert st["findings_scoped"] == st["findings_evidenced"] == "pass"
     f1 = rep.findings[0]
     assert f1.sources == ["measurement_system"] and not f1.incident
     assert [h.status for h in rep.hypotheses] == ["refuted"]
-    assert (rep.passed, rep.applicable) == (8, 9) and rep.acceptance
+    assert (rep.passed, rep.applicable) == (8, 10) and rep.acceptance
 
 
 def _qs_truth():
@@ -687,10 +690,12 @@ def test_queue_sim_round3_scores_as_observed():
     window (f1), the episode annotated +20 s from fault start, an arrival-surge hypothesis h1
     supported against a refuted slowdown h2 (t75 works). No finding names the surge: f3 says the
     request rate rose ~3x but calls the counter 'likely completion-side' and cites a run_code
-    peak with no source of variation (source_label fails). 14 tool rounds, num_turns 32."""
+    peak with no source of variation (source_label fails). 14 tool rounds, num_turns 32.
+    f1 says 'no flagged windows' over the overload: special_cause_windows fails (vayr)."""
     rep = score(snap("overload_spike.live-sonnet-3"), _qs_truth())
     st = {c.id: c.status for c in rep.checks}
-    assert {k for k, v in st.items() if v == "fail"} == {"root_cause_named", "source_label"}
+    assert {k for k, v in st.items() if v == "fail"} == {
+        "root_cause_named", "source_label", "special_cause_windows"}  # fmt: skip
     assert {k for k, v in st.items() if v == "n/a"} == {"no_control_blamed", "decoys_not_supported"}
     by = {f.id: f for f in rep.findings}
     assert by["f2"].incident and by["f2"].source_ok and by["f2"].sources == ["special_cause"]
@@ -698,7 +703,66 @@ def test_queue_sim_round3_scores_as_observed():
     assert [(h.id, h.role, h.status) for h in rep.hypotheses] == [
         ("h1", "root_cause", "supported"), ("h2", "other", "refuted")]  # fmt: skip
     assert [a.verdict for a in rep.annotations] == ["onset_ok"]
-    assert (rep.passed, rep.applicable) == (9, 11) and rep.acceptance
+    assert (rep.passed, rep.applicable) == (9, 12) and rep.acceptance
+
+
+@pytest.mark.parametrize(
+    "claim,ok",
+    [
+        # vayr: the verdict word is not judged; the special-cause windows are
+        (("checkout: Little's law consistent overall (R 0.99); the 14:37 window was promoted to "
+          "special cause at a load peak (backlog +764)."), True),
+        ("Verdict consistent, but the backlog grew +300 in the 14:37 window.", True),
+        ("L and λW disagree in the 14:37-14:39 windows: transient, special cause.", True),
+        ("checkout: L 108.6 agrees with λW 109.4; no systematic offset, no flagged windows.", False),
+        ("Little's law holds: no transient windows, no systematic offset.", False),
+        ("The 14:37 window is not a special cause: it is inside the common-cause envelope.", False),
+    ],
+)  # fmt: skip
+def test_special_cause_windows_whatever_the_verdict_word(claim, ok):
+    s = copy.deepcopy(snap("overload_spike.live-sonnet-3"))
+    finding(s, "f1")["claim"] = claim
+    rep = score(s, _qs_truth())
+    st = {c.id: c.status for c in rep.checks}
+    assert st["special_cause_windows"] == ("pass" if ok else "fail"), claim
+
+
+def test_special_cause_windows_from_a_special_cause_statistic_of_the_check():
+    s = copy.deepcopy(snap("overload_spike.live-sonnet-3"))
+    finding(s, "f1")["evidence"].append(
+        {"kind": "statistic", "dataset": "d4", "name": "littles_law_backlog_growth", "value": 764,
+         "interval": [600, 900], "source": "special_cause"})  # fmt: skip
+    st = {c.id: c.status for c in score(s, _qs_truth()).checks}
+    assert st["special_cause_windows"] == "pass"
+
+
+def test_special_cause_windows_truth_ignores_the_verdict_word():
+    """Old truth files (verdict inconsistent_in_windows) and the scenarios as now written
+    (verdict any) both expect special-cause windows; a fault-free or systematic scenario does
+    not, and without a Little's law finding the check is n/a."""
+    old = _qs_truth()
+    assert old.raw["expect"]["verdict"] == "inconsistent_in_windows" and old.expect_special_windows
+    raw = copy.deepcopy(old.raw)
+    raw["expect"] = raw["faults"][0]["expect"] = {"verdict": "any", "classification": "transient"}
+    assert load_truth(raw).expect_special_windows
+    raw["expect"] = raw["faults"][0]["expect"] = {
+        "verdict": "L_high",
+        "classification": "systematic",
+    }
+    assert not load_truth(raw).expect_special_windows
+    s = copy.deepcopy(snap("overload_spike.live-sonnet-3"))
+    s["workspace"]["findings"] = [f for f in s["workspace"]["findings"] if f["id"] != "f1"]
+    st = {c.id: c.status for c in score(s, _qs_truth()).checks}
+    assert st["special_cause_windows"] == "n/a"
+
+
+def test_overload_scenarios_do_not_judge_the_verdict_word():
+    from telemetry_nerd.devtools.queue_sim import SCENARIO_DIR, ground_truth, load_scenario
+
+    for name in ("overload_spike", "overload_spike_completions"):
+        gt = ground_truth(load_scenario(SCENARIO_DIR / f"{name}.yaml"), 0)
+        assert gt["expect"] == {"verdict": "any", "classification": "transient"}
+        assert load_truth(gt).expect_special_windows
 
 
 def test_queue_sim_round3_stream_counts_rounds_not_turns():

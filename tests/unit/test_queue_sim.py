@@ -2,6 +2,7 @@
 
 import json
 import re
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -201,3 +202,53 @@ def test_exact_windows_give_the_realised_littles_law_quantities():
     sc = scenario(overrides={"b": {"export_gauge": False}})
     (r,) = exact_windows(sc, [(60.0, 600.0)], dt=0.05)
     assert 0.4 < r["R"] < 0.6
+
+
+def _validate_script():
+    import importlib.util
+
+    root = Path(__file__).resolve().parents[2]
+    spec = importlib.util.spec_from_file_location("vqs", root / "scripts/validate_queue_sim.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize(
+    ("verdict", "transient", "promoted", "ok"),
+    [
+        ("consistent", [], [(300, 360)], True),  # vayr: consistent + a promoted load peak
+        ("inconsistent_in_windows", [(300, 360, "peak")], [], True),
+        ("inconsistent_in_windows", [(360, 420, "drain")], [], True),
+        ("consistent", [], [], False),  # nothing special at the episode
+        ("inconsistent_in_windows", [(300, 360, "peak")], [(600, 660)], False),  # a stray window
+    ],
+)
+def test_overload_transient_is_met_by_special_windows_whatever_the_verdict(
+    verdict, transient, promoted, ok
+):
+    from datetime import UTC, datetime
+
+    vqs = _validate_script()
+    t0 = 1_700_000_000_000
+    gt = ground_truth(load_scenario(SCENARIO_DIR / "overload_spike.yaml"), t0)
+    assert gt["expect"]["verdict"] == "any"
+    iso_ = lambda s: datetime.fromtimestamp((t0 + s * 1000) / 1000, UTC).isoformat()
+    out = {
+        "verdict": verdict,
+        "total": {"growing": None},
+        "classification": {
+            "transient": [
+                {
+                    "window": [iso_(a), iso_(b)],
+                    "source": "special_cause",
+                    "phase": ph,
+                    "direction": "L_high",
+                }
+                for a, b, ph in transient
+            ],
+            "promoted": [{"window": [iso_(a), iso_(b)]} for a, b in promoted],
+            "systematic": None,
+        },
+    }
+    assert vqs.matches(gt, out)[0] is ok, vqs.matches(gt, out)

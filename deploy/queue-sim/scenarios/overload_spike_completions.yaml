@@ -15,5 +15,8 @@ faults:
     at: 300
     until: 360
     set: {lambda: 15.0}
-    expect: {verdict: inconsistent_in_windows, classification: transient}
-expect: {verdict: inconsistent_in_windows, classification: transient}
+    expect: {verdict: any, classification: transient}
+# verdict any (vayr, option C of 83w/60j): the verdict word answers only whether L = lambda W
+# holds overall; the transient is met when special-cause windows (transient or promoted
+# load-peak) cover the episode, so `consistent` + promoted windows is a valid outcome.
+expect: {verdict: any, classification: transient}

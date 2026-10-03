@@ -876,8 +876,31 @@ def _pct(v: float | None) -> str:
     return "–" if v is None else f"{100 * v:+.0f}%"
 
 
+def _special_lead(g: dict) -> str | None:
+    """The special-cause windows (transient beyond the envelope, promoted load peaks) as the
+    summary's opening sentence: the verdict answers only whether L = λW holds over the range, so
+    "consistent" with a load peak promoted is not "nothing happened" (vayr, option C of 83w)."""
+    c = g["classification"]
+    special = [
+        (t["window"][0], "at a load peak" if t.get("at_peak") or t["phase"] == "peak"
+         else "draining a backlog" if t["phase"] == "drain" else "transient")
+        for t in c["transient"] if t["source"] == SPECIAL
+    ] + [(p["window"][0], "at a load peak, promoted") for p in c["promoted"]]  # fmt: skip
+    if not special:
+        return None
+    special = sorted(dict(special).items())
+    items = "; ".join(f"{w} ({what})" for w, what in special[:6])
+    more = f" (+{len(special) - 6} more)" if len(special) > 6 else ""
+    return (
+        f"Special cause in {len(special)} window(s): {items}{more}. The verdict below answers only "
+        f"whether L = λW holds over the range; these windows are where the system left steady "
+        f"state."
+    )
+
+
 def _summary_text(cfg: dict, g: dict, warnings: list[str], no_concurrency: bool) -> str:
-    """Discrepancy first, then the verdict and its classification, then the warnings."""
+    """Special-cause windows first when there are any, then the discrepancy, the verdict and its
+    classification, then the warnings."""
     if no_concurrency:
         return NOT_POSSIBLE + " (the concurrency query returned no data); L was not estimated."
     d = g["discrepancy"]
@@ -885,7 +908,8 @@ def _summary_text(cfg: dict, g: dict, warnings: list[str], no_concurrency: bool)
         return f"Not judged: {g.get('reason') or g['verdict']}."
     win = format_duration(cfg["window_ms"])
     pw = d["per_window"]
-    parts = [
+    lead = _special_lead(g)
+    parts = ([lead] if lead else []) + [
         (
             f"Discrepancy over the range: L − λ·W = {d['difference']:+.3g} requests (L "
             f"{_n(d['L'])} vs λ·W {_n(d['lambda_W'])}; L ÷ λW {_n(d['ratio'])}, "

@@ -43,7 +43,8 @@ law check. A service can have a RED and a Little's law binding at once.
 3. **Review the roles, never accept blind.** For each role read `detail`: `confidence`, `basis`
    (pack | naming | relation), `form`, the `expr` hint, `alternatives`, `ambiguous`. Check
    `unfilled` (a role nothing fills) and `join_on` (a label convention, not read from the source:
-   verify against real series with `query`). Prefer histograms for latency: a suggestion should
+   verify against real series with `query`, rates as `rate(x[$__rate_interval])`, as the bindings
+   themselves do: a fixed `[1m]` over many steps cuts the effective n of what you check). Prefer histograms for latency: a suggestion should
    never pick a precomputed percentile while a histogram exists.
 4. **Confirm.** `binding_accept(source, id, basis=...)`: `basis` states what was checked;
    `overrides={role: metric|null}` swaps a role for a listed alternative; `key` renames the
@@ -128,9 +129,13 @@ Detail, field meanings and wording templates: `references/verdicts.md`.
 end, window, warmup, latency_unit, arrivals)` (defaults: last 6h, `window="auto"` about range/12) tests L (the in-flight gauge, time-averaged) against
 lambda x W (arrival rate times MEAN latency from histogram `_sum` / `_count`).
 
-- Report the discrepancy FIRST, whatever the verdict (principle 12): `discrepancy` (L - lambda W and R - 1 =
-  L / (lambda W) - 1, whole range and per window, with the measurement interval); `summary` is that
-  sentence ready-made. Then the verdict (`consistent`, `L_high`, `L_low`,
+- Special-cause windows (`transient` with `source: special_cause`, `promoted`) come first when
+  present: the verdict answers only "does L = lambda W hold over the range", so `consistent` plus
+  promoted load-peak windows is a valid outcome meaning "the law holds overall; the system left
+  steady state in these windows" — never report it as "nothing happened". Then the discrepancy,
+  whatever the verdict (principle 12): `discrepancy` (L - lambda W and R - 1 =
+  L / (lambda W) - 1, whole range and per window, with the measurement interval); `summary` is
+  this order ready-made. Then the verdict (`consistent`, `L_high`, `L_low`,
   `inconsistent_in_windows`), `classification` (systematic offset, transient windows), then
   `warnings`, every entry of `assumptions` (ok / assumed / flagged) and `hints`.
 - Name the source of each variation: **measurement system** (the measurement interval; a

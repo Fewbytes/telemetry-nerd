@@ -167,6 +167,8 @@ def test_load_spike_is_called_out_as_transient_at_a_peak(tmp_path):
                for w in out["warnings"])  # fmt: skip
     assert not any("not a signal by itself" in w for w in out["warnings"])
     assert "promoted to special cause" in out["summary"]
+    assert out["summary"].startswith("Special cause in ")
+    assert f"{p['window'][0]} (at a load peak, promoted)" in out["summary"].split(". ")[0]
     assert any("toward overload" in h for h in out["hints"])
     (stat,) = [e for e in out["total"]["evidence"] if e["name"] == "littles_law_backlog_growth"]
     assert stat["source"] == "special_cause" and stat["interval"][0] <= stat["value"]
@@ -384,6 +386,13 @@ def test_spike_with_an_arrivals_counter_is_promoted_at_the_peak(tmp_path):
     assert e["significant"] and e["flow"] > 300 and e["gauge"] > 300  # both instruments see it
     assert "arrivals − completions +" in p["reason"]
     assert "Leaving steady state at a load peak — promoted to special cause (1)" in out["summary"]
+    # vayr: "consistent" answers only L = lambda W overall; the summary opens with the special
+    # cause so a reader does not stop at the verdict word
+    s = out["summary"]
+    assert s.startswith(
+        f"Special cause in 1 window(s): {p['window'][0]} (at a load peak, promoted)."
+    )
+    assert s.index("Special cause") < s.index("Discrepancy") < s.index("Verdict consistent")
     assert any(v["source"] == "special_cause" and v.get("promoted") for v in out["variation"])
     names = [e["name"] for e in out["total"]["evidence"]]
     assert "littles_law_backlog_growth" in names

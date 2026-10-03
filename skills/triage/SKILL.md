@@ -60,7 +60,8 @@ compare them with the onset interval (an event outside it does not explain the c
 ## 4. Changepoints and one signal in depth
 
 For a single signal (a dataset from `query`, or a rate or threshold count; histograms via
-`query_distribution`): `analyze(dataset)` gives level shifts with onset intervals, drift, variance
+`query_distribution`), rates written `rate(x[$__rate_interval])` (a fixed `[1m]` spanning many
+steps leaves few independent values, effective n): `analyze(dataset)` gives level shifts with onset intervals, drift, variance
 change and the control chart (`show(dataset, question, mark="spc")`). `analyze(dataset,
 baseline="day")` judges against yesterday. `spectrum` when the symptom repeats (cron, GC,
 retries).

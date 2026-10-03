@@ -185,8 +185,10 @@ def matches(truth: dict, out: dict) -> tuple[bool, str]:
     transient: special cause (a transient beyond the envelope, or a promoted load-peak window) in
       a window overlapping the episode (the fault and its drain); nothing special outside it (+-
       one window); `peak` only on windows overlapping the load, `drain` only after it started;
-      verdict inconsistent_in_windows, or consistent when the special window is a promotion
-      (the verdict is about L = lambda W: an arrivals counter can compensate)."""
+      the verdict word is not judged when the truth says `verdict: any` (vayr, option C of
+      83w/60j: it answers only whether L = lambda W holds overall; an arrivals counter can
+      compensate, leaving `consistent` + promoted windows); any other expected verdict must
+      match, or be consistent with a promotion at the episode."""
     if "error" in out:
         return False, "error: " + str(out["error"])[:120]
     exp = truth["expect"]
@@ -224,7 +226,7 @@ def matches(truth: dict, out: dict) -> tuple[bool, str]:
         if (t["phase"] == "peak" and not (_ms(t["window"][0]) < load_end and _ms(t["window"][1]) > lo))
         or (t["phase"] == "drain" and _ms(t["window"][1]) <= lo)
     ]  # fmt: skip
-    v_ok = verdict == exp["verdict"] or (
+    v_ok = exp["verdict"] in ("any", verdict) or (
         verdict == "consistent" and any(t.get("promoted_window") for t in at_episode)
     )
     ok = v_ok and bool(at_episode) and not stray and not bad_phase

@@ -27,6 +27,11 @@ The rules below apply principles 3, 10 and 11 (`docs/principles.md`).
 - **Counters are drawn as rates**: `show` on a counter selector draws a new rate dataset and
   returns it as `drawn_dataset`; run `analyze`, `spectrum`, `fleet` and `filter` on that
   handle, not on the counter (they refuse raw counters).
+- **Rate windows are `[$__rate_interval]`**: write `rate(x[$__rate_interval])`, not a fixed
+  `[1m]`/`[5m]`, for anything you will `analyze`, judge or compare. It is the shortest window the
+  resolution allows at the step; a window spanning many steps smooths the series so neighbouring
+  points share data: few independent values (effective n), `insufficient_data`, a short surge
+  flattened. A longer window only when the question is about that window.
 - **Look, then claim**: a chart catches wrong joins, gaps and units before a statistic does.
 
 ## Decision table

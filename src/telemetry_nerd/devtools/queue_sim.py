@@ -26,7 +26,8 @@ Scenario (YAML/JSON): name, description, duration_s, seed, scrape_interval_s, se
 (count or names), defaults (Params), overrides {instance: Params}, faults [{kind, at, until, instances,
 set, expect}] and an overall `expect`. Faults apply `set` over [at, until) (until omitted = to the
 end) and are the ground truth written to JSON: kind, window, instances, expected Little's law
-verdict/classification. Run: `just queue-sim <scenario>`; scrape target: <host>:9201/metrics.
+verdict/classification (`verdict: any` for a transient: the verdict word answers only whether
+L = lambda W holds overall; special-cause windows over the episode are what is expected). Run: `just queue-sim <scenario>`; scrape target: <host>:9201/metrics.
 """
 
 from __future__ import annotations

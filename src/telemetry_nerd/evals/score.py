@@ -25,6 +25,10 @@ per finding
   unscoped, and a `source_undetermined` source flag lists `undetermined` among the sources.
 
 workspace
+- special-cause windows (queue-sim overload; n/a without a finding citing check_littles_law):
+  a finding citing the check says that windows of the episode were special cause (transient,
+  promoted, a load peak; a special_cause statistic of the check), whatever the verdict word
+  (`consistent` + promoted windows is a valid outcome, vayr); "no flagged windows" fails.
 - findings present; root cause named by an in-window finding; annotations: at least one onset
   within fault_window.start +- tolerance and none off target; unscoped claims (findings and the
   final transcript) == 0; a root-cause hypothesis supported; no hypothesis blaming a control
@@ -116,6 +120,13 @@ _MEASURES = (
 _SENTENCES = re.compile(r"(?<=[.;!?])\s+|\n+")
 #: clauses of a sentence: "X returned 422s from 13:24 to 13:28, then zero" asserts a change in
 #: its first clause even though the second says what it returned to
+#: a Little's law finding reporting special-cause windows (vayr): the clause must not negate it
+_SPECIAL_WINDOWS = re.compile(
+    r"special[- _]cause|transient|promot\w*|load[- ]peak|(?:left|leaving|leaves) steady state|"
+    r"backlog (?:grew|grows|growth|built)",
+    re.IGNORECASE,
+)
+_NEGATION = re.compile(r"\b(no|not|none|never|without|cannot|nor)\b", re.IGNORECASE)
 _CLAUSES = re.compile(r",\s*(?:then|and then|and|after which|before|until)\b|;|\(")
 #: a heading or label line over a list of what is not known ("**Not established**",
 #: "Unknowns:"): the items under it name open questions, not claims (eval round 3)
@@ -628,6 +639,33 @@ def _unscoped_in(text: str, truth: Truth) -> list[tuple[str, str]]:
     return out
 
 
+def _littles_statistics(f: dict) -> list[dict]:
+    return [
+        e
+        for e in f.get("evidence", [])
+        if e.get("kind") == "statistic"
+        and (
+            str(e.get("name", "")).startswith("littles_law")
+            or "check_littles_law" in str(e.get("method", ""))
+        )
+    ]
+
+
+def reports_special_windows(f: dict) -> bool:
+    """Does a finding citing check_littles_law report special-cause windows? A special_cause
+    statistic of the check, or a clause naming them that does not negate them ("no flagged
+    windows, no transient" does not; "consistent overall; the 14:37 window promoted to special
+    cause at a load peak" does)."""
+    if any(e.get("source") == SPECIAL for e in _littles_statistics(f)):
+        return True
+    text = f.get("claim", "")
+    for s in sentences(text):
+        for c in re.split(r"[,;:(]|\bbut\b|\bwhile\b", s):
+            if (m := _SPECIAL_WINDOWS.search(c)) and not _NEGATION.search(c[: m.start()]):
+                return True
+    return False
+
+
 def _c(cid: str, ok: bool | None, detail: str, objs: list[str] | None = None) -> Check:
     status: Status = "n/a" if ok is None else ("pass" if ok else "fail")
     return Check(cid, status, detail, objs or [])
@@ -713,6 +751,18 @@ def score(snapshot: dict, truth: Truth) -> Report:
             f"incident findings labelled {' / '.join(truth.expected_sources)}",
             [f.id for f in judged if not f.source_ok]
             or ([f.id for f in incident] if not any(f.source_ok for f in incident) else []),
+        )
+    )
+    raw_fs = {f.get("id", "?"): f for f in ws.get("findings", [])}
+    littles = [f for f in fs if _littles_statistics(raw_fs[f.id]) and f.in_window]
+    special_ok = [f.id for f in littles if reports_special_windows(raw_fs[f.id])]
+    checks.append(
+        _c(
+            "special_cause_windows",
+            bool(special_ok) if truth.expect_special_windows and littles else None,
+            "a Little's law finding reports the episode's special-cause windows "
+            "(transient or promoted), whatever the verdict word",
+            special_ok or [f.id for f in littles],
         )
     )
     onset = [a.id for a in anns if a.verdict == "onset_ok"]
