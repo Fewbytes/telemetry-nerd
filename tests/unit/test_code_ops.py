@@ -289,6 +289,18 @@ async def test_gc_keeps_run_dirs_of_other_workspaces(svc):
     assert sorted(p.name for p in svc.code.runs.root.iterdir()) == ["c1", "c3"]
 
 
+async def test_gc_keeps_recent_nodes_per_workspace(svc):
+    svc.code.keep_recent = 1
+    await svc.code.run("x = 1")  # c1: w1's newest
+    svc.registry.create("second", None)
+    with svc.active.using("w2"):
+        await svc.code.run("y = 2")  # c2
+        await svc.code.run("z = 3")  # c3: w2's newest
+    root = svc.code.runs.root
+    assert sorted(p.name for p in root.iterdir()) == ["c1", "c3"]  # GC ran after c3
+    assert svc.code.gc() == []
+
+
 async def test_kernel_keyed_by_active_workspace(svc, kernels):
     svc.registry.create("second", None)
     with svc.active.using("w2"):

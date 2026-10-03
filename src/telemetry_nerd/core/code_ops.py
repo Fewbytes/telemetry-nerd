@@ -8,11 +8,11 @@ Nodes are immutable once finished: a re-run is a new node with `rerun_of`. Event
 code's own doing (actor `code`: `dataset.created` per output, `code.finished`).
 
 GC policy for run directories (`gc`): a run dir is kept while its node is running, among the
-`keep_recent` newest nodes (re-run, debugging), or referenced: one of its outputs is drawn on a
+`keep_recent` newest nodes of each workspace (re-run, debugging), or referenced: one of its outputs is drawn on a
 panel (open or closed), cited by a finding, or a parent of another dataset. Everything else,
-including directories with no node in any workspace, is removed. Run directories are shared by
-all workspaces, so recovery and GC look at every workspace, not just the active one. Removing a run dir never
-loses data: outputs are datasets in the store and the code + inputs live on the node.
+including directories with no node in any workspace, is removed. Run directories are shared
+by all workspaces, so recovery and GC look at every workspace, not just the active one.
+Removing a run dir never loses data: outputs are datasets in the store and the code + inputs live on the node.
 """
 
 from __future__ import annotations
@@ -280,7 +280,7 @@ class CodeOps:
     # --- GC ---------------------------------------------------------------------------------
 
     def _referenced_datasets(self) -> set[str]:
-        """Datasets drawn or cited in the current workspace, plus every dataset's parents."""
+        """Datasets drawn or cited in the current workspace."""
         refs: set[str] = set()
         for p in self.ws.workspace.list_panels(include_closed=True):
             refs.update(p.dataset_ids)
@@ -293,19 +293,22 @@ class CodeOps:
                         refs.update(self.ws.workspace.get_panel(ev.panel).dataset_ids)
                     except NotFound:
                         pass
-        for m in self.datasets.list_metas():
-            refs.update(m.parents)
         return refs
 
     def keep(self) -> Callable[[str], bool]:
         """The GC predicate (see the module docstring), computed once per GC pass."""
         nodes: list[CodeNode] = []
+        recent: set[str] = set()
         refs: set[str] = set()
         for wid in self.workspace_ids():
             with self.using(wid):
-                nodes.extend(self.ws.objects.list_code())
+                ws_nodes = self.ws.objects.list_code()
+                nodes.extend(ws_nodes)
+                newest = sorted(ws_nodes, key=lambda c: int(c.id[1:]))[-self.keep_recent :]
+                recent |= {c.id for c in newest}
                 refs |= self._referenced_datasets()
-        recent = {c.id for c in sorted(nodes, key=lambda c: int(c.id[1:]))[-self.keep_recent :]}
+        for m in self.datasets.list_metas():
+            refs.update(m.parents)
         keep = set(self._running) | recent
         for c in nodes:
             if c.status == "running" or any(o.dataset in refs for o in c.outputs):
