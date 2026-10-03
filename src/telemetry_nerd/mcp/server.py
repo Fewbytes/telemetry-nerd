@@ -30,7 +30,13 @@ from telemetry_nerd.sources.base import SourceError
 from telemetry_nerd.sources.grafana import discover_datasources, probe_backend
 from telemetry_nerd.sources.public import PUBLIC_SOURCES
 from telemetry_nerd.sources.spec import AuthRef, SourceSpec
-from telemetry_nerd.workspace.models import AnnotationIn, GapIn, HypothesisScope, HypothesisStatus
+from telemetry_nerd.workspace.models import (
+    AnnotationIn,
+    Finding,
+    GapIn,
+    HypothesisScope,
+    HypothesisStatus,
+)
 
 INSTRUCTIONS = """\
 Telemetry Nerd: an evidence-first telemetry workspace shared with the user's browser.
@@ -370,6 +376,22 @@ class TelemetryMCP(MCPServer):
         except UnexpectedToolError as e:
             log.error("tool %s crashed", name, exc_info=e.__cause__ or e)
             raise ToolError(crash_message(name, e)) from e.__cause__
+
+
+def _finding_result(f: Finding, ui_url: str) -> dict:
+    """finding_create's answer: what the server derived for the recorded finding."""
+    out: dict = {"finding": f.id, "url": f"{ui_url}/#/finding/{f.id}"}
+    if f.hypotheses:
+        out["hypotheses"] = [x.model_dump() for x in f.hypotheses]
+    if f.evidence_flags:
+        out["uncertainty"] = [e.model_dump() for e in f.evidence_flags]
+    if f.scope_check is not None:
+        out["scope"] = f.scope_check.model_dump()
+    if f.sources:
+        out["sources"] = f.sources  # spec §5.4: variation sources of the cited statistics
+    if f.source_flags:
+        out["source_flags"] = [e.model_dump() for e in f.source_flags]
+    return out
 
 
 def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
@@ -1948,17 +1970,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise ToolError(f"invalid arguments: {e}") from e
         except (ValidationError, NotFound, ValueError) as e:
             raise _fail(e) from e
-        out: dict = {"finding": f.id, "url": f"{ui_url}/#/finding/{f.id}"}
-        if f.hypotheses:
-            out["hypotheses"] = [x.model_dump() for x in f.hypotheses]
-        if f.evidence_flags:
-            out["uncertainty"] = [e.model_dump() for e in f.evidence_flags]
-        if f.scope_check is not None:
-            out["scope"] = f.scope_check.model_dump()
-        if f.sources:
-            out["sources"] = f.sources  # spec §5.4: variation sources of the cited statistics
-        if f.source_flags:
-            out["source_flags"] = [e.model_dump() for e in f.source_flags]
+        out = _finding_result(f, ui_url)
         citable, cite = ws.citable_statistics(f)
         if citable:  # hk2r: the ops' labelled statistics behind the cited panels
             out["citable_statistics"] = citable
