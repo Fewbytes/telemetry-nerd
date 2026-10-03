@@ -20,6 +20,7 @@ from telemetry_nerd.analysis.spectrum import MIN_POINTS, WINDOW_ARTIFACT, Peak, 
 from telemetry_nerd.analysis.stability import ALPHA as SPC_ALPHA
 from telemetry_nerd.analysis.stability import (
     KPSS,
+    MIN_SEGMENT,
     Harmonics,
     Period,
     Shape,
@@ -34,11 +35,15 @@ from telemetry_nerd.analysis.stability import (
     trend,
     variance_ratio,
 )
-from telemetry_nerd.analysis.stats import robust_sigma
+from telemetry_nerd.analysis.stats import poisson_interval, robust_sigma
 
 MATERIAL = 0.25  # below this (in sigma) a significant shift / change is only noted as minor
 SMALL = 1.0  # below this it is called small
 MIN_N_EFF = 10
+#: fewest points diagnose judges: one changepoint test (two segments of MIN_SEGMENT). Periods
+#: need the spectrum's MIN_POINTS; a shorter series is judged without a period search (e.g.
+#: 30 min at 1 m = 31 points, or a counter series born mid-range read as 0 before birth, 7thi)
+MIN_DIAGNOSE_POINTS = 2 * MIN_SEGMENT
 MAX_PERIODS = 3
 VARIANCE_MATERIAL = 1.5
 SIGNAL_P = SPC_ALPHA / len(DECIDING)  # a detector's count is significant below this (in_control)
@@ -69,6 +74,7 @@ class Diagnosis:
     #: labelled findings (spec §5.4): {source, finding}; measurement-system items are added
     #: from the caveats by the op
     variation: list[dict] = field(default_factory=list)
+    departure: Departure | None = None  # events after an all-zero baseline (event counts only)
 
     @property
     def shifted_from(self) -> int | None:
@@ -194,6 +200,70 @@ def _no_reference(y) -> ControlChart:
     )  # fmt: skip
 
 
+@dataclass(frozen=True)
+class Departure:
+    """Events after a baseline that saw none (an event-count series, e.g. an error counter
+    born on its first event and read as 0 before it): the SPC chart has no common-cause
+    envelope to judge against, and a burst shorter than two changepoint segments escapes the
+    changepoint tests. Exact conditional test of one Poisson rate across baseline and judged
+    steps: given the A events seen, P(none in the n_b baseline steps) = (n_j / (n_b + n_j))^A.
+    Dispersion and autocorrelation come from the baseline, as in the binding verdicts; an
+    all-zero baseline has none to estimate, so the counts are taken as Poisson (clustered
+    events, e.g. retries of one request, make p optimistic: the method says so)."""
+
+    index: int  # first judged sample with events (descriptive: the test has no split search)
+    ts_ms: int
+    n_baseline: int
+    n_judged: int
+    events: int  # judged events, whole (floor: conservative)
+    mean: float  # judged mean, the series' units
+    interval: tuple[float, float]  # exact Poisson (Garwood) 1 - ALPHA, the series' units
+    p: float
+
+    @property
+    def significant(self) -> bool:
+        return self.p < SPC_ALPHA
+
+
+DEPARTURE_METHOD = (
+    "events after an all-zero baseline: exact conditional test of one Poisson rate across "
+    "baseline and judged steps, p = (n_judged / n)^events; dispersion and autocorrelation from "
+    "the baseline (none to estimate in an all-zero one: Poisson; clustered events make p "
+    "optimistic); judged mean with its exact Poisson (Garwood) 99% interval"
+)
+
+
+def departure_from_zero(
+    ts_ms: np.ndarray,
+    y: np.ndarray,
+    baseline: np.ndarray,
+    events_scale: float,
+    reference: np.ndarray | None = None,
+) -> Departure | None:
+    """`events_scale`: events per step = value x events_scale. `baseline`: bool per sample;
+    `reference`: values of a separately fetched baseline (then every sample is judged). None
+    unless the baseline holds >= MIN_SEGMENT points, all exactly 0, and the judged steps an
+    event."""
+    y = np.asarray(y, float)
+    if reference is not None:
+        base, judged, idx = np.asarray(reference, float), y, np.arange(y.size)
+    else:
+        base, judged, idx = y[baseline], y[~baseline], np.flatnonzero(~baseline)
+    if base.size < MIN_SEGMENT or judged.size == 0 or np.any(base != 0) or events_scale <= 0:
+        return None
+    events = math.floor(float(judged.sum()) * events_scale + 1e-9)
+    if events < 1:
+        return None
+    nb, nj = int(base.size), int(judged.size)
+    p = math.exp(events * math.log(nj / (nb + nj)))
+    lo, hi = poisson_interval(events, SPC_ALPHA)
+    unit = nj * events_scale
+    first = int(idx[int(np.flatnonzero(judged > 0)[0])])
+    return Departure(
+        first, int(ts_ms[first]), nb, nj, events, float(judged.mean()), (lo / unit, hi / unit), p
+    )
+
+
 def diagnose(
     ts_ms: np.ndarray,
     y: np.ndarray,
@@ -204,6 +274,7 @@ def diagnose(
     fmt_ts=str,
     reference: tuple[np.ndarray, np.ndarray] | None = None,
     profile: tuple[np.ndarray, float] | None = None,
+    events_scale: float | None = None,
 ) -> Diagnosis:
     """`baseline`: bool per sample (SPC limits come only from these). `sp`: the series'
     spectrum, or None when the range is too short to resolve any period.
@@ -212,6 +283,9 @@ def diagnose(
     hours last week); when given, SPC limits come only from it and every point of the series
     is judged (`baseline` is ignored). `profile` (shape, cycle_s): the operating profile's
     seasonal shape per sample of [reference..., series...], estimated without the series.
+    `events_scale`: the series counts events (value x events_scale = events per step, e.g.
+    increase() of a counter); then a baseline that saw none is tested for a departure from
+    zero (`Departure`).
 
     Periods and structure confound each other (a step has 1/f^2 power; a slow cycle looks like
     a shift), so: structure on the raw series -> periods confirmed against red noise on what
@@ -222,10 +296,14 @@ def diagnose(
     n = int(y.size)
     span_ms = int(ts_ms[-1] - ts_ms[0]) + step_ms
     caveats: list[str] = []
-    if n < MIN_POINTS:
+    if n < MIN_DIAGNOSE_POINTS:
         return Diagnosis(
-            "insufficient_data", [], [f"{n} points < {MIN_POINTS}"], n, math.nan, math.nan
-        )
+            "insufficient_data", [], [f"{n} points < {MIN_DIAGNOSE_POINTS}"], n, math.nan,
+            math.nan,
+        )  # fmt: skip
+    if n < MIN_POINTS:
+        sp = None  # too short to resolve a period against red noise: none is searched
+        caveats.append("no_period_search")
     tau_raw = tau_int(pos, y)
     cands = candidate_peaks(sp)
     first = structure(pos, ts_ms, t_s, y, span_ms)
@@ -253,11 +331,22 @@ def diagnose(
     labels: list[str] = []
     reasons: list[str] = []
     var: list[dict] = []
+    dep = (
+        departure_from_zero(
+            ts_ms, y, baseline, events_scale, None if reference is None else reference[1]
+        )
+        if events_scale
+        else None
+    )
+    departed = dep is not None and dep.significant
     if ne < MIN_N_EFF:
-        labels.append("insufficient_data")
         reasons.append(
             f"n_eff {ne:.1f} < {MIN_N_EFF}: {n} points but autocorrelation time {tau:.1f} steps"
-        )
+            + (": trend, shift and period tests are unreliable; the departure from the zero "
+               "baseline rests on the event counts alone" if departed else "")
+        )  # fmt: skip
+        if not departed:
+            labels.append("insufficient_data")
     material = [s for s in shifts if abs(s.delta) >= MATERIAL * sigma_within]
     if material and model == "step":
         labels.append("level_shifted")
@@ -286,6 +375,20 @@ def diagnose(
     elif tr.significant and model == "trend":
         reasons.append(f"minor trend {fmt(tr.change)} over the range (< {MATERIAL:g} sigma)")
         var.append(item(SPECIAL, reasons[-1]))
+    if dep is not None:
+        what = (
+            f"{dep.events} events in {dep.n_judged} judged steps after {dep.n_baseline} baseline "
+            f"steps with none (first at {fmt_ts(dep.ts_ms)}; mean {fmt(dep.mean)} "
+            f"[{fmt(dep.interval[0])}, {fmt(dep.interval[1])}] per step, Poisson p={dep.p:.1g})"
+        )
+        if departed:
+            if "level_shifted" not in labels:
+                labels.append("level_shifted")
+            reasons.append(f"departure from a zero baseline: {what}")
+            var.append(item(SPECIAL, reasons[-1]))
+        else:
+            reasons.append(f"events after a zero baseline, within what one rate explains: {what}")
+            var.append(item(COMMON, reasons[-1]))
     if peaks:
         labels.append("periodic")
         reasons.append(
@@ -295,8 +398,10 @@ def diagnose(
         )
         var.append(item(COMMON, reasons[-1] + ": a systemic cycle, part of the envelope"))
     # a (even minor) shift or trend explains an out-of-control chart: that is not noise
-    structured = bool({"level_shifted", "drifting"} & set(labels)) or (
-        (model == "step" and bool(shifts)) or (model == "trend" and tr.significant)
+    structured = (
+        departed
+        or bool({"level_shifted", "drifting"} & set(labels))
+        or ((model == "step" and bool(shifts)) or (model == "trend" and tr.significant))
     )
     noisy: list[tuple[str, str]] = []
     if vr is not None and vr.significant and not 1 / VARIANCE_MATERIAL < vr.ratio < VARIANCE_MATERIAL:  # fmt: skip
@@ -328,8 +433,11 @@ def diagnose(
             else "no trend, shift or period"
         )
         var.append(item(COMMON, reasons[-1]))
-    shifted = "level_shifted" in labels and model == "step"
-    var += _chart_variation(chart, min(s.index for s in material) if shifted else None)
+    shifted = "level_shifted" in labels and model == "step" and bool(material)
+    var += _chart_variation(
+        chart,
+        min(s.index for s in material) if shifted else (dep.index if departed and dep else None),
+    )
     if "bimodal" in sh.flags and "level_shifted" in labels:
         caveats.append("bimodal_from_shift")
     if chart.mode == "insufficient_data" and chart.reason:
@@ -337,5 +445,5 @@ def diagnose(
     order = sorted(labels, key=VERDICTS.index)
     return Diagnosis(
         order[0], order[1:], reasons, n, tau, ne, peaks, confirmed, cands, harm if peaks else None, tr, shifts,
-        sigma_within, stationarity, vr, sh, chart, model, caveats, var,
+        sigma_within, stationarity, vr, sh, chart, model, caveats, var, dep,
     )  # fmt: skip

@@ -14,6 +14,8 @@ import numpy as np
 
 from telemetry_nerd.analysis import born_counters, sources
 from telemetry_nerd.analysis.diagnostics import (
+    DEPARTURE_METHOD,
+    MIN_DIAGNOSE_POINTS,
     Diagnosis,
     detector_source,
     diagnose,
@@ -24,7 +26,7 @@ from telemetry_nerd.analysis.profile import seasonal_shape
 from telemetry_nerd.analysis.seasonal import DEFAULT_K, cycle_shifts
 from telemetry_nerd.analysis.sources import COMMON, SPECIAL
 from telemetry_nerd.analysis.spc import CUSUM_H, CUSUM_K, EWMA_L, EWMA_LAMBDA
-from telemetry_nerd.analysis.spectrum import spectrum
+from telemetry_nerd.analysis.spectrum import MIN_POINTS, spectrum
 from telemetry_nerd.core.profiles import SeasonalShapes
 from telemetry_nerd.core.signal_ops import (
     SPECTRUM_CAP,
@@ -278,16 +280,18 @@ class SeriesDiagnostics:
 
         def prepare(d: str) -> Prepared:
             return self._signal._prepare(
-                d, "analyze", SPECTRUM_CAP, allow_empty=True, sibling=siblings[d]
-            )
+                d, "analyze", SPECTRUM_CAP, allow_empty=True, sibling=siblings[d],
+                min_points=MIN_DIAGNOSE_POINTS,
+            )  # fmt: skip
 
         prep = prepare(dataset_id)
         refs = [prepare(d) for d in ref_ds]
+        scale = self._signal.events_scale(dataset_id, prep.step_ms)
         out: dict[str, Diagnosis] = {}
         used: dict[str, dict] = {}
         for sid, (labels, ts, y) in prep.series.items():
             try:
-                sp = spectrum(ts, y, prep.step_ms, top=8)
+                sp = spectrum(ts, y, prep.step_ms, top=8) if ts.size >= MIN_POINTS else None
             except ValueError:
                 sp = None
             mask = (ts >= base[0]) & (ts < base[1])
@@ -304,8 +308,9 @@ class SeriesDiagnostics:
                 at = np.r_[reference[0], ts] if reference is not None else ts
                 profile = (seasonal_shape(seas, at - prep.step_ms // 2), shapes.cycle_s(seas))
             d = diagnose(
-                ts, y, prep.step_ms, mask, sp, lambda v: f"{v:.3g}", iso, reference, profile
-            )
+                ts, y, prep.step_ms, mask, sp, lambda v: f"{v:.3g}", iso, reference, profile,
+                events_scale=scale,
+            )  # fmt: skip
             out[sid] = d
             if d.chart is not None and "profile" in d.chart.seasonal and shapes and seas:
                 used[sid] = {
@@ -344,8 +349,9 @@ class SeriesDiagnostics:
                 if c is not None and c.mode == "insufficient_data" and c.baseline.any() and not np.any(prep.series[sid][2][c.baseline]):  # fmt: skip
                     zero["spc"] = (
                         "the baseline saw no events (all 0): there is no common-cause envelope "
-                        "to chart against; any event after it departs from zero, and the level "
-                        "shifts carry the special cause"
+                        "to chart against; any event after it departs from zero: "
+                        "stability.departure tests it on the event counts, and level shifts "
+                        "carry the special cause"
                     )
                 item["absent_as_zero"] = zero
                 item["variation"].append(sources.item(
@@ -451,6 +457,18 @@ class SeriesDiagnostics:
                 )  # fmt: skip
             shifts.append(item)
         stability = {"trend": trend, "shifts": shifts, "sigma_within": sig(d.sigma_within)}
+        if (dep := d.departure) is not None:
+            src = SPECIAL if dep.significant else COMMON
+            stability["departure"] = {
+                "at": iso(dep.ts_ms), "events": dep.events, "mean": sig(dep.mean),
+                "interval": sig_pair(dep.interval), "p": sig(dep.p, 2),
+                "n_baseline": dep.n_baseline, "n_judged": dep.n_judged, "source": src,
+                "evidence": ev(
+                    "departure_from_zero", dep.mean, dep.interval, DEPARTURE_METHOD,
+                    source=src, at=iso(dep.ts_ms), p=dep.p, events=dep.events,
+                    n_baseline=dep.n_baseline, n_judged=dep.n_judged,
+                ),
+            }  # fmt: skip
         if d.kpss is not None:
             stability["kpss"] = {
                 "stat": sig(d.kpss.stat, 3),

@@ -90,7 +90,7 @@ def test_analyze_refuses_with_hints(tmp_path, expr, rep, match):
 def test_too_few_points_is_an_honest_verdict_not_an_error(tmp_path):
     svc = make_service(tmp_path)
     keep = np.zeros(N, bool)
-    keep[:20] = True
+    keep[:15] = True  # < MIN_DIAGNOSE_POINTS (16); 16..31 points go on to the gap rule
     out = svc.analyze(put(svc, step_series(), keep=keep))
     (s,) = out["series"]
     assert s["verdict"] == "insufficient_data" and "too_few_points" in s["reasons"][0]

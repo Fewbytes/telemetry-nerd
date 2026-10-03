@@ -141,9 +141,10 @@ Primary label, in priority order, with every other label that applies in `also`:
 
 | label | rule |
 |---|---|
-| `insufficient_data` | < 32 points, > 50% gaps, constant, or n_eff < 10 |
+| `insufficient_data` | < 16 points (two changepoint segments), > 50% gaps, constant, or n_eff < 10 (unless an event count departs from an all-zero baseline, below); 16-31 points are judged without a period search (caveat `no_period_search`: the spectrum needs 32) |
 | `insufficient_data` (also) | n_eff < 10 after removing structure (near-unit-root series) |
 | `level_shifted` | significant changepoint(s) (p < 0.01), \|δ\| ≥ 0.25 σ_within, step model has the lowest BIC |
+| `level_shifted` (departure) | an event count (rate/increase of a counter) whose stated baseline (≥ 8 points) saw no events: exact conditional Poisson test p = (n_judged/n)^events < 0.01 (`stability.departure`, evidence `departure_from_zero`; dispersion from the baseline, none in an all-zero one; bead 7thi) |
 | `drifting` | 99% slope interval excludes 0, change ≥ 0.25 σ_resid, trend model has the lowest BIC |
 | `periodic` | ≥ 1 period confirmed against red noise |
 | `noisy` | none of the above, but heteroscedastic, heavy-tailed (kurtosis interval > 1) or SPC out of control |

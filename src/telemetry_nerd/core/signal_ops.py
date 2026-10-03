@@ -15,6 +15,7 @@ import pyarrow.compute as pc
 
 from telemetry_nerd.analysis import born_counters
 from telemetry_nerd.analysis.born_counters import BornCounter, Filled
+from telemetry_nerd.analysis.exprkind import counter_rate_source, events_per_step
 from telemetry_nerd.analysis.filters import FilterSpec, filter_buckets
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.analysis.spectrum import (
@@ -114,6 +115,21 @@ class SignalOps:
             return None
         return born_counters.born_counter(meta.expr, lambda m: self._facts(meta.source, m).type)
 
+    def events_scale(self, dataset_id: str, step_ms: int) -> float | None:
+        """Value x this = events per step, for `[sum [by]] (rate|increase(counter[w]))`; None for
+        any other expression (a gauge, a ratio, a code output)."""
+        meta = self._datasets.meta(dataset_id)
+        if meta.code_node or meta.derived:
+            return None
+        src = counter_rate_source(meta.expr)
+        if src is None:
+            return None
+        sel = src[0]
+        metric = sel.split("{", 1)[0].strip()
+        if not metric or self._facts(meta.source, metric).type != "counter":
+            return None
+        return events_per_step(meta.expr, step_ms)
+
     def _prepare(
         self,
         dataset_id: str,
@@ -121,9 +137,12 @@ class SignalOps:
         cap: int,
         allow_empty: bool = False,
         sibling: str | None = None,
+        min_points: int = MIN_POINTS,
     ) -> Prepared:
         """Series that qualify for `op`. `sibling`: a dataset of the live-sibling expression
-        (born_counters complement), same range and step, fetched by the caller."""
+        (born_counters complement), same range and step, fetched by the caller. `min_points`:
+        the fewest points (after the born-counter fill) the op can use; the spectrum's
+        MIN_POINTS by default."""
         meta = self.check(dataset_id, op)
         meta, result = self._datasets.get(dataset_id)
         table, step = result.buckets, meta.step_ms
@@ -163,7 +182,7 @@ class SignalOps:
         for sid, (lab, ts, y) in raw.items():
             gaps = 1 - ts.size / max(expected, 1)
             reason = None
-            if ts.size < MIN_POINTS:
+            if ts.size < min_points:
                 reason = "too_few_points"
             elif gaps > MAX_GAP_FRACTION:
                 reason = "too_gappy"
@@ -192,7 +211,7 @@ class SignalOps:
         if not series and not allow_empty:
             raise ValueError(
                 f"{op}: no series qualifies ({', '.join(sorted({s['reason'] for s in skipped})) or 'no data'}); "
-                f"needs >= {MIN_POINTS} points, <= {int(MAX_GAP_FRACTION * 100)}% gaps, not constant"
+                f"needs >= {min_points} points, <= {int(MAX_GAP_FRACTION * 100)}% gaps, not constant"
             )
         if len(series) > SERIES_BUDGET:
             raise ValueError(

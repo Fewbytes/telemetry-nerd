@@ -3,6 +3,7 @@ import pytest
 from telemetry_nerd.analysis.exprkind import (
     HistogramSource,
     analyze,
+    events_per_step,
     expand,
     histogram_source,
     min_samples,
@@ -224,3 +225,18 @@ def test_looks_like_histogram(expr, want):
     from telemetry_nerd.analysis.exprkind import looks_like_histogram
 
     assert looks_like_histogram(expr) is want
+
+
+@pytest.mark.parametrize(
+    "expr,step,want",
+    [
+        ('sum by (s) (increase(calls_total{x="1"}[1m]))', 60_000, 1.0),
+        ("increase(calls_total[5m])", 60_000, 0.2),
+        ("sum(rate(calls_total[1m]))", 15_000, 15.0),
+        ("avg(rate(calls_total[1m]))", 60_000, None),
+        ("sum(rate(a_total[1m])) / sum(rate(b_total[1m]))", 60_000, None),
+        ("calls_total", 60_000, None),
+    ],
+)
+def test_events_per_step(expr, step, want):
+    assert events_per_step(expr, step) == want

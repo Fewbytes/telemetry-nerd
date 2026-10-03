@@ -148,6 +148,49 @@ def poisson_sf(k: int, lam: float) -> float:
     return max(0.0, 1.0 - total)
 
 
+def _poisson_cdf(k: int, lam: float) -> float:
+    """P(X <= k), X ~ Poisson(lam), summed in log space (no underflow for a large lam)."""
+    if k < 0:
+        return 0.0
+    if lam <= 0:
+        return 1.0
+    log_lam = math.log(lam)
+    terms = [i * log_lam - lam - math.lgamma(i + 1) for i in range(k + 1)]
+    top = max(terms)
+    return min(1.0, math.exp(top) * sum(math.exp(t - top) for t in terms))
+
+
+#: above this many events the Wilson-Hilferty chi-square quantile is exact to < 0.1%
+_GARWOOD_EXACT = 1000
+
+
+def poisson_interval(k: int, alpha: float) -> tuple[float, float]:
+    """Exact (Garwood) 1 - alpha interval for a Poisson mean from k observed events: lo with
+    P(X >= k) = alpha/2, hi with P(X <= k) = alpha/2 (Wilson-Hilferty beyond 1000 events)."""
+    if k < 0:
+        raise ValueError("k must be >= 0")
+    z = z_of(1 - alpha / 2)
+    if k > _GARWOOD_EXACT:
+
+        def wh(n: float, zz: float) -> float:
+            return n * (1 - 1 / (9 * n) + zz / (3 * math.sqrt(n))) ** 3
+
+        return wh(k, -z), wh(k + 1, z)
+
+    def solve(f, lo: float, hi: float) -> float:  # f increasing in lam
+        for _ in range(200):
+            mid = (lo + hi) / 2
+            lo, hi = (mid, hi) if f(mid) < 0 else (lo, mid)
+            if hi - lo <= 1e-12 * max(1.0, hi):
+                break
+        return (lo + hi) / 2
+
+    top = k + 10 * math.sqrt(k + 1) + 10
+    lower = 0.0 if k == 0 else solve(lambda m: (1 - _poisson_cdf(k - 1, m)) - alpha / 2, 0.0, top)
+    upper = solve(lambda m: alpha / 2 - _poisson_cdf(k, m), 0.0, top)
+    return lower, upper
+
+
 def binom_sf(x: int, n: int, p: float) -> float:
     """P(Bin(n, p) >= x)."""
     if x <= 0:

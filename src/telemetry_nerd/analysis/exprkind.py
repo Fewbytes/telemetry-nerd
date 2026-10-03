@@ -353,3 +353,24 @@ def counter_rate_source(expr: str) -> tuple[str, tuple[str, ...]] | None:
     """(selector, grouping labels) of `[sum [by (L)]] (rate|increase(SEL[w]))`, or None for any
     other shape. Grouping is ("*",) for a bare rate/increase (every label kept)."""
     return _sum_source(_peel_parens(_strip_comments(expr)))
+
+
+_RATE_FN = re.compile(r"\b(rate|increase)\s*\(", re.IGNORECASE)
+
+
+def events_per_step(expr: str, step_ms: int) -> float | None:
+    """Factor turning a value of `[sum [by (L)]] (rate|increase(SEL[w]))` into events per step
+    (SEL a counter: the caller checks): increase(x[w]) counts the events of w, rate(x[w]) is
+    events per second, so a step of s holds value x s / w resp. value x s. None for any other
+    shape or more than one window."""
+    if counter_rate_source(expr) is None:
+        return None
+    text = _mask_strings(_strip_comments(expr))
+    fns = {m.group(1).lower() for m in _RATE_FN.finditer(text)}
+    windows = set(range_windows_ms(expr))
+    if len(fns) != 1 or len(windows) != 1 or step_ms <= 0:
+        return None
+    (w,) = windows
+    if w <= 0:
+        return None
+    return step_ms / w if fns == {"increase"} else step_ms / 1000
