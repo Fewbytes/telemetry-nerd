@@ -34,9 +34,11 @@ export function cardSummary(card: MetricCard): string {
 }
 
 /** A catalog typical_range {lo, hi, n, window, q?}: descriptive, so its quantiles and sample count travel with it. */
+const sig4 = (x: unknown): string => (Number.isFinite(Number(x)) ? String(Number(Number(x).toPrecision(4))) : String(x));
+const pct = (x: unknown): string => String(Math.round(Number(x) * 1000) / 10);
 const fmtRange = (r: Record<string, unknown>): string => {
-  const q = Array.isArray(r.q) ? ` (p${Number(r.q[0]) * 100}–p${Number(r.q[1]) * 100}, n=${r.n}, ${r.window})` : ` (n=${r.n}, ${r.window})`;
-  return `${r.lo} – ${r.hi}${q}`;
+  const q = Array.isArray(r.q) ? ` (p${pct(r.q[0])}–p${pct(r.q[1])}, n=${r.n}, ${r.window})` : ` (n=${r.n}, ${r.window})`;
+  return `${sig4(r.lo)} – ${sig4(r.hi)}${q}`;
 };
 
 export const fmtValue = (v: unknown): string => {
