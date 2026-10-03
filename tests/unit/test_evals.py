@@ -370,8 +370,17 @@ def test_op_undetermined_label_upgraded_to_special_cause_fails():
     assert any("upgrade" in p or "claims special cause" in p for p in f1.problems)
 
 
-def test_op_undetermined_negated_special_cause_is_not_an_upgrade():
-    rep = mutate(lambda s: _op_undetermined(s, " Not established as special cause."))
+@pytest.mark.parametrize(
+    "extra",
+    [
+        " Not established as special cause.",
+        # shipping round 5, f1: names it as a candidate and leaves it open
+        " Variation source: special_cause candidate, but the series has gaps, so undetermined.",
+        " It may be a special cause.",
+    ],
+)
+def test_op_undetermined_negated_or_open_special_cause_is_not_an_upgrade(extra):
+    rep = mutate(lambda s: _op_undetermined(s, extra))
     assert status(rep, "source_label") == "pass"
 
 
@@ -1181,6 +1190,34 @@ def test_payment_round5_stream_counts_rounds_not_turns():
         (EV / "payment-failure.live-sonnet-5.stream.jsonl").read_text().splitlines()
     )
     assert (out["tool_rounds"], out["num_turns"], out["tool_results"]) == (18, 28, 27)
+    assert live.caps({**out, "aborted": None}, 40, 5.0)["stopped_by"] == "finished"
+
+
+def test_shipping_round5_scores_as_observed():
+    """Eval round 5, shipping-slowdown: span latency by span_name found POST /ship-order;
+    h1 (shipping slow, checkout/frontend followed) supported against refuted h2 (arrival surge,
+    flat rates f2) and h3 (quote dependency, f4); region a1 -17 s. Fails only source_label:
+    analyze(d6) judged shipping's ~1 ms -> ~260 ms episode insufficient_data (n_eff 8.9 < 10,
+    product: 7f15), so f1/f3 cite panels only; f1's own 'special_cause candidate ... so
+    undetermined' is honest wording but no op labelled it undetermined, so it is an omission."""
+    t = load_truth(EV / "shipping-slowdown.live-sonnet-5.truth.json")
+    rep = score(snap("shipping-slowdown.live-sonnet-5"), t)
+    st = {c.id: c.status for c in rep.checks}
+    assert {k for k, v in st.items() if v == "fail"} == {"source_label"}
+    by = {f.id: f for f in rep.findings}
+    assert [f.id for f in rep.findings if f.incident] == ["f1", "f3"]
+    assert not by["f1"].source_ok and not by["f1"].honest_undetermined
+    assert [(h.id, h.status) for h in rep.hypotheses] == [
+        ("h1", "supported"), ("h2", "refuted"), ("h3", "refuted")]  # fmt: skip
+    assert [a.verdict for a in rep.annotations] == ["onset_ok"] and not rep.unscoped_claims
+    assert (rep.passed, rep.applicable) == (11, 12) and rep.acceptance
+
+
+def test_shipping_round5_stream_counts_rounds_not_turns():
+    out = live.parse_stream(
+        (EV / "shipping-slowdown.live-sonnet-5.stream.jsonl").read_text().splitlines()
+    )
+    assert (out["tool_rounds"], out["num_turns"], out["tool_results"]) == (22, 37, 35)
     assert live.caps({**out, "aborted": None}, 40, 5.0)["stopped_by"] == "finished"
 
 

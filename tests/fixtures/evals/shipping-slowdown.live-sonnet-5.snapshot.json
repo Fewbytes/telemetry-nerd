@@ -1,0 +1,938 @@
+{
+ "_fixture": "eval round 5 (d77.3), sonnet, 2026-10-03: shipping-slowdown, 22 tool rounds, $0.55",
+ "workspace": {
+  "panels": [
+   {
+    "id": "p5",
+    "question": "Did request rates change when shipping slowed (arrival surge?)",
+    "status": "open",
+    "spec": {
+     "layers": [
+      {
+       "mark": "line+envelope",
+       "data": "d7",
+       "windows": [],
+       "color": "count",
+       "quantiles": [
+        0.5,
+        0.9,
+        0.99
+       ],
+       "role": "main",
+       "segment_ms": null,
+       "overlap": null,
+       "min_period_ms": null,
+       "max_period_ms": null,
+       "seasonal": null,
+       "spc": null,
+       "fleet": null,
+       "littles": null,
+       "top": {
+        "keep": [
+         "8c73187124080a68",
+         "eb9d468b50818e15",
+         "c7bdeac952f8c604",
+         "0ca6c94ba673ea40"
+        ],
+        "total": 9,
+        "rank": "largest distance from the median across all series at the same step",
+        "note": "9 series exceed the line budget (5): drawn as lines are the 4 with the largest distance from the median across all series at the same step ({service_name=\"frontend\"}, {service_name=\"product-catalog\"}, {service_name=\"cart\"}, {service_name=\"checkout\"}); the other 5 ({service_name=\"email\"}, {service_name=\"payment\"}, {service_name=\"currency\"}, {service_name=\"shipping\"}, {service_name=\"quote\"}) are one grey 'others' band: their median (line) and min-max (envelope). None is dropped: query or filter them to see them one by one, or aggregate by a coarser label",
+        "others": [
+         "{service_name=\"email\"}",
+         "{service_name=\"payment\"}",
+         "{service_name=\"currency\"}",
+         "{service_name=\"shipping\"}",
+         "{service_name=\"quote\"}"
+        ]
+       }
+      }
+     ],
+     "y": {
+      "range_mode": "reference",
+      "unit": "count/s",
+      "unit_provenance": "knowledge pack",
+      "label": null,
+      "views": [],
+      "selected": null,
+      "context": {
+       "natural_lo": null,
+       "natural_hi": null,
+       "bounds": null,
+       "bounds_origin": null,
+       "bounds_basis": null,
+       "bounds_confidence": null,
+       "lines": [],
+       "reframes": [],
+       "profile": {
+        "lo": 0.3015237661740676,
+        "hi": 25.227232769193993,
+        "label": "normal range (30d)"
+       },
+       "typical": null,
+       "notes": [
+        "natural_bounds_unknown: the expression is not a single metric"
+       ],
+       "limit": null
+      },
+      "asserted_bounds": null
+     },
+     "references": {},
+     "marginal": null,
+     "signal": null,
+     "overlays": {
+      "normal": true,
+      "limit": true,
+      "ghost": false
+     },
+     "auto": null,
+     "group": null
+    },
+    "dataset_ids": [
+     "d7"
+    ],
+    "created_at_ms": 1791064787153,
+    "answered_by": null,
+    "closed": false
+   },
+   {
+    "id": "p4",
+    "question": "Which shipping span slowed, and when?",
+    "status": "open",
+    "spec": {
+     "layers": [
+      {
+       "mark": "line+envelope",
+       "data": "d8",
+       "windows": [],
+       "color": "count",
+       "quantiles": [
+        0.5,
+        0.9,
+        0.99
+       ],
+       "role": "main",
+       "segment_ms": null,
+       "overlap": null,
+       "min_period_ms": null,
+       "max_period_ms": null,
+       "seasonal": null,
+       "spc": null,
+       "fleet": null,
+       "littles": null,
+       "top": null
+      }
+     ],
+     "y": {
+      "range_mode": "reference",
+      "unit": "ms",
+      "unit_provenance": "provided by claude",
+      "label": null,
+      "views": [],
+      "selected": null,
+      "context": {
+       "natural_lo": null,
+       "natural_hi": null,
+       "bounds": null,
+       "bounds_origin": null,
+       "bounds_basis": null,
+       "bounds_confidence": null,
+       "lines": [],
+       "reframes": [],
+       "profile": {
+        "lo": 0.07952363594063584,
+        "hi": 305.11060040306523,
+        "label": "normal range (30d)"
+       },
+       "typical": null,
+       "notes": [
+        "natural_bounds_unknown: the expression is not a single metric"
+       ],
+       "limit": null
+      },
+      "asserted_bounds": null
+     },
+     "references": {},
+     "marginal": null,
+     "signal": null,
+     "overlays": {
+      "normal": true,
+      "limit": true,
+      "ghost": false
+     },
+     "auto": null,
+     "group": null
+    },
+    "dataset_ids": [
+     "d8"
+    ],
+    "created_at_ms": 1791064773159,
+    "answered_by": null,
+    "closed": false
+   },
+   {
+    "id": "p3",
+    "question": "Which services' mean span latency rose around 21:44-21:59 UTC?",
+    "status": "open",
+    "spec": {
+     "layers": [
+      {
+       "mark": "line+envelope",
+       "data": "d6",
+       "windows": [],
+       "color": "count",
+       "quantiles": [
+        0.5,
+        0.9,
+        0.99
+       ],
+       "role": "main",
+       "segment_ms": null,
+       "overlap": null,
+       "min_period_ms": null,
+       "max_period_ms": null,
+       "seasonal": null,
+       "spc": null,
+       "fleet": null,
+       "littles": null,
+       "top": {
+        "keep": [
+         "02a662caf021918b",
+         "d88a80a6fa586ce9",
+         "480047aa76d79832",
+         "a871129bb8109cb5"
+        ],
+        "total": 12,
+        "rank": "largest distance from the median across all series at the same step",
+        "note": "12 series exceed the line budget (5): drawn as lines are the 4 with the largest distance from the median across all series at the same step ({service_name=\"payment\"}, {service_name=\"ad\"}, {service_name=\"recommendation\"}, {service_name=\"flagd\"}); the other 8 ({service_name=\"shipping\"}, {service_name=\"checkout\"}, {service_name=\"currency\"}, {service_name=\"quote\"}, {service_name=\"cart\"}, {service_name=\"email\"}, {service_name=\"product-catalog\"}, {service_name=\"frontend\"}) are one grey 'others' band: their median (line) and min-max (envelope). None is dropped: query or filter them to see them one by one, or aggregate by a coarser label",
+        "others": [
+         "{service_name=\"shipping\"}",
+         "{service_name=\"checkout\"}",
+         "{service_name=\"currency\"}",
+         "{service_name=\"quote\"}",
+         "{service_name=\"cart\"}",
+         "{service_name=\"email\"}",
+         "{service_name=\"product-catalog\"}",
+         "{service_name=\"frontend\"}"
+        ]
+       }
+      }
+     ],
+     "y": {
+      "range_mode": "reference",
+      "unit": "ms",
+      "unit_provenance": "provided by claude",
+      "label": null,
+      "views": [],
+      "selected": null,
+      "context": {
+       "natural_lo": null,
+       "natural_hi": null,
+       "bounds": null,
+       "bounds_origin": null,
+       "bounds_basis": null,
+       "bounds_confidence": null,
+       "lines": [],
+       "reframes": [],
+       "profile": {
+        "lo": 0.014728731228641285,
+        "hi": 5787.87196901224,
+        "label": "normal range (30d)"
+       },
+       "typical": null,
+       "notes": [
+        "natural_bounds_unknown: the expression is not a single metric"
+       ],
+       "limit": null
+      },
+      "asserted_bounds": null
+     },
+     "references": {},
+     "marginal": null,
+     "signal": null,
+     "overlays": {
+      "normal": true,
+      "limit": true,
+      "ghost": false
+     },
+     "auto": null,
+     "group": null
+    },
+    "dataset_ids": [
+     "d6"
+    ],
+    "created_at_ms": 1791064747034,
+    "answered_by": null,
+    "closed": false
+   },
+   {
+    "id": "p2",
+    "question": "What share of spanmetrics's requests fail?",
+    "status": "open",
+    "spec": {
+     "layers": [
+      {
+       "mark": "fleet",
+       "data": "d4",
+       "windows": [],
+       "color": "count",
+       "quantiles": [
+        0.5,
+        0.9,
+        0.99
+       ],
+       "role": "main",
+       "segment_ms": null,
+       "overlap": null,
+       "min_period_ms": null,
+       "max_period_ms": null,
+       "seasonal": null,
+       "spc": null,
+       "fleet": {
+        "by": null,
+        "scale": "auto",
+        "normalise": "none",
+        "band_window": null
+       },
+       "littles": null,
+       "top": null
+      }
+     ],
+     "y": {
+      "range_mode": "data",
+      "unit": "ratio",
+      "unit_provenance": "provided by claude; agrees with ratio (rule: traces_span_metrics_calls_total narrowed by extra label matchers is a part of traces_span_metrics_calls_total)",
+      "label": null,
+      "views": [],
+      "selected": null,
+      "context": {
+       "natural_lo": 0.0,
+       "natural_hi": 1.0,
+       "bounds": "[0,1]",
+       "bounds_origin": "the RED errors role (a share of requests)",
+       "bounds_basis": "asserted by the RED errors role (a share of requests)",
+       "bounds_confidence": null,
+       "lines": [],
+       "reframes": [],
+       "profile": null,
+       "typical": null,
+       "notes": [],
+       "limit": null
+      },
+      "asserted_bounds": {
+       "lo": 0.0,
+       "hi": 1.0,
+       "by": "the RED errors role (a share of requests)"
+      }
+     },
+     "references": {},
+     "marginal": null,
+     "signal": null,
+     "overlays": {
+      "normal": true,
+      "limit": true,
+      "ghost": false
+     },
+     "auto": null,
+     "group": {
+      "id": "pg1",
+      "role": "errors"
+     }
+    },
+    "dataset_ids": [
+     "d4"
+    ],
+    "created_at_ms": 1791064735681,
+    "answered_by": null,
+    "closed": false
+   },
+   {
+    "id": "p1",
+    "question": "How many requests per second does spanmetrics serve?",
+    "status": "open",
+    "spec": {
+     "layers": [
+      {
+       "mark": "fleet",
+       "data": "d1",
+       "windows": [],
+       "color": "count",
+       "quantiles": [
+        0.5,
+        0.9,
+        0.99
+       ],
+       "role": "main",
+       "segment_ms": null,
+       "overlap": null,
+       "min_period_ms": null,
+       "max_period_ms": null,
+       "seasonal": null,
+       "spc": null,
+       "fleet": {
+        "by": null,
+        "scale": "auto",
+        "normalise": "none",
+        "band_window": null
+       },
+       "littles": null,
+       "top": null
+      }
+     ],
+     "y": {
+      "range_mode": "data",
+      "unit": "count/s",
+      "unit_provenance": "knowledge pack",
+      "label": null,
+      "views": [],
+      "selected": null,
+      "context": {
+       "natural_lo": null,
+       "natural_hi": null,
+       "bounds": null,
+       "bounds_origin": null,
+       "bounds_basis": null,
+       "bounds_confidence": null,
+       "lines": [],
+       "reframes": [],
+       "profile": null,
+       "typical": null,
+       "notes": [
+        "natural_bounds_unknown: the expression is not a single metric"
+       ],
+       "limit": null
+      },
+      "asserted_bounds": null
+     },
+     "references": {},
+     "marginal": null,
+     "signal": null,
+     "overlays": {
+      "normal": true,
+      "limit": true,
+      "ghost": false
+     },
+     "auto": null,
+     "group": {
+      "id": "pg1",
+      "role": "rate"
+     }
+    },
+    "dataset_ids": [
+     "d1"
+    ],
+    "created_at_ms": 1791064735635,
+    "answered_by": null,
+    "closed": false
+   }
+  ],
+  "annotations": [
+   {
+    "kind": "region",
+    "panel": "p4",
+    "t_start_ms": 1791064200000,
+    "t_end_ms": 1791064800000,
+    "value": null,
+    "value_hi": null,
+    "label": "POST /ship-order slow: onset ~21:50 (bounds 21:48-21:52, 4m rate window), peak 21:56-21:58 (~770ms vs 0.07), partial recovery by 22:00 (259ms); end not confirmed",
+    "links": [],
+    "id": "a1",
+    "author": "claude",
+    "created_at_ms": 1791064775788,
+    "deleted": false
+   }
+  ],
+  "hypotheses": [
+   {
+    "id": "h1",
+    "statement": "The shipping service's POST /ship-order handler became slow from ~21:50 UTC, and checkout and frontend order latency followed from it",
+    "status": "supported",
+    "author": "claude",
+    "evidence_for": [
+     "f1",
+     "f3",
+     "f4"
+    ],
+    "evidence_against": [],
+    "alternatives_considered": "Arrival surge (h2) refuted by flat request rates (f2); slow quote dependency (h3) refuted by flat get-quote spans (f4). Cause inside /ship-order (e.g. flag, deploy, resource) not identified.",
+    "status_reason": null,
+    "scope": {
+     "text": null,
+     "source": null,
+     "selector": "traces_span_metrics_duration_milliseconds{service_name=\"shipping\"}",
+     "time_range": {
+      "start_ms": 1791063000000,
+      "end_ms": 1791065280000
+     },
+     "step": null,
+     "aggregation": null
+    },
+    "created_at_ms": 1791064777006,
+    "updated_at_ms": 1791064803240
+   },
+   {
+    "id": "h2",
+    "statement": "An arrival-rate surge on frontend and checkout (more orders) slowed the order path, rather than a slow shipping service",
+    "status": "refuted",
+    "author": "claude",
+    "evidence_for": [],
+    "evidence_against": [
+     "f2"
+    ],
+    "alternatives_considered": null,
+    "status_reason": "f2: request rates of frontend, checkout and shipping flat 21:40-22:00.",
+    "scope": {
+     "text": null,
+     "source": null,
+     "selector": "traces_span_metrics_calls_total{service_name=~\"frontend|checkout|shipping\"}",
+     "time_range": {
+      "start_ms": 1791063000000,
+      "end_ms": 1791065280000
+     },
+     "step": null,
+     "aggregation": null
+    },
+    "created_at_ms": 1791064778252,
+    "updated_at_ms": 1791064801626
+   },
+   {
+    "id": "h3",
+    "statement": "The quote service (called by shipping via POST /get-quote) was slow and made shipping slow",
+    "status": "refuted",
+    "author": "claude",
+    "evidence_for": [],
+    "evidence_against": [
+     "f1",
+     "f4"
+    ],
+    "alternatives_considered": null,
+    "status_reason": "f4 and f1: shipping's get-quote spans flat ~1 ms while /ship-order rose; quote service stable in d6 (analyze). f4 is flagged beyond_evidence for the quote service.",
+    "scope": {
+     "text": null,
+     "source": null,
+     "selector": "traces_span_metrics_duration_milliseconds{service_name=~\"shipping|quote\"}",
+     "time_range": {
+      "start_ms": 1791063000000,
+      "end_ms": 1791065280000
+     },
+     "step": null,
+     "aggregation": null
+    },
+    "created_at_ms": 1791064778885,
+    "updated_at_ms": 1791064802458
+   }
+  ],
+  "findings": [
+   {
+    "claim": "Shipping's POST /ship-order mean span latency rose from ~0.07 ms (21:40-21:50) to 94 ms at 21:52, ~770 ms at 21:56-21:58, and 259 ms at 22:00; onset ~21:50 (bounds 21:48-21:52, 4m rate window smooths the ramp). Variation source: special_cause candidate, but the series has gaps, so undetermined.",
+    "scope": {
+     "source": "default",
+     "selector": "traces_span_metrics_duration_milliseconds{service_name=\"shipping\"}",
+     "time_range": {
+      "start_ms": 1791063000000,
+      "end_ms": 1791065280000
+     },
+     "step": "2m",
+     "aggregation": "mean",
+     "baseline_range": null
+    },
+    "evidence": [
+     {
+      "kind": "panel",
+      "panel": "p4"
+     },
+     {
+      "kind": "annotation",
+      "annotation": "a1"
+     }
+    ],
+    "caveats": [
+     "d8: Each series is judged over its own span in the window. {span_name=\"POST /ship-order\"}: no samples since 2026-10-03T22:00:00+00:00 in this evidence (it may have left, or may return after the window). {span_name=\"POST /get-quote\"}: no samples since 2026-10-03T22:00:00+00:00 in this evidence (it may have left, or may return after the window). {span_name=\"POST quote\"}: no samples since 2026-10-03T22:00:00+00:00 in this evidence (it may have left, or may return after the window). Membership changes within the window: check whether set(span_name) per bucket is consistent over a wider window (e.g. count by (span_name) (traces_span_metrics_duration_milliseconds{service_name=\"shipping\"}) over a longer range).",
+     "d8: __name__=\"traces_span_metrics_duration_milliseconds\" not checked: the evidence series carry no metric name, so the claim's metric is not confirmed."
+    ],
+    "hypotheses": [
+     {
+      "id": "h1",
+      "stance": "for"
+     },
+     {
+      "id": "h3",
+      "stance": "against"
+     }
+    ],
+    "answers_panel": null,
+    "scope_note": null,
+    "id": "f1",
+    "author": "claude",
+    "created_at_ms": 1791064782922,
+    "verdict": null,
+    "verdict_comment": null,
+    "evidence_flags": [],
+    "scope_check": {
+     "status": "covered",
+     "named": [
+      "service_name=\"shipping\""
+     ],
+     "not_covered": [],
+     "undetermined": [],
+     "message": ""
+    },
+    "source_flags": [
+     {
+      "evidence": 0,
+      "flag": "source_undetermined",
+      "source": "undetermined",
+      "message": "no cited statistic says what the variation is attributed to: if this finding reports a change or deviation, its source is undetermined (cite an op's evidence statistic, e.g. from analyze, compare_seasonal, fleet or binding_verdict)"
+     }
+    ]
+   },
+   {
+    "claim": "Request rates of frontend (~17/s), checkout (~2.7/s) and shipping (~0.65/s) stayed flat 21:40-22:00 (range checked per step: frontend 16.4-18.1, checkout 2.5-3.2, shipping 0.56-0.79) while shipping latency rose, so there was no arrival surge.",
+    "scope": {
+     "source": "default",
+     "selector": "traces_span_metrics_calls_total{service_name=~\"frontend|checkout|shipping\"}",
+     "time_range": {
+      "start_ms": 1791063000000,
+      "end_ms": 1791065280000
+     },
+     "step": "2m",
+     "aggregation": "rate",
+     "baseline_range": null
+    },
+    "evidence": [
+     {
+      "kind": "panel",
+      "panel": "p5"
+     }
+    ],
+    "caveats": [
+     "d7: 3 of 3 series have fewer samples than expected in the claim window: {service_name=\"checkout\"}, {service_name=\"frontend\"}, {service_name=\"shipping\"}.",
+     "d7: Each series is judged over its own span in the window. {service_name=\"checkout\"}: no samples since 2026-10-03T22:00:00+00:00 in this evidence (it may have left, or may return after the window). {service_name=\"frontend\"}: no samples since 2026-10-03T22:00:00+00:00 in this evidence (it may have left, or may return after the window). {service_name=\"shipping\"}: no samples since 2026-10-03T22:00:00+00:00 in this evidence (it may have left, or may return after the window). Membership changes within the window: check whether set(service_name) per bucket is consistent over a wider window (e.g. count by (service_name) (traces_span_metrics_calls_total{service_name=~\"frontend|checkout|shipping\"}) over a longer range).",
+     "d7: __name__=\"traces_span_metrics_calls_total\" not checked: the evidence series carry no metric name, so the claim's metric is not confirmed."
+    ],
+    "hypotheses": [
+     {
+      "id": "h2",
+      "stance": "against"
+     }
+    ],
+    "answers_panel": null,
+    "scope_note": null,
+    "id": "f2",
+    "author": "claude",
+    "created_at_ms": 1791064790676,
+    "verdict": null,
+    "verdict_comment": null,
+    "evidence_flags": [],
+    "scope_check": {
+     "status": "covered",
+     "named": [
+      "service_name=\"checkout\"",
+      "service_name=\"frontend\"",
+      "service_name=\"shipping\""
+     ],
+     "not_covered": [],
+     "undetermined": [],
+     "message": ""
+    },
+    "source_flags": [
+     {
+      "evidence": 0,
+      "flag": "source_undetermined",
+      "source": "undetermined",
+      "message": "no cited statistic says what the variation is attributed to: if this finding reports a change or deviation, its source is undetermined (cite an op's evidence statistic, e.g. from analyze, compare_seasonal, fleet or binding_verdict)"
+     }
+    ]
+   },
+   {
+    "claim": "Downstream spans slowed after shipping, in the same window: checkout mean latency 2 ms -> 17 (21:52), 66 (21:54), 122-123 (21:56-21:58), 43 (22:00); frontend 3 -> 8, 23, 40-42, 19 ms. Shipping rose first and highest (1 -> 32, 135, 257-261, 87 ms). Mean span latency, not the order p95; sequence from 2-minute steps with 4m rate windows, so ordering within ~2 min is not resolved.",
+    "scope": {
+     "source": "default",
+     "selector": "traces_span_metrics_duration_milliseconds{service_name=~\"shipping|checkout|frontend\"}",
+     "time_range": {
+      "start_ms": 1791062040000,
+      "end_ms": 1791065640000
+     },
+     "step": "2m",
+     "aggregation": "mean",
+     "baseline_range": null
+    },
+    "evidence": [
+     {
+      "kind": "panel",
+      "panel": "p3"
+     }
+    ],
+    "caveats": [
+     "d6: 3 of 3 series have fewer samples than expected in the claim window: {service_name=\"checkout\"}, {service_name=\"frontend\"}, {service_name=\"shipping\"}.",
+     "d6: Each series is judged over its own span in the window. {service_name=\"checkout\"}: no samples since 2026-10-03T22:00:00+00:00 in this evidence (it may have left, or may return after the window). {service_name=\"frontend\"}: no samples since 2026-10-03T22:00:00+00:00 in this evidence (it may have left, or may return after the window). {service_name=\"shipping\"}: no samples since 2026-10-03T22:00:00+00:00 in this evidence (it may have left, or may return after the window). Membership changes within the window: check whether set(service_name) per bucket is consistent over a wider window (e.g. count by (service_name) (traces_span_metrics_duration_milliseconds{service_name=~\"shipping|checkout|frontend\"}) over a longer range).",
+     "d6: __name__=\"traces_span_metrics_duration_milliseconds\" not checked: the evidence series carry no metric name, so the claim's metric is not confirmed."
+    ],
+    "hypotheses": [
+     {
+      "id": "h1",
+      "stance": "for"
+     }
+    ],
+    "answers_panel": null,
+    "scope_note": null,
+    "id": "f3",
+    "author": "claude",
+    "created_at_ms": 1791064794562,
+    "verdict": null,
+    "verdict_comment": null,
+    "evidence_flags": [],
+    "scope_check": {
+     "status": "covered",
+     "named": [
+      "service_name=\"checkout\"",
+      "service_name=\"frontend\"",
+      "service_name=\"shipping\""
+     ],
+     "not_covered": [],
+     "undetermined": [],
+     "message": ""
+    },
+    "source_flags": [
+     {
+      "evidence": 0,
+      "flag": "source_undetermined",
+      "source": "undetermined",
+      "message": "no cited statistic says what the variation is attributed to: if this finding reports a change or deviation, its source is undetermined (cite an op's evidence statistic, e.g. from analyze, compare_seasonal, fleet or binding_verdict)"
+     }
+    ]
+   },
+   {
+    "claim": "Shipping's own spans for the downstream price lookup (POST /get-quote and its client span) stayed ~0.9-1.3 ms through the episode, so that dependency did not cause the slowdown; shipping's /ship-order span carried it. The separate quote service's own latency was not checked in this window.",
+    "scope": {
+     "source": "default",
+     "selector": "traces_span_metrics_duration_milliseconds{service_name=\"shipping\"}",
+     "time_range": {
+      "start_ms": 1791063000000,
+      "end_ms": 1791065280000
+     },
+     "step": "2m",
+     "aggregation": "mean",
+     "baseline_range": null
+    },
+    "evidence": [
+     {
+      "kind": "panel",
+      "panel": "p4"
+     }
+    ],
+    "caveats": [
+     "d8: Each series is judged over its own span in the window. {span_name=\"POST /ship-order\"}: no samples since 2026-10-03T22:00:00+00:00 in this evidence (it may have left, or may return after the window). {span_name=\"POST /get-quote\"}: no samples since 2026-10-03T22:00:00+00:00 in this evidence (it may have left, or may return after the window). {span_name=\"POST quote\"}: no samples since 2026-10-03T22:00:00+00:00 in this evidence (it may have left, or may return after the window). Membership changes within the window: check whether set(span_name) per bucket is consistent over a wider window (e.g. count by (span_name) (traces_span_metrics_duration_milliseconds{service_name=\"shipping\"}) over a longer range).",
+     "d8: __name__=\"traces_span_metrics_duration_milliseconds\" not checked: the evidence series carry no metric name, so the claim's metric is not confirmed."
+    ],
+    "hypotheses": [
+     {
+      "id": "h3",
+      "stance": "against"
+     },
+     {
+      "id": "h1",
+      "stance": "for"
+     }
+    ],
+    "answers_panel": null,
+    "scope_note": "Quote service (as a service) was only seen stable in d6 over the same window (analyze: stable, mean ~0.005 range), via the p3 panel.",
+    "id": "f4",
+    "author": "claude",
+    "created_at_ms": 1791064798927,
+    "verdict": null,
+    "verdict_comment": null,
+    "evidence_flags": [],
+    "scope_check": {
+     "status": "beyond_evidence",
+     "named": [
+      "service_name=\"quote\"",
+      "service_name=\"shipping\""
+     ],
+     "not_covered": [
+      "service_name=\"quote\""
+     ],
+     "undetermined": [],
+     "message": "the claim names service_name=\"quote\", which its evidence does not cover (cited evidence covers: d8: service_name=\"shipping\")"
+    },
+    "source_flags": [
+     {
+      "evidence": 0,
+      "flag": "source_undetermined",
+      "source": "undetermined",
+      "message": "no cited statistic says what the variation is attributed to: if this finding reports a change or deviation, its source is undetermined (cite an op's evidence statistic, e.g. from analyze, compare_seasonal, fleet or binding_verdict)"
+     }
+    ]
+   }
+  ],
+  "gaps": [],
+  "groups": [
+   {
+    "id": "pg1",
+    "kind": "RED",
+    "key": "spanmetrics",
+    "source": "default",
+    "author": "claude",
+    "created_at_ms": 1791064735193,
+    "start_ms": 1791062040000,
+    "end_ms": 1791065640000,
+    "step_ms": 60000,
+    "basis": "suggestion",
+    "binding_origin": null,
+    "suggestion": "RED:spanmetrics",
+    "join_on": [
+     "service_name"
+    ],
+    "matchers": {},
+    "error_matcher": null,
+    "roles": [
+     {
+      "role": "rate",
+      "metric": "traces_span_metrics_calls_total",
+      "panel": "p1",
+      "form": "rate",
+      "view": "fleet",
+      "members": 13,
+      "notes": [
+       "13 members: drawn as a fleet (spread band, median, outliers)"
+      ],
+      "suggestion": null,
+      "why": null,
+      "gap": null,
+      "error": null,
+      "verdict": null
+     },
+     {
+      "role": "errors",
+      "metric": "traces_span_metrics_calls_total",
+      "panel": "p2",
+      "form": "error_ratio",
+      "view": "fleet",
+      "members": 13,
+      "notes": [
+       "errors: traces_span_metrics_calls_total where status_code=\"STATUS_CODE_ERROR\" (label names are conventions)",
+       "6 member(s) report no error series: counted as 0 errors at steps where their requests report ({\"service_name\":\"cart\"}, {\"service_name\":\"currency\"}, {\"service_name\":\"email\"} (+3); measurement-system assumption: error counters are born on their first error, born_counters)",
+       "error series born inside the window: 53 member-steps before its first point or after its last counted as 0 errors where requests report (measurement-system assumption: born on the first error, as analyze reads it, born_counters)",
+       "error series has no value at 5 member-steps: excluded, not counted as 0",
+       "13 members: drawn as a fleet (spread band, median, outliers)"
+      ],
+      "suggestion": null,
+      "why": null,
+      "gap": null,
+      "error": null,
+      "verdict": null
+     },
+     {
+      "role": "duration",
+      "metric": "traces_span_metrics_duration_milliseconds",
+      "panel": null,
+      "form": "distribution",
+      "view": "error",
+      "members": null,
+      "notes": [],
+      "suggestion": null,
+      "why": null,
+      "gap": null,
+      "error": "step 1m is shorter than two scrape intervals (2m)",
+      "verdict": null
+     }
+    ],
+    "notes": [
+     "join_on service_name: label names are conventions"
+    ],
+    "closed": false,
+    "reframed_from": null,
+    "verdict": null
+   }
+  ],
+  "code": [
+   {
+    "id": "c1",
+    "status": "ok",
+    "exec_status": "ok",
+    "inputs": [
+     "d6"
+    ],
+    "outputs": [],
+    "author": "claude",
+    "created_at_ms": 1791064754108,
+    "finished_at_ms": 1791064754730,
+    "duration_s": 0.615,
+    "rerun_of": null,
+    "error": null,
+    "restarted": false
+   },
+   {
+    "id": "c2",
+    "status": "ok",
+    "exec_status": "ok",
+    "inputs": [
+     "d7",
+     "d8"
+    ],
+    "outputs": [],
+    "author": "claude",
+    "created_at_ms": 1791064769196,
+    "finished_at_ms": 1791064769217,
+    "duration_s": 0.013,
+    "rerun_of": null,
+    "error": null,
+    "restarted": false
+   }
+  ],
+  "threads": [],
+  "last_seq": 39
+ },
+ "exprs": {
+  "d1": [
+   "sum by (service_name) (rate(traces_span_metrics_calls_total[4m]))"
+  ],
+  "d2": [
+   "sum by (service_name) (rate(traces_span_metrics_calls_total{status_code=\"STATUS_CODE_ERROR\"}[4m]))"
+  ],
+  "d3": [
+   "sum by (service_name) (rate(traces_span_metrics_calls_total[4m]))"
+  ],
+  "d4": [
+   "(sum by (service_name) (rate(traces_span_metrics_calls_total{status_code=\"STATUS_CODE_ERROR\"}[4m]))) / (sum by (service_name) (rate(traces_span_metrics_calls_total[4m])))"
+  ],
+  "d5": [
+   "sum by (service_name) (rate(traces_span_metrics_duration_milliseconds_sum[4m])) / sum by (service_name) (rate(traces_span_metrics_duration_milliseconds_count[4m]))"
+  ],
+  "d6": [
+   "sum by (service_name) (rate(traces_span_metrics_duration_milliseconds_sum{service_name!=\"load-generator\"}[4m])) / sum by (service_name) (rate(traces_span_metrics_duration_milliseconds_count{service_name!=\"load-generator\"}[4m]))"
+  ],
+  "op-1b4171060eac": [
+   "sum by (service_name) (rate(traces_span_metrics_duration_milliseconds_sum{service_name!=\"load-generator\"}[61m])) / sum by (service_name) (rate(traces_span_metrics_duration_milliseconds_count{service_name!=\"load-generator\"}[61m]))"
+  ],
+  "d7": [
+   "sum by (service_name) (rate(traces_span_metrics_calls_total{service_name=~\"shipping|checkout|frontend|quote|cart|payment|currency|email|product-catalog\"}[4m]))"
+  ],
+  "d8": [
+   "sum by (span_name) (rate(traces_span_metrics_duration_milliseconds_sum{service_name=\"shipping\"}[4m])) / sum by (span_name) (rate(traces_span_metrics_duration_milliseconds_count{service_name=\"shipping\"}[4m]))"
+  ],
+  "op-49c289c04ed9": [
+   "sum by (span_name) (rate(traces_span_metrics_duration_milliseconds_sum{service_name=\"shipping\"}[61m])) / sum by (span_name) (rate(traces_span_metrics_duration_milliseconds_count{service_name=\"shipping\"}[61m]))"
+  ],
+  "op-6566f0d17728": [
+   "sum by (service_name) (rate(traces_span_metrics_calls_total{service_name=~\"shipping|checkout|frontend|quote|cart|payment|currency|email|product-catalog\"}[61m]))"
+  ],
+  "p5": [
+   "sum by (service_name) (rate(traces_span_metrics_calls_total{service_name=~\"shipping|checkout|frontend|quote|cart|payment|currency|email|product-catalog\"}[4m]))"
+  ],
+  "p4": [
+   "sum by (span_name) (rate(traces_span_metrics_duration_milliseconds_sum{service_name=\"shipping\"}[4m])) / sum by (span_name) (rate(traces_span_metrics_duration_milliseconds_count{service_name=\"shipping\"}[4m]))"
+  ],
+  "p3": [
+   "sum by (service_name) (rate(traces_span_metrics_duration_milliseconds_sum{service_name!=\"load-generator\"}[4m])) / sum by (service_name) (rate(traces_span_metrics_duration_milliseconds_count{service_name!=\"load-generator\"}[4m]))"
+  ],
+  "p2": [
+   "(sum by (service_name) (rate(traces_span_metrics_calls_total{status_code=\"STATUS_CODE_ERROR\"}[4m]))) / (sum by (service_name) (rate(traces_span_metrics_calls_total[4m])))"
+  ],
+  "p1": [
+   "sum by (service_name) (rate(traces_span_metrics_calls_total[4m]))"
+  ]
+ },
+ "transcript": {
+  "result": "**Scope:** Order slowness on 2026-10-03, 21:44\u201321:59 UTC, in the `default` VictoriaMetrics source. I assumed baseline 21:14\u201321:44 and no known deploys. Nobody could be asked, so I didn't ask for deploy or config events.\n\n**What happened:** `shipping`'s `POST /ship-order` handler became slow, and `checkout` and `frontend` slowed with it. Workspace: http://127.0.0.1:60731\n- **Before:** `/ship-order` averaged about 0.07 ms from 21:40 to 21:50.\n- **Onset:** about 21:50, bounded to 21:48\u201321:52. The metrics use a 4-minute window, so this is approximate. 21:44\u201321:50 looks normal.\n- **Rise:** 94 ms at 21:52, 405 ms at 21:54, and about 770 ms at 21:56\u201321:58.\n- **After:** 259 ms at 22:00. That is partial recovery, and I did not confirm the end.\n- **Other services:** Mean span latency, not p95.\n  - `shipping` went from 1 ms to about 260 ms, rising first and highest.\n  - `checkout` went from 2 ms to about 123 ms.\n  - `frontend` went from 3 ms to about 42 ms.\n  - The ordering between them is only resolved to about 2 minutes.\n\n**Hypotheses:**\n- **h1, supported:** `shipping`'s `/ship-order` became slow, and `checkout` and `frontend` followed.\n- **h2, refuted:** an arrival surge. Request rates stayed flat at 21:40\u201322:00 (f2).\n- **h3, refuted:** `quote` as the cause. `shipping`'s get-quote spans stayed at about 1 ms (f4).\n\n**Findings** (all have source undetermined, because no analysis statistic is cited, so none attributes the variation to common or special cause):\n- **f1:** `/ship-order` slowdown and timing. Scope covered.\n- **f2:** flat request rates. Scope covered.\n- **f3:** `checkout` and `frontend` following `shipping`. Scope covered.\n- **f4:** get-quote spans flat. Scope is beyond_evidence for the `quote` service, which I only saw stable in the d6 `analyze` result, and I did not check it directly in this window.\n\nI annotated the window on panel p4 (a1). The charts are p3 (latency per service), p4 (`shipping` spans) and p5 (request rates).\n\n**Unexplained or unmeasurable:**\n- **Root cause:** I did not identify why `/ship-order` slowed. Nothing in the data points to a flag, deploy or resource change, and no logs or traces were checked.\n- **Data gaps:** Data is missing at several steps. The latest points are still settling, so the end of the episode isn't confirmed.\n- **Periodic bursts:** `ad`, `payment`, `recommendation` and `flagd` show roughly 10-minute multi-second latency bursts (21:32, 21:42, 21:52) that look like sparse-sample artifacts. They also appear before the incident and are unexplained. I did not check whether they matter.\n- **Quantiles:** A p95 query over the span-metrics histogram ran out of memory, so I used means."
+ }
+}

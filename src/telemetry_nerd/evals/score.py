@@ -673,6 +673,12 @@ def _littles_statistics(f: dict) -> list[dict]:
 
 
 _SPECIAL_CAUSE = re.compile(r"special[- _]cause|assignable[- _]cause", re.IGNORECASE)
+#: a sentence that names special cause only as a possibility it then leaves open ("special_cause
+#: candidate, but the series has gaps, so undetermined", eval round 5) does not assert it
+_OPEN_LABEL = re.compile(
+    r"\b(undetermined|candidate|possibl\w*|may|might|could|cannot|not established|unclear)\b",
+    re.IGNORECASE,
+)
 
 
 def op_undetermined(f: dict) -> bool:
@@ -693,8 +699,11 @@ def op_undetermined(f: dict) -> bool:
 
 
 def claims_special_cause(text: str) -> bool:
-    """A clause calling the variation special (assignable) cause, not negated."""
+    """A clause calling the variation special (assignable) cause, not negated, in a sentence
+    that does not leave it open."""
     for s in sentences(text):
+        if _OPEN_LABEL.search(s):
+            continue
         for c in re.split(r"[,;:(]|\bbut\b|\bwhile\b", s):
             if (m := _SPECIAL_CAUSE.search(c)) and not _NEGATION.search(c[: m.start()]):
                 return True
