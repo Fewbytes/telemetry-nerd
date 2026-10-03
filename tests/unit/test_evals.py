@@ -709,6 +709,77 @@ def test_queue_sim_round3_stream_counts_rounds_not_turns():
     assert live.caps({**out, "aborted": None}, 40, 5.0)["stopped_by"] == "finished"
 
 
+_HEADLINE = (
+    "Payment's Charge call failed from 14:53 to 14:57 UTC, and that is why placing an order failed."
+)
+
+
+def _pf3():
+    return load_truth(EV / "payment-failure.live-sonnet-3.truth.json")
+
+
+@pytest.mark.parametrize(
+    "text,flagged",
+    [
+        # eval round 3: the analyst's own limit, not a cause
+        ("I could not find why payment failed, because span metrics don't show it.", []),
+        # items listed under a heading of what is not known are open questions, not claims
+        ("**Not established**\n- The root cause inside payment. The span metrics lack logs.", []),
+        ("Unknowns:\n- why payment failed\n\nPayment broke because of a deploy.",
+         ["Payment broke because of a deploy."]),
+        # an uncited headline cause: 'that is why' states a cause
+        (_HEADLINE, [_HEADLINE]),
+        ("Payment's Charge call failed (h1, f1), and that is why placing an order failed.", []),
+    ],
+)  # fmt: skip
+def test_transcript_limits_and_unknown_lists_are_not_claims(text, flagged):
+    assert [s for s, _ in transcript_unscoped(text, _pf3())] == flagged
+
+
+def test_negated_entity_does_not_name_the_root_cause():
+    from telemetry_nerd.evals.score import score_hypothesis
+
+    t = _pf3()
+    h = {"id": "h2", "statement": "An arrival surge at frontend, not a payment fault, caused the "
+         "14:53-14:57 UTC order failures."}  # fmt: skip
+    assert score_hypothesis(h, t).role == "other"
+    h["statement"] = "payment Charge failed, not checkout"
+    assert score_hypothesis(h, t).role == "root_cause"
+
+
+def test_incident_entity_per_sentence_change_per_clause():
+    """f1 of round 3: payment is named in a parenthesised list, the rise comes clauses later,
+    then 'and were zero' (flat wording) in the same sentence."""
+    rep = score(snap("payment-failure.live-sonnet-3"), _pf3())
+    f1 = next(f for f in rep.findings if f.id == "f1")
+    assert f1.incident and f1.sources == ["undetermined"] and f1.source_ok is False
+
+
+def test_payment_round3_scores_as_observed():
+    """Eval round 3, payment-failure (after rbz/t75/e0k/1w7/lep/zqa): entities + RED on span
+    metrics found payment; h1 (payment Charge failed, propagated to checkout/frontend) supported
+    against a refuted arrival-surge h2; region a1 +84 s from fault start. Fails: f1/f2 cite only
+    panels (show_binding crashed, gzrz: no op statistic, source undetermined), and the answer
+    opens with an uncited causal sentence."""
+    rep = score(snap("payment-failure.live-sonnet-3"), _pf3())
+    st = {c.id: c.status for c in rep.checks}
+    assert {k for k, v in st.items() if v == "fail"} == {"source_label", "zero_unscoped_claims"}
+    assert st["root_cause_named"] == st["root_cause_hypothesis_supported"] == "pass"
+    assert st["annotation_onset"] == st["findings_scoped"] == st["findings_evidenced"] == "pass"
+    [u] = rep.unscoped_claims
+    assert u["claim"].startswith("Payment's Charge call failed") and "that is why" in u["claim"]
+    assert [(h.id, h.role, h.status) for h in rep.hypotheses] == [
+        ("h1", "root_cause", "supported"), ("h2", "other", "refuted")]  # fmt: skip
+    assert [a.verdict for a in rep.annotations] == ["onset_ok"]
+    assert (rep.passed, rep.applicable) == (10, 12) and not rep.acceptance
+
+
+def test_payment_round3_stream_counts_rounds_not_turns():
+    lines = (EV / "payment-failure.live-sonnet-3.stream.jsonl").read_text().splitlines()
+    out = live.parse_stream(lines)
+    assert (out["tool_rounds"], out["num_turns"], out["tool_results"]) == (22, 33, 31)
+
+
 # --- turn and budget caps (zqa) ---------------------------------------------------------------
 
 

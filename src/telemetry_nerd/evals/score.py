@@ -67,7 +67,8 @@ _FLAT = re.compile(
 )
 _CAUSAL = re.compile(
     r"\b(root[ -]cause\w*|caus\w*|culprit|responsible|originat\w*|triggered|because|due to|"
-    r"source of the|is failing|was failing|broke|broken)\b",
+    r"source of the|is failing|was failing|broke|broken|(?:that|this|which) is why|led to|"
+    r"resulted in)\b",
     re.IGNORECASE,
 )
 _HEDGE = re.compile(
@@ -79,7 +80,7 @@ _HEDGE = re.compile(
 #: the evidence, not a cause in the system
 _EPISTEMIC = re.compile(
     r"\b(?:cannot|can't|can ?not|unable to|could not|did not|didn't) "
-    r"(?:\w+ ){0,2}?(?:confirm|determine|establish|verify|tell|attribute|link|tie)\w*\b",
+    r"(?:\w+ ){0,2}?(?:confirm|determine|establish|verify|tell|attribute|link|tie|find|see)\w*\b",
     re.IGNORECASE,
 )
 #: a claim that an entity does not exist in the data ("there is no payment service"): a
@@ -113,7 +114,15 @@ _MEASURES = (
 _SENTENCES = re.compile(r"(?<=[.;!?])\s+|\n+")
 #: clauses of a sentence: "X returned 422s from 13:24 to 13:28, then zero" asserts a change in
 #: its first clause even though the second says what it returned to
-_CLAUSES = re.compile(r",\s*(?:then|and then|after which|before|until)\b|;|\(")
+_CLAUSES = re.compile(r",\s*(?:then|and then|and|after which|before|until)\b|;|\(")
+#: a heading or label line over a list of what is not known ("**Not established**",
+#: "Unknowns:"): the items under it name open questions, not claims (eval round 3)
+_UNKNOWN_HEAD = re.compile(
+    r"^\W*(?:not (?:yet )?(?:established|known|tested|explained|measured)|unknowns?|unexplained|"
+    r"open questions?|unmeasurable|what remains|remaining questions?|gaps?)\b",
+    re.IGNORECASE,
+)
+_HEADING = re.compile(r"^\s*(?:#+\s+.*|\*\*[^*]+\*\*:?|[A-Z][^.!?]{0,60}:)\s*$")
 _MATCHER = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)\s*(=~|!~|!=|=)\s*"((?:[^"\\]|\\.)*)"')
 _BY = re.compile(r"\b(?:by)\s*\(([^)]*)\)", re.IGNORECASE)
 _MAX_RANGE_MS = 7 * 24 * 3600 * 1000
@@ -161,9 +170,25 @@ def _names_phrase(text: str, term: str) -> bool:
     return False
 
 
+#: an entity named only to deny it: "an arrival surge, not a payment fault" (round 3, h2)
+_ENTITY_NEGATOR = re.compile(
+    r"\b(?:not|never|without|rather than|instead of|ruled? out)\b(?:\W+\w+){0,1}\W*$",
+    re.IGNORECASE,
+)
+
+
+def _names_entity(text: str, entity: str) -> bool:
+    """`entity` is named at least once other than right after a negation."""
+    alts = "|".join(re.escape(v) for v in _variants(entity))
+    rx = rf"(?<![A-Za-z0-9_])(?:{alts})(?:service)?(?![A-Za-z0-9_])"
+    return any(
+        not _ENTITY_NEGATOR.search(text[: m.start()]) for m in re.finditer(rx, text, re.IGNORECASE)
+    )
+
+
 def names_term(text: str, terms: tuple[str, ...], entities: tuple[str, ...]) -> bool:
-    """A root-cause term in prose: entity names by word, other terms as un-negated substrings."""
-    return any(mentions(text, t) if t in entities else _names_phrase(text, t) for t in terms)
+    """A root-cause term in prose, un-negated: entity names by word, other terms as substrings."""
+    return any(_names_entity(text, t) if t in entities else _names_phrase(text, t) for t in terms)
 
 
 def sentences(text: str) -> list[str]:
@@ -438,11 +463,12 @@ def score_finding(
         problems.append("direction disagrees with ground truth")
     # an incident finding: some sentence names an implicated entity (or the root cause) and
     # asserts a change (judged per sentence: long claims also say what did not change)
+    # (the entity per sentence, the change per clause: "Span errors on payment (charge),
+    # checkout (...) rose to 0.5/s ..., and were zero from 14:58", eval round 3)
     incident = f.get("stance") != "against" and any(
-        (named(c, truth.implicated) or names_term(c, truth.root_cause_terms, truth.entities))
-        and asserts_change(c)
+        (named(s, truth.implicated) or names_term(s, truth.root_cause_terms, truth.entities))
+        and any(asserts_change(c) for c in [s, *_CLAUSES.split(s)])
         for s in sentences(claim)
-        for c in [s, *_CLAUSES.split(s)]
     )
     sources = list(
         dict.fromkeys(e["source"] for e in ev if e.get("kind") == "statistic" and e.get("source"))
@@ -534,6 +560,23 @@ def transcript_unscoped(text: str, truth: Truth) -> list[tuple[str, str]]:
     citing a workspace object (f3, h1, p2, a1, g1) and without hedging: a cause (not the
     analyst's own limits: "cannot confirm X because ..."), or that the entity is absent from the
     data."""
+    out = []
+    open_list = False  # under a heading listing what is not known
+    for line in (text or "").splitlines():
+        if _HEADING.match(line) or _UNKNOWN_HEAD.match(line):
+            open_list = bool(_UNKNOWN_HEAD.match(line))
+            # a label with its list on the same line: "Not established: the root cause ..."
+            if open_list or not line.strip().endswith(":"):
+                continue
+        if open_list and not re.match(r"^\s*(?:[-*+]|\d+[.)])\s", line) and line.strip():
+            open_list = False  # prose after the list ends it
+        if open_list:
+            continue
+        out += _unscoped_in(line, truth)
+    return out
+
+
+def _unscoped_in(text: str, truth: Truth) -> list[tuple[str, str]]:
     out = []
     for s in sentences(text):
         if not named(s, truth.entities) or _CITES.search(s) or _HEDGE.search(s):
