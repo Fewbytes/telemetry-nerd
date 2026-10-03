@@ -11,7 +11,10 @@ from dataclasses import dataclass
 
 import numpy as np
 import polars as pl
+import pyarrow.compute as pc
 
+from telemetry_nerd.analysis import born_counters
+from telemetry_nerd.analysis.born_counters import BornCounter, Filled
 from telemetry_nerd.analysis.filters import FilterSpec, filter_buckets
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.analysis.spectrum import (
@@ -42,6 +45,10 @@ class Prepared:
     caveats: list[str]
     series: dict[str, tuple[dict, np.ndarray, np.ndarray]]  # sid -> (labels, ts_ms, y)
     skipped: list[dict]
+    #: the born-on-first-event reading of the expression (None: absence is missing data)
+    born: BornCounter | None = None
+    #: per series, the steps read as 0 events from a live sibling (born_counters)
+    absent_zero: dict[str, Filled] | None = None
 
 
 def human_period(seconds: float) -> str:
@@ -58,11 +65,35 @@ def _labels(series_table) -> dict[str, dict]:
     return {r["series_id"]: json.loads(r["labels"]) for r in series_table.to_pylist()}
 
 
+def same_grid(a: DatasetMeta, b: DatasetMeta) -> bool:
+    """`a` covers `b`'s range on the same step grid (same step and phase)."""
+    return (
+        a.source == b.source
+        and a.step_ms == b.step_ms
+        and (a.start_ms - b.start_ms) % b.step_ms == 0
+        and a.start_ms <= b.start_ms
+        and a.end_ms >= b.end_ms
+    )
+
+
+def _grouped(table, labels: dict[str, dict]) -> dict[str, tuple[dict, np.ndarray, np.ndarray]]:
+    """sid -> (labels, ts_ms, y) of the steps with a finite value, sorted by time."""
+    df = pl.from_arrow(table).with_columns(pl.col("avg").fill_nan(None)).drop_nulls("avg")
+    out: dict[str, tuple[dict, np.ndarray, np.ndarray]] = {}
+    for (sid,), g in df.sort("ts_ms").group_by("series_id", maintain_order=True):
+        out[sid] = (labels.get(sid, {}), g["ts_ms"].to_numpy(), g["avg"].to_numpy())
+    return out
+
+
 class SignalOps:
     def __init__(self, datasets: DatasetStore, facts: Callable[[str, str], Facts]) -> None:
         self._datasets = datasets
         self._facts = facts
         self._memo: OrderedDict[tuple, tuple[Prepared, dict[str, Spectrum]]] = OrderedDict()
+
+    @property
+    def datasets(self) -> DatasetStore:
+        return self._datasets
 
     # preconditions ------------------------------------------------------
     def check(self, dataset_id: str, op: str) -> DatasetMeta:
@@ -76,25 +107,60 @@ class SignalOps:
             raise ValueError(problem)
         return meta
 
-    def _prepare(self, dataset_id: str, op: str, cap: int, allow_empty: bool = False) -> Prepared:
+    def born(self, dataset_id: str) -> BornCounter | None:
+        """The born-on-first-event reading of a source dataset's expression, if any."""
+        meta = self._datasets.meta(dataset_id)
+        if meta.code_node or meta.derived:
+            return None
+        return born_counters.born_counter(meta.expr, lambda m: self._facts(meta.source, m).type)
+
+    def _prepare(
+        self,
+        dataset_id: str,
+        op: str,
+        cap: int,
+        allow_empty: bool = False,
+        sibling: str | None = None,
+    ) -> Prepared:
+        """Series that qualify for `op`. `sibling`: a dataset of the live-sibling expression
+        (born_counters complement), same range and step, fetched by the caller."""
         meta = self.check(dataset_id, op)
         meta, result = self._datasets.get(dataset_id)
         table, step = result.buckets, meta.step_ms
         caveats: list[str] = []
         span = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
+        rng = TimeRange(meta.start_ms, meta.end_ms)
         if span > cap:
-            table, step = lod(
-                result.buckets, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), cap
-            )
+            table, step = lod(result.buckets, meta.step_ms, rng, cap)
             caveats.append("coarsened")
         labels = _labels(result.series)
+        raw = _grouped(table, labels)
+        born = self.born(dataset_id)
+        filled: dict[str, Filled] = {}
+        if born is not None:
+            siblings = None
+            if sibling is not None:
+                smeta, sres = self._datasets.get(sibling)
+                if not same_grid(smeta, meta):
+                    raise ValueError(f"sibling {sibling} does not share {dataset_id}'s step grid")
+                ts_col = pc.field("ts_ms")
+                stable = sres.buckets.filter(
+                    (ts_col >= meta.start_ms) & (ts_col <= meta.end_ms)
+                )  # never fill outside the dataset's range
+                if step != meta.step_ms:
+                    stable = lod(stable, meta.step_ms, rng, cap)[0]
+                siblings = {
+                    sid: (lab, ts)
+                    for sid, (lab, ts, _) in _grouped(stable, _labels(sres.series)).items()
+                }
+            raw, filled = born_counters.fill_born(raw, siblings)
+            if filled:
+                caveats.append(born_counters.CAVEAT)
         series: dict[str, tuple[dict, np.ndarray, np.ndarray]] = {}
         skipped: list[dict] = []
-        df = pl.from_arrow(table).with_columns(pl.col("avg").fill_nan(None)).drop_nulls("avg")
         expected = (meta.end_ms - meta.start_ms) // step + 1
         gappy = False
-        for (sid,), g in df.sort("ts_ms").group_by("series_id", maintain_order=True):
-            ts, y = g["ts_ms"].to_numpy(), g["avg"].to_numpy()
+        for sid, (lab, ts, y) in raw.items():
             gaps = 1 - ts.size / max(expected, 1)
             reason = None
             if ts.size < MIN_POINTS:
@@ -104,9 +170,20 @@ class SignalOps:
             elif float(np.ptp(y)) == 0:
                 reason = "constant"
             if reason:
-                skipped.append({"labels": labels.get(sid, {}), "reason": reason})
+                item = {"labels": lab, "reason": reason}
+                if (
+                    born is not None
+                    and born.complement
+                    and sibling is None
+                    and reason != "constant"
+                ):
+                    item["hint"] = (
+                        "a counter series born on its first event: absence may mean 0 events; "
+                        f"analyze checks it against the live sibling {born.complement}"
+                    )
+                skipped.append(item)
             else:
-                series[sid] = (labels.get(sid, {}), ts, y)
+                series[sid] = (lab, ts, y)
                 gappy = gappy or gaps > 0.2
         if gappy:
             caveats.append("gaps")
@@ -121,7 +198,10 @@ class SignalOps:
             raise ValueError(
                 f"{len(series)} series: at most {SERIES_BUDGET} (hint: aggregate first, e.g. sum by (...))"
             )
-        return Prepared(meta, step, caveats, series, skipped)
+        return Prepared(
+            meta, step, caveats, series, skipped, born,
+            {sid: f for sid, f in filled.items() if sid in series},
+        )  # fmt: skip
 
     # spectrum -----------------------------------------------------------
     def spectrum_of(

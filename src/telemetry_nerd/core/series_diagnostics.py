@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable
 
 import numpy as np
 
-from telemetry_nerd.analysis import sources
+from telemetry_nerd.analysis import born_counters, sources
 from telemetry_nerd.analysis.diagnostics import (
     Diagnosis,
     detector_source,
@@ -25,7 +25,13 @@ from telemetry_nerd.analysis.sources import COMMON, SPECIAL
 from telemetry_nerd.analysis.spc import CUSUM_H, CUSUM_K, EWMA_L, EWMA_LAMBDA
 from telemetry_nerd.analysis.spectrum import spectrum
 from telemetry_nerd.core.profiles import SeasonalShapes
-from telemetry_nerd.core.signal_ops import SPECTRUM_CAP, Prepared, SignalOps, human_period
+from telemetry_nerd.core.signal_ops import (
+    SPECTRUM_CAP,
+    Prepared,
+    SignalOps,
+    human_period,
+    same_grid,
+)
 from telemetry_nerd.core.wire import (
     Memo,
     add_caveats,
@@ -36,6 +42,7 @@ from telemetry_nerd.core.wire import (
 )
 from telemetry_nerd.datasets.store import DatasetMeta
 from telemetry_nerd.model.time import format_duration, iso
+from telemetry_nerd.sources.base import SourceError
 
 MAX_VIOLATIONS_LISTED = 5
 GAP_HANDLING = (
@@ -102,6 +109,22 @@ def reference_label(baseline: str, k: int, span_ms: int, tz: str) -> str:
     return f"the same {span} window on the {days}, aligned by {where} (fetched separately)"
 
 
+def absent_as_zero(prep: Prepared, sid: str, sibling: str | None) -> dict | None:
+    """What was read as 0 for one series (born_counters), stated with its assumption."""
+    f = (prep.absent_zero or {}).get(sid)
+    if f is None or prep.born is None:
+        return None
+    return {
+        "steps": f.lead + f.trail, "before_first_point": f.lead, "after_last_point": f.trail,
+        "live_sibling": (
+            {"dataset": sibling, "expr": prep.born.complement} if sibling
+            else "the other series of this dataset with the same labels but another "
+            + "/".join(prep.born.outcome)
+        ),
+        "assumption": born_counters.ASSUMPTION, "onset_bias": born_counters.ONSET_BIAS,
+    }  # fmt: skip
+
+
 class SeriesDiagnostics:
     def __init__(
         self,
@@ -114,6 +137,47 @@ class SeriesDiagnostics:
         self._query = query
         self._memo: Memo[Run] = Memo()
         self._last: dict[str, dict | None] = {}  # dataset -> reference config of the last analyze
+        self._siblings: dict[str, str] = {}  # dataset -> its live-sibling dataset (born_counters)
+
+    # live siblings of counters born on their first event (born_counters) ------------------------
+    def sibling_of(self, dataset_id: str) -> str | None:
+        """The fetched live-sibling dataset of `dataset_id`, if any: remembered, or found in the
+        dataset store (same source, complement expression, covering the range on the same grid),
+        so a panel drawn later (or after a restart) reads the series exactly as analyze did."""
+        if (hit := self._siblings.get(dataset_id)) is not None:
+            return hit
+        born = self._signal.born(dataset_id)
+        if born is None or born.complement is None:
+            return None
+        meta = self._signal.datasets.meta(dataset_id)
+        for m in self._signal.datasets.list_metas():
+            if m.expr == born.complement and same_grid(m, meta) and not m.code_node:
+                self._siblings[dataset_id] = m.id
+                return m.id
+        return None
+
+    async def fetch_sibling(self, dataset_id: str, actor: str) -> str | None:
+        """Fetch the live sibling of a counter born on its first event (the outcome matcher
+        negated, same range and step) so absence can be read as 0 where the instrument is
+        provably alive. None when the expression has no such reading or no source can say."""
+        if (hit := self.sibling_of(dataset_id)) is not None:
+            return hit
+        born = self._signal.born(dataset_id)
+        if born is None or born.complement is None or self._query is None:
+            return None
+        meta = self._signal.datasets.meta(dataset_id)
+        try:
+            out = await self._query(
+                born.complement, start=str(meta.start_ms), end=str(meta.end_ms),
+                step=format_duration(meta.step_ms), source=meta.source, actor=actor,
+            )  # fmt: skip
+        except (SourceError, ValueError):
+            return None  # unchecked: absence stays missing data
+        sib = out["dataset"]
+        if not same_grid(self._signal.datasets.meta(sib), meta):
+            return None
+        self._siblings[dataset_id] = sib
+        return sib
 
     async def fetch_reference(
         self, dataset_id: str, baseline: str, cycles: int, tz: str, actor: str
@@ -179,17 +243,23 @@ class SeriesDiagnostics:
             if self._shapes
             else None
         )
+        ref_ds = [r["dataset"] for r in sorted(ref["refs"], key=lambda r: -r["shift_ms"])] if ref else []  # fmt: skip
+        siblings = {d: self.sibling_of(d) for d in [dataset_id, *ref_ds]}
         key = (
             dataset_id, start_ms, end_ms, json.dumps(ref, sort_keys=True) if ref else None,
             (shapes.profile_id, shapes.computed_at_ms) if shapes else None,
+            tuple(sorted((k, v) for k, v in siblings.items() if v)),
         )  # fmt: skip
         if (hit := self._memo.get(key)) is not None:
             return hit
-        prep = self._signal._prepare(dataset_id, "analyze", SPECTRUM_CAP, allow_empty=True)
-        refs = [
-            self._signal._prepare(r["dataset"], "analyze", SPECTRUM_CAP, allow_empty=True)
-            for r in sorted(ref["refs"], key=lambda r: -r["shift_ms"])
-        ] if ref else []  # fmt: skip
+
+        def prepare(d: str) -> Prepared:
+            return self._signal._prepare(
+                d, "analyze", SPECTRUM_CAP, allow_empty=True, sibling=siblings[d]
+            )
+
+        prep = prepare(dataset_id)
+        refs = [prepare(d) for d in ref_ds]
         out: dict[str, Diagnosis] = {}
         used: dict[str, dict] = {}
         for sid, (labels, ts, y) in prep.series.items():
@@ -245,6 +315,20 @@ class SeriesDiagnostics:
                     sources.MEASUREMENT, f"{missing} of {expected} steps without data (never "
                     "filled: run rules break there, EWMA/CUSUM decay across them)",
                     missing_steps=missing,
+                ))  # fmt: skip
+            if (zero := absent_as_zero(prep, sid, self.sibling_of(dataset_id))) is not None:
+                c = d.chart
+                if c is not None and c.mode == "insufficient_data" and c.baseline.any() and not np.any(prep.series[sid][2][c.baseline]):  # fmt: skip
+                    zero["spc"] = (
+                        "the baseline saw no events (all 0): there is no common-cause envelope "
+                        "to chart against; any event after it departs from zero, and the level "
+                        "shifts carry the special cause"
+                    )
+                item["absent_as_zero"] = zero
+                item["variation"].append(sources.item(
+                    sources.MEASUREMENT, f"{zero['steps']} steps without this series read as 0 "
+                    "events: " + born_counters.ASSUMPTION, caveat=born_counters.CAVEAT,
+                    steps=zero["steps"],
                 ))  # fmt: skip
             series.append(item)
             add_caveats(caveats, d.caveats)

@@ -49,6 +49,8 @@ const CAVEATS: Record<string, Describe> = {
   too_gappy: () => "Some series are more than half gaps and were skipped.",
   constant: () => "Some series are constant and were skipped.",
   skipped_series: () => "Some series did not qualify and were skipped.",
+  absent_as_zero: () =>
+    "A counter series that only exists after its first event (e.g. an error status) was read as 0 where it was absent and its live sibling (same instrument, another outcome) reported: an assumption about the instrument. Gaps inside the series' lifetime, and steps where the sibling is absent too, stay gaps.",
   cycles_excluded: () => "Some previous cycles were left out of the reference (missing data, excluded dates, or atypical); see the legend.",
   heavy_tails: () => "Previous cycles had excursions beyond the normal-theory threshold, so the extreme-point threshold was raised to the largest of them.",
   small_residual_pool: () => "Few previous-cycle residuals: the band edges are rough.",

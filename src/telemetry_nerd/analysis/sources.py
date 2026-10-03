@@ -72,6 +72,8 @@ MEASUREMENT_CAVEATS: dict[str, str] = {
     "no_uncertainty": "input uncertainty unknown",
     "input_uncertainty_unknown": "input uncertainty unknown: intervals are lower bounds",
     "uncertainty_not_propagated": "input intervals not propagated: intervals are lower bounds",
+    "absent_as_zero": "a counter series born on its first event read as 0 where absent while its "
+    "live sibling reported (assumption)",
 }
 
 

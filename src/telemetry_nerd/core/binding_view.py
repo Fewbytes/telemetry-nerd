@@ -366,10 +366,12 @@ def error_ratio(num: FetchResult, den: FetchResult, step_ms: int) -> tuple[Fetch
     notes: list[str] = []
     if absent:
         notes.append(
-            f"{len(absent)} member(s) report no error series: counted as 0 errors ("
+            f"{len(absent)} member(s) report no error series: counted as 0 errors at steps "
+            "where their requests report ("
             + ", ".join(sorted(absent)[:3])
             + (f" (+{len(absent) - 3})" if len(absent) > 3 else "")
-            + "; error counters usually appear only after the first error)"
+            + "; measurement-system assumption: error counters are born on their first "
+            "error, born_counters)"
         )
     if gap_steps:
         notes.append(

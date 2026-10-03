@@ -18,7 +18,7 @@ export const MEASUREMENT_CAVEATS = new Set([
   "sampling_artifact", "extrapolated", "resets", "members_missing", "members_skipped",
   "member_coverage_unknown", "members_partial", "skipped_series", "latency_unit_assumed",
   "estimated_counts", "counts_unknown", "n_unknown", "no_uncertainty", "input_uncertainty_unknown",
-  "uncertainty_not_propagated",
+  "uncertainty_not_propagated", "absent_as_zero",
 ]);
 
 export const caveatSource = (code: string): VariationSource | null =>

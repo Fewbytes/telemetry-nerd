@@ -458,7 +458,7 @@ bounds = "≥0"
 additivity_series = "additive"
 additivity_time = "additive"
 role = "throughput"
-description = "Span-metrics-connector call count per service/span-name/status: the R and E of RED (rate via rate(), errors by filtering status_code)."
+description = "Span-metrics-connector call count per service/span-name/status: the R and E of RED (rate via rate(), errors by filtering status_code). The status_code=\"STATUS_CODE_ERROR\" series of a service/span exists only from its first error span (and again after expiry or a restart): absent means 0 errors where the non-error series of the same service/span reports, not missing data (analyze reads it so, stated as a measurement-system assumption)."
 
 [[metric]]
 name = "traces_spanmetrics_size_total"

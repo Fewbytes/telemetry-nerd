@@ -342,3 +342,9 @@ def has_division(expr: str) -> bool:
     """`/` as an operator (not inside a label value or comment): the expression is a quotient,
     whose unit is not its operands' unit."""
     return "/" in _mask_strings(_strip_comments(expr))
+
+
+def counter_rate_source(expr: str) -> tuple[str, tuple[str, ...]] | None:
+    """(selector, grouping labels) of `[sum [by (L)]] (rate|increase(SEL[w]))`, or None for any
+    other shape. Grouping is ("*",) for a bare rate/increase (every label kept)."""
+    return _sum_source(_peel_parens(_strip_comments(expr)))
