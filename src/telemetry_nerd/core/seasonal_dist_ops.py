@@ -18,8 +18,9 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import polars as pl
 
+from telemetry_nerd.analysis import sources
 from telemetry_nerd.analysis.distlod import window_histogram
-from telemetry_nerd.analysis.seasonal import crosses_dst
+from telemetry_nerd.analysis.seasonal import EXCLUDED_SOURCE, crosses_dst
 from telemetry_nerd.analysis.seasonal_dist import (
     Hist,
     TailComparison,
@@ -29,7 +30,7 @@ from telemetry_nerd.analysis.seasonal_dist import (
     default_threshold,
     snap,
 )
-from telemetry_nerd.core.seasonal_ops import requested_schemes, scheme_shifts
+from telemetry_nerd.core.seasonal_ops import VERDICT_SOURCE, requested_schemes, scheme_shifts
 from telemetry_nerd.core.signal_ops import SERIES_BUDGET
 from telemetry_nerd.core.wire import add_caveats, sig, statistic
 from telemetry_nerd.datasets.store import DatasetStore
@@ -220,13 +221,30 @@ class SeasonalDistOps:
                 "scheme": c.scheme,
                 "label": label,
                 "cycles": [cyc(h) for h in c.kept],
-                "excluded": [{**cyc(h), "reason": why} for h, why in c.excluded],
+                "excluded": [{**cyc(h), "reason": why, "source": EXCLUDED_SOURCE[why]}
+                             for h, why in c.excluded],
                 "scores": {s: sig(v, 3) for s, v in scores.items()},
             },
         }  # fmt: skip
+        if src := VERDICT_SOURCE.get(c.verdict):
+            out["source"] = src
+        # spec §5.4: labelled findings (the cycles' spread of the share is the envelope)
+        var = [
+            sources.item(EXCLUDED_SOURCE[why], f"previous {c.scheme} cycle {h.j} excluded: {why}",
+                         cycle=h.j)
+            for h, why in c.excluded
+        ]  # fmt: skip
+        out["variation"] = var
         if c.share is None:
+            var += sources.measurement_items(c.caveats)
             return out
         sh = c.share
+        var.insert(0, sources.item(
+            sources.COMMON, f"normal band of the share above {x:g}: the spread across {k} "
+            "previous cycles (the common-cause envelope)",
+        ))  # fmt: skip
+        if c.verdict in VERDICT_SOURCE:
+            var += [sources.item(VERDICT_SOURCE[c.verdict], r) for r in c.reasons]
         out["share_over"] = {
             "value": sig(sh.value, 3), "normal_90": [sig(sh.normal[0], 3), sig(sh.normal[1], 3)],
             "interval_99": [sig(sh.p_interval[0], 3), sig(sh.p_interval[1], 3)],
@@ -237,6 +255,7 @@ class SeasonalDistOps:
                 f"share above {x:g} per cycle from histogram counts; 90% range of a normal cycle "
                 f"from the spread of {k} cycles (t, {k - 1} df, logit)",
                 {"x": x, "reference": c.scheme, "cycles": k, "tz": tz, "n": sig(c.now.n)},
+                source=sources.SPECIAL if sh.flagged else sources.COMMON,
             ),
         }  # fmt: skip
         if math.isfinite(c.shape):
@@ -245,8 +264,16 @@ class SeasonalDistOps:
                 "distance": sig(c.shape, 3),
                 "previous_cycles": [sig(v, 3) for v in prev],
                 "beyond_previous": bool(prev) and c.shape > max(prev),
+                # descriptive, not a test: a shape beyond every cycle is not attributed
+                **({"source": sources.UNDETERMINED} if prev and c.shape > max(prev) else {}),
                 "method": "largest |CDF difference| at the shared bucket edges: now vs the kept "
                           "cycles' summed counts, each cycle vs the others (descriptive: with k "
                           "cycles, now exceeds all of them by chance 1/(k+1) of the time)",
             }  # fmt: skip
+            if prev and c.shape > max(prev):
+                var.append(sources.item(
+                    sources.UNDETERMINED, "distribution shape further from the reference than "
+                    "every previous cycle (descriptive: happens by chance 1/(k+1) of the time)",
+                ))  # fmt: skip
+        var += sources.measurement_items(c.caveats)
         return out

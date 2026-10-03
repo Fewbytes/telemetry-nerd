@@ -12,14 +12,28 @@ from collections.abc import Awaitable, Callable
 
 import numpy as np
 
-from telemetry_nerd.analysis.diagnostics import Diagnosis, diagnose
+from telemetry_nerd.analysis import sources
+from telemetry_nerd.analysis.diagnostics import (
+    Diagnosis,
+    detector_source,
+    diagnose,
+    violation_sources,
+)
 from telemetry_nerd.analysis.profile import seasonal_shape
 from telemetry_nerd.analysis.seasonal import DEFAULT_K, cycle_shifts
+from telemetry_nerd.analysis.sources import COMMON, SPECIAL
 from telemetry_nerd.analysis.spc import CUSUM_H, CUSUM_K, EWMA_L, EWMA_LAMBDA
 from telemetry_nerd.analysis.spectrum import spectrum
 from telemetry_nerd.core.profiles import SeasonalShapes
 from telemetry_nerd.core.signal_ops import SPECTRUM_CAP, Prepared, SignalOps, human_period
-from telemetry_nerd.core.wire import Memo, add_caveats, sig, sig_pair, statistic
+from telemetry_nerd.core.wire import (
+    Memo,
+    add_caveats,
+    measurement_caveats,
+    sig,
+    sig_pair,
+    statistic,
+)
 from telemetry_nerd.datasets.store import DatasetMeta
 from telemetry_nerd.model.time import format_duration, iso
 
@@ -222,9 +236,17 @@ class SeriesDiagnostics:
         eff = format_duration(prep.step_ms)
         caveats = list(prep.caveats)
         series = []
+        expected = (prep.meta.end_ms - prep.meta.start_ms) // prep.step_ms + 1
         for sid, d in diags.items():
             labels, ts, _ = prep.series[sid]
-            series.append(self._series_summary(dataset_id, eff, base, labels, ts, d, used.get(sid)))
+            item = self._series_summary(dataset_id, eff, base, labels, ts, d, used.get(sid))
+            if (missing := expected - int(ts.size)) > 0:
+                item["variation"].append(sources.item(
+                    sources.MEASUREMENT, f"{missing} of {expected} steps without data (never "
+                    "filled: run rules break there, EWMA/CUSUM decay across them)",
+                    missing_steps=missing,
+                ))  # fmt: skip
+            series.append(item)
             add_caveats(caveats, d.caveats)
         for sk in prep.skipped:
             series.append({
@@ -244,6 +266,8 @@ class SeriesDiagnostics:
             "baseline": baseline,
             "series": series,
             "caveats": caveats,
+            # spec §5.4: dataset-wide measurement-system items; per series in series[].variation
+            "variation": sources.measurement_items(prep.caveats + measurement_caveats(prep.meta)),
             "draw": f'show("{dataset_id}", question, mark="spc"'
             + ("" if base[2] != "stated" else ", windows=[the baseline]")
             + ")"
@@ -252,10 +276,10 @@ class SeriesDiagnostics:
 
     @staticmethod
     def _series_summary(dataset_id, eff, base, labels, ts, d: Diagnosis, profile=None) -> dict:
-        def ev(name, value, interval, method, **params):
+        def ev(name, value, interval, method, source=None, **params):
             return statistic(
                 dataset_id, name, sig(value), sig_pair(interval), method,
-                {"step": eff, "n": d.n, "n_eff": sig(d.n_eff, 3), **params},
+                {"step": eff, "n": d.n, "n_eff": sig(d.n_eff, 3), **params}, source=source,
             )  # fmt: skip
 
         out: dict = {
@@ -264,6 +288,9 @@ class SeriesDiagnostics:
             "also": d.also,
             "reasons": d.reasons,
             "n": d.n,
+            # spec §5.4: each finding labelled common cause / special cause / measurement
+            # system / undetermined (measurement items from this series' caveats)
+            "variation": d.variation + sources.measurement_items(d.caveats),
         }
         if d.trend is None:  # too few points: nothing else was computed
             return out
@@ -282,7 +309,7 @@ class SeriesDiagnostics:
                 "evidence": ev(
                     "dominant_period", p_s, interval,
                     "Lomb-Scargle peak, half-power width; confirmed against AR(1) red noise",
-                    fap=pr.fap, phi_background=sig(pr.phi, 3),
+                    source=COMMON, fap=pr.fap, phi_background=sig(pr.phi, 3),
                 ),
             })  # fmt: skip
         out["frequency"] = {
@@ -298,19 +325,20 @@ class SeriesDiagnostics:
             trend["evidence"] = ev(
                 "trend_change_over_range", tr.change, tr.change_interval,
                 "OLS slope x range, SE inflated by sqrt(tau) of residuals, 99% t interval",
+                source=SPECIAL,
             )  # fmt: skip
         shifts = []
         for s in d.shifts:
             item = {
                 "at": iso(s.ts_ms), "delta": sig(s.delta), "interval": sig_pair(s.interval),
                 "sigma_units": sig(abs(s.delta) / d.sigma_within, 3), "p": sig(s.p, 2),
-                "n_before": s.n_before, "n_after": s.n_after,
+                "n_before": s.n_before, "n_after": s.n_after, "source": SPECIAL,
             }  # fmt: skip
             if d.model == "step":
                 item["evidence"] = ev(
                     "level_shift", s.delta, s.interval,
                     "CUSUM changepoint (Kolmogorov null, AR(1) long-run sigma), 99% interval",
-                    at=iso(s.ts_ms), p=s.p,
+                    source=SPECIAL, at=iso(s.ts_ms), p=s.p,
                 )  # fmt: skip
             shifts.append(item)
         stability = {"trend": trend, "shifts": shifts, "sigma_within": sig(d.sigma_within)}
@@ -351,12 +379,14 @@ class SeriesDiagnostics:
             name: {
                 "count": det.count, "of": det.opportunities, "expected": sig(det.expected, 3),
                 **({"p": sig(det.p, 2)} if det.p is not None else {}),
+                **({"source": src} if (src := detector_source(c, name)) else {}),
             }
             for name, det in c.detectors.items()
         }  # fmt: skip
         viol = c.violations()
+        vsrc = violation_sources(c, d.shifted_from)
         first = [
-            {"t": iso(int(ts[i])), "rules": rules}
+            {"t": iso(int(ts[i])), "rules": rules, "source": vsrc[i]}
             for i, rules in list(viol.items())[:MAX_VIOLATIONS_LISTED]
         ]
         return {
@@ -372,24 +402,26 @@ class SeriesDiagnostics:
                     "baseline median" + (
                         " of y minus the operating profile's seasonal shape (re-fitted without "
                         "the judged hours)" if profile else ""
-                    ) + ", 99% interval from n_eff",
-                    baseline=bwin, **nb,
+                    ) + ", 99% interval from n_eff; centre of the common-cause envelope",
+                    source=COMMON, baseline=bwin, **nb,
                 ),
             },
             "sigma": {
                 "value": sig(c.sigma), "interval": sig_pair(c.sigma_interval),
                 "evidence": ev(
                     "spc_sigma", c.sigma, c.sigma_interval,
-                    "1.4826 MAD of baseline deviations (marginal), 99% interval from n_eff",
-                    baseline=bwin, **nb,
+                    "1.4826 MAD of baseline deviations (marginal), 99% interval from n_eff; the "
+                    "common-cause scale", source=COMMON, baseline=bwin, **nb,
                 ),
             },
             "limits_3sigma": [sig(level - 3 * c.sigma), sig(level + 3 * c.sigma)],
+            "envelope": {"source": COMMON, "meaning": sources.MEANING[COMMON]},
             "lag1_phi": sig(c.phi, 3),
             "in_control": c.in_control,
             "outside_limits": {
                 "count": c.outside.count, "of": c.outside.opportunities,
                 "expected": sig(c.outside.expected, 3),
+                **({"source": src} if (src := detector_source(c, "outside_limits")) else {}),
                 "rate_interval": sig_pair(c.outside.rate_interval) if c.outside.rate_interval else None,
             } if c.outside else None,
             "detectors": detectors,
@@ -424,6 +456,7 @@ class SeriesDiagnostics:
             if c is None or c.mode == "insufficient_data":
                 item |= {"mode": "insufficient_data", "reason": c.reason if c else d.reasons[0]}
             else:
+                vsrc = violation_sources(c, d.shifted_from)
                 item |= {
                     "mode": c.mode,
                     "centre": [sig(v, 6) for v in c.centre],
@@ -438,8 +471,15 @@ class SeriesDiagnostics:
                     "seasonal": c.seasonal,
                     **({"seasonal_profile": used[sid]} if sid in used else {}),
                     "in_control": c.in_control,
+                    # spec §5.4: each signal's source (special cause, common-cause false
+                    # alarm, or undetermined)
                     "violations": [
-                        {"ts": int(ts[i]), "value": sig(float(y[i]), 6), "rules": rules}
+                        {
+                            "ts": int(ts[i]),
+                            "value": sig(float(y[i]), 6),
+                            "rules": rules,
+                            "source": vsrc[i],
+                        }
                         for i, rules in c.violations().items()
                     ],
                 }

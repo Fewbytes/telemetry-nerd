@@ -65,6 +65,9 @@ def test_weekday_peak_on_saturday_is_unusual_against_last_saturdays(tmp_path):
     assert ref["scheme"] == "1w" and len(ref["cycles"]) == 4
     assert "previous 4 weeks, aligned by UTC" in ref["label"]
     assert s["ratio"]["evidence"]["name"] == "seasonal_ratio"
+    # spec §5.4: unusual now is a special cause against the cycle-to-cycle envelope
+    assert s["source"] == s["ratio"]["evidence"]["source"] == "special_cause"
+    assert {v["source"] for v in s["variation"]} >= {"common_cause", "special_cause"}
     assert out["alignment"].startswith("UTC") and out["draw"].endswith('mark="seasonal")')
     assert len(str(out)) < 4000
 
@@ -76,6 +79,9 @@ def test_normal_saturday_is_usual_and_panel_draws_cycles_and_band(tmp_path):
     (s,) = out["series"]
     assert s["verdict"] == "usual", s["reasons"]
     assert out["schemes"] == {"1w": "4 cycles fetched"}
+    assert s["source"] == "common_cause"
+    assert {v["source"] for v in s["variation"]} == {"common_cause"}  # only the envelope
+    assert s["ratio"]["evidence"]["source"] == "common_cause"
     shown = svc.show(d, "Is this Saturday unusual for a Saturday?", mark="seasonal")
     data = svc.panel_data(shown.panel.id, 800)
     assert data["kind"] == "seasonal"
@@ -93,6 +99,10 @@ def test_short_history_is_insufficient(tmp_path):
     (s,) = out["series"]
     assert s["verdict"] == "insufficient_history"
     assert [e["reason"] for e in s["reference"]["excluded"]] == ["missing", "missing"]
+    # cycles without data are the measurement system's, and no verdict source is claimed
+    assert [e["source"] for e in s["reference"]["excluded"]] == ["measurement_system"] * 2
+    assert {v["source"] for v in s["variation"]} == {"measurement_system"}
+    assert "source" not in s
 
 
 def test_user_excluded_holiday_is_stated(tmp_path):
@@ -101,8 +111,12 @@ def test_user_excluded_holiday_is_stated(tmp_path):
     out = asyncio.run(svc.compare_seasonal(d, cycles=["1w"], exclude=["2026-09-26"]))
     (s,) = out["series"]
     assert s["reference"]["excluded"] == [
-        {"j": 1, "start": "2026-09-26T08:00:00+00:00", "shift_h": 168.0, "reason": "user"}
-    ]
+        {"j": 1, "start": "2026-09-26T08:00:00+00:00", "shift_h": 168.0, "reason": "user",
+         "source": "undetermined"}
+    ]  # fmt: skip
+    # the user did not say why: the source of that cycle's deviation is not guessed (§5.4)
+    assert {"source": "undetermined", "finding": "previous 1w cycle 1: excluded by the user",
+            "cycle": 1} in s["variation"]  # fmt: skip
 
 
 def test_local_time_alignment_is_stated(tmp_path):

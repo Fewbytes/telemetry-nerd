@@ -17,6 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 import numpy as np
 
 from telemetry_nerd.analysis.autocorr import n_eff, tau_int
+from telemetry_nerd.analysis.sources import COMMON, MEASUREMENT, SPECIAL, UNDETERMINED, item
 from telemetry_nerd.analysis.stats import MAD_SCALE, binom_sf, t_quantile
 
 SCHEMES = ("previous", "1d", "1w")  # preference order: a later scheme must win by CHOICE_GAIN
@@ -200,6 +201,29 @@ class Comparison:
     score: float = math.nan  # LOO mean absolute error before atypical exclusion (choice)
     blocks: int = 1
     caveats: list[str] = field(default_factory=list)
+    #: labelled findings (spec §5.4): {source, finding}
+    variation: list[dict] = field(default_factory=list)
+
+
+#: why a previous cycle was left out -> the source of that cycle's deviation (spec §5.4)
+EXCLUDED_SOURCE = {
+    "missing": MEASUREMENT,  # too little data in the cycle: coverage, not the process
+    "atypical": SPECIAL,  # its level is beyond the others' prediction: a special cause back then
+    "user": UNDETERMINED,  # the user left it out; the data does not say why
+}
+
+
+def _excluded_variation(excluded: list[tuple[Cycle, str]]) -> list[dict]:
+    what = {
+        "missing": "data at fewer than half of the phases",
+        "atypical": "its level is beyond the other cycles' prediction (a holiday or incident "
+        "back then), left out of the envelope",
+        "user": "excluded by the user",
+    }
+    return [
+        item(EXCLUDED_SOURCE[why], f"previous {c.scheme} cycle {c.j}: {what[why]}", cycle=c.j)
+        for c, why in excluded
+    ]
 
 
 def scale_of(now: np.ndarray, cycles: list[Cycle]) -> str:
@@ -416,6 +440,7 @@ def compare(
             f"(< {MIN_CYCLES}); {len(cycles)} looked at"
             + (f", {len(excluded)} excluded" if excluded else "")
         )
+        out.variation = _excluded_variation(excluded)
         return out
 
     X = np.vstack([_g(c.values, scale) for c in kept])
@@ -434,6 +459,7 @@ def compare(
         if "cycles_excluded" not in out.caveats:
             out.caveats.append("cycles_excluded")
     out.kept, out.excluded = kept, excluded
+    out.variation = _excluded_variation(excluded)
     k = len(kept)
     f = loo_factor(k)
     c = _nanmedian_min(X, MIN_CYCLES)
@@ -473,6 +499,10 @@ def compare(
     outside = _outside_band(outside_now, Rc, w_lo, w_hi, out.n, out.n_eff)
 
     out.level, out.extremes, out.outside = level, extremes, outside
+    out.variation.insert(0, item(
+        COMMON, f"normal band: the spread across {k} previous cycles at the same phase "
+        "(cycle-to-cycle variation): the common-cause envelope",
+    ))  # fmt: skip
     signs: set[str] = set()
     fmt = (lambda v: f"x{v:.3g}") if scale == "log" else (lambda v: f"{v:+.3g}")
     if level.flagged:
@@ -481,6 +511,7 @@ def compare(
             f"window level {fmt(level.ratio)} vs the reference; normal cycles "
             f"{fmt(level.normal[0])}..{fmt(level.normal[1])} (90%, from {k} cycles)"
         )
+        out.variation.append(item(SPECIAL, out.reasons[-1]))
     if extremes.flagged:
         pts = extremes.points
         signs |= {"higher" if zz > 0 else "lower" for _, zz in pts}
@@ -489,6 +520,7 @@ def compare(
             f"{len(pts)} point(s) beyond |z| {extremes.threshold:.2f} (max {top[1]:+.1f} at "
             f"phase {top[0]}); previous cycles reached at most {max(extremes.previous_max):.1f}"
         )
+        out.variation.append(item(SPECIAL, out.reasons[-1]))
     if outside.flagged:
         dirs = dc[outside_now] - (w_lo + w_hi)[outside_now] / 2
         signs |= {"higher" if v > 0 else "lower" for v in dirs}
@@ -497,6 +529,7 @@ def compare(
             f"{min(outside.previous):.0%}..{max(outside.previous):.0%}, p={outside.p:.1g} on "
             f"n_eff {out.n_eff:.0f})"
         )
+        out.variation.append(item(SPECIAL, out.reasons[-1]))
     if signs:
         out.verdict = "unusual"
         if level.flagged:  # shape detectors are relative to the window's own level
@@ -510,6 +543,7 @@ def compare(
             f"{fmt(level.normal[1])}), {outside.share:.0%} outside the 90% shape band, no "
             "extreme points"
         )
+        out.variation.append(item(COMMON, out.reasons[-1]))
     return out
 
 

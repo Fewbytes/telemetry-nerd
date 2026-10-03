@@ -124,6 +124,9 @@ def test_percentile_series_compares_the_histogram_per_cycle(tmp_path):
     assert s["threshold"]["x"] == 0.25 and "not from now" in s["threshold"]["how"]
     assert s["share_over"]["evidence"]["name"] == "seasonal_share_over"
     assert len(str(out)) < 6000
+    # spec §5.4: a usual window sits inside the cycle-to-cycle (common-cause) envelope
+    assert s["source"] == s["share_over"]["evidence"]["source"] == "common_cause"
+    assert "special_cause" not in {v["source"] for v in s["variation"]}
 
 
 def test_slow_tail_now_is_unusual_and_threshold_is_snapped(tmp_path):
@@ -132,6 +135,8 @@ def test_slow_tail_now_is_unusual_and_threshold_is_snapped(tmp_path):
     (s,) = out["series"]
     assert s["threshold"]["x"] == 0.25 and "snapped" in s["threshold"]["how"]
     assert s["verdict"] == "unusual" and s["direction"] == "higher", s["reasons"]
+    assert s["source"] == s["share_over"]["evidence"]["source"] == "special_cause"
+    assert "special_cause" in {v["source"] for v in s["variation"]}
 
 
 def test_distribution_dataset_is_compared_too(tmp_path):

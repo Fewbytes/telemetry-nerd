@@ -133,3 +133,63 @@ async def test_mcp_analyze_tool(tmp_path):
     assert out["series"][0]["verdict"] == "level_shifted" and "spc" in out["draw"]
     bad = await call(mcp, "analyze", {"dataset": d, "baseline_start": "1970-01-05T00:00:00Z"})
     assert bad.is_error and "hint" in text_of(bad)
+
+
+# variation sources (spec §5.4, bead gkk) ------------------------------------------------------
+def _sources(items):
+    return {v["source"] for v in items}
+
+
+def test_stable_series_is_labelled_common_cause_only(tmp_path):
+    svc = make_service(tmp_path)
+    d = put(svc, np.random.default_rng(1).normal(size=N) + 10)
+    out = svc.analyze(d)
+    (s,) = out["series"]
+    assert s["verdict"] == "stable"
+    assert _sources(s["variation"]) == {"common_cause"}
+    assert out["variation"] == []
+    spc = s["spc"]
+    assert spc["envelope"]["source"] == "common_cause"
+    assert (
+        spc["centre"]["evidence"]["source"] == spc["sigma"]["evidence"]["source"] == "common_cause"
+    )
+    # signals on a chart in control are the false alarms common cause produces
+    assert {v["source"] for v in spc["first_violations"]} <= {"common_cause"}
+    assert {x.get("source") for x in spc["detectors"].values()} <= {None, "common_cause"}
+
+
+def test_injected_shift_is_special_cause(tmp_path):
+    svc = make_service(tmp_path)
+    d = put(svc, step_series())
+    out = svc.analyze(d)
+    (s,) = out["series"]
+    shift = s["stability"]["shifts"][0]
+    assert shift["source"] == shift["evidence"]["source"] == "special_cause"
+    assert "special_cause" in _sources(s["variation"])
+    assert s["spc"]["detectors"]["cusum"]["source"] == "special_cause"
+    after = [v for v in s["spc"]["first_violations"] if v["t"] >= shift["at"]]
+    assert after and {v["source"] for v in after} == {"special_cause"}
+    # the numbers are unchanged by the labels
+    assert s["verdict"] == "level_shifted" and shift["interval"][0] < 2 < shift["interval"][1]
+    panel = svc.diagnostics.panel(d, None, None)
+    assert {v["source"] for v in panel["series"][0]["violations"]} >= {"special_cause"}
+
+
+def test_gap_is_a_measurement_system_item(tmp_path):
+    svc = make_service(tmp_path)
+    keep = np.ones(N, bool)
+    keep[300:420] = False
+    d = put(svc, np.random.default_rng(1).normal(size=N) + 10, keep=keep)
+    (s,) = svc.analyze(d)["series"]
+    gap = [v for v in s["variation"] if v["source"] == "measurement_system"]
+    assert gap and gap[0]["missing_steps"] == 120
+
+
+def test_signals_before_a_small_shift_are_source_undetermined(tmp_path):
+    svc = make_service(tmp_path)
+    t = np.arange(N)
+    y = np.random.default_rng(3).normal(size=N) + 10 + np.where(t >= 1000, 0.6, 0.0)
+    (s,) = svc.analyze(put(svc, y))["series"]
+    assert s["spc"]["in_control"] is False
+    und = [v for v in s["variation"] if v["source"] == "undetermined"]
+    assert und and "run rules" in und[0]["finding"]

@@ -14,8 +14,10 @@ from itertools import pairwise
 import numpy as np
 
 from telemetry_nerd.analysis.autocorr import n_eff, positions, tau_int
-from telemetry_nerd.analysis.spc import ControlChart, control_chart
+from telemetry_nerd.analysis.sources import COMMON, SPECIAL, UNDETERMINED, item
+from telemetry_nerd.analysis.spc import DECIDING, ControlChart, control_chart
 from telemetry_nerd.analysis.spectrum import MIN_POINTS, WINDOW_ARTIFACT, Peak, Spectrum
+from telemetry_nerd.analysis.stability import ALPHA as SPC_ALPHA
 from telemetry_nerd.analysis.stability import (
     KPSS,
     Harmonics,
@@ -39,6 +41,7 @@ SMALL = 1.0  # below this it is called small
 MIN_N_EFF = 10
 MAX_PERIODS = 3
 VARIANCE_MATERIAL = 1.5
+SIGNAL_P = SPC_ALPHA / len(DECIDING)  # a detector's count is significant below this (in_control)
 VERDICTS = ("insufficient_data", "level_shifted", "drifting", "periodic", "noisy", "stable")
 
 
@@ -63,6 +66,18 @@ class Diagnosis:
     chart: ControlChart | None = None
     model: str = "none"  # which structure explains the series best: none | trend | step
     caveats: list[str] = field(default_factory=list)
+    #: labelled findings (spec §5.4): {source, finding}; measurement-system items are added
+    #: from the caveats by the op
+    variation: list[dict] = field(default_factory=list)
+
+    @property
+    def shifted_from(self) -> int | None:
+        """Index of the first material level shift (the step model): signals after it belong to
+        that special cause."""
+        if self.model != "step" or "level_shifted" not in (self.verdict, *self.also):
+            return None
+        material = [s.index for s in self.shifts if abs(s.delta) >= MATERIAL * self.sigma_within]
+        return min(material) if material else None
 
 
 def _bic(sse: float, n: int, k: int) -> float:
@@ -120,6 +135,56 @@ def _chart(ts_ms, y, step_ms, pos, t_s, baseline, harm, reference, profile) -> C
         seasonal, cycle,
     )  # fmt: skip
     return chart.tail(k)
+
+
+def detector_source(chart: ControlChart, name: str) -> str | None:
+    """Source of a detector's signals (spec §5.4). A deciding detector (independent points,
+    Poisson-tested) is special cause when its count is significant, else its signals are the
+    false alarms common cause produces. The other rules (overlapping windows, no calibrated
+    test) follow the chart: common cause in control; out of control they cannot be told apart
+    from the special cause on their own (undetermined)."""
+    det = chart.outside if name == "outside_limits" else chart.detectors.get(name)
+    if det is None or det.count == 0 or chart.in_control is None:
+        return None
+    if name in DECIDING and det.p is not None:
+        return SPECIAL if det.p < SIGNAL_P else COMMON
+    return COMMON if chart.in_control else UNDETERMINED
+
+
+def violation_sources(chart: ControlChart, shifted_from: int | None = None) -> dict[int, str]:
+    """Sample index -> source of its SPC signals: special cause when one of its rules is a
+    significant deciding detector, or when it lies after a material level shift on an
+    out-of-control chart (the shift is the assignable cause); else the weakest label among its
+    rules."""
+    srcs = {n: detector_source(chart, n) for n in ("outside_limits", *chart.detectors)}
+    after = shifted_from if chart.in_control is False else None
+    out = {}
+    for i, rules in chart.violations().items():
+        got = {srcs.get(r) for r in rules}
+        if SPECIAL in got or (after is not None and i >= after):
+            out[i] = SPECIAL
+        else:
+            out[i] = UNDETERMINED if UNDETERMINED in got else COMMON
+    return out
+
+
+def _chart_variation(chart: ControlChart, shifted_from: int | None) -> list[dict]:
+    if chart.mode == "insufficient_data":
+        return []
+    out = [item(COMMON, "control limits (baseline centre +- 3 sigma): the common-cause envelope; "
+                "points inside it are not to be chased")]  # fmt: skip
+    vs = list(violation_sources(chart, shifted_from).values())
+    why = {
+        COMMON: "no more than the false alarms common cause produces (chart in control)",
+        SPECIAL: "beyond what common cause explains (a significant detector, or after the level "
+        "shift): investigate",
+        UNDETERMINED: "run rules on an out-of-control chart without a significant detector of "
+        "their own",
+    }
+    for src in (SPECIAL, UNDETERMINED, COMMON):
+        if k := vs.count(src):
+            out.append(item(src, f"{k} point(s) with SPC signals: {why[src]}", points=k))
+    return out
 
 
 def _no_reference(y) -> ControlChart:
@@ -187,6 +252,7 @@ def diagnose(
 
     labels: list[str] = []
     reasons: list[str] = []
+    var: list[dict] = []
     if ne < MIN_N_EFF:
         labels.append("insufficient_data")
         reasons.append(
@@ -201,12 +267,14 @@ def diagnose(
                 f"{fmt_ts(s.ts_ms)} ({abs(s.delta) / sigma_within:.1f} sigma"
                 f"{', small' if abs(s.delta) < SMALL * sigma_within else ''}, p={s.p:.1g})"
             )
+            var.append(item(SPECIAL, reasons[-1]))
     for s in shifts:
         if s not in material:
             reasons.append(
                 f"minor shift {fmt(s.delta)} at {fmt_ts(s.ts_ms)} (p={s.p:.1g}, "
                 f"{abs(s.delta) / sigma_within:.1f} sigma < {MATERIAL:g})"
             )
+            var.append(item(SPECIAL, reasons[-1]))
     drift_material = abs(tr.change) >= MATERIAL * tr.sigma_resid
     if tr.significant and drift_material and model == "trend":
         labels.append("drifting")
@@ -214,8 +282,10 @@ def diagnose(
             f"trend {fmt(tr.change)} over the range [{fmt(tr.change_interval[0])}, "
             f"{fmt(tr.change_interval[1])}] ({fmt(tr.slope_per_h)}/h, 99%, n_eff {tr.n_eff:.0f})"
         )
+        var.append(item(SPECIAL, reasons[-1]))
     elif tr.significant and model == "trend":
         reasons.append(f"minor trend {fmt(tr.change)} over the range (< {MATERIAL:g} sigma)")
+        var.append(item(SPECIAL, reasons[-1]))
     if peaks:
         labels.append("periodic")
         reasons.append(
@@ -223,31 +293,33 @@ def diagnose(
             + ", ".join(f"{c.period_s:.4g}s (fap {c.fap:.1g} vs red noise)" for c in confirmed)
             + f"; amplitude {', '.join(fmt(a) for a in harm.amplitudes())}"
         )
+        var.append(item(COMMON, reasons[-1] + ": a systemic cycle, part of the envelope"))
     # a (even minor) shift or trend explains an out-of-control chart: that is not noise
     structured = bool({"level_shifted", "drifting"} & set(labels)) or (
         (model == "step" and bool(shifts)) or (model == "trend" and tr.significant)
     )
-    noisy = []
+    noisy: list[tuple[str, str]] = []
     if vr is not None and vr.significant and not 1 / VARIANCE_MATERIAL < vr.ratio < VARIANCE_MATERIAL:  # fmt: skip
-        noisy.append(
+        noisy.append((SPECIAL, (
             f"variance changes: last/first third scale {vr.ratio:.2g} "
             f"[{vr.interval[0]:.2g}, {vr.interval[1]:.2g}]"
-        )
+        )))  # fmt: skip
     if "heavy_tails" in sh.flags:
-        noisy.append(
+        noisy.append((COMMON, (
             f"heavy tails: excess kurtosis {sh.excess_kurtosis:.2g} "
             f"[{sh.kurtosis_interval[0]:.2g}, {sh.kurtosis_interval[1]:.2g}]"
-        )
+        )))  # fmt: skip
     if stationarity.p_upper <= 0.01 and not structured:
-        noisy.append(
+        noisy.append((COMMON, (
             f"not level-stationary (KPSS {stationarity.stat:.2g}, p <= 0.01) but no single trend or "
             "shift explains it: wandering / red noise"
-        )
+        )))  # fmt: skip
     if chart.in_control is False and not structured:
-        noisy.append("out of control against the baseline without a sustained shift")
+        noisy.append((SPECIAL, "out of control against the baseline without a sustained shift"))
     if noisy:
         labels.append("noisy")
-        reasons += noisy
+        reasons += [r for _, r in noisy]
+        var += [item(src, r) for src, r in noisy]
     if not labels:
         labels.append("stable")
         reasons.append(
@@ -255,6 +327,9 @@ def diagnose(
             if chart.in_control
             else "no trend, shift or period"
         )
+        var.append(item(COMMON, reasons[-1]))
+    shifted = "level_shifted" in labels and model == "step"
+    var += _chart_variation(chart, min(s.index for s in material) if shifted else None)
     if "bimodal" in sh.flags and "level_shifted" in labels:
         caveats.append("bimodal_from_shift")
     if chart.mode == "insufficient_data" and chart.reason:
@@ -262,5 +337,5 @@ def diagnose(
     order = sorted(labels, key=VERDICTS.index)
     return Diagnosis(
         order[0], order[1:], reasons, n, tau, ne, peaks, confirmed, cands, harm if peaks else None, tr, shifts,
-        sigma_within, stationarity, vr, sh, chart, model, caveats,
+        sigma_within, stationarity, vr, sh, chart, model, caveats, var,
     )  # fmt: skip

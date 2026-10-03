@@ -17,8 +17,10 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import polars as pl
 
+from telemetry_nerd.analysis import sources
 from telemetry_nerd.analysis.seasonal import (
     DEFAULT_K,
+    EXCLUDED_SOURCE,
     SCHEMES,
     Comparison,
     Cycle,
@@ -29,11 +31,21 @@ from telemetry_nerd.analysis.seasonal import (
     scale_of,
 )
 from telemetry_nerd.core.signal_ops import SERIES_BUDGET, SignalOps, human_period
-from telemetry_nerd.core.wire import Memo, add_caveats, sig, sig_list, sig_pair, statistic
+from telemetry_nerd.core.wire import (
+    Memo,
+    add_caveats,
+    measurement_caveats,
+    sig,
+    sig_list,
+    sig_pair,
+    statistic,
+)
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
 from telemetry_nerd.model.time import format_duration, iso
 
 MAX_POINTS = 2000
+#: comparison verdict -> source (spec §5.4): unusual is beyond the cycle-to-cycle envelope
+VERDICT_SOURCE = {"unusual": "special_cause", "usual": "common_cause"}
 DAY_S, WEEK_S = 86_400, 7 * 86_400
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
@@ -320,6 +332,8 @@ class SeasonalOps:
             "profile_period": profile or None,
             "series": series,
             "caveats": caveats,
+            # spec §5.4: dataset-wide measurement-system items; per series in series[].variation
+            "variation": sources.measurement_items(measurement_caveats(meta)),
             "draw": f'show("{dataset_id}", question, mark="seasonal")',
         }  # fmt: skip
 
@@ -333,11 +347,17 @@ class SeasonalOps:
             "verdict": c.verdict,
             "direction": c.direction,
             "reasons": c.reasons,
+            **({"source": src} if (src := VERDICT_SOURCE.get(c.verdict)) else {}),
+            # spec §5.4: each finding labelled (the band is the common-cause envelope)
+            "variation": c.variation + sources.measurement_items(c.caveats),
             "reference": {
                 "scheme": c.scheme,
                 "label": self.label(c, cfg["tz"], span),
                 "cycles": [cyc(x) for x in c.kept],
-                "excluded": [{**cyc(x), "reason": why} for x, why in c.excluded],
+                "excluded": [
+                    {**cyc(x), "reason": why, "source": EXCLUDED_SOURCE[why]}
+                    for x, why in c.excluded
+                ],
                 "scores": {k: sig(v, 3) for k, v in scores.items()},
             },
         }
@@ -363,6 +383,7 @@ class SeasonalOps:
                     dataset_id, f"seasonal_{unit}", sig(lv.ratio), sig_pair(lv.normal), method,
                     {"reference": c.scheme, "cycles": len(c.kept), "tz": cfg["tz"],
                      "step": format_duration(meta.step_ms), "n": c.n},
+                    source=sources.SPECIAL if lv.flagged else sources.COMMON,
                 ),
             },
         }  # fmt: skip
@@ -371,6 +392,7 @@ class SeasonalOps:
                 "share": sig(c.outside.share, 3), "nominal": 0.1,
                 "previous_cycles": [sig(v, 3) for v in c.outside.previous],
                 "p": sig(c.outside.p, 2), "flagged": c.outside.flagged,
+                "source": sources.SPECIAL if c.outside.flagged else sources.COMMON,
             }  # fmt: skip
         if c.extremes is not None:
             e = c.extremes
@@ -380,6 +402,7 @@ class SeasonalOps:
                 "max_z": sig(top[1], 3) if top else None,
                 "at": iso(meta.start_ms + top[0] * meta.step_ms) if top else None,
                 "heavy_tails": e.heavy_tails, "flagged": e.flagged,
+                "source": sources.SPECIAL if e.flagged else sources.COMMON,
             }  # fmt: skip
         return out
 
@@ -397,7 +420,8 @@ class SeasonalOps:
                 "direction": c.direction, "reasons": c.reasons, "scheme": c.scheme,
                 "label": self.label(c, cfg["tz"], span), "scale": c.scale,
                 "cycles": [{"j": x.j, "start_ms": x.start_ms, "values": sig_list(x.values)} for x in c.kept],
-                "excluded": [{"j": x.j, "start_ms": x.start_ms, "reason": why} for x, why in c.excluded],
+                "excluded": [{"j": x.j, "start_ms": x.start_ms, "reason": why,
+                              "source": EXCLUDED_SOURCE[why]} for x, why in c.excluded],
                 "n": c.n,
             }  # fmt: skip
             if c.centre is not None:

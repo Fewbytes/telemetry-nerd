@@ -7,7 +7,7 @@ import math
 from collections import OrderedDict
 from collections.abc import Hashable, Iterable
 
-from telemetry_nerd.analysis.sources import SOURCES
+from telemetry_nerd.analysis.sources import MEASUREMENT_CAVEATS, SOURCES
 
 
 def sig(v: float | None, digits: int = 4) -> float | None:
@@ -62,6 +62,15 @@ def statistic(
     if source is not None:
         out["source"] = source
     return out
+
+
+def measurement_caveats(meta) -> list[str]:
+    """Measurement-system caveat codes a dataset carries itself (spec §5.4): a partial fetch,
+    failed spans (data unknown there), and source caveats about the instruments."""
+    out = ["partial"] if getattr(meta, "partial", False) else []
+    if getattr(meta, "failed_spans", None):
+        out.append("untrusted_data")
+    return out + [c for c in getattr(meta, "source_caveats", ()) if c in MEASUREMENT_CAVEATS]
 
 
 class Memo[V]:

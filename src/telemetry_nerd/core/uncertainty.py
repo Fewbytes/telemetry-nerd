@@ -35,6 +35,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
+from telemetry_nerd.analysis.sources import measurement_items
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
 from telemetry_nerd.exchange.fmt import (
     ESTIMATE,
@@ -153,6 +154,9 @@ def mark_statistics(out: dict, datasets: DatasetStore, dataset_ids: Sequence[str
     caveats = out.setdefault("caveats", [])
     if isinstance(caveats, list) and (c := _PARAM_FLAG[status]) not in caveats:
         caveats.append(c)
+        # spec §5.4: unknown or unpropagated input error is the measurement system's
+        if isinstance(out.get("variation"), list):
+            out["variation"] += measurement_items([c])
     return out
 
 

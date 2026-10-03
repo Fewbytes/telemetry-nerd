@@ -335,7 +335,8 @@ class TelemetryService:
                 dataset_id, cycles, tz, exclude, threshold, actor
             )
         cfg = await self.seasonal.fetch(dataset_id, cycles, tz, exclude, actor)
-        return self.seasonal.summary(dataset_id, cfg)
+        # the band is the cycles' own spread; the input's declared error is not folded in
+        return mark_statistics(self.seasonal.summary(dataset_id, cfg), self.datasets, [dataset_id])
 
     def fleet(
         self,
