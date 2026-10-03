@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import selectors
 import shutil
 import signal
 import socket
@@ -291,14 +292,6 @@ def caps(run: dict, max_turns: int | None, max_budget_usd: float | None) -> dict
     not that count, see `StreamTally`), cost against --max-budget-usd (checked by the CLI after
     a turn, so it can overshoot by one), and what stopped it."""
     rounds, cost = run.get("tool_rounds"), run.get("total_cost_usd")
-    subtype, aborted = run.get("subtype"), run.get("aborted")
-    stopped = (
-        "max_turns" if subtype == "error_max_turns"
-        else "max_budget" if subtype == "error_max_budget_usd"
-        else "harness" if aborted
-        else "finished" if subtype == "success"
-        else subtype
-    )  # fmt: skip
     return {
         "max_turns": max_turns,
         "tool_rounds": rounds,
@@ -310,10 +303,20 @@ def caps(run: dict, max_turns: int | None, max_budget_usd: float | None) -> dict
         "budget_exceeded": (
             None if max_budget_usd is None or cost is None else cost > max_budget_usd
         ),
-        "stopped_by": stopped,
+        "stopped_by": _stopped_by(run.get("subtype"), run.get("aborted")),
         "note": "num_turns (Claude Code) counts the prompt and each tool result; --max-turns "
         "limits tool-use rounds",
     }
+
+
+def _stopped_by(subtype: str | None, aborted: str | None) -> str | None:
+    if subtype == "error_max_turns":
+        return "max_turns"
+    if subtype == "error_max_budget_usd":
+        return "max_budget"
+    if aborted:
+        return "harness"
+    return "finished" if subtype == "success" else subtype
 
 
 def mcp_connected(init_servers: list[dict]) -> bool:
@@ -346,14 +349,11 @@ def run_claude(
         cmd, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         start_new_session=True,
     )  # fmt: skip
-    lines: list[str] = []
     aborted = None
     denials = 0
     tally = StreamTally()
     assert proc.stdout is not None
     with transcript.open("w") as fh:
-        import selectors
-
         sel = selectors.DefaultSelector()
         sel.register(proc.stdout, selectors.EVENT_READ)
         while True:
@@ -371,7 +371,6 @@ def run_claude(
                 continue
             fh.write(line)
             fh.flush()
-            lines.append(line)
             errors_before = len(tally.out["errors"])
             ev = tally.feed(line)
             init = bool(ev) and ev.get("type") == "system" and ev.get("subtype") == "init"
@@ -396,7 +395,7 @@ def run_claude(
         except subprocess.TimeoutExpired:
             os.killpg(proc.pid, signal.SIGKILL)
     err = proc.stderr.read() if proc.stderr else ""
-    out = parse_stream(lines)
+    out = tally.summary()
     out["aborted"] = aborted
     out["caps"] = caps(out, max_turns, max_budget_usd)
     out["exit_code"] = proc.returncode
