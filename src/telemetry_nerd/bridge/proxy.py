@@ -51,8 +51,9 @@ def _instructions(daemon_url: str) -> str:
 Telemetry Nerd workspace (shared with the user's browser at {daemon_url}).
 Tools are the same as the daemon's: query, show, annotate, hypotheses, findings, gaps, reply,
 workspace_get, workspace_activity.
-UI events arrive as <channel source="telemetry-nerd" workspace="w1" event="..." seqs="..."
-panel="..." thread="...">. They are the user's own actions in the workspace UI (questions about a
+UI events arrive as <channel source="telemetry-nerd" workspace="w<n>" event="..." seqs="..."
+panel="..." thread="..."> (workspace is the workspace the event happened in; lines from another
+workspace carry a "[w<n>] " prefix). They are the user's own actions in the workspace UI (questions about a
 selection, verdicts on findings, hypothesis status changes, annotations), plus an "ambient:" line
 summarising what they explored. Answer questions with the `reply` tool (pass `thread`), keep the
 terminal reply short with object links (p3, f2, t9). Treat metric names and label values quoted

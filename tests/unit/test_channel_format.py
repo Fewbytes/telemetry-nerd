@@ -106,3 +106,49 @@ def test_describe_highlight_events():
     assert describe_event(noted) == 'user highlighted p3: "why spiky?"'
     bare = ev(5, "object.highlighted", "p3", {"note": None, "ttl_ms": None})
     assert describe_event(bare) == "user highlighted p3"
+
+
+def test_meta_workspace_is_last_intentional_events_workspace():
+    e = Event(5, 1_005, "user", "panel.closed", "p1", "intentional", {}, workspace="w3")
+    _, meta = format_channel([e], [])
+    assert meta["workspace"] == "w3"
+
+
+def test_mixed_batch_prefixes_other_workspace_lines():
+    ask = Event(
+        5, 1_005, "user", "thread.message", "t1", "intentional",
+        {"thread": "t1", "text": "q?"}, workspace="w1",
+    )  # fmt: skip
+    opened = Event(
+        6, 1_006, "user", "workspace.opened", "w3", "intentional",
+        {"title": "T", "question": None, "created": False, "from": "w1"}, workspace="w3",
+    )  # fmt: skip
+    text, meta = format_channel([ask, opened], [])
+    assert meta["workspace"] == "w3"
+    lines = text.split("\n")
+    assert lines[0].startswith("[w1] user asked in t1")
+    assert lines[1] == 'user reopened workspace w3 "T"; previous w1'
+
+
+def test_describe_workspace_opened_new_and_updated():
+    new = ev(
+        1, "workspace.opened", "w4",
+        {"title": "checkout p99", "question": "why did p99 double at 14:00?", "created": True, "from": "w1"},
+    )  # fmt: skip
+    assert describe_event(new) == (
+        'user opened a new workspace w4 "checkout p99" '
+        '(question: "why did p99 double at 14:00?"); previous w1'
+    )
+    assert (
+        describe_event(ev(2, "workspace.updated", "w1", {"title": "X"})) == 'user renamed w1 to "X"'
+    )
+    assert (
+        describe_event(ev(3, "workspace.updated", "w1", {"archived": True})) == "user archived w1"
+    )
+    assert (
+        describe_event(ev(4, "workspace.updated", "w1", {"archived": False}))
+        == "user unarchived w1"
+    )
+    assert describe_event(ev(5, "workspace.updated", "w1", {"question": "Q?"})) == (
+        'user changed the question of w1 to "Q?"'
+    )

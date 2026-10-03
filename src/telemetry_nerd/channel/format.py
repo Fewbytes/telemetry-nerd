@@ -88,6 +88,23 @@ def describe_event(e: Event) -> str:
             tail = f" → {outs}" if outs else ""
             err = f": {p['error']}" if p.get("error") else ""
             return f"code {e.object_id} {p.get('status')} in {p.get('duration_s')} s{tail}{err}"
+        case "workspace.opened":
+            title = f' "{p["title"]}"'
+            if p.get("created"):
+                q = f' (question: "{p["question"]}")' if p.get("question") else ""
+                head = f"{who} opened a new workspace {e.object_id}{title}{q}"
+            else:
+                head = f"{who} reopened workspace {e.object_id}{title}"
+            return head + (f"; previous {p['from']}" if p.get("from") else "")
+        case "workspace.updated":
+            parts = []
+            if "title" in p:
+                parts.append(f'renamed {e.object_id} to "{p["title"]}"')
+            if "question" in p:
+                parts.append(f'changed the question of {e.object_id} to "{p["question"]}"')
+            if "archived" in p:
+                parts.append(f"{'archived' if p['archived'] else 'unarchived'} {e.object_id}")
+            return f"{who} " + "; ".join(parts) if parts else f"{who} updated {e.object_id}"
         case "focus.changed":
             return f"{who} focused {_selection(p).strip()}"
         case _:
@@ -96,11 +113,17 @@ def describe_event(e: Event) -> str:
 
 def format_channel(intentional: list[Event], ambient: list[Event]) -> tuple[str, dict[str, str]]:
     first = intentional[0]
-    lines = [describe_event(e) for e in intentional]
+    current = intentional[-1].workspace
+
+    def line(e: Event) -> str:
+        text = describe_event(e)
+        return text if e.workspace == current else f"[{e.workspace}] {text}"
+
+    lines = [line(e) for e in intentional]
     if ambient:
-        lines.append("ambient: " + "; ".join(describe_event(e) for e in ambient))
+        lines.append("ambient: " + "; ".join(line(e) for e in ambient))
     meta = {
-        "workspace": "w1",
+        "workspace": current,
         "event": first.type,
         "seqs": ",".join(str(e.seq) for e in intentional),
     }
