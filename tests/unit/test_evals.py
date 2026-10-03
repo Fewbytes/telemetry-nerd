@@ -341,6 +341,66 @@ def test_unlabelled_incident_findings_fail_source_label():
     assert status(mutate(m), "source_label") == "fail"
 
 
+def _op_undetermined(s, claim_extra: str = "", derived: bool = True) -> None:
+    """f1 and f2 cite statistics the op (cautious model) labelled undetermined (0vg7)."""
+    for fid in ("f1", "f2"):
+        f = finding(s, fid)
+        f["evidence"][0]["source"] = "undetermined"
+        if derived:
+            f["source_flags"] = [{"evidence": 0, "flag": "source_derived",
+                                  "source": "undetermined", "message": "from the op"}]  # fmt: skip
+        f["claim"] += claim_extra
+
+
+def test_op_undetermined_label_kept_is_honest():
+    """Principle 16 (eval round 5): the ops could not tell special from common cause under the
+    cautious model; a finding that says so is not a model mistake."""
+    rep = mutate(_op_undetermined)
+    assert status(rep, "source_label") == "pass"
+    f1 = next(f for f in rep.findings if f.id == "f1")
+    assert f1.incident and f1.source_ok and f1.honest_undetermined
+    assert "undetermined as the ops labelled it (f1, f2)" in rep.check("source_label").detail
+
+
+def test_op_undetermined_label_upgraded_to_special_cause_fails():
+    rep = mutate(lambda s: _op_undetermined(s, " This is a special cause."))
+    assert status(rep, "source_label") == "fail"
+    f1 = next(f for f in rep.findings if f.id == "f1")
+    assert not f1.source_ok and not f1.honest_undetermined
+    assert any("upgrade" in p or "claims special cause" in p for p in f1.problems)
+
+
+def test_op_undetermined_negated_special_cause_is_not_an_upgrade():
+    rep = mutate(lambda s: _op_undetermined(s, " Not established as special cause."))
+    assert status(rep, "source_label") == "pass"
+
+
+def test_untraced_statistic_is_still_an_omission():
+    """A source_undetermined flag (statistic not traced to an op, or none cited) is the
+    finding's omission, not the op's verdict: still a fail."""
+
+    def m(s):
+        for fid in ("f1", "f2"):
+            f = finding(s, fid)
+            f["evidence"][0].pop("source")
+            f["source_flags"] = [{"evidence": 0, "flag": "source_undetermined",
+                                  "source": "undetermined", "message": "not traced"}]  # fmt: skip
+
+    rep = mutate(m)
+    assert status(rep, "source_label") == "fail"
+    assert not any(f.honest_undetermined for f in rep.findings)
+
+
+def test_invented_label_is_not_accepted_as_undetermined():
+    """A label outside the source vocabulary is neither expected nor op-undetermined."""
+
+    def m(s):
+        for fid in ("f1", "f2"):
+            finding(s, fid)["evidence"][0]["source"] = "probably_payment"
+
+    assert status(mutate(m), "source_label") == "fail"
+
+
 @pytest.mark.parametrize(
     "delta_s,verdict",
     [(0, "onset_ok"), (149, "onset_ok"), (-149, "onset_ok"), (-151, "off"), (290, "end_ok")],
@@ -1063,6 +1123,64 @@ def test_payment_round4_stream_counts_rounds_not_turns():
         (EV / "payment-failure.live-sonnet-4.stream.jsonl").read_text().splitlines()
     )
     assert (out["tool_rounds"], out["num_turns"], out["tool_results"]) == (20, 32, 31)
+    assert live.caps({**out, "aborted": None}, 40, 5.0)["stopped_by"] == "finished"
+
+
+def test_queue_sim_round5_scores_as_observed():
+    """Eval round 5, queue-sim (after tcfz/7thi/ipqy/14y/zroj/0vg7/8jjy/4ahp): check_littles_law
+    (given the three metrics after binding_accept was called without basis) opened with the
+    special cause (21:15 load peak promoted, 21:16 drain) and returned special_cause statistics,
+    but f1 and f2 cite panels only (product: hk2r), so their source is undetermined by omission,
+    not by the op: source_label still fails under the round-5 rule, and special_cause_windows is
+    n/a (no finding cites the check's statistics). h1 (arrival surge) left inconclusive on a
+    'latency 30x vs arrivals 3x' reading that ignores queueing near capacity (model)."""
+    t = load_truth(EV / "overload_spike.live-sonnet-5.truth.json", extra_terms("overload_spike"))
+    rep = score(snap("overload_spike.live-sonnet-5"), t)
+    st = {c.id: c.status for c in rep.checks}
+    assert {k for k, v in st.items() if v == "fail"} == {
+        "source_label", "root_cause_hypothesis_supported"}  # fmt: skip
+    assert st["special_cause_windows"] == "n/a" and st["root_cause_named"] == "pass"
+    by = {f.id: f for f in rep.findings}
+    assert by["f2"].incident and by["f2"].sources == ["undetermined"] and not by["f2"].source_ok
+    assert not by["f2"].honest_undetermined  # panels only: an omission, not the op's label
+    assert [(h.id, h.role, h.status) for h in rep.hypotheses] == [
+        ("h1", "root_cause", "inconclusive"), ("h2", "other", "inconclusive")]  # fmt: skip
+    assert [a.verdict for a in rep.annotations] == ["onset_ok"] and not rep.unscoped_claims
+    assert (rep.passed, rep.applicable) == (8, 10) and rep.acceptance
+
+
+def test_queue_sim_round5_stream_counts_rounds_not_turns():
+    out = live.parse_stream(
+        (EV / "overload_spike.live-sonnet-5.stream.jsonl").read_text().splitlines()
+    )
+    assert (out["tool_rounds"], out["num_turns"], out["tool_results"]) == (11, 22, 21)
+    assert live.caps({**out, "aborted": None}, 40, 5.0)["stopped_by"] == "finished"
+
+
+def test_payment_round5_scores_as_observed():
+    """Eval round 5, payment-failure: span metrics by service, h1 (payment failed, propagated to
+    checkout/frontend) supported against a refuted checkout-first h2, region a1 +141 s, no
+    uncited headline. Fails only source_label: analyze(d1) labelled payment's level shift special
+    cause, but f1/f2 cite panels only (product: hk2r); analyze on the hand-written error ratio d3
+    skipped every born series (product: wr6j). Panels only is the finding's omission, not an op's
+    undetermined label, so the round-5 rule does not excuse it."""
+    t = load_truth(EV / "payment-failure.live-sonnet-5.truth.json")
+    rep = score(snap("payment-failure.live-sonnet-5"), t)
+    st = {c.id: c.status for c in rep.checks}
+    assert {k for k, v in st.items() if v == "fail"} == {"source_label"}
+    for f in rep.findings:
+        assert f.incident and f.sources == ["undetermined"] and not f.source_ok
+        assert not f.honest_undetermined
+    assert [(h.id, h.status) for h in rep.hypotheses] == [("h1", "supported"), ("h2", "refuted")]
+    assert [a.verdict for a in rep.annotations] == ["onset_ok"] and not rep.unscoped_claims
+    assert (rep.passed, rep.applicable) == (11, 12) and rep.acceptance
+
+
+def test_payment_round5_stream_counts_rounds_not_turns():
+    out = live.parse_stream(
+        (EV / "payment-failure.live-sonnet-5.stream.jsonl").read_text().splitlines()
+    )
+    assert (out["tool_rounds"], out["num_turns"], out["tool_results"]) == (18, 28, 27)
     assert live.caps({**out, "aborted": None}, 40, 5.0)["stopped_by"] == "finished"
 
 

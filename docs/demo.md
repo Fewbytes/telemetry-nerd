@@ -199,7 +199,9 @@ findings present, **scoped** (source, selector, step, aggregation, time range in
 entity the claim names covered by the selector or the cited evidence), **evidenced** (a statistic
 or an existing panel), uncertainty flags repeated, root cause named by an in-window finding,
 controls never blamed, directions consistent with the expected signals, incident findings
-labelled with the expected source of variation (special cause for a demo fault), **annotation
+labelled with the expected source of variation (special cause for a demo fault), or
+undetermined where the op itself labelled the cited statistic so under its cautious model
+(principle 16; a claim that still calls it special cause fails), **annotation
 onset** within `fault_window.start` ± `tolerance.start_s` and none off target, **zero unscoped
 claims** (findings, and sentences of the final answer that state a cause, or that a named service
 is absent, citing no f/h/p/a/g id; the analyst's own limits such as "cannot confirm ... because"

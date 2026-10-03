@@ -146,9 +146,10 @@ def test_round4_departure_is_citable_evidence(tmp_path):
 def test_round4_payment_rescored_with_the_departure_cited():
     """Counterfactual offline re-score: the recorded f1 cites panels only (round 4 had no
     analyze statistic: 11/12, source_label fail, kept as is in test_evals). Citing the
-    departure statistic analyze now returns for d2 does not change that: under the cautious
-    model it is undetermined (0vg7), so source_label still fails, honestly (the truth expects
-    special cause; 13 zero minutes cannot show it under clustered errors)."""
+    departure statistic analyze now returns for d2: under the cautious model it is undetermined
+    (0vg7; 13 zero minutes cannot show special cause under clustered errors). The finding keeps
+    the op's label, which is honest, not a model mistake: source_label passes since eval round 5
+    (12/12); calling it special cause in the claim would fail (test_evals)."""
     ev_dir = Path(__file__).parents[1] / "fixtures/evals"
     snap = json.loads((ev_dir / "payment-failure.live-sonnet-4.snapshot.json").read_text())
     f1 = next(f for f in snap["workspace"]["findings"] if f["id"] == "f1")
@@ -160,5 +161,7 @@ def test_round4_payment_rescored_with_the_departure_cited():
     f1["source_flags"] = []
     rep = score(snap, load_truth(ev_dir / "payment-failure.live-sonnet-4.truth.json"))
     st = {c.id: c.status for c in rep.checks}
-    assert [k for k, v in st.items() if v == "fail"] == ["source_label"]
-    assert (rep.passed, rep.applicable) == (11, 12)
+    assert [k for k, v in st.items() if v == "fail"] == []
+    f1s = next(f for f in rep.findings if f.id == "f1")
+    assert f1s.source_ok and f1s.honest_undetermined
+    assert (rep.passed, rep.applicable) == (12, 12)

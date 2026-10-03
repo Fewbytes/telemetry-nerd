@@ -23,6 +23,10 @@ per finding
   statistics with an expected source (special cause for a demo fault); common cause alone is wrong.
   The daemon's structured verdicts count too (bead qxp): `scope_check.not_covered` entities are
   unscoped, and a `source_undetermined` source flag lists `undetermined` among the sources.
+  Results are model outputs (principle 16): when an op itself labelled a cited statistic
+  undetermined (its cautious model cannot decide), a finding that keeps that label passes; one
+  whose text calls it special cause anyway fails. An untraced statistic or a finding citing none
+  (`source_undetermined` flag) is the finding's omission and still fails.
 
 workspace
 - special-cause windows (queue-sim overload; n/a without a finding citing check_littles_law):
@@ -47,7 +51,7 @@ import re
 from dataclasses import asdict, dataclass, field
 from typing import Literal
 
-from telemetry_nerd.evals.truth import COMMON, SPECIAL, Truth
+from telemetry_nerd.evals.truth import COMMON, SPECIAL, UNDETERMINED, Truth
 
 Status = Literal["pass", "fail", "n/a"]
 
@@ -314,6 +318,8 @@ class FindingScore:
     sources: list[str]
     source_ok: bool | None
     problems: list[str]
+    #: source_ok only because an op itself labelled a cited statistic undetermined
+    honest_undetermined: bool = False
 
 
 @dataclass
@@ -498,7 +504,18 @@ def score_finding(
         source_ok = SPECIAL not in sources  # a control said to be calm, with a special cause?
     if incident and sources == [COMMON]:
         source_ok = False
-    if source_ok is False:
+    # an op that labelled a cited statistic undetermined (its cautious model cannot decide,
+    # principle 16 / 0vg7): a finding that keeps that label is honest, not a mistake; one whose
+    # text upgrades it to special cause is not (eval round 5)
+    op_undet = op_undetermined(f)
+    upgrade = op_undet and SPECIAL not in sources and claims_special_cause(text)
+    honest_undetermined = False
+    if incident and source_ok is False and op_undet and not upgrade:
+        source_ok = honest_undetermined = True
+    if upgrade:
+        source_ok = False
+        problems.append("claims special cause where the ops labelled the statistic undetermined")
+    elif source_ok is False:
         problems.append(f"source label {sources} not in {list(truth.expected_sources)}")
     return FindingScore(
         id=f.get("id", "?"),
@@ -516,6 +533,7 @@ def score_finding(
         sources=sources,
         source_ok=source_ok,
         problems=problems,
+        honest_undetermined=honest_undetermined,
     )
 
 
@@ -654,6 +672,35 @@ def _littles_statistics(f: dict) -> list[dict]:
     ]
 
 
+_SPECIAL_CAUSE = re.compile(r"special[- _]cause|assignable[- _]cause", re.IGNORECASE)
+
+
+def op_undetermined(f: dict) -> bool:
+    """Does the finding cite a statistic that an op itself labelled undetermined? The daemon fills
+    the source from the op result and flags it `source_derived`; a source the caller typed is
+    taken as given (the daemon does not check it). A `source_undetermined` flag (statistic not
+    traced to an op, ops disagreeing, or no statistic cited) is the finding's omission, not the
+    op's verdict."""
+    if any(
+        e.get("kind") == "statistic" and e.get("source") == UNDETERMINED
+        for e in f.get("evidence", [])
+    ):
+        return True
+    return any(
+        x.get("flag") == "source_derived" and x.get("source") == UNDETERMINED
+        for x in f.get("source_flags") or []
+    )
+
+
+def claims_special_cause(text: str) -> bool:
+    """A clause calling the variation special (assignable) cause, not negated."""
+    for s in sentences(text):
+        for c in re.split(r"[,;:(]|\bbut\b|\bwhile\b", s):
+            if (m := _SPECIAL_CAUSE.search(c)) and not _NEGATION.search(c[: m.start()]):
+                return True
+    return False
+
+
 def reports_special_windows(f: dict) -> bool:
     """Does a finding citing check_littles_law report special-cause windows? A special_cause
     statistic of the check, or a clause naming them that does not negate them ("no flagged
@@ -751,7 +798,12 @@ def score(snapshot: dict, truth: Truth) -> Report:
             (all(f.source_ok for f in judged) and any(f.source_ok for f in incident))
             if incident
             else None,
-            f"incident findings labelled {' / '.join(truth.expected_sources)}",
+            f"incident findings labelled {' / '.join(truth.expected_sources)}"
+            + (
+                f", or undetermined as the ops labelled it ({', '.join(hu)})"
+                if (hu := [f.id for f in fs if f.honest_undetermined])
+                else ""
+            ),
             [f.id for f in judged if not f.source_ok]
             or ([f.id for f in incident] if not any(f.source_ok for f in incident) else []),
         )
