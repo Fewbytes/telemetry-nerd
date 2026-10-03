@@ -47,8 +47,10 @@ When the viewport extends beyond the fetched range:
 
 - Client calls `POST /api/panels/{id}/preview {start, end}` (new route).
 - Backend re-runs the same `query()` the panel's dataset used (same expr/source/step
-  derivation as `meta`), returns `{dataset, summary}`. **Does not** touch the `panels` table,
-  does not mutate `spec`, does not append any event — nothing durable has happened.
+  derivation as `meta`), returns `{dataset, summary}`. **Does not** touch the `panels` table
+  or mutate `spec`. `query()` always logs its routine internal `dataset.created` event (every
+  fetch does, classified `internal` — never surfaced to Claude or the UI feed); no panel-level
+  or ambient event is logged. Nothing durable or evidentiary has happened.
 - Client renders the preview dataset with a "previewing last 6h" badge. Viewport can keep
   moving; previews are debounced, one in-flight preview per panel (supersede, don't queue).
 - If the user navigates away or the preview dataset simply ages out of the dataset cache,
@@ -56,35 +58,44 @@ When the viewport extends beyond the fetched range:
 
 ### Crystallization — only on an evidence-bearing action
 
-The preview becomes a durable panel only when the user does one of:
+The preview becomes a durable panel only when the user explicitly clicks "keep this range".
 
-- Explicitly clicks "keep this range", or
-- Adds an annotation, or cites the panel in a finding, while a preview is active.
+v1 scope note: the existing brush-selection menu (`SelectionMenu.svelte`, opened from
+`Panel.svelte`'s `selection` state) is how a user today starts a thread or annotation against
+a panel. Auto-crystallizing on that action would need `SelectionMenu` to await an async
+`rescope()` before it has a panel id to act against — real integration work this plan hasn't
+scoped. v1 instead disables the selection menu's ask/annotate actions while a preview is
+active, with a prompt to "keep this range" first. Follow-up bead: wire automatic
+crystallize-on-evidence-action once that's scoped.
 
-Either path calls a new service method, mirroring `reframe()`:
+Both v1's explicit button and any future automatic trigger call the same service method,
+mirroring `reframe()`:
 
 ```python
-@atomic
-def rescope(self, panel_id: str, dataset_id: str, actor: Actor) -> ShowResult:
+async def rescope(self, panel_id: str, start: str, end: str, actor: Actor = "user") -> ShowResult:
     """Accept a time-range change (bead aqk): a NEW panel over the new range, marked as
     rescoped from this one, which is left exactly as it was. Never applied silently."""
     p = self.workspace.get_panel(panel_id)
+    meta = self.datasets.meta(p.dataset_ids[0])
+    refuse_requery(meta, "a time-range rescope")
+    ds = (
+        await self.query(
+            meta.expr, start=start, end=end, step=format_duration(meta.step_ms),
+            source=meta.source, actor=actor,
+        )
+    )["dataset"]
     form = AutoForm(
-        transform="rescope",
-        source_dataset=p.dataset_ids[0],
-        reason=f"rescoped from {panel_id}",
+        transform="rescope", source_dataset=p.dataset_ids[0], reason=f"rescoped from {panel_id}",
     )
-    res = self.show(dataset_id, p.question, actor, auto=form, raw_ok=True, **mark_specific_kwargs)
-    self.log.append(actor, "panel.rescoped", res.panel.id, {"from": panel_id, "start_ms": ..., "end_ms": ...})
+    res = self.show(ds, p.question, actor, auto=form, raw_ok=True, **mark_specific_kwargs)
+    self.log.append(actor, "panel.rescoped", res.panel.id, {"from": panel_id})
     return res
 ```
 
-- `mark_specific_kwargs`: for derived marks (spc, seasonal, littles, fleet, spectrogram),
-  re-derive the mark's own config for the new range the same way `show()` does for a fresh
-  panel (per your answer: re-derive, don't keep fixed). E.g. spc re-resolves its baseline
-  window if the old one no longer fits; littles re-resolves its dataset bundle. These reuse
-  `show()`'s existing per-mark construction in `service.py` — no new logic there, just routing
-  through the same path `reframe()` already uses.
+Mirrors `reframe()`'s shape exactly (`src/telemetry_nerd/core/service.py:943`), except it
+re-queries the same expr over the new range instead of a different expr, and it detects the
+old panel's mark to pick `mark_specific_kwargs` (see "Mark scope for v1" below) instead of
+always defaulting to `mark="auto"`.
 - This is a new panel id. The old panel, and every annotation/thread/finding anchored to it,
   is completely untouched — satisfies the evidence-trail requirement by construction, not by
   a flag or a warning.
@@ -108,13 +119,40 @@ crystallization always mints a new id.
 In scope:
 - Presets + typed `now-N` + absolute from/to range input (per your answer).
 - Workspace-level default time range for new panels (per your answer) — stored on a workspace
-  settings row, read by `query`/`show` defaults when the caller doesn't specify start/end.
+  settings row, read by `query`'s default when the caller doesn't specify start/end.
   Independent of the preview/crystallize flow above.
-- Re-derive per-mark config on crystallization for all mark types already covered by `show()`.
+- Re-derive config on crystallization for the mark types below ("Mark scope for v1").
 
 Deferred (follow-up bead):
 - Chart brush-drag as a viewport input (the viewport model supports it, but the drag
   interaction itself is separate frontend work).
+- Rescope for `seasonal`, `littles`, `spectrogram` marks (see below).
+
+### Mark scope for v1
+
+`seasonal` and `littles` cache their config keyed by `dataset_id`
+(`SeasonalOps.last_config()`/`LittlesOps.last_config()`): the config only exists for the
+dataset that produced it. Rescope produces a new dataset, so reusing their config means
+fully re-running their setup call (`compare_seasonal`, the littles dataset-bundle resolution)
+with the old panel's params against the new dataset — its own dispatch per mark, with its own
+failure modes (e.g. a previous-cycle reference that doesn't exist at the new range).
+`spectrogram`'s segment-length validation has a similar "does this still fit the new span"
+question. None of these have a well-defined re-derivation rule yet, so v1 raises a clear
+`rescope_unsupported_for_mark` error for them, pointing the user at creating a new panel
+manually. Follow-up bead covers re-deriving each.
+
+v1 `rescope()` handles:
+- **`line+envelope`** — no extra config; `show()` with no special `mark` kwarg reconstructs it
+  the same way a fresh panel would.
+- **`fleet`** — `FleetOps.last_config()` is keyed by `dataset_id` too, but with a safe default
+  rather than a raise. Rescope re-populates it for the new dataset by calling
+  `self.fleets.summary(new_dataset_id, **old_cfg)` (the same call the `fleet` MCP tool makes)
+  with the old panel's `by`/`scale`/`normalise`/`band_window`, before `show(..., mark="fleet")`.
+- **`spc`** — the old baseline window (`spec.layers[0].windows[0]`) is reused via the same
+  `resolve_baseline(meta, w.start_ms, w.end_ms)` call `show()` already makes, against the
+  *new* dataset's meta. If the baseline no longer fits inside the new range,
+  `resolve_baseline` raises the same error a fresh `show(mark="spc")` would — surfaced to the
+  user to pick a new baseline explicitly, never silently dropped or auto-picked.
 
 ## Components touched
 
@@ -128,18 +166,21 @@ Backend:
   call sites that currently hardcode `now-1h`.
 
 Frontend:
-- `ui/src/lib/api.ts` — `previewPanel(id, start, end)`, `rescopePanel(id, datasetId)`.
+- `ui/src/lib/api.ts` — `previewPanel(id, start, end)`, `rescopePanel(id, start, end)`.
 - New `ui/src/chart/viewport.ts` (mirrors `ui/src/chart/yview.ts` structure) — viewport state,
   in-bounds check against fetched buckets, debounced preview trigger.
 - `ui/src/Panel.svelte` — range control UI (presets/typed/absolute), preview badge, "keep this
-  range" affordance, crystallize-on-annotate wiring.
+  range" button (crystallizes via `rescopePanel`); disables the selection menu's ask/annotate
+  actions while a preview is active and not yet kept.
 
 ## Testing
 
 - Backend: unit tests for `preview()` (asserts no `panels` table write, no event appended) and
   `rescope()` (new panel id, `panel.rescoped` event payload, old panel/annotations/threads
-  byte-for-byte untouched) across each mark type (line, fleet, spc, seasonal, littles,
-  spectrogram).
+  byte-for-byte untouched) for `line+envelope`, `fleet`, and `spc` (both the baseline-still-fits
+  and baseline-no-longer-fits cases); plus a test that `rescope()` on a `seasonal`/`littles`/
+  `spectrogram` panel raises `rescope_unsupported_for_mark` without touching the old panel.
 - Frontend: viewport unit tests (in-bounds zoom issues zero network calls); e2e test
   (`ui/e2e/time-selector.spec.ts`, mirroring `ui/e2e/yview.spec.ts`) covering
-  preset → preview → annotate → crystallize.
+  preset → preview badge shown, ask/annotate disabled → "keep this range" → new panel id,
+  old panel unchanged.
