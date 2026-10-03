@@ -33,7 +33,13 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from telemetry_nerd.analysis.autocorr import n_eff, tau_int
-from telemetry_nerd.analysis.sources import COMMON, MEASUREMENT, SPECIAL, UNDETERMINED
+from telemetry_nerd.analysis.sources import (
+    COMMON,
+    MEASUREMENT,
+    SPECIAL,
+    UNDETERMINED,
+    cautious_label,
+)
 from telemetry_nerd.analysis.stability import trend
 from telemetry_nerd.analysis.stats import t_quantile
 
@@ -202,6 +208,15 @@ def _own_scale(
     return k_lam, k_w
 
 
+def _small_system(
+    q95: float, arrivals: float, completions: float, k_lam: float = 1.0, k_w: float = 1.0
+) -> float:
+    """The small-system envelope of L / (lambda W) - 1 at q95: Poisson arrival and completion
+    counts, each term inflated by its own factor (1: Poisson, latency CV 1; the window's own
+    sub-step variation: the cautious envelope, 4ahp)."""
+    return q95 * (k_lam / math.sqrt(max(arrivals, 1.0)) + k_w / math.sqrt(max(completions, 1.0)))
+
+
 def _endpoint_shift(sub: Substeps, ok: np.ndarray) -> float:
     """Sum over the contiguous runs of `ok` of N at the run's last sub-step minus N just before
     it (the sub-step before the run when observed, else its first)."""
@@ -342,12 +357,10 @@ def judge(
     blk.lambda_W_ci = (max(0.0, lw - half_lw), lw + half_lw)
     # COMMON CAUSE: a small system's per-window L and lambda W fluctuate with the number of
     # requests behind them (Poisson counts, latency CV 1): not measurement error, reported apart
-    blk.common = q95 * (1 / math.sqrt(max(lam * T, 1.0)) + 1 / math.sqrt(max(C * T, 1.0)))
+    blk.common = _small_system(q95, lam * T, C * T)
     k_lam, k_w = _own_scale(pos, a, s, c, W, C * T, step_s)
     blk.common_terms = {"k_arrivals": k_lam, "k_latency": k_w}
-    blk.common_cautious = q95 * (
-        k_lam / math.sqrt(max(lam * T, 1.0)) + k_w / math.sqrt(max(C * T, 1.0))
-    )
+    blk.common_cautious = _small_system(q95, lam * T, C * T, k_lam, k_w)
 
     # assumptions
     span = end - start
@@ -644,7 +657,7 @@ def _classify(
         d = abs(w.ratio / refs[i] - 1)
         env = max(w.common, spread)
         cautious = max(env, w.common_cautious or 0.0) if few else env
-        w.source = SPECIAL if d > cautious else UNDETERMINED if d > env else COMMON
+        w.source = cautious_label(d > cautious, d > env)
         t = _transient(i, w, refs[i], out.phases[i])
         t["envelope"] = {
             "deviation": d, "small_system": w.common, "spread": spread if not few else None,

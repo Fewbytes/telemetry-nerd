@@ -13,9 +13,9 @@ from itertools import pairwise
 
 import numpy as np
 
-from telemetry_nerd.analysis.autocorr import dispersion, n_eff, positions, tau_int
+from telemetry_nerd.analysis.autocorr import dispersion, n_eff, positions, tau_int, widest
 from telemetry_nerd.analysis.excursion import Excursion, excursion
-from telemetry_nerd.analysis.sources import COMMON, SPECIAL, UNDETERMINED, item
+from telemetry_nerd.analysis.sources import COMMON, SPECIAL, UNDETERMINED, cautious_label, item
 from telemetry_nerd.analysis.spc import DECIDING, ControlChart, control_chart
 from telemetry_nerd.analysis.spectrum import MIN_POINTS, WINDOW_ARTIFACT, Peak, Spectrum
 from telemetry_nerd.analysis.stability import ALPHA as SPC_ALPHA
@@ -250,9 +250,7 @@ class Departure:
 
     @property
     def status(self) -> str:
-        if self.p_clustered < SPC_ALPHA:
-            return SPECIAL
-        return UNDETERMINED if self.p < SPC_ALPHA else COMMON
+        return cautious_label(self.p_clustered < SPC_ALPHA, self.p < SPC_ALPHA)
 
     @property
     def significant(self) -> bool:
@@ -323,9 +321,9 @@ def departure_from_zero(
     if sibling is not None and np.asarray(sibling[0]).size > 1:
         sts = np.asarray(sibling[0], np.int64)
         d_sib = dispersion(positions(sts, step), np.asarray(sibling[1], float) * events_scale)
-    cands = {"poisson_floor": 1.0, "judged": d_judged, **({"sibling": d_sib} if d_sib else {})}
-    src = max(cands, key=cands.__getitem__)
-    d = cands[src]
+    src, d = widest(
+        {"poisson_floor": 1.0, "judged": d_judged, **({"sibling": d_sib} if d_sib else {})}
+    )
     clusters = max(1.0, events / d)
     share = nj / (nb + nj)
     if exposure is not None and reference is None:

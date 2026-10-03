@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from telemetry_nerd.analysis.autocorr import ar1, tau_int
+from telemetry_nerd.analysis.autocorr import ar1, tau_int, widest
 from telemetry_nerd.analysis.fraction import wilson
 from telemetry_nerd.analysis.seasonal import MIN_CYCLES, atypical_levels
 from telemetry_nerd.analysis.seasonal_dist import logit_share
@@ -448,6 +448,11 @@ DISPERSION_SOURCE = {
 }
 
 
+def _count_var(n: np.ndarray, p: float, family: str) -> np.ndarray:
+    """Binomial (n trials) or Poisson (n exposure) variance of the counts at share (rate) p."""
+    return n * p * (1 - p) if family == "binomial" else n * p
+
+
 def own_dispersion(a: np.ndarray, n: np.ndarray, family: str) -> float | None:
     """Long-run dispersion of one window's per-step counts around its own share (rate):
     Pearson phi x the integrated autocorrelation time of the residuals. None with fewer than 2
@@ -459,34 +464,10 @@ def own_dispersion(a: np.ndarray, n: np.ndarray, family: str) -> float | None:
         return None
     p = A / N
     nv = n[ok]
-    var = nv * p * (1 - p) if family == "binomial" else nv * p
-    r = (a[ok] - nv * p) / np.sqrt(var)
+    r = (a[ok] - nv * p) / np.sqrt(_count_var(nv, p, family))
     phi = float(np.sum(r**2)) / (r.size - 1)
     tau = tau_int(np.flatnonzero(ok), r) if r.size >= 8 else 1.0
     return phi * tau
-
-
-def _skewness(cycles: list[tuple[np.ndarray, np.ndarray]], family: str) -> float:
-    """Skewness of the per-step counts around each cycle's own share (rate), pooled over the
-    cycles: the third standardised moment of the Pearson residuals (each cycle standardised by
-    its own spread). 0 without data."""
-    rs = []
-    for a, n in cycles:
-        a, n = np.asarray(a, float), np.asarray(n, float)
-        ok = ~np.isnan(a) & ~np.isnan(n) & (n > 0)
-        A, N = float(a[ok].sum()), float(n[ok].sum())
-        if ok.sum() < 3 or A <= 0 or (family == "binomial" and A >= N):
-            continue
-        p = A / N
-        nv = n[ok]
-        r = (a[ok] - nv * p) / np.sqrt(nv * p * (1 - p) if family == "binomial" else nv * p)
-        sd = float(np.std(r))
-        if sd > 0:
-            rs.append((r - r.mean()) / sd)
-    if not rs:
-        return 0.0
-    z = np.concatenate(rs)
-    return float(np.mean(z**3))
 
 
 def _link(a: float, n: float, family: str, infl: float) -> tuple[float, float]:
@@ -541,9 +522,6 @@ def judge_counts(
     b = max(1, math.ceil(MIN_EXPECTED / e_step)) if e_step > 0 else a0.size
     a0[~ok0], n0[~ok0] = np.nan, np.nan
 
-    def var_fn(n: np.ndarray, p: float) -> np.ndarray:
-        return n * p * (1 - p) if family == "binomial" else n * p
-
     def dispersions(b: int):
         """Per reference cycle: its block sums, Pearson residuals and phi (cycles with events)."""
         blocks = [(block_sums(a, b), block_sums(n, b)) for a, n in rs]
@@ -554,7 +532,7 @@ def judge_counts(
             if p <= 0 or (family == "binomial" and p >= 1) or ok.sum() < 3:
                 resid.append(np.full(ab.size, np.nan))
                 continue
-            r = np.where(ok, (ab - nb * p) / np.sqrt(var_fn(nb, p)), np.nan)
+            r = np.where(ok, (ab - nb * p) / np.sqrt(_count_var(nb, p, family)), np.nan)
             phis.append(float(np.nansum(r**2)) / (ok.sum() - 1))
             resid.append(r)
         return blocks, phis, resid
@@ -582,7 +560,7 @@ def judge_counts(
     else:
         d_judged = own_dispersion(a0, n0, family) if ok0.sum() > 1 else None
         d_judged = A0 if d_judged is None else d_judged  # one judged step: one cluster
-        infl_c, src = (d_judged, "judged") if d_judged > infl else (infl, "poisson_floor")
+        src, infl_c = widest({"poisson_floor": infl, "judged": d_judged})
     j.dispersion = Dispersion(infl, float(infl_c), src, tau, [float(v) for v in phis], d_judged)
     scale = "logit" if family == "binomial" else "log"
 
@@ -620,7 +598,7 @@ def judge_counts(
             if pc <= 0:
                 pc = float(ab[ok].sum() / nb[ok].sum())
             pc = min(max(pc, 0.5 / float(nb[ok].sum())), 1 - 1e-9)
-            return np.where(ok, (ab - nb * pc) / np.sqrt(disp * var_fn(nb, pc)), np.nan)
+            return np.where(ok, (ab - nb * pc) / np.sqrt(disp * _count_var(nb, pc, family)), np.nan)
 
         z0 = z_of_cycle(ab0, nb0)
         j.stage = episode_stage(z0, [z_of_cycle(a, n) for a, n in blocks], alpha_episode, False)

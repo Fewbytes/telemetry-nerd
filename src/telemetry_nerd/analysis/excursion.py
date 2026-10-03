@@ -42,7 +42,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from telemetry_nerd.analysis.autocorr import n_eff, tau_int
-from telemetry_nerd.analysis.sources import COMMON, SPECIAL, UNDETERMINED
+from telemetry_nerd.analysis.sources import SPECIAL, cautious_label
 from telemetry_nerd.analysis.stability import ALPHA, MIN_SEGMENT
 from telemetry_nerd.analysis.stats import MAD_VAR, robust_sigma, t_isf, t_sf
 
@@ -111,9 +111,7 @@ class Excursion:
 
     @property
     def status(self) -> str:
-        if self.cautious.p < ALPHA:
-            return SPECIAL
-        return UNDETERMINED if self.baseline.p < ALPHA else COMMON
+        return cautious_label(self.cautious.p < ALPHA, self.baseline.p < ALPHA)
 
     @property
     def significant(self) -> bool:

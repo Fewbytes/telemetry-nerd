@@ -9,6 +9,7 @@ sample size of a mean is n / τ_int. Reused by seasonal comparison (lkn.2) and f
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
@@ -114,3 +115,10 @@ def dispersion(pos: np.ndarray, events: np.ndarray) -> float | None:
     if x.size < 2 or m <= 0:
         return None
     return float(x.var(ddof=1)) / m * tau_int(np.asarray(pos), x)
+
+
+def widest(candidates: Mapping[str, float]) -> tuple[str, float]:
+    """The largest candidate dispersion (a cautious model's) and its source; a tie goes to the
+    earlier candidate, so list the more modest source first."""
+    source = max(candidates, key=candidates.__getitem__)
+    return source, candidates[source]

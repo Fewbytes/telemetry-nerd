@@ -99,3 +99,12 @@ def measurement_items(caveats: Iterable[str]) -> list[dict]:
 
 def measurement_caveats(caveats: Iterable[str]) -> list[str]:
     return [c for c in dict.fromkeys(caveats) if c in MEASUREMENT_CAVEATS]
+
+
+def cautious_label(cautious: bool, optimistic: bool) -> str:
+    """The source of a change judged under two models (principle 16: results are model
+    outputs): special cause only when the cautious model sees it, undetermined when only the
+    optimistic one does, else common cause."""
+    if cautious:
+        return SPECIAL
+    return UNDETERMINED if optimistic else COMMON
