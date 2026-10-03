@@ -357,8 +357,9 @@ reads sort them (`vm__ooo_write`). Neither marks it in query results.
 
 Reading a marker needs a raw range-vector probe (`x[w]` as an instant query), and only
 VictoriaMetrics returns the stale NaN there; Prometheus hides it, Thanos/Mimir are documented-only
-(table above). Our adapters read `query_range`, which never carries markers on any backend, so no
-adapter sets `Flag.STALE_MARKER` and fleet churn reports every stopped member as `silent`. The
+(table above). Our adapters read `query_range`, which carries no markers on any backend we verified or found documented, so no
+adapter sets `Flag.STALE_MARKER` and fleet churn reports every stopped member as `silent`. A marker still ends a series within about one scrape interval in `query_range` (the series stops
+rather than lingering for the lookback), so `silent` does not mean no marker was written. The
 absence of a marker in our data is **not** evidence that none was written (principle 9: a marker
 is a positive observation; its absence from a channel that cannot show it is unknown). Detecting
 it would take a per-member raw probe around `last_seen`, VictoriaMetrics only (bead cr4 option);
