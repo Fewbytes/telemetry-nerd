@@ -17,5 +17,5 @@ Connect a metrics source. Argument: `$ARGUMENTS` (a URL or a registry name; may 
 4. Name already taken: ask before passing `replace=true`.
 5. Never ask for or pass a token; use `auth_file` (absolute path) or `auth_env` (variable name).
 6. Then `source_status(name)` and report in two lines: reachable, latency, application/version,
-   flavor, and any error with its hint. Suggest `/tn:learn <name>` (or `/tn:start` for the full
+   flavor, and any error with its hint. Suggest `/telemetry-nerd:learn <name>` (or `/telemetry-nerd:start` for the full
    flow) as the next step. Do not learn the source here.

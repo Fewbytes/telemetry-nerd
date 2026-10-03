@@ -675,7 +675,7 @@ loop in the server and adds a chat panel to the UI without changes to the core.
   - `metric-learning` — T2 inference procedure and confidence discipline;
   - `models` — Little's law, USL, M/M/c, USE/RED: assumptions and validity limits;
   - `charting` — which chart answers which question.
-- **Commands:** `/tn:connect`, `/tn:investigate <question>`, `/tn:open`, `/tn:learn`.
+- **Commands:** `/telemetry-nerd:connect`, `/telemetry-nerd:investigate <question>`, `/telemetry-nerd:open`, `/telemetry-nerd:learn`.
 - **Hooks:** `SessionStart` (ensure server, print workspace URL), `UserPromptSubmit`
   (channel fallback).
 

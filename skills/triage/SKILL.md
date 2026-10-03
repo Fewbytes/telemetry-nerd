@@ -1,6 +1,6 @@
 ---
 name: triage
-description: This skill should be used when investigating a live or recent production problem with Telemetry Nerd: "the service is slow", "errors are up", "what's wrong with checkout", "investigate this alert", "what changed", "find the root cause", "is this incident real", "how bad is it / who is affected", or when running /tn:investigate. Gives the step-by-step SRE incident flow, stop conditions and the report.
+description: This skill should be used when investigating a live or recent production problem with Telemetry Nerd: "the service is slow", "errors are up", "what's wrong with checkout", "investigate this alert", "what changed", "find the root cause", "is this incident real", "how bad is it / who is affected", or when running /telemetry-nerd:investigate. Gives the step-by-step SRE incident flow, stop conditions and the report.
 ---
 
 # Incident triage

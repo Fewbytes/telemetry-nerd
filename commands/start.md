@@ -29,10 +29,10 @@ Start a Telemetry Nerd session. Data location given: `$ARGUMENTS` (may be empty)
 4. **Learn.** `source_learn(source)` once (tiered and bounded; it only lists metric names and
    reads declared metadata, packs and naming conventions). Then `binding_suggest(source)`
    (reads the catalog only, nothing is queried). Do not sweep the catalog or start charting.
-5. **Open the UI.** Print the workspace URL for the user to open (/tn:open does the same).
+5. **Open the UI.** Print the workspace URL for the user to open (/telemetry-nerd:open does the same).
 6. **Report briefly:** source name, flavor and reachability; metric count from the learn result;
    the knowledge packs matched (node_exporter, Kubernetes, ...) if the result lists any; how many
    binding suggestions were found (RED / USE / Little's law) and the top ones; caveats
    (`metadata_coverage`, `cardinality_unavailable`, `metrics_truncated`) in one line.
-   Suggest next steps: `/tn:investigate <question>` (e.g. "why did checkout latency spike at
-   14:00?"), `/tn:learn` to deepen what the catalog knows, `/tn:open` for the workspace.
+   Suggest next steps: `/telemetry-nerd:investigate <question>` (e.g. "why did checkout latency spike at
+   14:00?"), `/telemetry-nerd:learn` to deepen what the catalog knows, `/telemetry-nerd:open` for the workspace.

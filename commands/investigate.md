@@ -10,7 +10,7 @@ If the question is empty, ask for one. Follow the `triage` skill for the method,
 skill for what counts as a claim, and the `charting` skill for how to draw. The MCP server
 instructions apply throughout.
 
-1. **Orient.** `source_list` (if nothing is live, stop and point to `/tn:start`) and
+1. **Orient.** `source_list` (if nothing is live, stop and point to `/telemetry-nerd:start`) and
    `workspace_get` (existing panels, hypotheses, open threads: build on them, do not repeat).
 2. **Scope the question** before touching data: the service or system, the time range (absolute
    times and timezone; a "spike" or "slow" needs a start, an end or "ongoing", and a baseline
