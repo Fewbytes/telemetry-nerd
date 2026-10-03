@@ -78,54 +78,69 @@ SILENT = [State.OK] * 5 + [State.EMPTY] * 20 + [State.OK] * 5  # buckets 6..25 e
 W = (5 * STEP, 25 * STEP)  # claim window: exactly the silent stretch
 
 
-def check(states, selector, window=W):
-    return claim_coverage(states, *window, STEP, labels=LABELS, selector=selector, metric="up")
+def check(states, selector, window=W, labels=LABELS, metric="up"):
+    return claim_coverage(states, *window, STEP, labels=labels, selector=selector, metric=metric)
+
+
+def codes(out):
+    return {c.code: c for c in out}
 
 
 def test_claim_on_a_silent_pod_blocks_and_on_a_healthy_one_passes():
     states = fleet(p03=SILENT)
     [c] = check(states, 'up{pod="p03"}')
     assert c.severity == "blocks_claim" and 'pod="p03"} has no samples' in c.message
+    assert "left and rejoined" in c.message  # bounded by samples on both sides, 20 min
     assert check(states, 'up{pod="p04"}') == []
 
 
 def test_fleet_claim_with_two_silent_pods_warns_naming_both():
-    c, m = check(fleet(p03=SILENT, p11=SILENT), 'up{job="api"}')
-    assert m.code == "membership" and "left and rejoined" in m.message  # bounded 20 min gaps
-    assert (c.code, c.severity) == ("missing_data", "warn")
+    out = codes(check(fleet(p03=SILENT, p11=SILENT), 'up{job="api"}'))
+    c = out["missing_data"]
+    assert c.severity == "warn" and c.message.startswith("2 of 20 series")
     assert '{pod="p03"}' in c.message and '{pod="p11"}' in c.message
-    assert c.message.startswith("2 of 20 series")
     assert c.where.series == ["p03", "p11"]
+    assert "membership" not in out  # a bounded gap is no membership change
 
 
 def test_fleet_claim_with_most_pods_silent_blocks():
     [c] = check(fleet(**{p: SILENT for p in PODS[:11]}), "up")
     assert c.severity == "blocks_claim" and c.message.startswith("11 of 20 series")
     assert "and 1 more" in c.message  # names capped at MAX_NAMED
-    c, _ = check(fleet(**{p: SILENT for p in PODS[:10]}), "up")  # exactly half: rests on 10
-    assert c.severity == "warn"
+    out = check(fleet(**{p: SILENT for p in PODS[:10]}), "up")  # exactly half: rests on 10
+    assert {c.severity for c in out} == {"warn"}
 
 
 def test_late_born_and_early_ended_pods_are_not_missing_in_a_fleet_claim():
     born = [State.ABSENT] * 10 + [State.OK] * 20
     ended = [State.OK] * 15 + [State.EMPTY] * 15
-    out = check(fleet(p01=born, p02=ended), "up")
-    assert [c.severity for c in out] == ["warn"]
-    [c] = out
-    assert c.code == "membership"
-    assert "may not have existed before" in c.message
-    assert "last sample at" in c.message and "may return after the window" in c.message
-    assert "left" not in c.message.split("may have left")[0]  # never asserts it left
+    [c] = check(fleet(p01=born, p02=ended), "up")
+    assert (c.code, c.severity) == ("membership", "warn")
+    assert "no samples before 1970-01-01T00:11:00+00:00 in this evidence" in c.message
+    assert "may not have existed yet" in c.message
+    assert "no samples since 1970-01-01T00:15:00+00:00" in c.message
+    assert "may return after the window" in c.message
     assert "count by (pod) (up)" in c.message  # the membership hint
+    assert c.where.series == ["p01", "p02"]
 
 
-def test_single_pod_claim_counts_its_unobserved_tail_and_head_as_missing():
+def test_short_trailing_silence_is_missing_data_not_membership():
+    short = [State.OK] * 27 + [State.EMPTY] * 3  # 3 min < LONG_GAP_MS
+    out = codes(check(fleet(p02=short), "up", (0, N * STEP)))
+    assert "membership" not in out
+    assert out["missing_data"].message.startswith("1 of 20 series have fewer samples")
+
+
+def test_single_pod_claim_counts_time_outside_its_samples_as_unobserved():
     ended = [State.OK] * 8 + [State.EMPTY] * 22
     [c] = check(fleet(p02=ended), 'up{pod="p02"}')
-    assert c.severity == "blocks_claim" and "last sample at" in c.message
+    assert c.severity == "blocks_claim" and "no samples since" in c.message
+    assert "To tell, check whether it has samples over a wider window" in c.message
+    assert 'count by (pod) (up{pod="p02"})' in c.message
     born = [State.ABSENT] * 20 + [State.OK] * 10
     [c] = check(fleet(p01=born), 'up{pod="p01"}')
-    assert c.severity == "blocks_claim"
+    assert c.severity == "blocks_claim" and "no samples before" in c.message
+    assert "missing" not in c.message and "born" not in c.message
 
 
 def test_unknown_on_another_pod_does_not_block_a_single_pod_claim():
@@ -137,39 +152,68 @@ def test_unknown_on_another_pod_does_not_block_a_single_pod_claim():
     assert (c.code, c.severity) == ("untrusted_data", "warn") and '{pod="p07"}' in c.message
 
 
+def test_unknown_before_the_first_sample_on_every_pod_blocks_a_fleet_claim():
+    # a failed fetch at the window start beats absent: no first sample, no span, no membership
+    head = [State.UNKNOWN] * 10 + [State.OK] * 20
+    [c] = check(fleet(**{p: head for p in PODS}), "up", (0, N * STEP))
+    assert (c.code, c.severity) == ("untrusted_data", "blocks_claim")
+    assert c.message.startswith("20 of 20 series")
+
+
 def test_unparseable_selector_falls_back_to_every_series_and_says_so():
-    c, _ = check(fleet(p03=SILENT), 'up{pod="p03"} / on(pod) other{pod="p03"}')
-    assert c.severity == "warn" and c.message.startswith("1 of 20 series")
-    assert "judged over every evidence series" in c.message
+    out = codes(check(fleet(p03=SILENT), 'up{pod="p03"} / on(pod) other{pod="p03"}'))
+    assert out["missing_data"].message.startswith("1 of 20 series")
+    note = out["claim_scope"]
+    assert note.severity == "info" and "judged over every evidence series" in note.message
+
+
+def test_selector_notes_survive_clean_data():
+    agg = {"j": {"job": "api"}}  # evidence: sum by (job) (up)
+    states = pa.table({"ts_ms": [STEP], "series_id": ["j"], "observed": [4.0], "expected": [4.0],
+                       "state": [0], "flags": [0]}, schema=STATE_SCHEMA)  # fmt: skip
+    [c] = check(states, 'up{pod="p03"}', (0, STEP), labels=agg, metric=None)
+    assert (c.code, c.severity) == ("claim_scope", "warn")
+    assert 'pod="p03" not applied' in c.message and "__name__" in c.message
 
 
 def test_selector_matching_no_evidence_series_blocks():
     [c] = check(fleet(), 'up{pod="nope"}')
-    assert c.severity == "blocks_claim" and "does not contain" in c.message
+    assert (c.code, c.severity) == ("scope_mismatch", "blocks_claim")
     [c] = check(fleet(), 'down{pod="p01"}')
     assert c.severity == "blocks_claim" and "metric 'up'" in c.message
+    [c] = check(fleet(), "rate(down[5m])")  # a bare name inside a call
+    assert c.code == "scope_mismatch"
+    [c] = check(fleet(), "down offset 5m")
+    assert c.code == "scope_mismatch"
 
 
 def test_selector_forms():
     states = fleet(p03=SILENT)
     assert check(states, 'rate(up{pod=~"p0[4-9]"}[5m])') == []  # anchored regex, inside rate
     assert check(states, 'sum by (pod) (rate(up{pod!="p03"}[5m]))') == []
-    assert check(states, 'up{pod=~"p0"}')[0].message.startswith("The claim names")  # anchored
+    assert check(states, 'up{pod!="p03"} offset 5m') == []
+    assert check(states, 'max_over_time(up{pod!="p03"}[10m:1m])') == []  # subquery
+    assert check(states, 'up{pod!="p03"} @ 1700000000') == []
+    assert check(states, 'up{pod=~"p0"}')[0].code == "scope_mismatch"  # anchored
     [c] = check(states, 'up{pod!~"p0[0-24-9]|p1."}')  # only p03
     assert c.severity == "blocks_claim"
-    [c] = check(states, 'up{pod="p03", zone="eu"}')  # zone carried by no series: not applied
-    assert c.severity == "blocks_claim" and "zone" in c.message
+    out = codes(check(states, 'up{pod="p03", zone="eu"}'))  # zone carried by no series
+    assert out["missing_data"].severity == "blocks_claim"
+    assert "zone" in out["claim_scope"].message
+    assert check(states, 'up{pod!="p03", zone=~".*"}') == []  # moot on a missing label
+    assert check(states, 'up{pod!="p03", zone!="x"}') == []
 
 
 def test_long_mid_gap_reads_as_loss_or_leave_and_rejoin():
     gap = [State.OK] * 8 + [State.EMPTY] * 6 + [State.OK] * 16  # 6 min, bounded by samples
     [c] = check(fleet(p05=gap), 'up{pod="p05"}', (0, N * STEP))
     assert c.severity == "warn"
-    assert "has no samples 1970-01-01T00:08:00+00:00–00:14:00+00:00" in c.message
+    assert "has no samples 1970-01-01T00:08:00+00:00–1970-01-01T00:14:00+00:00" in c.message
     assert "scrape loss, or the series left and rejoined; not distinguished yet" in c.message
     short = [State.OK] * 8 + [State.EMPTY] * 2 + [State.OK] * 20
     [c] = check(fleet(p05=short), 'up{pod="p05"}', (0, N * STEP))
     assert "rejoined" not in c.message
-    [c, m] = check(fleet(p05=gap), "up", (0, N * STEP))
-    assert c.message.startswith("1 of 20 series have fewer samples")
-    assert m.code == "membership" and "rejoined" in m.message
+    partial, gaps = check(fleet(p05=gap), "up", (0, N * STEP))
+    assert partial.message.startswith("1 of 20 series have fewer samples")
+    assert gaps.code == "long_gap" and gaps.message.startswith("Long gaps")
+    assert "rejoined" in gaps.message and gaps.where.series == ["p05"]

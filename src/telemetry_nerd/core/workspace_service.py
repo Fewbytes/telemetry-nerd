@@ -75,7 +75,7 @@ from telemetry_nerd.charts.yview import (
 )
 from telemetry_nerd.core.card_payload import binding_row, browse_row, field_rows, relation_row
 from telemetry_nerd.core.code_outputs import evidence_problem
-from telemetry_nerd.core.coverage_check import claim_coverage
+from telemetry_nerd.core.coverage_check import SCOPE_MISMATCH, claim_coverage
 from telemetry_nerd.core.events import Actor, Event, EventLog, check_actor
 from telemetry_nerd.core.panel_payloads import series_labels
 from telemetry_nerd.core.uncertainty import evidence_flags
@@ -216,10 +216,14 @@ class WorkspaceService:
         return list(dict.fromkeys(out))
 
     def _check_claim_coverage(self, data: FindingIn) -> FindingIn:
-        """Reject a claim whose window lacks the data to support it; warn on partial coverage."""
+        """Reject a claim whose window lacks the data to support it; warn on partial coverage.
+        An evidence dataset whose series the selector does not name (another metric cited
+        alongside) is skipped with a note; the claim is blocked only if none of them matches."""
         span = data.scope.time_range
         blocking: list[str] = []
         warnings: list[str] = []
+        mismatched: list[str] = []
+        checked = 0
         for did in self._evidence_datasets(data):
             if self.datasets.meta(did).representation not in ("bucket_agg", "quantile"):
                 continue
@@ -229,14 +233,22 @@ class WorkspaceService:
                 continue
             plain = meta.derived is None and meta.code_node is None  # expr is the query
             parts = (selector_parts(meta.expr) or counter_rate_parts(meta.expr)) if plain else None
+            checked += 1
             for c in claim_coverage(
                 states, span.start_ms, span.end_ms, meta.step_ms,
                 labels=series_labels(result.series), selector=data.scope.selector,
                 metric=parts[0] if parts else None,
             ):  # fmt: skip
+                if c.code == SCOPE_MISMATCH:
+                    mismatched.append(f"{did}: {c.message}")
+                    continue
                 (blocking if c.severity == "blocks_claim" else warnings).append(
                     f"{did}: {c.message}"
                 )
+        if mismatched and len(mismatched) == checked:
+            blocking = mismatched + blocking
+        else:
+            warnings += [f"{m} Not checked for coverage." for m in mismatched]
         if blocking:
             raise ValueError(
                 "insufficient coverage for this claim: "

@@ -2,27 +2,42 @@
 
 The selector's label matchers (=, !=, =~, !~; a bare metric name or `{"name"}` is a `__name__`
 matcher) are applied to the evidence series' labels with Prometheus semantics: a regex is fully
-anchored and a missing label reads as the empty string. Read from a plain selector, or from the one
-selector inside an expression that keeps its series' labels (rate(x{pod="a"}[5m]), sum by (pod)
-(...)); an expression whose matchers cannot be tied to its output series (binary operators,
-label_replace, several selectors) is not read at all and the claim is judged over every evidence
-series, saying so."""
+anchored and `.` matches a newline (Prometheus compiles `^(?s:re)$`), and a missing label reads as
+the empty string. Read from a plain selector, or from the one selector inside an expression that
+keeps its series' labels (rate(x{pod="a"}[5m]), sum by (pod) (...), x offset 5m); an expression
+whose matchers cannot be tied to its output series (binary operators, label_replace, count_values,
+several selectors) is not read at all and the claim is judged over every evidence series, saying
+so."""
 
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Literal
 
 _IDENT = re.compile(r"[A-Za-z_:][A-Za-z0-9_:]*")
 _LABEL = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _OP = re.compile(r"=~|!~|!=|=")
 _ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\", '"': '"', "'": "'", "`": "`"}
+# modifiers that move or pin the evaluation time but keep the series: removed before reading
+_MODIFIERS = re.compile(
+    r"\boffset\s+-?[0-9a-zA-Z.]+|@\s*(?:start\s*\(\s*\)|end\s*\(\s*\)|[0-9.eE+-]+)"
+)
+_GROUPING = re.compile(r"\b(?:by|without)\s*\([^()]*\)")
 # outside strings, selectors and ranges: anything that combines series or rewrites their labels
 _COMBINES = re.compile(
     r"[-+*/%^<>=!]|\b(?:and|or|unless|on|ignoring|group_left|group_right|label_replace|label_join"
-    r"|absent|absent_over_time|vector|scalar)\b"
+    r"|count_values|absent|absent_over_time|vector|scalar)\b"
 )
+_BARE = re.compile(rf"(?<![0-9.A-Za-z_:]){_IDENT.pattern}")  # not the exponent of 1e3
+_KEYWORDS = {"by", "without", "bool", "inf", "nan", "offset"}
+# RE2 syntax Python's re reads differently or not at all: refuse rather than guess
+_RE2_ONLY = re.compile(r"\[:\^?[a-z]+:\]|\\[pP]")
+
+
+class Unreadable(ValueError):
+    """The selector cannot be read into matchers; the message says why (for the caveat)."""
 
 
 @dataclass(frozen=True)
@@ -41,13 +56,20 @@ class Matcher:
         return hit if self.op == "=~" else not hit
 
     def __str__(self) -> str:
-        return f'{self.label}{self.op}"{self.value}"'
+        value = self.value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'{self.label}{self.op}"{value}"'
 
 
 def _matcher(label: str, op: str, value: str) -> Matcher:
-    if op in ("=~", "!~"):
-        return Matcher(label, op, value, re.compile(value))  # re.error: caller falls back
-    return Matcher(label, op, value)
+    if op not in ("=~", "!~"):
+        return Matcher(label, op, value)
+    if _RE2_ONLY.search(value):
+        raise Unreadable(f"regex {value!r} uses RE2 syntax (POSIX class or \\p) this check does "
+                         "not evaluate")  # fmt: skip
+    try:
+        return Matcher(label, op, value, re.compile(value, re.DOTALL))
+    except re.error as e:
+        raise Unreadable(f"regex {value!r} is invalid ({e})") from e
 
 
 def _string(s: str, i: int) -> tuple[str, int]:
@@ -65,7 +87,7 @@ def _string(s: str, i: int) -> tuple[str, int]:
             continue
         out.append(c)
         j += 1
-    raise ValueError("unterminated string")
+    raise Unreadable("unterminated string")
 
 
 def _body(s: str) -> list[Matcher]:
@@ -82,7 +104,7 @@ def _body(s: str) -> list[Matcher]:
         elif m := _LABEL.match(s, i):
             label, i = m.group(), m.end()
         else:
-            raise ValueError(f"cannot read a label at {s[i:]!r}")
+            raise Unreadable(f"cannot read a label at {s[i:]!r}")
         while i < n and s[i] in " \t\n":
             i += 1
         op = _OP.match(s, i)
@@ -93,7 +115,7 @@ def _body(s: str) -> list[Matcher]:
         while i < n and s[i] in " \t\n":
             i += 1
         if i >= n or s[i] not in "\"'`":
-            raise ValueError("matcher value must be a string")
+            raise Unreadable("matcher value must be a string")
         value, i = _string(s, i)
         out.append(_matcher(label, op.group(), value))
 
@@ -113,7 +135,7 @@ def _selectors(expr: str) -> tuple[list[tuple[str | None, str]], str]:
             j, depth = i + 1, 1
             while depth:
                 if j >= n:
-                    raise ValueError("unbalanced braces")
+                    raise Unreadable("unbalanced braces")
                 if expr[j] in "\"'`":
                     _, j = _string(expr, j)
                     continue
@@ -130,7 +152,7 @@ def _selectors(expr: str) -> tuple[list[tuple[str | None, str]], str]:
         elif c == "[":
             j = expr.find("]", i)
             if j < 0:
-                raise ValueError("unbalanced brackets")
+                raise Unreadable("unbalanced brackets")
             rest.append(" ")
             i = j + 1
         else:
@@ -139,45 +161,46 @@ def _selectors(expr: str) -> tuple[list[tuple[str | None, str]], str]:
     return found, "".join(rest)
 
 
+def _bare_names(rest: str) -> list[str]:
+    """Metric names written without braces: identifiers that are not calls or keywords."""
+    return [
+        m.group()
+        for m in _BARE.finditer(rest)
+        if m.group() not in _KEYWORDS and not rest[m.end() :].lstrip().startswith("(")
+    ]
+
+
+Level = Literal["info", "warn"]
+
+
 @dataclass
 class SelectorRead:
     matchers: list[Matcher] | None  # None: not read, judge every evidence series
-    note: str | None = None  # how it was read, when that is worth saying
+    why: str | None = None  # why it was not read
 
 
 def read_selector(selector: str) -> SelectorRead:
     try:
         found, rest = _selectors(selector)
-    except (ValueError, re.error):
-        found, rest = [], "!"
-    plain = rest.strip()
-    if not found and _IDENT.fullmatch(plain) and plain not in ("and", "or", "unless"):
-        return SelectorRead([Matcher("__name__", "=", plain)])  # a bare metric name
-    if len(found) > 1 or _COMBINES.search(rest):
-        return SelectorRead(None, _NOT_READ)
-    if not found:  # e.g. rate(x[5m]): no label matchers, every evidence series
-        return SelectorRead([])
-    name, body = found[0]
-    try:
+        rest = _GROUPING.sub(" ", _MODIFIERS.sub(" ", rest))
+        names = _bare_names(rest)
+        if len(found) + len(names) > 1:
+            raise Unreadable("several selectors")
+        if _COMBINES.search(rest):
+            raise Unreadable("operators or label rewriting")
+        if not found:  # rate(x[5m]), up offset 5m; no name at all: every evidence series
+            return SelectorRead([Matcher("__name__", "=", n) for n in names])
+        name, body = found[0]
         ms = _body(body)
-    except (ValueError, re.error):
-        return SelectorRead(None, _NOT_READ)
-    if name is not None:
-        ms.insert(0, Matcher("__name__", "=", name))
-    note = None if not plain else "matchers read from the one selector inside the expression"
-    return SelectorRead(ms, note)
-
-
-_NOT_READ = (
-    "scope.selector is not one selector whose label matchers name evidence series (operators, "
-    "label rewriting or several selectors), so the claim is judged over every evidence series"
-)
+    except Unreadable as e:
+        return SelectorRead(None, str(e))
+    return SelectorRead(([Matcher("__name__", "=", name)] if name else []) + ms)
 
 
 @dataclass
 class ClaimSeries:
     ids: list[str]  # evidence series the claim is about
-    notes: list[str]  # how the selector was applied, when not plainly
+    notes: list[tuple[Level, str]]  # how the selector was applied, when not plainly
     mismatch: str | None = None  # the selector names series this evidence does not contain
 
 
@@ -186,30 +209,35 @@ def claim_series(
 ) -> ClaimSeries:
     """Evidence series (ids of `labels`) the selector names. Series labels carry no `__name__`
     (a dataset drops it): a `__name__` matcher is checked against `metric`, the dataset's metric
-    when its expression has one, else not applied. A matcher on a label no evidence series carries
-    (aggregated away) is not applied either, unless the empty value satisfies it (then it is
-    moot): the evidence cannot show it, and Prometheus would read it as empty and drop them all."""
+    when its expression has one, else not checked (warn). A matcher on a label no evidence series
+    carries (aggregated away) is moot when the empty value satisfies it, else not applied (warn):
+    the evidence cannot show it, and Prometheus would read it as empty and drop them all."""
     ids = sorted(labels)
     if selector is None:
         return ClaimSeries(ids, [])
     read = read_selector(selector)
     if read.matchers is None:
-        return ClaimSeries(ids, [read.note or _NOT_READ])
-    notes = [read.note] if read.note else []
+        why = (f"scope.selector not read into label matchers ({read.why}): the claim is judged "
+               "over every evidence series")  # fmt: skip
+        return ClaimSeries(ids, [("info", why)])
+    notes: list[tuple[Level, str]] = []
     carried = {k for lb in labels.values() for k in lb}
     applied: list[Matcher] = []
     for m in read.matchers:
-        if m.label in carried or m.matches(""):
-            applied.append(m)
-        elif m.label == "__name__":
+        if m.label == "__name__" and m.label not in carried:
             if metric is None:
-                notes.append(f"{m} not checked (the evidence series carry no metric name)")
+                why = (f"{m} not checked: the evidence series carry no metric name, so the "
+                       "claim's metric is not confirmed")  # fmt: skip
+                notes.append(("warn", why))
             elif not m.matches(metric):
                 return ClaimSeries([], notes, f"scope.selector names {m}; this evidence is "
                                    f"metric {metric!r}")  # fmt: skip
-        else:
-            notes.append(f"{m} not applied: no evidence series carries label {m.label!r} "
-                         "(aggregated away?)")  # fmt: skip
+        elif m.label in carried:
+            applied.append(m)
+        elif not m.matches(""):
+            why = (f"{m} not applied: no evidence series carries label {m.label!r} (aggregated "
+                   "away?), so the claim's scope is not checked against it")  # fmt: skip
+            notes.append(("warn", why))
     chosen = [s for s in ids if all(m.matches(labels[s].get(m.label, "")) for m in applied)]
     if not chosen:
         named = ", ".join(str(m) for m in applied)

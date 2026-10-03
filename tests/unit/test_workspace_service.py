@@ -512,6 +512,19 @@ async def test_claim_coverage_follows_the_selector(tmp_path):
         svc.ws.finding_create(claim_on(ds, a, b, 'down{instance="i1"}'), "claude")
 
 
+async def test_evidence_of_another_metric_is_skipped_not_blocking(tmp_path):
+    svc, up, _, hole = await _queried(tmp_path, HoleySource())
+    errs = (await svc.query("errors_total", start="now-2h", end="now-1h", step="1m"))["dataset"]
+    data = claim_on(up, hole - 60_000, hole + 120_000, 'up{instance="i1"}').model_dump()
+    data["evidence"] = [*data["evidence"], {**data["evidence"][0], "dataset": errs}]
+    f = svc.ws.finding_create(FindingIn(**data), "claude")
+    [note] = f.caveats
+    assert note.startswith(f"{errs}: The claim names series") and "Not checked" in note
+    data["scope"]["selector"] = 'other{instance="i1"}'  # no evidence dataset matches: block
+    with pytest.raises(ValueError, match="does not contain"):
+        svc.ws.finding_create(FindingIn(**data), "claude")
+
+
 async def test_finding_over_a_clean_window_gains_no_caveats(tmp_path):
     svc, ds, meta, _ = await _queried(tmp_path, HoleySource())
     f = svc.ws.finding_create(claim_in(ds, meta.start_ms, meta.start_ms + 600_000), "claude")
