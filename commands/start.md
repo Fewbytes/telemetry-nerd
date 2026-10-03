@@ -1,14 +1,14 @@
 ---
 description: Get going - make sure the daemon runs, connect your data, learn it, open the workspace
 argument-hint: "[prometheus-url | registry-name | grafana-url]"
-allowed-tools: Bash(sh *scripts/tn-launch*), mcp__plugin_telemetry-nerd_telemetry-nerd__source_list, mcp__plugin_telemetry-nerd_telemetry-nerd__source_connect, mcp__plugin_telemetry-nerd_telemetry-nerd__source_status, mcp__plugin_telemetry-nerd_telemetry-nerd__source_learn, mcp__plugin_telemetry-nerd_telemetry-nerd__public_sources, mcp__plugin_telemetry-nerd_telemetry-nerd__binding_suggest
+allowed-tools: Bash(sh ${CLAUDE_PLUGIN_ROOT}/scripts/tn-launch *), mcp__plugin_telemetry-nerd_telemetry-nerd__source_list, mcp__plugin_telemetry-nerd_telemetry-nerd__source_connect, mcp__plugin_telemetry-nerd_telemetry-nerd__source_status, mcp__plugin_telemetry-nerd_telemetry-nerd__source_learn, mcp__plugin_telemetry-nerd_telemetry-nerd__public_sources, mcp__plugin_telemetry-nerd_telemetry-nerd__binding_suggest
 ---
 
 Start a Telemetry Nerd session. Data location given: `$ARGUMENTS` (may be empty).
 
 1. **Daemon.** The SessionStart hook already ran `scripts/tn-launch ensure`; its context line holds
    the workspace UI URL (default http://127.0.0.1:7070). If you cannot see it, run
-   `sh "${CLAUDE_PLUGIN_ROOT}/scripts/tn-launch" ensure`. If that reports the daemon missing or
+   `sh ${CLAUDE_PLUGIN_ROOT}/scripts/tn-launch ensure` (exactly this form, so the allowed-tools rule matches). If that reports the daemon missing or
    telemetry-nerd not installed, relay its message (see docs/install.md) and stop. Report the URL.
 2. **Where is the data?** Call `source_list` first; if a live source already covers it, say so
    and skip to step 4. Otherwise, from `$ARGUMENTS`:
