@@ -7,7 +7,7 @@ run rules and EWMA/CUSUM on per-series deviations.
 
 ## Principles (carried over)
 
-Principles 4, 10, 11 and 14 apply (`docs/principles.md`). Consequences for this op:
+Principles 4, 8, 10, 11 and 14 apply (`docs/principles.md`). Consequences for this op:
 
 - Preconditions as for `spectrum`: percentile series, distributions and raw counters are refused
   with hints (`time_op_problem`; principle 10); gaps are not interpolated (principle 11): autocorrelation uses only pairs

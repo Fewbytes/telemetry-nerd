@@ -168,11 +168,11 @@ Every op that reports variation labels each finding (principle 8; spec §5.4): `
   chase points inside it; the lever is changing the system.
 - **special cause**: assignable (SPC signals of a significant detector, shifts, drift, an unusual
   window or member, a changed role, a transient). Investigate.
-- **measurement system**: the instruments (gaps, partial / untrusted data, missing members (alive
-  but not reporting), units, unknown input uncertainty, a systematic Little's law offset).
-  Members joining or leaving inside the window are normal lifecycle, not missing data
-  (principle 11). Fix or qualify
-  them before reading the process.
+- **measurement system**: the instruments (gaps, partial / untrusted data, the share of members
+  missing per step, membership changes (n moves), units, unknown input uncertainty, a systematic
+  Little's law offset). Fix or qualify them before reading the process. A membership change is
+  normal lifecycle, not a fault: it is labelled because n moving changes fleet aggregates
+  (principle 11).
 - **source undetermined**: the data cannot tell them apart (run rules on an out-of-control chart
   without their own evidence, an outlier episode on partial buckets, a silent member, a
   user-excluded cycle). Say so; propose what would separate them.

@@ -14,7 +14,7 @@ becomes a wrong axis.
 ## Precedence
 
 user > **claude (you)** > stats > context (repo code, docs, dashboards) > pack > metadata > rule
-(principle 15, `docs/principles.md`). You outrank packs, metadata and name rules; you never
+(principle 15, `docs/principles.md`). You outrank measured stats, repo context, packs, metadata and name rules; you never
 outrank the user, and you do not try. If your write comes back
 `effective: false`, someone outranks you: accept it.
 

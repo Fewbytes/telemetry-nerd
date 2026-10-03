@@ -64,8 +64,9 @@ statistic states an interval, `exact`, or `uncertainty_unknown`. Three rules (us
    cited, but whatever cites it says "uncertainty unknown" visibly; it is never treated as exact
    and never refused for that reason alone.
 2. **Error aggregation is maximalist.** Errors propagate through transforms; where propagation is
-   impossible the worst case is taken. Combining steps never shrinks uncertainty: an interval that
-   left out its inputs' error is a lower bound.
+   impossible the worst case is taken. A later step never shrinks the error below what propagation
+   implies (pooling independent inputs may legitimately narrow it; leaving their error out may
+   not): an interval that left out its inputs' error is a lower bound.
 3. **Derive before giving up.** Where a tool gives no uncertainty, derive one (bootstrap,
    effective n, bucket bounds, Wilson / Poisson, propagation) before falling back to "unknown".
 
@@ -136,7 +137,7 @@ instead of asserting it.
 - Enforced by: `skills/evidence/SKILL.md` ("Positive vs negative claims");
   `skills/triage/references/ruling-out.md` (notes); `bucket_state` keeps trailing silence `empty`
   (alive), `absent` only before the first sample (`src/telemetry_nerd/model/bucket_state.py`);
-  fleet `stopped_reporting` lists `since` (`src/telemetry_nerd/core/fleet_ops.py`).
+  fleet `stopped_reporting` lists `last_seen` (`src/telemetry_nerd/core/fleet_ops.py`).
 
 ## 10. Only mergeable statistics are aggregated; percentiles never are
 
@@ -158,17 +159,23 @@ the median of member p99s. A percentile is never cited without its sample count 
 
 "No info is itself info." Missing data is shown, never filled: no interpolation, no zero-fill, no
 carrying forward; "no data" ≠ 0 ≠ "don't know", and an unknown (failed, unobservable) span is
-neither present nor missing. Missingness is rarely random: the member that stops reporting may be
-the sick one, so a silent member is listed and labelled (source undetermined), never dropped.
-Members joining or leaving within the window is normal lifecycle, not missing data; a member that
-left and came back (a gap bounded by samples) is the suspicious case. Work with the data there is:
-missing data narrows the scope of a claim and is labelled in caveats, so the analysis still
-delivers value and says plainly what it could not see. When missing data blocks a finding
-outright is set in the missing-data spec §4.4.
+neither present nor missing. Missingness is rarely random: a member that stops reporting before
+the window end may be the sick one, so it is listed and labelled source undetermined: neither
+missing data nor healthy, never dropped. Membership changes (members appearing, or stopping
+reporting, inside the window) are normal lifecycle, not a fault; because n moves, they are a
+measurement effect on fleet aggregates and labelled so (`measurement_system`), with text saying
+it is normal lifecycle. A member that stopped and came back (a gap bounded by samples) is the
+suspicious case; detecting leave-then-rejoin is not implemented yet (bead telemetry-nerd-ojo).
 
-- Decided: brainstorm 2026-10-01/02 (missing-data spec §1); user decision 2026-10-03 (churn is
-  normal; "work with the data you have, be honest about quirks/suspicions and still provide
-  value").
+Work with the data there is (user decision 2026-10-03): claim checks run per series, over the
+series the claim's selector matches. In a multi-series claim, silent, low-coverage or untrusted
+members produce a warning and are labelled in the finding; the claim is blocked only when it
+cannot be supported (more than half of the members, or none, usable). A single-series claim is
+judged over the whole claim window. The mechanics are in the missing-data spec §4.4.
+
+- Decided: brainstorm 2026-10-01/02 (missing-data spec §1); user decisions 2026-10-03 (churn is
+  normal; per-series claim checks, warn and label rather than block; "work with the data you
+  have, be honest about quirks/suspicions and still provide value").
 - Enforced by: `src/telemetry_nerd/model/bucket_state.py`, `src/telemetry_nerd/model/caveats.py`,
   `src/telemetry_nerd/core/summary.py` (`coverage`, `unknown_spans`, `silent_members`),
   `src/telemetry_nerd/core/coverage_check.py`; `docs/superpowers/specs/2026-10-02-series-bundles-missing-data-design.md`;
@@ -209,9 +216,9 @@ result.
 ## 14. Decide before looking; count the looks
 
 The question, range and reference are chosen before the result is seen, and stated with it.
-Reference windows and control limits come from a stated baseline, never from the data being
-judged. Many simultaneous tests (roles, members, windows, steps) share one family-wise error
-budget, and every re-run with another range, reference or alpha is another look that the budget
+Reference windows and control limits come from a stated baseline or from history, never from
+the window being judged. Each op's simultaneous tests (roles, members, windows, steps) share one
+family-wise error budget, and every re-run with another range, reference or alpha is another look that the budget
 does not cover: say how many looks were taken.
 
 - Decided: 2026-10-02 (series-diagnostics, seasonal, fleet and binding-verdict designs).
@@ -225,11 +232,14 @@ does not cover: say how many looks were taken.
 
 What the catalog knows about a metric (unit, type, bounds, relations, bindings) is a claim with
 an origin, a confidence and a basis, never a bare fact. Precedence is user > Claude > measured
-stats > repo context (code, docs, dashboards) > pack > metadata > naming rule; Claude's confidence is capped at 0.9 (1.0 only for what the
-user verified), conflicts stay visible, and a `correlated` relation is observation, never truth.
+stats > repo context (code, docs, dashboards) > pack > metadata > naming rule; Claude's
+confidence is capped at 0.9 (1.0 only for what the user verified), conflicts stay visible, and a `correlated` relation is observation, never truth.
 A role with no signal is a gap, never a stand-in metric.
 
-- Decided: 2026-09-30 (MVP spec §3.4, §4.3).
-- Enforced by: `ORIGIN_RANK` in `src/telemetry_nerd/catalog/models.py`,
+- Decided: 2026-09-30 (MVP spec §3.4, §4.3); 2026-10-01 (catalog-store, relations-bindings and
+  claude-learning designs: claims with provenance, retractions, the cap); repo `context` origin
+  with `catalog_context`.
+- Enforced by: `ORIGIN_RANK` in `src/telemetry_nerd/catalog/models.py`; `_claude_gate` and
+  `CLAUDE_MAX_CONFIDENCE` in `src/telemetry_nerd/core/workspace_service.py`;
   `src/telemetry_nerd/catalog/store.py`, `src/telemetry_nerd/catalog/relations.py`;
   `skills/metric-learning/SKILL.md`.

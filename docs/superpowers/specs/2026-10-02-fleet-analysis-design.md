@@ -188,7 +188,7 @@ fleet, which trips that < 0.3% of the time, is never split), and must then still
   own group and carry `cluster`; caveat `clustered` replaces `many_outliers`. The fleet-level band
   is still the whole fleet; the panel payload adds per-group bands.
 
-## Churn and missing data## Churn and missing data (series-bundles semantics)
+## Churn and missing data (series-bundles semantics)
 
 The dataset's `bucket_state` companion (series-bundles spec §5; carried through filters, coarsened
 with the values for long ranges) is laid on the fleet grid (lkn.13). Without one (a derived
@@ -207,7 +207,7 @@ dataset whose op drops it) the fleet falls back to presence from values and says
   per episode: an excursion that rests on half-empty buckets may be a collection artefact.
 - `appeared`: first seen after the window start (+ tolerance max(3 steps, 5%)), counting known steps
   only.
-- `stopped_reporting`: last seen before the end (same tolerance, known steps), with `since` and
+- `stopped_reporting`: last seen before the end (same tolerance, known steps), with `last_seen` and
   `state`: `ended` when a staleness marker (bucket_state flag `stale_marker`) is on its buckets
   from the last sample on (the source marked the target or series stale; principle 9: report it
   as "marked stale since T", not as "left": a wider window may show it return), else `silent`

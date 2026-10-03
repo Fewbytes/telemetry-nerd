@@ -7,9 +7,9 @@ autocorrelation / n_eff (lkn.1) and the red-noise spectrum (lkn.4).
 
 ## Principles
 
-Principles 4, 10, 11 and 14 apply (`docs/principles.md`). Consequences for this op:
+Principles 4, 8, 10, 11 and 14 apply (`docs/principles.md`). Consequences for this op:
 
-- The reference is chosen from the data and **stated**: which cycles, how many, how they are
+- The reference is chosen from history, never from the judged window, and **stated** (principle 14): which cycles, how many, how they are
   aligned (UTC or a named timezone), which were excluded and why.
 - Uncertainty comes from what previous cycles actually did at the same phase (leave-one-cycle-out
   residuals), not from within-window noise and not from one reference cycle.
