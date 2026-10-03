@@ -12,6 +12,8 @@ const RELOAD_TYPES = new Set([
   "hypothesis.status_changed", "gap.created", "thread.message", "panel.closed", "panel.y_context", "panel.overlays_set", "panel.unit_refreshed",
   "panel.y_view_suggested", "panel.marginal_set", "code.started", "code.finished",
   "panel_group.created", "panel_group.updated", "panel_group.closed",
+  // a socket opened just after a switch replays this but never saw the frame
+  "workspace.opened",
 ]);
 
 const RETRY_BASE_MS = 1000;
@@ -31,6 +33,9 @@ export function createWorkspace() {
   let expiryTimer: ReturnType<typeof setTimeout> | undefined;
   let workspaces = $state.raw<WorkspaceInfo[]>([]);
   let lastSeq = 0;
+  // the workspace the latest frame named; null until one arrives and after the socket drops
+  // (frames are not replayed, so after an outage only the snapshot knows what is active)
+  let target: string | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let failures = 0;
@@ -47,15 +52,26 @@ export function createWorkspace() {
   const load = (): Promise<void> =>
     fetchWorkspace()
       .then((s) => {
-        // concurrent loads can return out of order; never apply a stale snapshot
-        if (s.last_seq >= lastSeq) {
+        const id = s.workspace.id;
+        const shown = snapshot?.workspace.id;
+        // Concurrent loads can return out of order; never apply a stale snapshot. last_seq is
+        // global and the /ws stream forwards a switch's frame and then the new workspace's
+        // events before this fetch lands, so the first snapshot of the frame's workspace wins
+        // even when those events raised lastSeq past it. A load that raced a later frame (a
+        // switch and a switch back) is for a workspace no longer active: dropped.
+        const fresh = target === null
+          ? s.last_seq >= lastSeq
+          : id === target && (s.last_seq >= lastSeq || shown !== target);
+        if (fresh) {
+          const first = snapshot === null;
           const switched = workspaceChanged(snapshot, s);
           snapshot = s;
           error = null;
-          if (switched) {
-            clearHighlights();
-            refreshList();
-          }
+          if (switched) clearHighlights();
+          if (switched || first) refreshList();
+        } else if (target === null && shown !== undefined && id !== shown) {
+          // no frame to go by (e.g. the resync after an outage): the daemon switched, retry
+          schedule();
         }
         lastSeq = Math.max(lastSeq, s.last_seq);
         failures = 0;
@@ -102,7 +118,6 @@ export function createWorkspace() {
       let stopped = false;
       load().then(() => {
         if (stopped) return;
-        refreshList();
         let dropped = false;
         stopUnsub = subscribe((e) => {
           lastSeq = Math.max(lastSeq, e.seq);
@@ -115,10 +130,12 @@ export function createWorkspace() {
           if (needsReload(e)) schedule();
         }, () => lastSeq, {
           onPresence: (p) => (presence = p),
-          // a rename/archive of another workspace changes only the list; the board is untouched.
+          // a rename/archive changes only the list and the shown title; the board is untouched.
           // On a switch, the reloaded snapshot refreshes the list once it lands.
           onWorkspace: (f) => {
-            if (f.active.id === snapshot?.workspace.id) {
+            target = f.active.id;
+            if (snapshot !== null && f.active.id === snapshot.workspace.id) {
+              snapshot = { ...snapshot, workspace: f.active };
               refreshList();
             } else {
               clearHighlights();
@@ -132,6 +149,7 @@ export function createWorkspace() {
           },
           onClose: () => {
             dropped = true;
+            target = null;
             daemon = "reconnecting";
             presence = null;
           },

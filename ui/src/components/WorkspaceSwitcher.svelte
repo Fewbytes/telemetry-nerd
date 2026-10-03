@@ -1,8 +1,15 @@
 <script lang="ts">
-  import { createWorkspace, fetchWorkspaces, openWorkspace, updateWorkspace, type WorkspaceInfo } from "../lib/api";
+  import {
+    createWorkspace, fetchWorkspaces, openWorkspace, updateWorkspace, type Snapshot, type WorkspaceInfo,
+  } from "../lib/api";
   import { defaultTitle, sortForSwitcher } from "../lib/workspaces";
 
-  let { active, workspaces }: { active: WorkspaceInfo | null; workspaces: WorkspaceInfo[] } = $props();
+  let { active, workspaces, onopen }: {
+    active: Snapshot["workspace"] | null;
+    workspaces: WorkspaceInfo[];
+    /** the popover opened: refetch the list so rows, counts and "ago" are current */
+    onopen?: () => void;
+  } = $props();
 
   let open = $state(false);
   let showArchived = $state(false);
@@ -24,8 +31,16 @@
     fetchWorkspaces(true).then((l) => (archivedList = l.workspaces)).catch((e) => (error = String(e)));
   });
 
-  const run = (p: Promise<unknown>, done?: () => void) =>
-    p.then(() => { error = null; done?.(); }).catch((e) => (error = String(e)));
+  // one request at a time: a double or held Enter must not create two workspaces
+  let busy = false;
+  const run = (action: () => Promise<unknown>, done?: () => void) => {
+    if (busy) return;
+    busy = true;
+    action()
+      .then(() => { error = null; done?.(); })
+      .catch((e) => (error = String(e)))
+      .finally(() => (busy = false));
+  };
 
   const close = () => { open = false; renaming = null; creating = false; error = null; };
 
@@ -43,7 +58,7 @@
     if (e.key === "Escape") { e.stopPropagation(); creating = false; return; }
     if (e.key !== "Enter") return;
     const t = e.currentTarget.value.trim() || defaultTitle(new Date());
-    run(createWorkspace(t), close);
+    run(() => createWorkspace(t), close);
   };
 
   const rename = (e: KeyboardEvent & { currentTarget: HTMLInputElement }, w: WorkspaceInfo) => {
@@ -51,7 +66,7 @@
     if (e.key !== "Enter") return;
     const t = e.currentTarget.value.trim();
     if (!t || t === w.title) { renaming = null; return; }
-    run(updateWorkspace(w.id, { title: t }), () => (renaming = null));
+    run(() => updateWorkspace(w.id, { title: t }), () => (renaming = null));
   };
 
   const onkeydown = (e: KeyboardEvent) => {
@@ -72,7 +87,7 @@
 <div class="workspace-switcher" bind:this={root} {onkeydown}>
   <button
     type="button" class="ws-trigger" aria-haspopup="listbox" aria-expanded={open}
-    onclick={() => (open ? close() : (open = true))}
+    onclick={() => { if (open) close(); else { open = true; onopen?.(); } }}
   >
     <span class="ws-title">{title}</span><span aria-hidden="true">▾</span>
   </button>
@@ -87,7 +102,7 @@
                 onkeydown={(e) => rename(e, w)} onblur={() => (renaming = null)}
               />
             {:else}
-              <button type="button" class="ws-open" title={w.question ?? undefined} aria-label="Open {w.title}" onclick={() => run(openWorkspace(w.id), close)}>
+              <button type="button" class="ws-open" title={w.question ?? undefined} aria-label="Open {w.title}" onclick={() => run(() => openWorkspace(w.id), close)}>
                 <span class="ws-name">{w.title}</span>
                 <span class="ws-meta">
                   {#if w.archived}archived · {/if}{ago(w.last_activity_ms)} · {w.counts.findings} finding{w.counts.findings === 1 ? "" : "s"}
@@ -95,7 +110,7 @@
               </button>
               <button type="button" class="ws-act" aria-label="Rename {w.title}" onclick={() => (renaming = w.id)}>Rename</button>
               {#if w.id !== activeId && !w.archived}
-                <button type="button" class="ws-act" aria-label="Archive {w.title}" onclick={() => run(updateWorkspace(w.id, { archived: true }))}>Archive</button>
+                <button type="button" class="ws-act" aria-label="Archive {w.title}" onclick={() => run(() => updateWorkspace(w.id, { archived: true }))}>Archive</button>
               {/if}
             {/if}
           </li>

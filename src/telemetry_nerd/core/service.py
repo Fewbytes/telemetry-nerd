@@ -353,7 +353,7 @@ class TelemetryService:
         )  # fmt: skip
 
     def _current_workspace(self) -> dict:
-        info = self.registry.get(self.active.active)
+        info = self.registry.get(self.active())  # the pinned workspace, not the live pointer
         return {"id": info.id, "title": info.title, "question": info.question}
 
     def _littles_binding(self, source: str, key: str):

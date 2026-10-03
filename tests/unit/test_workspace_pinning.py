@@ -132,3 +132,51 @@ async def test_reply_to_a_missing_thread_still_fails(tmp_path):
 
 def _text(result) -> str:
     return result.content[0].text
+
+
+async def test_claude_tool_call_over_streamable_http_follows_its_own_switch(tmp_path):
+    """Regression: the /mcp session opened in w1 must not stay pinned to w1 after
+    workspace_create; the next tool call writes into the new workspace."""
+    import httpx2
+    from mcp import Client
+    from mcp.client.streamable_http import streamable_http_client
+
+    svc = make_service(tmp_path)
+    url = "http://testserver"
+    app = create_app(svc, allowed_hosts=HOSTS, mcp=build_mcp(svc, url))
+    http = httpx2.AsyncClient(transport=httpx2.ASGITransport(app=app), base_url=url)
+    transport = streamable_http_client(f"{url}/mcp", http_client=http)
+    async with app.router.lifespan_context(app), http, Client(transport) as client:
+        created = await client.call_tool("workspace_create", {"title": "second"})
+        assert not created.is_error
+        assert svc.active.active == "w2"
+        made = await client.call_tool("hypothesis_create", {"statement": "a deploy did it"})
+        assert not made.is_error
+    rows = _workspaces(svc, "SELECT workspace FROM objects WHERE kind = 'hypothesis'")
+    assert rows == [("w2",)]
+
+
+def test_current_workspace_reads_the_pinned_one(tmp_path):
+    svc = make_service(tmp_path)
+    svc.registry.create("second", None)
+    with svc.active.using("w1"):
+        svc.active.set_active("w2")  # a switch lands mid-call
+        assert svc.ws.current()["id"] == "w1"
+
+
+async def test_workspace_update_fans_its_frame_out_on_the_event_loop(tmp_path, monkeypatch):
+    """asyncio.Queue is not thread-safe: the tool must notify from the loop thread."""
+    import threading
+
+    from mcp import Client
+
+    svc = make_service(tmp_path)
+    threads: list[int] = []
+    notify = svc.active.notify
+    monkeypatch.setattr(
+        svc.active, "notify", lambda f: (threads.append(threading.get_ident()), notify(f))
+    )
+    async with Client(build_mcp(svc, "http://x")) as client:
+        r = await client.call_tool("workspace_update", {"id": "w1", "title": "renamed"})
+    assert not r.is_error
+    assert threads == [threading.get_ident()]

@@ -2075,7 +2075,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         )
 
     @mcp.tool()
-    def workspace_update(
+    async def workspace_update(  # async: the frame fan-out (ActiveWorkspace.notify) needs the loop
         id: str,
         title: str | None = None,
         question: str | None = None,

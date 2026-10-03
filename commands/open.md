@@ -9,9 +9,9 @@ Open the workspace UI.
    instructions (default http://127.0.0.1:7070), else run
    `sh ${CLAUDE_PLUGIN_ROOT}/scripts/tn-launch ensure` (exactly this form, so the allowed-tools rule matches; it starts the daemon if needed and
    prints the URL). If that fails, relay its message and stop.
-2. Print the URL. Add a one-line brief from `workspace_get` naming the workspace (its title and question), and mention
-   the header workspace switcher (new investigation, reopen, rename, archive): panel, hypothesis and finding counts and
-   any open threads. When the workspace has specific objects the user is working on, link them as
+2. Print the URL. Add a one-line brief from `workspace_get` naming the workspace (title and
+   question), panel/hypothesis/finding counts and any open threads, and mention the header
+   workspace switcher (new, reopen, rename, archive). When the workspace has specific objects the user is working on, link them as
    `<url>/#/panel/<id>`, `/#/finding/<id>`.
 3. Try to open it in the browser (`open <url>` on macOS, `xdg-open <url>` on Linux); if that is
    unavailable, just print the URL. Do not retry.

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchWorkspace, fetchWorkspaces, subscribe, type Snapshot, type WorkspaceEvent } from "./api";
+import { fetchWorkspace, fetchWorkspaces, subscribe, type Snapshot, type WorkspaceEvent, type WorkspaceInfo } from "./api";
 import { createWorkspace, needsReload } from "./workspace.svelte";
 
 vi.mock("./api", async (orig) => ({ ...(await orig<typeof import("./api")>()), fetchWorkspace: vi.fn(), fetchWorkspaces: vi.fn() }));
@@ -23,7 +23,8 @@ describe("needsReload", () => {
   it("reloads for listed types even when internal", () => {
     for (const t of ["panel.created", "panel.answered", "finding.created", "finding.verdict",
       "annotation.created", "annotation.deleted", "hypothesis.created",
-      "hypothesis.status_changed", "gap.created", "thread.message", "panel.closed", "panel.y_context", "panel.overlays_set", "panel.unit_refreshed"]) {
+      "hypothesis.status_changed", "gap.created", "thread.message", "panel.closed", "panel.y_context", "panel.overlays_set", "panel.unit_refreshed",
+      "workspace.opened"]) {
       expect(needsReload(ev(t, "internal"))).toBe(true);
     }
   });
@@ -124,7 +125,8 @@ describe("snapshot load retry", () => {
     const load = vi.mocked(fetchWorkspace);
     load.mockReset();
     load.mockRejectedValueOnce(new Error("down")).mockRejectedValueOnce(new Error("down"))
-      .mockResolvedValue({ last_seq: 3 } as Snapshot);
+      .mockResolvedValue({ last_seq: 3, workspace: { id: "w1" } } as Snapshot);
+    vi.mocked(fetchWorkspaces).mockResolvedValue({ active: "w1", workspaces: [], more: 0 });
     const ws = createWorkspace();
     await ws.reload();
     expect(ws.error).toContain("down");
@@ -207,5 +209,80 @@ describe("workspace frames in the store", () => {
     await a;
     expect(ws.snapshot?.workspace.id).toBe("w2");
     expect(ws.snapshot?.last_seq).toBe(9);
+  });
+
+  // an event that never triggers a reload, so only the frame's own load can switch the board
+  const quiet = (seq: number, workspace: string) => JSON.stringify({
+    seq, ts_ms: 0, actor: "claude", type: "cache.warm", object_id: null, klass: "internal", payload: {}, workspace,
+  });
+  const pending = (load: ReturnType<typeof vi.mocked<typeof fetchWorkspace>>) => {
+    const resolvers: ((s: Snapshot) => void)[] = [];
+    load.mockImplementation(() => new Promise((r) => resolvers.push(r)));
+    return resolvers;
+  };
+
+  it("switches on the frame's snapshot even after a newer event raised lastSeq", async () => {
+    const { ws, load, stop, send } = await started(snap("w1", 1));
+    const resolvers = pending(load);
+    send(frame("w2"));
+    send(quiet(8, "w2")); // forwarded before the switch-triggered snapshot (last_seq 7) lands
+    resolvers[0](snap("w2", 7));
+    await vi.waitFor(() => expect(ws.snapshot?.workspace.id).toBe("w2"));
+    expect(ws.snapshot?.last_seq).toBe(7);
+    stop();
+  });
+
+  it("switch-back race: a load for the previous frame's workspace never overrides a later frame", async () => {
+    const { ws, load, stop, send } = await started(snap("w1", 1));
+    const resolvers = pending(load);
+    send(frame("w2"));
+    send(frame("w1")); // switched back before w2's load landed
+    resolvers[0](snap("w2", 9));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ws.snapshot?.workspace.id).toBe("w1");
+    stop();
+  });
+
+  it("reloads after a reconnect drops a snapshot of another workspace for being behind the stream", async () => {
+    vi.useFakeTimers();
+    const { ws, load, stop, send } = await started(snap("w1", 1));
+    const resolvers = pending(load);
+    void ws.reload(); // e.g. the post-outage resync, no frame seen: the daemon switched meanwhile
+    send(quiet(8, "w2"));
+    resolvers[0](snap("w2", 7));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ws.snapshot?.workspace.id).toBe("w1"); // behind the stream: not applied as is
+    await vi.advanceTimersByTimeAsync(100);
+    expect(load).toHaveBeenCalledTimes(3); // initial, the dropped one, the rescheduled one
+    resolvers[1](snap("w2", 8));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ws.snapshot?.workspace.id).toBe("w2");
+    stop();
+  });
+
+  it("a frame for the shown workspace patches its title and question in place", async () => {
+    const { ws, load, stop, send } = await started(snap("w1", 1));
+    send(JSON.stringify({ kind: "workspace", active: { id: "w1", title: "renamed", question: "why?", archived: false, created_at_ms: 0 } }));
+    expect(ws.snapshot?.workspace.title).toBe("renamed");
+    expect(ws.snapshot?.workspace.question).toBe("why?");
+    expect(ws.highlights.size).toBe(1);
+    expect(load).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("fetches the workspace list with the first snapshot, even one that landed after a retry", async () => {
+    vi.useFakeTimers();
+    const load = vi.mocked(fetchWorkspace);
+    load.mockReset();
+    load.mockRejectedValueOnce(new Error("down")).mockResolvedValue(snap("w1", 1));
+    const lists = vi.mocked(fetchWorkspaces);
+    lists.mockReset();
+    lists.mockResolvedValue({ active: "w1", workspaces: [{ id: "w1" } as WorkspaceInfo], more: 0 });
+    const ws = createWorkspace();
+    await ws.reload();
+    expect(lists).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(lists).toHaveBeenCalledTimes(1);
+    expect(ws.workspaces.map((w) => w.id)).toEqual(["w1"]);
   });
 });

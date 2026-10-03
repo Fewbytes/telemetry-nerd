@@ -83,7 +83,7 @@
       <a href="#/catalog" aria-current={route === "catalog" ? "page" : undefined}>Catalog</a>
     </nav>
     <div class="header-controls">
-      <WorkspaceSwitcher active={ws.snapshot?.workspace ?? null} workspaces={ws.workspaces} />
+      <WorkspaceSwitcher active={ws.snapshot?.workspace ?? null} workspaces={ws.workspaces} onopen={ws.refreshWorkspaces} />
       <ConnectionPill daemon={ws.daemon} presence={ws.presence} />
       <select
         class="theme-toggle"

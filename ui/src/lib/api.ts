@@ -294,7 +294,8 @@ export interface Snapshot {
   findings: Finding[]; gaps: Gap[]; threads: Thread[]; last_seq: number;
   code?: CodeBrief[];
   groups?: PanelGroup[];
-  workspace: WorkspaceInfo;
+  /** what /api/workspace returns: no counts or last activity (those come with the list) */
+  workspace: WorkspaceFrame["active"];
 }
 /** One role of a panel group: its panel, or the gap where its signal is missing (bead czt.3). */
 export interface GroupRole {
