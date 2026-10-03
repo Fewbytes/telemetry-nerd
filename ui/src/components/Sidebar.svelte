@@ -45,7 +45,7 @@
       <p class="none">No findings yet.</p>
     {:else}
       {#each openFindings as finding (finding.id)}
-        <FindingCard {finding} {annotations} />
+        <FindingCard {finding} {annotations} panels={snapshot?.panels ?? []} code={runs} />
       {/each}
       {#if rejectedFindings.length > 0}
         <button
@@ -58,7 +58,7 @@
         </button>
         {#if showRejected}
           {#each rejectedFindings as finding (finding.id)}
-            <FindingCard {finding} {annotations} />
+            <FindingCard {finding} {annotations} panels={snapshot?.panels ?? []} code={runs} />
           {/each}
         {/if}
       {/if}
