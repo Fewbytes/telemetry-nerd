@@ -20,11 +20,18 @@ import polars as pl
 from telemetry_nerd.analysis import sources
 from telemetry_nerd.analysis.fleet import (
     ALPHA,
+    DEFAULT_BAND_WINDOW,
     EXCURSIONS,
     MIN_MEMBERS,
+    MIN_TESTED,
+    ControlBand,
     Fleet,
     Outlier,
     analyse,
+    check_band_window,
+    control_band,
+    flagged_steps,
+    missing_bounds,
     trimmed_interval,
 )
 from telemetry_nerd.analysis.fleet_clusters import (
@@ -60,6 +67,11 @@ MAX_DRAWN = 6
 CHURN_TOL = 0.05  # appeared / stopped: beyond max(3 steps, 5% of the window) from the edge
 MISSING_WARN = 0.05  # members_missing / members_partial warn above this share of member-steps
 _QUANTILE_EXPR = re.compile(r"\b(histogram_quantile|quantile_over_time)\s*\(", re.IGNORECASE)
+
+MEMBER_ERROR_NOTE = (
+    "member measurement error not propagated (principle 4): the band and the tests use each "
+    "member's reported value as exact; per-member sampling or bucket error is not in sigma"
+)
 
 QUANTILE_REFUSAL = (
     "fleet refused on percentile series: the spread of member percentiles is not the fleet's "
@@ -115,7 +127,8 @@ class FleetOps:
 
     def last_config(self, dataset_id: str) -> dict:
         """Options of the latest fleet() on this dataset; defaults when show() comes first."""
-        return dict(self._last.get(dataset_id, {"by": None, "scale": "auto", "normalise": "none"}))
+        default = {"by": None, "scale": "auto", "normalise": "none", "band_window": None}
+        return dict(self._last.get(dataset_id, default))
 
     # preconditions ------------------------------------------------------------------
     def check(self, dataset_id: str) -> DatasetMeta:
@@ -291,10 +304,14 @@ class FleetOps:
         by: list[str] | None = None,
         scale: str = "auto",
         normalise: str = "none",
+        band_window: int | None = None,
     ) -> dict:
+        check_band_window(band_window)
         run = self.run(dataset_id, by, scale, normalise)
         f, ts, names, groups, cov = run.fleet, run.ts, run.names, run.groups, run.coverage
-        self._last[dataset_id] = {"by": by, "scale": scale, "normalise": normalise}
+        self._last[dataset_id] = {
+            "by": by, "scale": scale, "normalise": normalise, "band_window": band_window,
+        }  # fmt: skip
         caveats = list(run.caveats)  # the memoised list stays as computed
         ranked = self.ranked_outliers(run)
         m_, t_ = f.z.shape
@@ -354,6 +371,7 @@ class FleetOps:
             "scale": self._scale_text(f),
             "normalise": "none: members compared as they are" if f.normalise == "none"
             else "member: each member relative to its own median (shapes, not levels)",
+            "band": self._band_summary(f, self.band(run, band_window)),
             "spread": self._spread_summary(f, ts),
             "coverage": {
                 "n_per_step": {"min": int(sp.n.min()), "median": float(np.median(sp.n)),
@@ -378,8 +396,9 @@ class FleetOps:
     def _variation(out: dict, caveats: list[str]) -> list[dict]:
         """The fleet's labelled findings in one list (spec §5.4)."""
         var = [sources.item(
-            COMMON, "the fleet's per-step spread across members (descriptive: the fleet is the "
-            "population): the common-cause envelope",
+            COMMON, "the fleet's SPC band (per-step median +- 2 / 3 pooled robust sigma, the "
+            "reference the outlier tests use) and its per-step spread across members "
+            "(descriptive: the fleet is the population): the common-cause envelope",
         )]  # fmt: skip
         if cl := out.get("clusters"):
             var.append(sources.item(
@@ -508,6 +527,59 @@ class FleetOps:
         return "linear: members compared by difference"
 
     @staticmethod
+    def band(run: FleetRun, window: int | None) -> ControlBand:
+        """The SPC band of the whole fleet; member-steps flagged by the outlier tests (in the
+        fleet or within their behaviour group) are excluded from the beyond-3-sigma count."""
+        f = run.fleet
+        flagged = flagged_steps(
+            f.z.shape, [(gi, o) for _, o, _, _, _, gi in FleetOps.ranked_outliers(run)]
+        )
+        return control_band(f, window, flagged)
+
+    @staticmethod
+    def band_text(b: ControlBand) -> str:
+        unit = "log scale: multiplicative" if b.scale == "log" else "linear scale"
+        return f"median ± 2σ/3σ (robust, pooled ±{b.pool_half} steps, {unit})"
+
+    @staticmethod
+    def unflagged_text(f: Fleet) -> str:
+        k = len(f.tested)
+        if k < MIN_TESTED:
+            return f"outside 3σ; no outlier tests ran ({k} members tested, {MIN_TESTED} needed)"
+        return f"outside 3σ, not significant at fleet-wide {ALPHA:.0%} ({k} members tested)"
+
+    def _band_summary(self, f: Fleet, b: ControlBand) -> dict:
+        log = f.scale == "log"
+        s = b.sigma[np.isfinite(b.sigma)]
+        out: dict = {
+            "basis": self.band_text(b) + (
+                f"; centre smoothed by a {b.window}-step moving median" if b.window > DEFAULT_BAND_WINDOW else ""
+            ),
+            "window_steps": b.window,
+            "role": "stable SPC reference: the centre and sigma the outlier tests use (full "
+            "fleet); zones are for reading, flags come from the family-wise tests",
+            "source": COMMON,
+            "caveat": MEMBER_ERROR_NOTE,
+        }  # fmt: skip
+        if s.size:
+            med = float(np.median(s))
+            out["sigma_median"] = (
+                {"ratio": sig(math.exp(med), 3)} if log else {"difference": sig(med, 3)}
+            )
+        if b.threshold_z is not None:
+            out["flag_threshold_z"] = sig(b.threshold_z, 3)
+            out["flag_line"] = (
+                "single-step flag threshold (spike test, fleet-wide 1%) drawn dashed; level, "
+                "change and episode tests flag members whose single steps stay inside it"
+            )
+        total = int(b.outside3.sum())
+        out["outside_3sigma_unflagged"] = {
+            "member_steps": total, "members": b.outside3_members,
+            "note": self.unflagged_text(f),
+        }  # fmt: skip
+        return out
+
+    @staticmethod
     def _spread_summary(f: Fleet, ts: list[int]) -> dict:
         sp = f.spread
         with np.errstate(invalid="ignore", divide="ignore"):
@@ -519,8 +591,18 @@ class FleetOps:
         first, last = rel[:third], rel[-third:]
         widest = int(np.nanargmax(np.where(ok, rel, -np.inf)))
         kind = "q75 / q25 across members" if f.scale == "log" else "q75 - q25 across members"
+        short = int(np.sum(sp.n < sp.alive))
         return {
-            "basis": f"{kind} per step (descriptive: the fleet is the population)",
+            "basis": f"{kind} per step (descriptive: the fleet is the population; the panel's "
+            "quantile view)",
+            "missing_member_bounds": (
+                f"{short} steps had alive members not reporting: there each quantile is drawn "
+                "with bounds (missing values at -inf / +inf; unbounded when they reach its rank; "
+                "min / max unknown beyond on the missing side)"
+                if short
+                else "every alive member reported at every step: no bounds needed"
+            ),
+            "caveat": MEMBER_ERROR_NOTE,
             "median": sig(float(np.nanmedian(rel))),
             "first_third": sig(float(np.nanmedian(first))) if np.isfinite(first).any() else None,
             "last_third": sig(float(np.nanmedian(last))) if np.isfinite(last).any() else None,
@@ -597,6 +679,13 @@ class FleetOps:
                 f"last third minus first third of the member's {what} (20% trimmed means), "
                 "99% interval from n_eff",
             )  # fmt: skip
+        if o.kind != "transient":
+            if o.episodes:  # both modes: excursions beyond its own level
+                item["episodes"] = [
+                    {"start": iso(ts[e.start]), "end": iso(ts[e.end]), "steps": e.end - e.start + 1,
+                     "peak_z_beyond_own_level": sig(e.peak_z, 3), "sustained": e.sustained}
+                    for e in o.episodes[:5]
+                ]  # fmt: skip
         else:
             eps = []
             for e in o.episodes[:5]:
@@ -619,6 +708,23 @@ class FleetOps:
                 )  # fmt: skip
         return item
 
+    @staticmethod
+    def _effect(f: Fleet, o: Outlier, ts: list[int], step: int) -> dict:
+        """What the end label says: the offset (persistent), the change and where it happened
+        (shifted), the rate (drifting), as a ratio (log scale) or a difference."""
+        log = f.scale == "log"
+        conv = math.exp if log else (lambda v: v)
+        out: dict = {"as": "ratio" if log else "difference", "offset": sig(conv(o.offset), 3)}
+        if o.kind in ("shifted", "drifting"):
+            out["change"] = sig(conv(o.change), 3)
+            if o.at is not None:
+                out["at_ms"] = ts[o.at]
+            t_ = len(ts)
+            hours = (t_ - max(1, t_ // 3)) * step / 3_600_000  # between the thirds' centres
+            if hours > 0:
+                out["change_per_hour"] = sig(conv(o.change / hours), 3)
+        return out
+
     # panel payload --------------------------------------------------------------------
     def panel(self, dataset_id: str, cfg: dict) -> dict:
         run = self.run(
@@ -627,6 +733,8 @@ class FleetOps:
         f, ts, groups, cov = run.fleet, run.ts, run.groups, run.coverage
         sp = f.spread
         ranked = self.ranked_outliers(run)
+        window = cfg.get("band_window")
+        b = self.band(run, window)
         drawn = []
         for gf, o, gn, gl, extra, gi in ranked[:MAX_DRAWN]:
             drawn.append({
@@ -635,9 +743,15 @@ class FleetOps:
                 "direction": o.direction, "score": sig(o.score, 3),
                 "values": sig_list(gf.values[o.member]),
                 "since_ms": ts[o.since] if o.since is not None else None,
-                "episodes": [[ts[e.start], ts[e.end]] for e in o.episodes],
+                "episodes": [
+                    {"start_ms": ts[e.start], "end_ms": ts[e.end], "peak_z": sig(e.peak_z, 3),
+                     "sustained": e.sustained, "beyond_own_level": e.beyond_own_level}
+                    for e in o.episodes
+                ],
+                "effect": self._effect(gf, o, ts, run.step),
                 **extra,
             })  # fmt: skip
+        bounds = missing_bounds(f.values, sp.n, sp.alive)
         payload = {
             "kind": "fleet",
             "effective_step_ms": run.step,
@@ -649,6 +763,26 @@ class FleetOps:
                 k: sig_list(getattr(sp, k))
                 for k in ("median", "q25", "q75", "q10", "q90", "lo", "hi")
             },
+            # None where unbounded (+-inf) or not drawn: the UI tells them apart by the
+            # quantile itself (drawn) and n < alive
+            "band_bounds": {k: sig_list(v) for k, v in bounds.items()},
+            "spc": {
+                "centre": sig_list(b.centre),
+                "lo2": sig_list(b.lo2),
+                "hi2": sig_list(b.hi2),
+                "lo3": sig_list(b.lo3),
+                "hi3": sig_list(b.hi3),
+                "threshold_z": sig(b.threshold_z, 3) if b.threshold_z is not None else None,
+                "threshold_lo": sig_list(b.threshold_lo) if b.threshold_lo is not None else None,
+                "threshold_hi": sig_list(b.threshold_hi) if b.threshold_hi is not None else None,
+                "window": b.window,
+                "pool_half": b.pool_half,
+                "legend": self.band_text(b),
+                "outside3": [int(v) for v in b.outside3],
+                "outside3_note": self.unflagged_text(f),
+                "tested": len(f.tested),
+                "note": MEMBER_ERROR_NOTE,
+            },
             "n": [int(v) for v in sp.n],
             "alive": [int(v) for v in sp.alive],
             "outliers": drawn,
@@ -657,11 +791,14 @@ class FleetOps:
             "located": [c.model_dump() for c in cov.located],
         }
         if groups is not None:  # per-group bands (additive; lkn.10)
-            payload["clusters"] = [
-                {"id": f"c{k + 1}", "size": len(g.members),
-                 "band": {b: sig_list(getattr(g.fleet.spread, b)) for b in ("median", "q25", "q75")}}
-                for k, g in enumerate(groups.groups)
-            ]  # fmt: skip
+            payload["clusters"] = []
+            for k, g in enumerate(groups.groups):
+                gb = control_band(g.fleet, window)  # each group's own reference (its tests')
+                payload["clusters"].append({
+                    "id": f"c{k + 1}", "size": len(g.members),
+                    "band": {q: sig_list(getattr(g.fleet.spread, q)) for q in ("median", "q25", "q75")},
+                    "spc": {q: sig_list(getattr(gb, q)) for q in ("centre", "lo2", "hi2", "lo3", "hi3")},
+                })  # fmt: skip
         return payload
 
 

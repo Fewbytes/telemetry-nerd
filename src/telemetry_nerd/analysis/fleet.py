@@ -60,9 +60,9 @@ def mad_factor(n: int | np.ndarray) -> np.ndarray:
 
 
 # robust centre / scale ---------------------------------------------------------------------
-def _pooled(others: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _pooled(others: np.ndarray, half: int = POOL_HALF) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Per step: median of the members, and a robust sigma of their deviations from the per-step
-    median pooled over +-POOL_HALF steps (local heteroscedasticity; far more values than one
+    median pooled over +-half steps (local heteroscedasticity; far more values than one
     step's members, so the z threshold is not dominated by MAD noise). Returns (centre, sigma,
     values pooled); NaN where fewer than MIN_OTHERS members report."""
     with warnings.catch_warnings():
@@ -70,8 +70,8 @@ def _pooled(others: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         n = np.sum(~np.isnan(others), axis=0)
         c = np.nanmedian(others, axis=0)
         dev = others - c
-        w = 2 * POOL_HALF + 1
-        pad = np.pad(dev, ((0, 0), (POOL_HALF, POOL_HALF)), constant_values=np.nan)
+        w = 2 * half + 1
+        pad = np.pad(dev, ((0, 0), (half, half)), constant_values=np.nan)
         win = np.lib.stride_tricks.sliding_window_view(pad, w, axis=1)  # (n_o, T, w)
         flat = np.moveaxis(win, 1, 0).reshape(dev.shape[1], -1)
         cnt = np.sum(~np.isnan(flat), axis=1)
@@ -156,6 +156,9 @@ class Episode:
     end: int  # inclusive
     peak_z: float
     sustained: bool
+    # level / change outliers: an excursion beyond the member's own (shifted, drifting) level,
+    # peak_z in units of the fleet sigma relative to that level, not to the fleet centre
+    beyond_own_level: bool = False
 
 
 @dataclass
@@ -232,6 +235,137 @@ def spread(y: np.ndarray, unknown: np.ndarray | None = None) -> Spread:
         q10=gate(q[0], SPREAD_MIN_N["q10"]), q90=gate(q[4], SPREAD_MIN_N["q10"]),
         lo=gate(lo, 2), hi=gate(hi, 2),
     )  # fmt: skip
+
+
+QUANTILES = {"q10": 0.1, "q25": 0.25, "median": 0.5, "q75": 0.75, "q90": 0.9}
+
+
+def _hf7(x: np.ndarray, h: float) -> float:
+    """Hyndman-Fan 7 at 0-based position h of sorted x (which may hold -inf / +inf)."""
+    lo = math.floor(h)
+    frac = h - lo
+    if frac < 1e-12:
+        return float(x[lo])
+    a, b = float(x[lo]), float(x[lo + 1])
+    if math.isinf(a) or math.isinf(b):
+        return a if math.isinf(a) else b
+    return a + frac * (b - a)
+
+
+def missing_bounds(y: np.ndarray, n: np.ndarray, alive: np.ndarray) -> dict[str, np.ndarray]:
+    """Missing-member bounds of the per-step quantiles: at a step where m = alive - n members
+    did not report, each quantile of all alive members is recomputed with the m missing values at
+    -inf (lower bound) and at +inf (upper bound). The bound is -inf / +inf when the quantile's
+    order statistics reach into the missing ones (m large enough for that rank): unbounded.
+    Where nobody is missing the bounds equal the quantile. Gated like the spread (n per step).
+    Returns {name_lo, name_hi} per quantile; NaN where the quantile itself is not drawn."""
+    t_ = y.shape[1]
+    out = {f"{k}_{s}": np.full(t_, np.nan) for k in QUANTILES for s in ("lo", "hi")}
+    gates = {"median": 3, "q25": SPREAD_MIN_N["q25"], "q75": SPREAD_MIN_N["q25"],
+             "q10": SPREAD_MIN_N["q10"], "q90": SPREAD_MIN_N["q10"]}  # fmt: skip
+    for t in range(t_):
+        x = np.sort(y[:, t][~np.isnan(y[:, t])])
+        k, m = x.size, max(int(alive[t]) - int(n[t]), 0)
+        low = np.concatenate([np.full(m, -np.inf), x])
+        high = np.concatenate([x, np.full(m, np.inf)])
+        for name, q in QUANTILES.items():
+            if k < gates[name]:
+                continue
+            h = (k + m - 1) * q
+            out[f"{name}_lo"][t] = _hf7(low, h)
+            out[f"{name}_hi"][t] = _hf7(high, h)
+    return out
+
+
+@dataclass
+class ControlBand:
+    """The fleet's SPC reference band, in the band's units (raw, or relative to own median):
+    centre = per-step median of all members, zones centre +- 2 / 3 sigma with sigma the pooled
+    robust sigma the outlier tests use (log scale: multiplicative, centre * exp(+-k sigma)).
+    `threshold_*`: the single-step flag line (spike threshold z) from the tests' own centre and
+    pooled sigma (+-POOL_HALF), whatever the drawn window."""
+
+    window: int  # steps the sigma is pooled over (and the centre smoothed over, when > default)
+    scale: Scale
+    centre: np.ndarray
+    lo2: np.ndarray
+    hi2: np.ndarray
+    lo3: np.ndarray
+    hi3: np.ndarray
+    sigma: np.ndarray  # analysis units (log or linear)
+    threshold_z: float | None
+    threshold_lo: np.ndarray | None
+    threshold_hi: np.ndarray | None
+    outside3: np.ndarray  # per step: unflagged member-steps beyond the drawn 3 sigma
+    outside3_members: int  # members with any such step
+
+    @property
+    def pool_half(self) -> int:
+        return self.window // 2
+
+
+DEFAULT_BAND_WINDOW = 2 * POOL_HALF + 1
+
+
+def check_band_window(window: int | None) -> int:
+    if window is None:
+        return DEFAULT_BAND_WINDOW
+    if window < DEFAULT_BAND_WINDOW or window % 2 == 0:
+        raise ValueError(
+            f"band_window must be an odd number of steps >= {DEFAULT_BAND_WINDOW} (the outlier "
+            f"tests pool sigma over +-{POOL_HALF} steps; larger is calmer), got {window}"
+        )
+    return window
+
+
+def control_band(
+    f: Fleet, window: int | None = None, flagged: np.ndarray | None = None
+) -> ControlBand:
+    """The SPC band of an analysed fleet. window: steps (odd, >= 13): sigma pooled over
+    +-window // 2 steps and, above the default, the centre a centred moving median over window
+    steps (a calmer band; the flag line stays the tests'). flagged: member-steps the outlier
+    tests flagged (whole members for level / change, episode steps for transients); member-steps
+    beyond the drawn 3 sigma that are not flagged are counted per step."""
+    w = check_band_window(window)
+    log = f.scale == "log"
+    with np.errstate(divide="ignore", invalid="ignore"):
+        y = np.log(f.values) if log else f.values.astype(float)
+    c0, s0, _ = _pooled(y)
+    if w == DEFAULT_BAND_WINDOW:
+        c, s = c0, s0
+    else:
+        _, s, _ = _pooled(y, w // 2)
+        c = rolling_median(c0[None, :], w)[0]
+        s = np.where(np.isnan(c), np.nan, s)
+    back = np.exp if log else (lambda v: v)
+    thr = f.thresholds.get("spike_tail_threshold", f.thresholds.get("spike_threshold"))
+    if thr is not None and not math.isfinite(thr):
+        thr = None
+    with np.errstate(invalid="ignore"):
+        beyond = np.abs(y - c) > 3 * s
+    if flagged is not None:
+        beyond &= ~flagged
+    return ControlBand(
+        window=w, scale=f.scale, centre=back(c), sigma=s,
+        lo2=back(c - 2 * s), hi2=back(c + 2 * s), lo3=back(c - 3 * s), hi3=back(c + 3 * s),
+        threshold_z=thr,
+        threshold_lo=None if thr is None else back(c0 - thr * s0),
+        threshold_hi=None if thr is None else back(c0 + thr * s0),
+        outside3=beyond.sum(axis=0), outside3_members=int(beyond.any(axis=1).sum()),
+    )  # fmt: skip
+
+
+def flagged_steps(shape: tuple[int, int], outliers: list[tuple[int, Outlier]]) -> np.ndarray:
+    """Member-steps the tests flagged: every step of a level / change outlier, the episode
+    steps of a transient. outliers: (row in the fleet, outlier)."""
+    out = np.zeros(shape, bool)
+    for i, o in outliers:
+        if o.kind == "transient":
+            for e in o.episodes:
+                out[i, e.start : e.end + 1] = True
+        else:
+            out[i] = True
+    return out
 
 
 def _runs(mask: np.ndarray, max_gap: int) -> list[tuple[int, int]]:
@@ -357,7 +491,12 @@ def analyse(
     for row, i in enumerate(tested):
         fired, zs, exceed, ratio = _member_tests(row, tests, thr, scans, bars)
         if fired:
-            outliers.append(_describe(i, z[i], d[i], fired, zs, exceed, ratio, thr, t_, tau_hat))
+            o = _describe(i, z[i], d[i], fired, zs, exceed, ratio, thr, t_, tau_hat)
+            if o.kind != "transient":  # both modes: excursions beyond its own level
+                resid = z[i] - _own_baseline(z[i], o)
+                ex = _excursions(resid, thresholds["phi"], {k_: b[row] for k_, b in bars.items()})
+                o.episodes = _episodes(resid, ex, o.tau, beyond_own_level=True)
+            outliers.append(o)
     if len(outliers) > MANY_OUTLIERS * k:
         caveats.append("many_outliers")
     outliers.sort(key=lambda o: -o.score)
@@ -583,6 +722,48 @@ def gumbel_bars(peaks: np.ndarray, pool_rows: np.ndarray, p: float) -> np.ndarra
     return out
 
 
+def _episodes(
+    zi: np.ndarray, exceed: np.ndarray, tau: float, beyond_own_level: bool = False
+) -> list[Episode]:
+    """Runs of steps beyond an excursion bar, merged across gaps shorter than tau; sustained
+    when longer than tau steps. peak_z: the largest |z| of the run, signed."""
+    out = []
+    for a, b in _runs(exceed, max(0, math.ceil(tau) - 1)):
+        seg = np.where(np.isnan(zi[a : b + 1]), 0.0, zi[a : b + 1])
+        j = int(np.argmax(np.abs(seg)))
+        out.append(Episode(a, b, float(seg[j]), b - a + 1 > tau, beyond_own_level))
+    return out
+
+
+def _own_baseline(zi: np.ndarray, o: Outlier) -> np.ndarray:
+    """A level / change outlier's own expected z per step: its 20% trimmed mean (persistent), the
+    trimmed means before and after its split (shifted), its least-squares line (drifting)."""
+    t_ = zi.size
+    ok = np.isfinite(zi)
+    if o.kind == "shifted" and o.at is not None:
+        before, after = zi[: o.at], zi[o.at :]
+        if np.isfinite(before).sum() >= 3 and np.isfinite(after).sum() >= 3:
+            m1, m2 = trimmed_mean(before[None, :])[0], trimmed_mean(after[None, :])[0]
+            return np.where(np.arange(t_) < o.at, m1, m2)
+    if o.kind in ("drifting", "shifted") and ok.sum() >= 3:
+        pos = np.flatnonzero(ok).astype(float)
+        coef = np.polyfit(pos, zi[ok], 1)
+        return np.polyval(coef, np.arange(t_, dtype=float))
+    return np.full(t_, trimmed_mean(zi[None, :])[0])
+
+
+def _excursions(zi: np.ndarray, phi: float, bars: dict[str, np.ndarray]) -> np.ndarray:
+    """Steps where one member's deviation series exceeds the excursion bars (the same scans as
+    the excursion tests: single steps, rolling medians of the AR(1) innovations)."""
+    ep_in = prewhiten(zi[None, :], phi)
+    ex = np.zeros(zi.size, bool)
+    for name, w_ in EXCURSIONS.items():
+        zz = zi if w_ == 1 else rolling_median(ep_in, w_)[0]
+        with np.errstate(invalid="ignore"):
+            ex |= np.abs(zz) > bars[name]
+    return ex
+
+
 def _describe(i, zi, di, fired, zs, exceed, ratio, thr, t_, tau_fleet) -> Outlier:
     ok = ~np.isnan(zi)
     pos = np.flatnonzero(ok)
@@ -622,10 +803,7 @@ def _describe(i, zi, di, fired, zs, exceed, ratio, thr, t_, tau_fleet) -> Outlie
     else:
         kind = "transient"
         sign = math.copysign(1.0, float(zi[peak_at]))
-        for a, b in _runs(exceed, max(0, math.ceil(tau) - 1)):
-            seg = np.where(np.isnan(zi[a : b + 1]), 0.0, zi[a : b + 1])
-            j = int(np.argmax(np.abs(seg)))
-            episodes.append(Episode(a, b, float(seg[j]), b - a + 1 > tau))
+        episodes = _episodes(zi, exceed, tau)
     since, from_start = _since(zi, sign, tau)
     if kind == "transient" and episodes:
         since, from_start = None, False

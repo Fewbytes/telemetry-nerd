@@ -345,9 +345,10 @@ class TelemetryService:
         by: list[str] | None = None,
         scale: str = "auto",
         normalise: str = "none",
+        band_window: int | None = None,
     ) -> dict:
         """Many series of one metric as a group: spread, outlying members, churn (lkn.3)."""
-        out = self.fleets.summary(dataset_id, by, scale, normalise)
+        out = self.fleets.summary(dataset_id, by, scale, normalise, band_window)
         return mark_statistics(out, self.datasets, [dataset_id])
 
     def seasonal_suggestion(self, dataset_id: str, mark: str = "auto") -> str | None:
