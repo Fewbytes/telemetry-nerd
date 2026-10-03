@@ -284,22 +284,23 @@ class WorkspaceService:
         self, hypothesis_id: str, status: HypothesisStatus, reason: str | None, note: str | None
     ) -> None:
         h = self.objects.get_hypothesis(hypothesis_id)
-        rejected = {f.id for f in self.objects.list_findings() if f.verdict == "rejected"}
+        rejected = self._rejected_findings()
         problems = ruled_out_problems(
             h.id, status, h.evidence_for, h.evidence_against, rejected, reason, note
         )
         if problems:
             raise ValueError(f"cannot mark {h.id} {status}: " + "; ".join(problems) + ".")
 
+    def _rejected_findings(self) -> set[str]:
+        return {f.id for f in self.objects.list_findings() if f.verdict == "rejected"}
+
     def _metric_names(self, metas: list) -> set[str]:
         out: set[str] = set()
         for m in metas:
-            read = read_selector(m.expr) if m.expr and not is_code_expr(m.expr) else None
-            out |= (
-                {x.value for x in (read.matchers or []) if x.label == "__name__" and x.op == "="}
-                if read
-                else set()
-            )
+            if not m.expr or is_code_expr(m.expr):
+                continue
+            matchers = read_selector(m.expr).matchers or []
+            out |= {x.value for x in matchers if x.label == "__name__" and x.op == "="}
         return out
 
     def hypothesis_subjects(
@@ -320,7 +321,7 @@ class WorkspaceService:
 
     def _check_support(self, hypothesis_id: str, alternatives_considered: str | None) -> None:
         h = self.objects.get_hypothesis(hypothesis_id)
-        rejected = {f.id for f in self.objects.list_findings() if f.verdict == "rejected"}
+        rejected = self._rejected_findings()
         # a ruled-out alternative counts when it is concrete (names a subject) or was ruled out
         # by evidence against it: a vague statement set aside is not an alternative considered
         others = {
