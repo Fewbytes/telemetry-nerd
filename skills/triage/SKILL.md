@@ -130,7 +130,9 @@ Short, in this order, with object ids (they become links): symptom and scope (se
 selector, window, reference, alpha); timeline (onsets with intervals, order only as far as
 intervals allow); findings (`f1`...) with source labels and uncertainty flags; hypotheses with
 status, including what was ruled out; unknowns and gaps; next steps. `highlight` the panel or
-finding the user should open first. Never claim cause from ordering (principle 13). Principles:
+finding the user should open first. Never claim cause from ordering (principle 13). Results are
+model outputs (principle 16): "under a Poisson model …", "consistent with …", never a bare fact;
+a label stands only under the cautious model the op names. Principles:
 `docs/principles.md`.
 
 ## Additional resources

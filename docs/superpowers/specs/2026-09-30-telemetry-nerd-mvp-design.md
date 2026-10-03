@@ -27,7 +27,9 @@ Canonical text, decision dates and enforcement: **[`docs/principles.md`](../../p
 workspace is the single source of truth · 8 every variation is labelled with its source (§5.4) ·
 9 positive vs negative claims · 10 only mergeable statistics are aggregated · 11 missing data is
 information · 12 show the discrepancy · 13 hypotheses, not verdicts · 14 decide before looking ·
-15 learned facts carry their origin.
+15 learned facts carry their origin · 16 results are model outputs, not facts: a result states its
+model and assumptions; a label must hold under the cautious model (overdispersion, clustering,
+autocorrelation), else it is undetermined with the optimistic result shown as context (2026-10-03).
 
 ### 1.3 Personas
 

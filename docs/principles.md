@@ -271,3 +271,23 @@ A role with no signal is a gap, never a stand-in metric.
   `CLAUDE_MAX_CONFIDENCE` in `src/telemetry_nerd/core/workspace_service.py`;
   `src/telemetry_nerd/catalog/store.py`, `src/telemetry_nerd/catalog/relations.py`;
   `skills/metric-learning/SKILL.md`.
+
+## 16. Results are model outputs, not facts
+
+"We don't make things up. We have models and we present their results, but we don't claim these
+are facts." Every test, label and verdict is the output of a model with assumptions (Poisson
+counts, independent steps, a stationary baseline, a linear trend). An op states the model and
+its assumptions with the result ("under a Poisson model p = …; allowing clustered errors (…)
+p = …"), in its `method` text and its summary. Where a plausible alternative model is more
+cautious (overdispersion, clustering, autocorrelation), both results are reported, and a label
+(special cause, a verdict) is assigned only if it holds under the cautious model; otherwise the
+label is **undetermined**, with the optimistic result shown as context. The cautious model's
+inputs come from the most principled source available (a live sibling, the operating profile,
+history) or a stated conservative bound, and the op says which. Claude words findings as
+"under model M …" / "consistent with …", citing the model, never as a bare fact.
+
+- Decided: 2026-10-03, user (bead 0vg7: the departure-from-zero test, Poisson vs clustered).
+- Enforced by: `Departure` / `DEPARTURE_METHOD` in `src/telemetry_nerd/analysis/diagnostics.py`
+  (both p values, label on the clustered one) and `stability.departure` in
+  `src/telemetry_nerd/core/series_diagnostics.py`; `skills/evidence/SKILL.md` ("Results are
+  model outputs"); `skills/triage/SKILL.md` (Report); the MCP server instructions.

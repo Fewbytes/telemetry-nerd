@@ -116,6 +116,16 @@ Separate measurement-system findings from process findings: "the gauge misses in
 its own finding, not a caveat on a latency claim. A `common_cause` result supports "nothing
 beyond normal variation was detected", which can rule a hypothesis out.
 
+## Results are model outputs (principle 16)
+
+Every p value, label and verdict comes from a model with assumptions; none is a fact. Word a
+finding as "under model M …" or "consistent with …", and cite the model the op states (its
+`method`, the `models` / `summary` fields): "under a Poisson model p = 2e-24; allowing
+clustered errors (dispersion 13 from the judged steps) p = 0.015: undetermined". Where an op
+reports an optimistic and a cautious model, the label rests on the cautious one: pass it
+through (`undetermined` stays `undetermined`), quote the optimistic p only as context, and name
+what would decide it (a longer baseline, history, a sibling signal).
+
 ## Always show the discrepancy (principle 12)
 
 A verdict is context, never a replacement for the measured numbers. Lead with the measured
