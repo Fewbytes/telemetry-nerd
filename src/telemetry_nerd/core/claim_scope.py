@@ -6,13 +6,18 @@ anchored and `.` matches a newline (Prometheus compiles `^(?s:re)$`), and a miss
 the empty string. Read from a plain selector, or from the one selector inside an expression that
 keeps its series' labels (rate(x{pod="a"}[5m]), sum by (pod) (...), x offset 5m); an expression
 whose matchers cannot be tied to its output series (binary operators, label_replace, count_values,
-several selectors) is not read at all and the claim is judged over every evidence series, saying
-so."""
+several selectors) is not read at all: the claim's scope is *undetermined* (said as such, a warning;
+coverage is then checked over every evidence series). A grouping written without parentheses
+(`x{...} by status_code`, not PromQL) is read as the grouping it means, with a note.
+
+The evidence's own expression pins labels its series no longer carry (`sum by (status_code)
+(rate(x{service_name="payment"}[1m]))` is about payment only): `pinned_matchers` reads them so a
+claim matcher on an aggregated-away label is checked against them instead of skipped."""
 
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -26,6 +31,11 @@ _MODIFIERS = re.compile(
     re.IGNORECASE,  # PromQL keywords are case-insensitive
 )
 _GROUPING = re.compile(r"\b(?:by|without)\s*\([^()]*\)", re.IGNORECASE)
+# `by a, b` without parentheses (not PromQL; read as the grouping it means, with a note)
+_LOOSE_GROUPING = re.compile(
+    r"\b(by|without)\s+([A-Za-z_][A-Za-z0-9_]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_]*)*)(?!\s*\()",
+    re.IGNORECASE,
+)
 # outside strings, selectors and ranges: anything that combines series or rewrites their labels
 _COMBINES = re.compile(
     r"[-+*/%^<>=!]|\b(?:and|or|unless|on|ignoring|group_left|group_right|label_replace|label_join"
@@ -177,26 +187,50 @@ Level = Literal["info", "warn"]
 
 @dataclass
 class SelectorRead:
-    matchers: list[Matcher] | None  # None: not read, judge every evidence series
+    matchers: list[Matcher] | None  # None: not read, the scope is undetermined
     why: str | None = None  # why it was not read
+    notes: list[str] = field(default_factory=list)  # how it was read, when not plainly
 
 
 def read_selector(selector: str) -> SelectorRead:
+    notes: list[str] = []
     try:
         found, rest = _selectors(selector)
         rest = _GROUPING.sub(" ", _MODIFIERS.sub(" ", rest))
+        if loose := list(_LOOSE_GROUPING.finditer(rest)):
+            for m in loose:
+                notes.append(f"scope.selector is not PromQL ('{m.group(1)} {m.group(2)}' needs "
+                             f"parentheses); read as grouping {m.group(1).lower()} "
+                             f"({m.group(2)})")  # fmt: skip
+            rest = _LOOSE_GROUPING.sub(" ", rest)
         names = _bare_names(rest)
         if len(found) + len(names) > 1:
             raise Unreadable("several selectors")
         if _COMBINES.search(rest):
             raise Unreadable("operators or label rewriting")
         if not found:  # rate(x[5m]), up offset 5m; no name at all: every evidence series
-            return SelectorRead([Matcher("__name__", "=", n) for n in names])
+            return SelectorRead([Matcher("__name__", "=", n) for n in names], notes=notes)
         name, body = found[0]
         ms = _body(body)
     except Unreadable as e:
         return SelectorRead(None, str(e))
-    return SelectorRead(([Matcher("__name__", "=", name)] if name else []) + ms)
+    return SelectorRead(([Matcher("__name__", "=", name)] if name else []) + ms, notes=notes)
+
+
+def pinned_matchers(expr: str | None) -> list[Matcher]:
+    """Label matchers (not `__name__`) every series of an evidence expression satisfies, read
+    from its one selector; [] when the expression cannot be read (binary operators, several
+    selectors, a code output)."""
+    if not expr:
+        return []
+    read = read_selector(expr)
+    return [m for m in read.matchers or [] if m.label != "__name__"]
+
+
+def undetermined_note(why: str | None) -> str:
+    return (f"scope undetermined: scope.selector could not be read into label matchers ({why}); "
+            "coverage was checked over every evidence series instead, so which series the claim "
+            "is about is not established")  # fmt: skip
 
 
 @dataclass
@@ -210,28 +244,46 @@ class ClaimSeries:
     # the selector has label matchers but none could be applied here: the claimed series are
     # not checked by this evidence at all
     labels_unchecked: bool = False
+    # scope.selector could not be read: which series the claim is about is not established
+    undetermined: bool = False
 
 
 def claim_series(
-    selector: str | None, labels: Mapping[str, Mapping[str, str]], metric: str | None = None
+    selector: str | None,
+    labels: Mapping[str, Mapping[str, str]],
+    metric: str | None = None,
+    pinned: Sequence[Matcher] = (),
 ) -> ClaimSeries:
     """Evidence series (ids of `labels`) the selector names. Series labels carry no `__name__`
     (a dataset drops it): a `__name__` matcher is checked against `metric`, the dataset's metric
     when its expression has one, else not checked (warn). A matcher on a label no evidence series
     carries (aggregated away) is moot when the empty value satisfies it, else not applied (warn):
-    the evidence cannot show it, and Prometheus would read it as empty and drop them all."""
+    the evidence cannot show it, and Prometheus would read it as empty and drop them all. Unless the
+    evidence's expression pins that label (`pinned`, from `pinned_matchers`): an equality pin is
+    checked (a different value is a mismatch), a regex pin leaves it unchecked (warn)."""
     ids = sorted(labels)
     if selector is None:
         return ClaimSeries(ids, [])
     read = read_selector(selector)
     if read.matchers is None:
-        why = (f"scope.selector not read into label matchers ({read.why}): the claim is judged "
-               "over every evidence series")  # fmt: skip
-        return ClaimSeries(ids, [("info", why)])
-    notes: list[tuple[Level, str]] = []
+        return ClaimSeries(ids, [("warn", undetermined_note(read.why))], undetermined=True)
+    notes: list[tuple[Level, str]] = [("info", n) for n in read.notes]
     carried = {k for lb in labels.values() for k in lb}
     applied: list[Matcher] = []
     for m in read.matchers:
+        pins = [p for p in pinned if p.label == m.label] if m.label not in carried else []
+        if eq := [p for p in pins if p.op == "="]:
+            if all(m.matches(p.value) for p in eq):
+                applied.append(m)
+                continue
+            why = (f"scope.selector names {m}; this evidence's expression fixes "
+                   f"{', '.join(map(str, eq))}")  # fmt: skip
+            return ClaimSeries([], notes, why, "labels")
+        if pins and not m.matches(""):
+            why = (f"{m} not checked: this evidence's expression restricts {m.label!r} by "
+                   f"{', '.join(map(str, pins))}, which this check does not compare")  # fmt: skip
+            notes.append(("warn", why))
+            continue
         if m.label == "__name__" and m.label not in carried:
             if metric is None:
                 why = (f"{m} not checked: the evidence series carry no metric name, so the "
@@ -246,9 +298,10 @@ def claim_series(
             why = (f"{m} not applied: no evidence series carries label {m.label!r} (aggregated "
                    "away?), so the claim's scope is not checked against it")  # fmt: skip
             notes.append(("warn", why))
-    chosen = [s for s in ids if all(m.matches(labels[s].get(m.label, "")) for m in applied)]
+    on_series = [m for m in applied if m.label in carried]
+    chosen = [s for s in ids if all(m.matches(labels[s].get(m.label, "")) for m in on_series)]
     if not chosen:
-        named = ", ".join(str(m) for m in applied)
+        named = ", ".join(str(m) for m in on_series)
         why = f"no evidence series matches {named} from scope.selector"
         return ClaimSeries([], notes, why, "labels")
     wanted = [m for m in read.matchers if m.label != "__name__" and not m.matches("")]

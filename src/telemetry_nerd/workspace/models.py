@@ -193,6 +193,9 @@ class Hypothesis(_Strict):
     author: str
     evidence_for: list[str] = Field(default_factory=list)
     evidence_against: list[str] = Field(default_factory=list)
+    #: the competing explanations considered and why they were set aside (principle 13), when
+    #: they are not recorded as refuted / inconclusive hypotheses of their own
+    alternatives_considered: str | None = None
     created_at_ms: int
     updated_at_ms: int
 
@@ -205,6 +208,9 @@ class FindingIn(_Strict):
     hypothesis: str | None = None
     stance: Literal["for", "against"] | None = None
     answers_panel: str | None = None
+    #: why the claim names entities its evidence does not cover; required for such a claim
+    #: (the finding is then flagged beyond_evidence, never silently accepted)
+    scope_note: str | None = None
 
     @model_validator(mode="after")
     def _stance(self) -> FindingIn:
@@ -230,6 +236,33 @@ class EvidenceFlag(_Strict):
     message: str
 
 
+ScopeStatus = Literal["covered", "beyond_evidence", "undetermined"]
+
+
+class ScopeCheck(_Strict):
+    """What the server found about the claim's scope against its evidence (spec §4.4, qxp).
+
+    covered: every entity the claim names (a service, pod, job... value seen in the workspace)
+    is covered by the cited evidence; beyond_evidence: some are not (the finding carries a
+    scope_note); undetermined: the evidence or scope.selector could not be read, so coverage is
+    not established. Entities are written label="value"."""
+
+    status: ScopeStatus
+    named: list[str] = Field(default_factory=list)
+    not_covered: list[str] = Field(default_factory=list)
+    undetermined: list[str] = Field(default_factory=list)
+    message: str = ""
+
+
+class SourceFlag(_Strict):
+    """Where a finding's source of variation (spec §5.4) came from, when not as cited."""
+
+    evidence: int  # index into Finding.evidence
+    flag: Literal["source_derived", "source_undetermined"]
+    source: VariationSource | None = None
+    message: str
+
+
 class Finding(FindingIn):
     id: str
     author: str
@@ -237,6 +270,19 @@ class Finding(FindingIn):
     verdict: Verdict | None = None
     verdict_comment: str | None = None
     evidence_flags: list[EvidenceFlag] = Field(default_factory=list)
+    scope_check: ScopeCheck | None = None
+    source_flags: list[SourceFlag] = Field(default_factory=list)
+
+    @property
+    def sources(self) -> list[str]:
+        """Cited variation sources, plus `undetermined` when the server flagged that no source
+        could be established for part of the evidence (never upgraded)."""
+        out = super().sources
+        if any(f.flag == "source_undetermined" for f in self.source_flags) and (
+            "undetermined" not in out
+        ):
+            out.append("undetermined")
+        return out
 
 
 class MetricSuggestion(_Strict):

@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 import polars as pl
 import pyarrow as pa
 
-from telemetry_nerd.core.claim_scope import claim_series
+from telemetry_nerd.core.claim_scope import Matcher, claim_series
 from telemetry_nerd.model.bucket_state import Flag, State
 from telemetry_nerd.model.caveats import (
     MAX_WHERE_SERIES,
@@ -56,6 +56,7 @@ IDENTITY_LABELS = ("pod", "instance", "host", "container", "node")
 SCOPE_MISMATCH = "scope_mismatch"  # no series has the claimed labels: blocks
 METRIC_MISMATCH = "metric_mismatch"  # this evidence is another metric: a caller may skip it
 LABELS_UNCHECKED = "labels_unchecked"  # no label matcher of the selector applies here
+SCOPE_UNDETERMINED = "scope_undetermined"  # scope.selector unreadable: every series judged
 
 Labels = Mapping[str, Mapping[str, str]]
 Namer = Callable[[str], str]
@@ -70,6 +71,7 @@ def claim_coverage(
     labels: Labels | None = None,
     selector: str | None = None,
     metric: str | None = None,
+    pinned: Sequence[Matcher] = (),
 ) -> list[Caveat]:
     """Caveats on the claim window (start, end] from a dataset's bucket_state. `labels`: series id
     -> labels (default: every series in `states`, unlabelled); `selector`: the claim's
@@ -77,11 +79,13 @@ def claim_coverage(
     naming another metric gives one `metric_mismatch` caveat (blocks_claim; a caller citing
     several datasets may skip this one instead); one whose label matchers match no series gives
     `scope_mismatch` (blocks_claim). `labels_unchecked` (warn) says no label matcher applied
-    here; a caller blocks when that holds for all of its evidence."""
+    here; a caller blocks when that holds for all of its evidence. `pinned`: label matchers the
+    dataset's own expression fixes (`claim_scope.pinned_matchers`). An unreadable selector gives
+    `scope_undetermined` (warn): coverage is then judged over every series."""
     df = pl.from_arrow(states)
     if labels is None:
         labels = {sid: {} for sid in df["series_id"].unique().to_list()}
-    scope = claim_series(selector, labels, metric)
+    scope = claim_series(selector, labels, metric, pinned)
     window = Where(spans=[(start_ms, end_ms)])
     if scope.mismatch:
         code = METRIC_MISMATCH if scope.mismatch_kind == "metric" else SCOPE_MISMATCH
@@ -91,7 +95,8 @@ def claim_coverage(
     out = []
     if scope.notes:
         severity: Severity = "warn" if any(lv == "warn" for lv, _ in scope.notes) else "info"
-        out.append(Caveat(code="claim_scope", severity=severity, where=window, source="validator",
+        code = SCOPE_UNDETERMINED if scope.undetermined else "claim_scope"
+        out.append(Caveat(code=code, severity=severity, where=window, source="validator",
                           message="; ".join(t for _, t in scope.notes) + "."))  # fmt: skip
     if scope.labels_unchecked:
         out.append(Caveat(code=LABELS_UNCHECKED, severity="warn", where=window,

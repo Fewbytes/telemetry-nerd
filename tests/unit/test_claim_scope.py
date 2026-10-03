@@ -60,4 +60,5 @@ def test_expressions_that_combine_series_are_not_read():
                  'count_values("v", up{pod="z"})', "a or b"]:  # fmt: skip
         assert read_selector(expr).matchers is None, expr
     out = claim_series("a + b", LB)
-    assert out.ids == ["a", "b"] and out.notes[0][0] == "info"
+    assert out.ids == ["a", "b"] and out.undetermined  # said as such, never assumed
+    assert out.notes[0][0] == "warn" and out.notes[0][1].startswith("scope undetermined")

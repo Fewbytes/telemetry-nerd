@@ -35,6 +35,11 @@ _SCHEMA = [
     # declared uncertainty of a value (e.g. a code output's CI); NULL when none was declared
     "ALTER TABLE dataset_rows ADD COLUMN IF NOT EXISTS lo DOUBLE",
     "ALTER TABLE dataset_rows ADD COLUMN IF NOT EXISTS hi DOUBLE",
+    # evidence statistics tier-1 ops emitted (spec §5.4): a finding citing one without its
+    # `source` gets it back from here; source '' = the op attributes no variation (a level)
+    """CREATE TABLE IF NOT EXISTS op_statistics (
+        dataset VARCHAR, name VARCHAR, method VARCHAR, value DOUBLE, source VARCHAR,
+        PRIMARY KEY (dataset, name, method, value, source))""",
 ]
 
 

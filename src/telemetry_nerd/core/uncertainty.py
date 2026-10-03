@@ -143,7 +143,10 @@ def mark_statistics(out: dict, datasets: DatasetStore, dataset_ids: Sequence[str
     """Mark a tier-1 op result computed over `dataset_ids` (in place; returns `out`): every
     evidence statistic gets `params.input_uncertainty` and `out["caveats"]` the matching
     caveat when the inputs are not clean. The op's own intervals stay as they are: they are
-    still evidence (spec §5.3), with the flag saying they are a lower bound."""
+    still evidence (spec §5.3), with the flag saying they are a lower bound. Every statistic is
+    also recorded (`DatasetStore.record_statistics`) so a finding citing one without its
+    variation `source` gets it back (spec §5.4)."""
+    datasets.record_statistics(list(iter_statistics(out)))
     status = input_status(datasets, dataset_ids)
     if status is None:
         return out

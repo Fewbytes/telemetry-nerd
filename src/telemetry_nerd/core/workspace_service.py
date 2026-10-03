@@ -74,16 +74,26 @@ from telemetry_nerd.charts.yview import (
     value_stats,
 )
 from telemetry_nerd.core.card_payload import binding_row, browse_row, field_rows, relation_row
+from telemetry_nerd.core.claim_scope import pinned_matchers, read_selector, undetermined_note
 from telemetry_nerd.core.code_outputs import evidence_problem
 from telemetry_nerd.core.coverage_check import (
     LABELS_UNCHECKED,
     METRIC_MISMATCH,
+    SCOPE_UNDETERMINED,
     claim_coverage,
 )
 from telemetry_nerd.core.events import Actor, Event, EventLog, check_actor
+from telemetry_nerd.core.evidence_discipline import (
+    check_claim,
+    derive_sources,
+    evidence_cover,
+    known_entities,
+    subjects,
+    support_problems,
+)
 from telemetry_nerd.core.panel_payloads import series_labels
 from telemetry_nerd.core.uncertainty import evidence_flags
-from telemetry_nerd.datasets.store import DatasetStore
+from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore, is_code_expr
 from telemetry_nerd.model.companions import dataset_bundle
 from telemetry_nerd.model.discovery import Discovery, with_histogram_bases
 from telemetry_nerd.model.errors import NotFound
@@ -158,6 +168,11 @@ def _claude_gate(item: dict[str, Any], cap: float) -> tuple[float, str]:
     return float(confidence), basis.strip()
 
 
+def _readable(meta: DatasetMeta) -> bool:
+    """The dataset's expr is the query that produced it (not a code output or a filter)."""
+    return meta.derived is None and meta.code_node is None and not is_code_expr(meta.expr)
+
+
 @dataclass
 class WorkspaceService:
     workspace: WorkspaceStore
@@ -200,13 +215,66 @@ class WorkspaceService:
 
     @atomic
     def hypothesis_update(
-        self, hypothesis_id: str, status: HypothesisStatus, actor: Actor, note: str | None = None
+        self,
+        hypothesis_id: str,
+        status: HypothesisStatus,
+        actor: Actor,
+        note: str | None = None,
+        alternatives_considered: str | None = None,
     ) -> Hypothesis:
-        old, h = self.objects.set_hypothesis_status(hypothesis_id, status)
-        self.log.append(
-            actor, "hypothesis.status_changed", h.id, {"from": old, "to": h.status, "note": note}
-        )
+        """Set a hypothesis' status. Marking it supported (by Claude or code: the user's own
+        verdict is theirs) needs a concrete subject, a standing finding for it and an
+        alternative considered (principle 13); otherwise refused with what is missing."""
+        if alternatives_considered is not None and not alternatives_considered.strip():
+            raise ValueError("alternatives_considered must not be empty")
+        if status == "supported" and actor != "user":
+            self._check_support(hypothesis_id, alternatives_considered)
+        old, h = self.objects.set_hypothesis_status(hypothesis_id, status, alternatives_considered)
+        payload: dict = {"from": old, "to": h.status, "note": note}
+        if alternatives_considered is not None:
+            payload["alternatives_considered"] = alternatives_considered
+        self.log.append(actor, "hypothesis.status_changed", h.id, payload)
         return h
+
+    def _metric_names(self, metas: list) -> set[str]:
+        out: set[str] = set()
+        for m in metas:
+            read = read_selector(m.expr) if m.expr and not is_code_expr(m.expr) else None
+            out |= (
+                {x.value for x in (read.matchers or []) if x.label == "__name__" and x.op == "="}
+                if read
+                else set()
+            )
+        return out
+
+    def hypothesis_subjects(self, statement: str) -> list[str]:
+        """Concrete subjects (entity values, metric names) a statement names."""
+        metas = self.datasets.list_metas()
+        known = known_entities(
+            self.datasets.series_labels_by_dataset(), {m.id: m.expr for m in metas if _readable(m)}
+        )
+        sources = {m.source for m in metas}
+        return subjects(
+            statement, known, self._metric_names(metas),
+            lambda t: any(self.catalog.has_metric(src, t) for src in sources),
+        )  # fmt: skip
+
+    def _check_support(self, hypothesis_id: str, alternatives_considered: str | None) -> None:
+        h = self.objects.get_hypothesis(hypothesis_id)
+        rejected = {f.id for f in self.objects.list_findings() if f.verdict == "rejected"}
+        # a ruled-out alternative counts when it is concrete (names a subject) or was ruled out
+        # by evidence against it: a vague statement set aside is not an alternative considered
+        others = {
+            o.id: o.status
+            for o in self.objects.list_hypotheses()
+            if o.id != h.id and (o.evidence_against or self.hypothesis_subjects(o.statement))
+        }
+        problems = support_problems(
+            h.id, h.statement, self.hypothesis_subjects(h.statement), h.evidence_for, rejected,
+            others, alternatives_considered or h.alternatives_considered,
+        )  # fmt: skip
+        if problems:
+            raise ValueError(f"cannot mark {h.id} supported: " + "; ".join(problems) + ".")
 
     # findings -----------------------------------------------------------
     def _evidence_datasets(self, data: FindingIn) -> list[str]:
@@ -218,6 +286,37 @@ class WorkspaceService:
                 case StatisticRef(dataset=did):
                     out.append(did)
         return list(dict.fromkeys(out))
+
+    def _statistic_sources(self, st: dict) -> set[str] | None:
+        return self.datasets.statistic_sources(
+            st["dataset"], st["name"], st.get("method") or "", st["value"]
+        )
+
+    def _claim_scope(self, data: FindingIn) -> dict | None:
+        """The claim's scope against its evidence (`evidence_discipline.check_claim`); refuses a
+        claim naming entities its evidence does not cover unless it carries a scope_note.
+        None when no data is cited."""
+        dids = self._evidence_datasets(data)
+        if not dids:
+            return None
+        by_dataset = self.datasets.series_labels_by_dataset()
+        metas = self.datasets.list_metas()
+        covers = {}
+        for did in dids:
+            meta = self.datasets.meta(did)
+            covers[did] = evidence_cover(meta.expr, by_dataset.get(did, []), _readable(meta))
+        known = known_entities(by_dataset, {m.id: m.expr for m in metas if _readable(m)})
+        read = read_selector(data.scope.selector)
+        why = undetermined_note(read.why) if read.matchers is None else None
+        scope = check_claim(data.claim, covers, known, why)
+        if scope.status == "beyond_evidence" and not (data.scope_note or "").strip():
+            hint = f"{scope.hint}: cite them, or " if scope.hint else ""
+            raise ValueError(
+                f"claim_beyond_evidence: {scope.message}. Hint: {hint}narrow the claim to what "
+                "the evidence covers, or pass scope_note saying why the claim reaches beyond "
+                "its evidence (the finding is then flagged beyond_evidence)"
+            )
+        return scope.to_dict()
 
     def _check_claim_coverage(self, data: FindingIn) -> FindingIn:
         """Reject a claim whose window lacks the data to support it; warn on partial coverage.
@@ -244,6 +343,7 @@ class WorkspaceService:
                 states, span.start_ms, span.end_ms, meta.step_ms,
                 labels=series_labels(result.series), selector=data.scope.selector,
                 metric=parts[0] if parts else None,
+                pinned=pinned_matchers(meta.expr) if plain else (),
             ):  # fmt: skip
                 if c.code == METRIC_MISMATCH:
                     mismatched.append(f"{did}: {c.message}")
@@ -251,7 +351,7 @@ class WorkspaceService:
                 if c.code == LABELS_UNCHECKED:
                     unchecked.append(did)
                     continue
-                if c.code == "claim_scope":
+                if c.code in ("claim_scope", SCOPE_UNDETERMINED):
                     scope_notes.setdefault(c.message, []).append(did)
                     continue
                 (blocking if c.severity == "blocks_claim" else warnings).append(
@@ -299,6 +399,13 @@ class WorkspaceService:
                     if not self.catalog.has_metric(src, m):
                         raise NotFound(f"no catalog entry for {m!r} on {src!r}")
         data = self._check_claim_coverage(data)
+        scope_check, source_flags = None, []
+        if actor != "system":  # a mechanical discovery names no entities and attributes nothing
+            scope_check = self._claim_scope(data)
+            ev, source_flags = derive_sources(
+                [ref.model_dump() for ref in data.evidence], self._statistic_sources
+            )
+            data = FindingIn.model_validate({**data.model_dump(), "evidence": ev})
         if data.hypothesis is not None:
             self.objects.get_hypothesis(data.hypothesis)
         if data.answers_panel is not None:
@@ -308,7 +415,7 @@ class WorkspaceService:
             [ref.model_dump() for ref in data.evidence],
             lambda pid: self.workspace.get_panel(pid).dataset_ids,
         )
-        f = self.objects.create_finding(data, actor, flags)
+        f = self.objects.create_finding(data, actor, flags, scope_check, source_flags)
         if data.hypothesis is not None and data.stance is not None:
             self.objects.link_evidence(data.hypothesis, f.id, data.stance)
         self.log.append(
@@ -322,6 +429,8 @@ class WorkspaceService:
                 "answers_panel": f.answers_panel,
                 **({"evidence_flags": [e.model_dump() for e in f.evidence_flags]}
                    if f.evidence_flags else {}),
+                **({"scope": f.scope_check.model_dump()}
+                   if f.scope_check and f.scope_check.status != "covered" else {}),
             },
         )  # fmt: skip
         if data.answers_panel is not None:
@@ -1784,6 +1893,12 @@ class WorkspaceService:
                 ),
                 # spec §5.4: what the cited variation is attributed to
                 **({"sources": f.sources} if f.sources else {}),
+                # a claim beyond its evidence, or whose coverage is not established, says so
+                **(
+                    {"scope": f.scope_check.status}
+                    if f.scope_check and f.scope_check.status != "covered"
+                    else {}
+                ),
             }
             for f in reversed(self.objects.list_findings())
         ]

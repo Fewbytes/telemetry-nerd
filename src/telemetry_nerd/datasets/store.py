@@ -330,3 +330,49 @@ class DatasetStore:
             {"id": dataset_id},
         ).fetchone()
         return int(row[0]) if row else 0
+
+    def series_labels_by_dataset(self) -> dict[str, list[dict]]:
+        """dataset id -> the labels of each of its series (every dataset in the store)."""
+        rows = self._con.execute(
+            """SELECT d.dataset_id, s.labels FROM (
+                 SELECT DISTINCT dataset_id, series_id FROM dataset_rows
+                 UNION SELECT DISTINCT dataset_id, series_id FROM dist_columns) d
+               JOIN series s ON s.series_id = d.series_id"""
+        ).fetchall()
+        out: dict[str, list[dict]] = {}
+        for did, raw in rows:
+            try:
+                lb = json.loads(raw)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(lb, dict):
+                out.setdefault(did, []).append(lb)
+        return out
+
+    def record_statistics(self, stats: list[dict]) -> None:
+        """Remember evidence statistics an op emitted, with their variation `source`."""
+        rows = [
+            (st["dataset"], st["name"], st.get("method") or "", float(st["value"]),
+             st.get("source") or "")
+            for st in stats
+            if isinstance(st.get("dataset"), str) and isinstance(st.get("name"), str)
+            and isinstance(st.get("value"), int | float) and not isinstance(st["value"], bool)
+        ]  # fmt: skip
+        if rows:
+            self._con.executemany(
+                "INSERT OR IGNORE INTO op_statistics VALUES (?, ?, ?, ?, ?)", rows
+            )
+
+    def statistic_sources(
+        self, dataset: str, name: str, method: str, value: float
+    ) -> set[str] | None:
+        """Variation sources ('' = none) ops gave this statistic: those emitted with this value,
+        else any value of (dataset, name, method); None when no op emitted it."""
+        key = {"d": dataset, "n": name, "m": method}
+        base = (
+            "SELECT DISTINCT source FROM op_statistics WHERE dataset=$d AND name=$n AND method=$m"
+        )
+        rows = self._con.execute(base + " AND value=$v", key | {"v": float(value)}).fetchall()
+        if not rows:
+            rows = self._con.execute(base, key).fetchall()
+        return {r[0] for r in rows} if rows else None

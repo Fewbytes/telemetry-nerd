@@ -163,8 +163,9 @@ def test_unknown_before_the_first_sample_on_every_pod_blocks_a_fleet_claim():
 def test_unparseable_selector_falls_back_to_every_series_and_says_so():
     out = codes(check(fleet(p03=SILENT), 'up{pod="p03"} / on(pod) other{pod="p03"}'))
     assert out["missing_data"].message.startswith("1 of 20 series")
-    note = out["claim_scope"]
-    assert note.severity == "info" and "judged over every evidence series" in note.message
+    note = out["scope_undetermined"]
+    assert note.severity == "warn" and note.message.startswith("scope undetermined")
+    assert "checked over every evidence series" in note.message
 
 
 def test_selector_notes_survive_clean_data():

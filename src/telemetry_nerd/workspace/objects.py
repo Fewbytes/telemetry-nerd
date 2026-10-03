@@ -114,10 +114,13 @@ class ObjectStore:
         return self._get("hypothesis", Hypothesis, obj_id)
 
     def set_hypothesis_status(
-        self, obj_id: str, status: HypothesisStatus
+        self, obj_id: str, status: HypothesisStatus, alternatives_considered: str | None = None
     ) -> tuple[str, Hypothesis]:
         h = self.get_hypothesis(obj_id)
-        updated = h.model_copy(update={"status": status, "updated_at_ms": self._clock()})
+        change: dict = {"status": status, "updated_at_ms": self._clock()}
+        if alternatives_considered is not None:
+            change["alternatives_considered"] = alternatives_considered
+        updated = h.model_copy(update=change)
         updated = Hypothesis.model_validate(updated.model_dump())  # re-validate status
         self._update(updated)
         return h.status, updated
@@ -143,7 +146,12 @@ class ObjectStore:
 
     # findings -----------------------------------------------------------
     def create_finding(
-        self, data: FindingIn, author: str, evidence_flags: list[dict] | None = None
+        self,
+        data: FindingIn,
+        author: str,
+        evidence_flags: list[dict] | None = None,
+        scope_check: dict | None = None,
+        source_flags: list[dict] | None = None,
     ) -> Finding:
         f = Finding(
             **data.model_dump(),
@@ -151,6 +159,8 @@ class ObjectStore:
             author=author,
             created_at_ms=self._clock(),
             evidence_flags=evidence_flags or [],
+            scope_check=scope_check,
+            source_flags=source_flags or [],
         )
         self._insert("finding", f, data.answers_panel)
         return f

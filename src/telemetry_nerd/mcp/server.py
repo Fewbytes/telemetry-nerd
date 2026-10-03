@@ -1500,12 +1500,23 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise _fail(e) from e
 
     @mcp.tool()
-    def hypothesis_update(hypothesis: str, status: str, note: str | None = None) -> str:
-        """Change a hypothesis status (open, supported, refuted, ...). Refuted ones stay visible.
+    def hypothesis_update(
+        hypothesis: str,
+        status: str,
+        note: str | None = None,
+        alternatives_considered: str | None = None,
+    ) -> str:
+        """Change a hypothesis status (proposed, supported, refuted, inconclusive). Refuted ones
+        stay visible. `supported` is refused unless the statement names a concrete subject (a
+        service/resource label value or metric the workspace has queried), a finding with
+        stance=for backs it, and an alternative was considered: another hypothesis refuted or
+        inconclusive, or alternatives_considered (which alternatives, how ruled out).
         Returns {hypothesis, status}."""
         try:
             st = TypeAdapter(HypothesisStatus).validate_python(status)
-            h = ws.hypothesis_update(hypothesis, st, "claude", note=note)
+            h = ws.hypothesis_update(
+                hypothesis, st, "claude", note=note, alternatives_considered=alternatives_considered
+            )
             return _dump({"hypothesis": h.id, "status": h.status})
         except (ValidationError, NotFound, ValueError) as e:
             raise _fail(e) from e
@@ -1519,6 +1530,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         hypothesis: str | None = None,
         stance: str | None = None,
         answers_panel: str | None = None,
+        scope_note: str | None = None,
     ) -> str:
         """Record a scoped, evidenced claim. scope: {source, selector, start, end, step,
         aggregation, baseline_start?, baseline_end?} (times: now-2h, epoch ms, ISO).
@@ -1528,10 +1540,16 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         `source` (common_cause | special_cause | measurement_system | undetermined) says what
         the variation is attributed to; never relabel it. hypothesis and stance (for|against)
         go together. Coverage of the window is checked per evidence series that
-        scope.selector's label matchers name (e.g. up{pod="x"} for a claim about one pod).
-        Returns {finding, url, uncertainty?: [{evidence, flag, message}],
-        sources?}: flags the server derived (uncertainty unknown / lower bound) and the cited
-        variation sources; report them with the finding."""
+        scope.selector's label matchers name (e.g. up{pod="x"} for a claim about one pod);
+        write it as PromQL (sum by (code) (rate(x{svc="a"}[5m])) or x{svc="a"}).
+        Every entity the claim names (service, pod, job... values) must be covered by the
+        cited evidence: refused otherwise, with the datasets that hold them; or pass scope_note
+        saying why the claim reaches beyond its evidence (flagged beyond_evidence).
+        Returns {finding, url, scope: {status covered|beyond_evidence|undetermined, ...},
+        uncertainty?: [{evidence, flag, message}], sources?, source_flags?}: what the server
+        derived (scope against evidence, uncertainty unknown / lower bound, variation sources:
+        taken from the op that emitted a statistic, or undetermined); report them with the
+        finding."""
         try:
             sc = dict(scope)
             try:
@@ -1551,6 +1569,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                     "hypothesis": hypothesis,
                     "stance": stance,
                     "answers_panel": answers_panel,
+                    "scope_note": scope_note,
                 }
             )
             f = ws.finding_create(data, "claude")
@@ -1559,8 +1578,12 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         out: dict = {"finding": f.id, "url": f"{ui_url}/#/finding/{f.id}"}
         if f.evidence_flags:
             out["uncertainty"] = [e.model_dump() for e in f.evidence_flags]
+        if f.scope_check is not None:
+            out["scope"] = f.scope_check.model_dump()
         if f.sources:
             out["sources"] = f.sources  # spec §5.4: variation sources of the cited statistics
+        if f.source_flags:
+            out["source_flags"] = [e.model_dump() for e in f.source_flags]
         return _dump(out)
 
     @mcp.tool()
