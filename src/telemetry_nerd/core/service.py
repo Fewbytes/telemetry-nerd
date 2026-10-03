@@ -396,8 +396,8 @@ class TelemetryService:
     async def query(
         self,
         expr: str,
-        start: str = "now-1h",
-        end: str = "now",
+        start: str | None = None,
+        end: str | None = None,
         step: str = "auto",
         source: str = "default",
         actor: Actor = "claude",
@@ -408,6 +408,8 @@ class TelemetryService:
                 f"{expr.strip()} names a code output (fixed data), not a source query",
                 hint="pass the output's dataset handle to show or the op instead of its expr",
             )
+        start = start or self.get_default_range()
+        end = end or "now"
         src = self._source(source)
         expr = self._expand_families(expr, source, src)
         now = self.clock()
@@ -485,6 +487,15 @@ class TelemetryService:
             }
         self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
         return {"dataset": meta.id, "summary": summary}
+
+    def get_default_range(self) -> str:
+        """The `start` new panels default to when the caller doesn't say (bead aqk)."""
+        return self.workspace.get_setting("default_range", "now-1h")
+
+    def set_default_range(self, value: str) -> str:
+        parse_time(value, self.clock())  # raises ValueError if unparseable
+        self.workspace.set_setting("default_range", value)
+        return value
 
     def _time_summary(self, meta, result, now: int, bundle=None) -> dict:
         bundle = bundle or dataset_bundle(self.datasets, meta, result)

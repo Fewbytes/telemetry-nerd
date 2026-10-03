@@ -442,6 +442,15 @@ def create_app(
         await service.y_context(request.path_params["id"], "user")
         return service.workspace.get_panel(request.path_params["id"]).to_dict()
 
+    @_api
+    async def workspace_default_range(request: Request) -> object:
+        return {"default_range": service.get_default_range()}
+
+    @_api
+    async def set_workspace_default_range(request: Request) -> object:
+        body = await _body(request, default_range=str)
+        return {"default_range": service.set_default_range(body["default_range"])}
+
     async def render_report(request: Request) -> JSONResponse:
         try:
             body = await _body(request)
@@ -839,6 +848,8 @@ def create_app(
         Route("/api/panels/{id}/y-view", panel_y_view, methods=["POST"]),
         Route("/api/panels/{id}/y-context", panel_y_context, methods=["POST"]),
         Route("/api/panels/{id}/reframe", panel_reframe, methods=["POST"]),
+        Route("/api/workspace/default-range", workspace_default_range, methods=["GET"]),
+        Route("/api/workspace/default-range", set_workspace_default_range, methods=["POST"]),
         Route("/api/panels/{id}/split-outcome", panel_split_outcome, methods=["POST"]),
         Route("/api/panels/{id}/overlays", panel_overlays, methods=["POST"]),
         Route("/api/panels/{id}/card", panel_card),
