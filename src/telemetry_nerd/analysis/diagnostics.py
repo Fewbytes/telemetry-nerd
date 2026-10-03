@@ -343,6 +343,13 @@ def departure_from_zero(
     )  # fmt: skip
 
 
+def _two_model_reason(source: str, reasons: list[str], var: list[dict], why: dict) -> None:
+    """The reason and variation item of a test judged under two models: its source (the
+    cautious model's label) picks the text."""
+    reasons.append(why[source])
+    var.append(item(source, why[source]))
+
+
 def diagnose(
     ts_ms: np.ndarray,
     y: np.ndarray,
@@ -432,8 +439,8 @@ def diagnose(
         else None
     )
     departed = dep is not None and dep.significant
-    # a departure only the Poisson model sees: not labelled, but not stable or noise either
-    undecided = dep is not None and dep.status == UNDETERMINED
+    # a departure only the Poisson model sees is not labelled, but not stable or noise either
+    dep_tested = dep is not None and dep.status != COMMON
     # no chart judges the judged points (short baseline), or the series' residuals look too
     # dependent: test them against the baseline's own variation (an episode that fits neither
     # step nor trend inflates tau through its own rise and fall, 7f15)
@@ -445,7 +452,7 @@ def diagnose(
             ref = (positions(rts, step_ms) if rts.size else rts, reference[1])
         exc = excursion(ts_ms, pos, y, baseline, ref)
     exc_special = exc is not None and exc.significant
-    exc_undecided = exc is not None and exc.status == UNDETERMINED
+    exc_tested = exc is not None and exc.status != COMMON
     if exc is not None and exc_special and ne < MIN_N_EFF:
         # the excursion is the structure the residuals still held: their autocorrelation and
         # sigma from what it leaves
@@ -463,16 +470,15 @@ def diagnose(
     if ne < MIN_N_EFF:
         # the judged points were tested against the baseline (a departure from zero or an
         # excursion, under two models): that is not "insufficient data", whatever the label
-        tested = departed or undecided or exc_special or exc_undecided
         reasons.append(
             f"n_eff {ne:.1f} < {MIN_N_EFF}: {n} points but autocorrelation time {tau:.1f} steps"
             + (": trend, shift and period tests are unreliable; the departure from the zero "
-               "baseline rests on the event counts alone" if departed or undecided else "")
+               "baseline rests on the event counts alone" if dep_tested else "")
             + (": trend, shift and period tests are unreliable; the excursion test judges the "
                "judged points against the baseline's own variation"
-               if (exc_special or exc_undecided) and not (departed or undecided) else "")
+               if exc_tested and not dep_tested else "")
         )  # fmt: skip
-        if not tested:
+        if not (dep_tested or exc_tested):
             labels.append("insufficient_data")
     material = [s for s in shifts if abs(s.delta) >= MATERIAL * sigma_within]
     if material and model == "step":
@@ -510,21 +516,17 @@ def diagnose(
             f"{' in the numerator units of the ratio' if counts is not None else ''}); "
             f"{dep.describe(fmt)}"
         )
-        if departed:
-            if "level_shifted" not in labels:
-                labels.append("level_shifted")
-            reasons.append(f"departure from a zero baseline under both models: {what}")
-            var.append(item(SPECIAL, reasons[-1]))
-        elif undecided:
-            reasons.append(
+        if departed and "level_shifted" not in labels:
+            labels.append("level_shifted")
+        _two_model_reason(dep.status, reasons, var, {
+            SPECIAL: f"departure from a zero baseline under both models: {what}",
+            UNDETERMINED: (
                 f"departure from a zero baseline under the Poisson model only: {what}; one "
                 "burst of clustered events cannot be told from a change at this baseline length "
                 "(a longer zero baseline, e.g. a range starting earlier, would decide it)"
-            )
-            var.append(item(UNDETERMINED, reasons[-1]))
-        else:
-            reasons.append(f"events after a zero baseline, within what one rate explains: {what}")
-            var.append(item(COMMON, reasons[-1]))
+            ),
+            COMMON: f"events after a zero baseline, within what one rate explains: {what}",
+        })  # fmt: skip
     if exc is not None:
         what = (
             f"{exc.points} judged point(s) {fmt_ts(exc.start_ms)}..{fmt_ts(exc.end_ms)} "
@@ -534,23 +536,19 @@ def diagnose(
             f"[{fmt(exc.interval[0])}, {fmt(exc.interval[1])}] ({exc.sigmas:.3g} sigma); "
             f"{exc.describe()}"
         )
-        if exc_special:
-            lab = "transient" if exc.returned else "level_shifted"
-            if lab not in labels:
-                labels.append(lab)
-            reasons.append(f"excursion from the baseline under both models: {what}")
-            var.append(item(SPECIAL, reasons[-1]))
-        elif exc_undecided:
-            reasons.append(
+        lab = "transient" if exc.returned else "level_shifted"
+        if exc_special and lab not in labels:
+            labels.append(lab)
+        _two_model_reason(exc.status, reasons, var, {
+            SPECIAL: f"excursion from the baseline under both models: {what}",
+            UNDETERMINED: (
                 f"excursion from the baseline under the baseline model only: {what}; the "
                 "cautious model (heavier tails, the residuals' own autocorrelation and spread) "
                 "explains it as common cause, so the source is not decided (a longer baseline, "
                 "e.g. a range starting earlier, would decide it)"
-            )
-            var.append(item(UNDETERMINED, reasons[-1]))
-        else:
-            reasons.append(f"judged points within the baseline's common-cause variation: {what}")
-            var.append(item(COMMON, reasons[-1]))
+            ),
+            COMMON: f"judged points within the baseline's common-cause variation: {what}",
+        })  # fmt: skip
     if peaks:
         labels.append("periodic")
         reasons.append(
@@ -561,10 +559,8 @@ def diagnose(
         var.append(item(COMMON, reasons[-1] + ": a systemic cycle, part of the envelope"))
     # a (even minor) shift or trend explains an out-of-control chart: that is not noise
     structured = (
-        departed
-        or undecided
-        or exc_special
-        or exc_undecided
+        dep_tested
+        or exc_tested
         or bool({"level_shifted", "drifting"} & set(labels))
         or ((model == "step" and bool(shifts)) or (model == "trend" and tr.significant))
     )
@@ -591,7 +587,8 @@ def diagnose(
         reasons += [r for _, r in noisy]
         var += [item(src, r) for src, r in noisy]
     changed = {"insufficient_data", "level_shifted", "transient", "drifting"}
-    if (undecided or exc_undecided) and not changed & set(labels):
+    undecided = UNDETERMINED in (dep.status if dep else None, exc.status if exc else None)
+    if undecided and not changed & set(labels):
         labels.append("undetermined")  # tested, the models disagree: not "stable"
     if not labels:
         labels.append("stable")
