@@ -33,7 +33,7 @@ from telemetry_nerd.core.consumer import kind_of
 from telemetry_nerd.core.presence import MODES
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
 from telemetry_nerd.core.workspace_service import code_brief
-from telemetry_nerd.model.errors import NotFound
+from telemetry_nerd.model.errors import NotFound, WrongWorkspace
 from telemetry_nerd.model.jsonsafe import finite
 from telemetry_nerd.sources.base import SourceError
 from telemetry_nerd.workspace.models import AnnotationIn, HypothesisStatus, TimeSpan, Verdict
@@ -108,6 +108,14 @@ def _validated[M: BaseModel](model: type[M], body: dict) -> M:
         ) from e
 
 
+def _optional(body: dict, key: str, typ: type):
+    """`body[key]` when present and not null; it must then be a `typ`."""
+    value = body.get(key)
+    if value is not None and not isinstance(value, typ):
+        raise _BadRequest(f"invalid field {key!r}", f"{key!r} must be a {typ.__name__} or null")
+    return value
+
+
 def _int_param(request: Request, name: str, default: int) -> int:
     raw = request.query_params.get(name)
     if raw is None:
@@ -134,6 +142,10 @@ def _api(handler: Callable[[Request], Awaitable[object]]):
             return _error(e.status, str(e), **extra)
         except NotFound as e:
             return _error(404, str(e))
+        except WrongWorkspace as e:
+            return _error(
+                409, str(e), hint=f"open it first: POST /api/workspaces/{e.workspace}/open"
+            )
         except ValueError as e:
             return _error(400, str(e))
 
@@ -162,7 +174,8 @@ def mcp_transport_security(allowed_hosts: Sequence[str]) -> TransportSecuritySet
 class PinWorkspace:
     """Pure ASGI middleware: each HTTP request runs pinned to the workspace active when it
     arrived (spec D4). WebSocket scopes pass through unpinned: `/ws` and `/ws/bridge` are
-    long-lived and read the active id per frame."""
+    long-lived. `/ws` reads the active id per frame; `/ws/bridge` delivers the global
+    stream and needs none."""
 
     def __init__(self, app: ASGIApp, active: ActiveWorkspace) -> None:
         self.app = app
@@ -539,7 +552,9 @@ def create_app(
         await websocket.accept()
         queue = service.log.subscribe()
         changes = presence.subscribe()
+        switches = service.active.subscribe()
         # Subscribed first, so nothing is lost between replay and live; dedupe by seq.
+        # Unpinned scope: the replay reads the active workspace's events.
         last_sent = since
         while batch := service.log.since(last_sent):
             for event in batch:
@@ -555,17 +570,23 @@ def create_app(
         reader = asyncio.ensure_future(until_disconnect())
         getter = asyncio.ensure_future(queue.get())
         changed = asyncio.ensure_future(changes.get())
+        switched = asyncio.ensure_future(switches.get())
         try:
             while True:
                 done, _ = await asyncio.wait(
-                    {reader, getter, changed}, return_when=asyncio.FIRST_COMPLETED
+                    {reader, getter, changed, switched}, return_when=asyncio.FIRST_COMPLETED
                 )
                 if reader in done:
                     break
+                if switched in done:
+                    # Workspace frames are control messages too: the UI reloads its snapshot.
+                    await websocket.send_json(switched.result())
+                    switched = asyncio.ensure_future(switches.get())
                 if getter in done:
                     event = getter.result()
                     getter = asyncio.ensure_future(queue.get())
-                    if event["seq"] > last_sent:
+                    # Only the active workspace's events; read per frame (spec "HTTP").
+                    if event["seq"] > last_sent and event["workspace"] == service.active.active:
                         await websocket.send_json(event)
                         last_sent = event["seq"]
                 if changed in done:
@@ -577,10 +598,11 @@ def create_app(
         except WebSocketDisconnect:
             pass
         finally:
-            for task in (reader, getter, changed):
+            for task in (reader, getter, changed, switched):
                 task.cancel()
             service.log.unsubscribe(queue)
             presence.unsubscribe(changes)
+            service.active.unsubscribe(switches)
 
     async def bridge(websocket: WebSocket) -> None:
         """One stdio bridge's lifetime socket: presence reports in, channel deliveries out."""
@@ -671,7 +693,44 @@ def create_app(
 
     @_api
     async def workspace(request: Request) -> object:
-        return ws.snapshot()
+        info = service.registry.get(service.active())  # the workspace this request is pinned to
+        return {
+            **ws.snapshot(),
+            "workspace": {
+                "id": info.id,
+                "title": info.title,
+                "question": info.question,
+                "archived": info.archived,
+                "created_at_ms": info.created_at_ms,
+            },
+        }
+
+    @_api
+    async def workspaces_list(request: Request) -> object:
+        archived = request.query_params.get("archived", "") in ("1", "true")
+        return service.workspaces.list(archived, None)
+
+    @_api
+    async def workspaces_create(request: Request) -> object:
+        body = await _body(request, title=str)
+        question = _optional(body, "question", str)
+        return await service.workspaces.create(body["title"], question, "user")
+
+    @_api
+    async def workspaces_open(request: Request) -> object:
+        await _body(request)
+        return await service.workspaces.switch(request.path_params["id"], "user")
+
+    @_api
+    async def workspaces_update(request: Request) -> object:
+        body = await _body(request)
+        return service.workspaces.update(
+            request.path_params["id"],
+            title=_optional(body, "title", str),
+            question=_optional(body, "question", str),
+            archived=_optional(body, "archived", bool),
+            actor="user",
+        ).to_dict()
 
     @_api
     async def panel_y_view(request: Request) -> object:
@@ -866,6 +925,10 @@ def create_app(
     routes = [
         Route("/api/health", health),
         Route("/api/workspace", workspace),
+        Route("/api/workspaces", workspaces_list),
+        Route("/api/workspaces", workspaces_create, methods=["POST"]),
+        Route("/api/workspaces/{id}/open", workspaces_open, methods=["POST"]),
+        Route("/api/workspaces/{id}/update", workspaces_update, methods=["POST"]),
         Route("/api/sources", list_sources),
         Route("/api/events", list_events),
         Route("/api/annotations", annotation_create, methods=["POST"]),

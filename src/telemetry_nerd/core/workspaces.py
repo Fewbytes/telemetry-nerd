@@ -59,8 +59,9 @@ class WorkspaceOps:
             )  # fmt: skip
         self._registry.mark_opened(wid)
         self._active.set_active(wid)
-        result = await self._result(self._registry.get(wid), previous)
+        # before the restore: a slow or cancelled restore must not delay or skip the UI frame
         self._notify()
+        result = await self._result(self._registry.get(wid), previous)
         return {**result, "created": True} if created else result
 
     def update(

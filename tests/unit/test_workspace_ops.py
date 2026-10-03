@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from telemetry_nerd.model.errors import NotFound
@@ -196,3 +198,21 @@ async def test_notify_reaches_subscribers(tmp_path):
     assert frame["kind"] == "workspace" and frame["active"]["id"] == out["workspace"]["id"]
     svc.workspaces.update(out["workspace"]["id"], title="three", actor="user")
     assert q.get_nowait()["active"]["title"] == "three"
+
+
+@pytest.mark.parametrize("error", [RuntimeError("restore blew up"), asyncio.CancelledError()])
+async def test_switch_notifies_before_restoring_sources(tmp_path, monkeypatch, error):
+    """A slow, failing or cancelled source restore must not delay or skip the UI frame."""
+    svc = make_service(tmp_path)
+    w1 = svc.active.active
+    out = await svc.workspaces.create("two", None, "user")
+    q = svc.active.subscribe()
+
+    async def boom(wid):
+        raise error
+
+    monkeypatch.setattr(svc.workspaces, "restore_sources", boom)
+    with pytest.raises(type(error)):
+        await svc.workspaces.switch(w1, "user")
+    assert svc.active.active == w1 != out["workspace"]["id"]
+    assert q.get_nowait()["active"]["id"] == w1
