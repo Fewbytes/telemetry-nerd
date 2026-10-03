@@ -358,3 +358,22 @@ def test_compare_seasonal_route(client):
         client.post("/api/show", json={"dataset": "x", "question": "q?", "mark": 3}).status_code
         == 400
     )
+
+
+def test_panel_preview_returns_a_dataset_without_mutating_the_panel(client):
+    pid = make_panel(client).json()["panel"]["id"]
+    resp = client.post(f"/api/panels/{pid}/preview", json={"start": "now-3h", "end": "now"})
+    assert resp.status_code == 200
+    assert "dataset" in resp.json()
+
+
+def test_panel_rescope_returns_a_new_panel(client):
+    pid = make_panel(client).json()["panel"]["id"]
+    resp = client.post(f"/api/panels/{pid}/rescope", json={"start": "now-3h", "end": "now"})
+    assert resp.status_code == 200
+    assert resp.json()["panel"]["id"] != pid
+
+
+def test_panel_preview_404s_on_an_unknown_panel(client):
+    resp = client.post("/api/panels/p999/preview", json={"start": "now-3h", "end": "now"})
+    assert resp.status_code == 404

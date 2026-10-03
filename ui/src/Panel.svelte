@@ -3,9 +3,10 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import {
-    closePanel, fetchPanelData, refreshYContext, reframePanel, splitOutcome, reportRender, selectYView, setMarginal, selectDataView, setOverlays,
+    closePanel, fetchPanelData, previewPanel, refreshYContext, reframePanel, rescopePanel, splitOutcome, reportRender, selectYView, setMarginal, selectDataView, setOverlays,
     type Annotation, type Panel, type PanelData, type Thread, type Where, type YView,
   } from "./lib/api";
+  import { isInBounds, parseRelative, presetRange, type Viewport } from "./chart/viewport";
   import { rgba, seriesName, toUplot } from "./chart/toUplot";
   import { drawRug, facetTop, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, rugMoreLabel, type RugCell } from "./chart/rug";
   import { describeShown, intervalLegend, panelNotes, provenanceParts, provenanceText } from "./lib/panelNotes";
@@ -14,7 +15,7 @@
   import { windowBadge } from "./lib/coverage";
   import { focusRects, hasFocus, notesAt, unknownReasons } from "./chart/focus";
   import ChartTip from "./components/ChartTip.svelte";
-  import { fmtSI, fmtStep } from "./lib/format";
+  import { fmtRange, fmtSI, fmtStep } from "./lib/format";
   import { axisGutterSize, placeTip, type HoverTip } from "./chart/plotKit";
   import { setupCanvas } from "./chart/canvas";
   import { drawnFor, VIEW_LABELS, type DataViewName } from "./chart/dataview";
@@ -213,6 +214,60 @@
     pending = optimistic;
     bandPick = false;
     selectYView(panel.id, body).catch((e) => { pending = undefined; error = String(e); });
+  };
+
+  // time-range selector (task 11): viewport is null while showing the panel's committed/fetched range.
+  // Picking a preset/typed range selects it (fetching it from the server when it's outside what's
+  // already loaded); "keep this range" rescopes the panel for real, which opens a new panel for that
+  // range. The chart itself does NOT re-render the selected range yet (no rendering pipeline for an
+  // unattached preview dataset), so the badge only says what was fetched/selected, never "previewing".
+  let viewport = $state<Viewport | null>(null);
+  let previewData = $state<{ dataset: string; summary: unknown } | null>(null);
+  let rangeBusy = $state(false);
+  let rangeError = $state<string | null>(null);
+
+  // source of truth for "already fetched": the dataset actually loaded for this panel, not the
+  // spec (ChartSpec has no `scope` field — see DatasetMeta.start_ms/end_ms on `data.dataset`).
+  const fetchedBounds = (): { start_ms: number; end_ms: number } => ({
+    start_ms: data?.kind === "time" ? data.dataset.start_ms : 0,
+    end_ms: data?.kind === "time" ? data.dataset.end_ms : 0,
+  });
+
+  const applyViewport = (v: Viewport) => {
+    viewport = v;
+    rangeError = null;
+    if (isInBounds(v, fetchedBounds())) {
+      previewData = null; // in-bounds: nothing to fetch (the chart is not re-windowed yet either)
+      return;
+    }
+    rangeBusy = true;
+    previewPanel(panel.id, String(v.start_ms), String(v.end_ms))
+      .then((r) => (previewData = r))
+      .catch((e) => (rangeError = String(e)))
+      .finally(() => (rangeBusy = false));
+  };
+
+  const pickPreset = (preset: "15m" | "1h" | "6h" | "24h" | "7d") =>
+    applyViewport(presetRange(preset, Date.now()));
+
+  const pickTyped = (text: string) => {
+    const v = parseRelative(text, Date.now());
+    if (v) applyViewport(v);
+    else rangeError = `could not parse "${text}"`;
+  };
+
+  const keepThisRange = () => {
+    if (!viewport) return;
+    rangeBusy = true;
+    rescopePanel(panel.id, String(viewport.start_ms), String(viewport.end_ms))
+      .then(() => {
+        viewport = null;
+        previewData = null;
+        // the rescoped range arrives as a new panel via the workspace snapshot stream
+        // (same pattern as reframe()/splitOutcome() above) — nothing else to do here.
+      })
+      .catch((e) => (rangeError = String(e)))
+      .finally(() => (rangeBusy = false));
   };
 
 
@@ -729,7 +784,7 @@
       <span class="y-strip" style="bottom:{32 + (data.kind === "time" ? rugAxisExtra(data.bucket_state?.length ?? 0) : 0)}px" title="where this view sits within the full data range"><i style="bottom:{cs.bottomPct}%;height:{cs.heightPct}%"></i></span>
     {/if}
     {#if data?.kind === "time" && originOff}<span class="y-origin" data-y-origin>y ≠ 0</span>{/if}
-    {#if selection}
+    {#if selection && !previewData}
       {#key selection}
         <SelectionMenu
           panelId={panel.id}
@@ -797,6 +852,26 @@
       {/if}
       {#if bandPick}<span class="hint">drag vertically on the plot · Esc cancels</span>{/if}
       {#if idxBusy}<span class="hint">fetching baseline…</span>{/if}
+    </div>
+  {/if}
+  {#if data?.kind === "time"}
+    <div class="legend time-range" role="group" aria-label="Time range">
+      range:
+      {#each ["15m", "1h", "6h", "24h", "7d"] as const as preset}
+        <button type="button" disabled={rangeBusy} onclick={() => pickPreset(preset)}>{preset}</button>
+      {/each}
+      <input
+        type="text" placeholder="now-3h" disabled={rangeBusy}
+        onkeydown={(e) => e.key === "Enter" && pickTyped((e.target as HTMLInputElement).value)}
+      />
+      {#if viewport && !rangeBusy && !rangeError}
+        <span class="hint" data-preview-badge>
+          {previewData ? "fetched" : "selected"} {fmtRange(viewport.start_ms, viewport.end_ms)} — the chart still shows the
+          current range; click 'keep this range' to open a panel over it
+        </span>
+        <button type="button" disabled={rangeBusy} onclick={keepThisRange}>keep this range</button>
+      {/if}
+      {#if rangeError}<span class="hint" data-range-error>{rangeError}</span>{/if}
     </div>
   {/if}
   {#if data?.kind === "time" && data.filter}

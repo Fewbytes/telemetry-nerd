@@ -14,7 +14,7 @@ export interface ChartSpec {
     views?: YView[]; selected?: YView | null; context?: YContext | null;
   };
   overlays?: OverlayFlags;
-  auto?: { transform: "rate" | "reframe"; source_dataset: string; reason: string } | null;
+  auto?: { transform: "rate" | "reframe" | "rescope"; source_dataset: string; reason: string } | null;
   signal?: { filter: string; kind: string; reason: string; offered: string[]; default: string; selected?: string | null } | null;
   references?: Record<string, { mode: string; label: string; start_ms: number; end_ms: number; shift_ms: number; series: string; dist?: string | null }>;
   marginal?: { reference: "previous" | "week" | "profile"; author?: string; reason?: string | null } | null;
@@ -408,6 +408,15 @@ export interface OutcomeSplit { label: string; excluded: string[]; success: { pa
 export const splitOutcome = (id: string) => postJSON<OutcomeSplit>(`/api/panels/${id}/split-outcome`);
 export const reframePanel = (id: string, index: number) => postJSON<{ panel: Panel }>(`/api/panels/${id}/reframe`, { index });
 export const refreshYContext = (id: string) => postJSON<unknown>(`/api/panels/${id}/y-context`);
+
+export const previewPanel = (id: string, start: string, end: string) =>
+  postJSON<{ dataset: string; summary: unknown }>(`/api/panels/${id}/preview`, { start, end });
+export const rescopePanel = (id: string, start: string, end: string) =>
+  postJSON<{ panel: Panel }>(`/api/panels/${id}/rescope`, { start, end });
+export const fetchDefaultRange = () =>
+  fetch("/api/workspace/default-range").then((r) => json<{ default_range: string }>(r));
+export const setDefaultRange = (value: string) =>
+  postJSON<{ default_range: string }>("/api/workspace/default-range", { default_range: value });
 
 /** Switch reference layers; turning the ghost on makes the daemon fetch last week. */
 export const setOverlays = (id: string, body: Partial<OverlayFlags>) =>

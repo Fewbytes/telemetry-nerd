@@ -58,6 +58,8 @@ def describe_event(e: Event) -> str:
             )
         case "panel.closed":
             return f"{who} closed {e.object_id}"
+        case "panel.rescoped":
+            return f"{who} rescoped {p['from']} to {e.object_id}"
         case "catalog.claimed":
             return (
                 f"{who} set {p['field']} of {p['metric']} on {p['source']} "

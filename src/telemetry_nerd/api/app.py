@@ -436,11 +436,43 @@ def create_app(
         return {"panel": res.panel.to_dict(), "issues": [i.model_dump() for i in res.issues]}
 
     @_api
+    async def panel_preview(request: Request) -> object:
+        """A dataset over a different range for this panel, without mutating it."""
+        body = await _body(request, start=str, end=str)
+        try:
+            return await service.preview(
+                request.path_params["id"], body["start"], body["end"], "user"
+            )
+        except SourceError as e:
+            raise _BadRequest(str(e), e.hint or "") from e
+
+    @_api
+    async def panel_rescope(request: Request) -> object:
+        """Accept a time-range change: a new panel over the new range, leaving this one untouched."""
+        body = await _body(request, start=str, end=str)
+        try:
+            res = await service.rescope(
+                request.path_params["id"], body["start"], body["end"], "user"
+            )
+        except SourceError as e:
+            raise _BadRequest(str(e), e.hint or "") from e
+        return {"panel": res.panel.to_dict(), "issues": [i.model_dump() for i in res.issues]}
+
+    @_api
     async def panel_y_context(request: Request) -> object:
         """Recompute a panel's y context (e.g. once its operating profile has finished)."""
         await _body(request)
         await service.y_context(request.path_params["id"], "user")
         return service.workspace.get_panel(request.path_params["id"]).to_dict()
+
+    @_api
+    async def workspace_default_range(request: Request) -> object:
+        return {"default_range": service.get_default_range()}
+
+    @_api
+    async def set_workspace_default_range(request: Request) -> object:
+        body = await _body(request, default_range=str)
+        return {"default_range": service.set_default_range(body["default_range"])}
 
     async def render_report(request: Request) -> JSONResponse:
         try:
@@ -839,6 +871,10 @@ def create_app(
         Route("/api/panels/{id}/y-view", panel_y_view, methods=["POST"]),
         Route("/api/panels/{id}/y-context", panel_y_context, methods=["POST"]),
         Route("/api/panels/{id}/reframe", panel_reframe, methods=["POST"]),
+        Route("/api/panels/{id}/preview", panel_preview, methods=["POST"]),
+        Route("/api/panels/{id}/rescope", panel_rescope, methods=["POST"]),
+        Route("/api/workspace/default-range", workspace_default_range, methods=["GET"]),
+        Route("/api/workspace/default-range", set_workspace_default_range, methods=["POST"]),
         Route("/api/panels/{id}/split-outcome", panel_split_outcome, methods=["POST"]),
         Route("/api/panels/{id}/overlays", panel_overlays, methods=["POST"]),
         Route("/api/panels/{id}/card", panel_card),

@@ -248,6 +248,17 @@ class ShowResult:
     issues: list[ValidationIssue]
 
 
+def _refuse_derived_rescope(panel_id: str, meta: DatasetMeta, spec: ChartSpec) -> None:
+    """A filter output keeps its parent's expr: re-querying that expr over a new range would
+    silently show the raw, unfiltered signal under the same question (bead aqk)."""
+    if meta.derived is not None or spec.signal is not None:
+        raise ValueError(
+            f"rescope_unsupported_for_derived: {panel_id} is a derived/filtered panel; rescope "
+            "does not yet re-run its derivation (hint: create a new panel over the new range "
+            "and re-apply the filter)"
+        )
+
+
 def _bounds_text(lo: float | None, hi: float | None) -> str:
     """The catalog's notation where it has one, else an interval."""
     for text, rng in NATURAL.items():
@@ -454,8 +465,8 @@ class TelemetryService:
     async def query(
         self,
         expr: str,
-        start: str = "now-1h",
-        end: str = "now",
+        start: str | None = None,
+        end: str | None = None,
         step: str = "auto",
         source: str = "default",
         actor: Actor = "claude",
@@ -466,6 +477,8 @@ class TelemetryService:
                 f"{expr.strip()} names a code output (fixed data), not a source query",
                 hint="pass the output's dataset handle to show or the op instead of its expr",
             )
+        start = start or self.get_default_range()
+        end = end or "now"
         src = self._source(source)
         await self.ensure_resolution(source)
         expr = self._expand_families(expr, source, src)
@@ -546,6 +559,18 @@ class TelemetryService:
             }
         self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
         return {"dataset": meta.id, "summary": summary}
+
+    def get_default_range(self) -> str:
+        """The `start` new panels default to when the caller doesn't say (bead aqk)."""
+        return self.workspace.get_setting("default_range", "now-1h")
+
+    def set_default_range(self, value: str) -> str:
+        now = self.clock()
+        if parse_time(value, now) >= now:  # parse_time raises ValueError if unparseable
+            # every defaulted query ends at now: a start at or after it would fail end <= start
+            raise ValueError(f"default range {value!r} must start before now (e.g. now-1h)")
+        self.workspace.set_setting("default_range", value)
+        return value
 
     def _time_summary(self, meta, result, now: int, bundle=None) -> dict:
         bundle = bundle or dataset_bundle(self.datasets, meta, result)
@@ -1004,6 +1029,80 @@ class TelemetryService:
             start=str(start_ms), end=str(end_ms), matchers=g.matchers,
             error_matcher=g.error_matcher, actor=actor, reframed_from=g.id,
         )  # fmt: skip
+
+    async def preview(self, panel_id: str, start: str, end: str, actor: Actor = "user") -> dict:
+        """A dataset over a different range for `panel_id`, without touching it (bead aqk):
+        the server side of a client-side zoom preview. Nothing is persisted or logged beyond
+        the routine internal dataset.created event any fetch makes."""
+        p = self.workspace.get_panel(panel_id)
+        meta = self.datasets.meta(p.dataset_ids[0])
+        refuse_requery(meta, "a time-range preview")
+        _refuse_derived_rescope(panel_id, meta, ChartSpec.model_validate(p.spec))
+        # step=auto: the old step was chosen for the old range (a 15 m panel's step over 7 d
+        # would be tens of thousands of buckets)
+        return await self.query(
+            meta.expr, start=start, end=end, step="auto", source=meta.source, actor=actor
+        )
+
+    async def rescope(
+        self, panel_id: str, start: str, end: str, actor: Actor = "user"
+    ) -> ShowResult:
+        """Accept a time-range change (bead aqk): a NEW panel over the new range, marked as
+        rescoped from this one, which is left exactly as it was. Never applied silently."""
+        p = self.workspace.get_panel(panel_id)
+        spec = ChartSpec.model_validate(p.spec)
+        mark = spec.layers[0].mark if spec.layers else "auto"
+        if mark not in ("line+envelope", "fleet", "spc"):
+            raise ValueError(
+                f"rescope_unsupported_for_mark: {panel_id} is a {mark} panel; rescope only "
+                "supports line+envelope, fleet and spc panels for now (hint: create a new "
+                "panel over the new range instead)"
+            )
+        meta = self.datasets.meta(p.dataset_ids[0])
+        refuse_requery(meta, "a time-range rescope")
+        _refuse_derived_rescope(panel_id, meta, spec)
+        layer = spec.layers[0]
+        if mark == "spc" and not layer.windows and layer.spc is not None:
+            # the baseline is a separately fetched reference (analyze_reference), not a window:
+            # show() would silently auto-pick an in-dataset baseline for the new dataset
+            raise ValueError(
+                f"rescope_unsupported_for_spc_reference: {panel_id}'s spc baseline is a "
+                "reference comparison, not an explicit window; rescope does not yet re-derive "
+                "it (hint: create a new panel and re-run the reference comparison)"
+            )
+        # step=auto: the old step was chosen for the old range, not this one (reframe keeps the
+        # window, so it keeps the step; a rescope changes the window)
+        ds = (
+            await self.query(
+                meta.expr, start=start, end=end, step="auto", source=meta.source, actor=actor
+            )
+        )["dataset"]
+        form = AutoForm(
+            transform="rescope",
+            source_dataset=p.dataset_ids[0],
+            reason=f"rescoped from {panel_id}",
+        )
+        kwargs: dict = {}
+        if spec.y.unit and (spec.y.unit_provenance or "").startswith("provided by"):
+            kwargs["unit"] = spec.y.unit  # an asserted unit; an inferred one is re-inferred
+        if (ab := spec.y.asserted_bounds) is not None:
+            kwargs.update(bounds_lo=ab.lo, bounds_hi=ab.hi, bounds_by=ab.by)
+        if mark == "fleet":
+            # the panel's persisted config, not FleetOps' in-memory last call (lost on restart,
+            # clobbered by any other fleet() on that dataset)
+            self.fleets.summary(ds, **(layer.fleet or {}))
+            kwargs["mark"] = "fleet"
+        elif mark == "spc":
+            kwargs["mark"] = "spc"
+            if layer.windows:
+                w = layer.windows[0]
+                kwargs["windows"] = [Window(start_ms=w.start_ms, end_ms=w.end_ms)]
+        elif layer.quantiles:
+            kwargs.update(mark="line+envelope", quantiles=list(layer.quantiles))
+        res = self.show(ds, p.question, actor, auto=form, raw_ok=True, **kwargs)
+        self.log.append(actor, "panel.rescoped", res.panel.id, {"from": panel_id})
+        await self.y_context(res.panel.id, actor)
+        return res
 
     async def reframe(self, panel_id: str, index: int, actor: Actor = "user") -> ShowResult:
         """Accept a proposed reframing (bead 2as.15): a NEW panel over the same window and step,

@@ -98,4 +98,9 @@ describe("y range and notes with context lines", () => {
     expect(n.find((x) => x.key === "auto_reframe")).toMatchObject({ kind: "caveat" });
     expect(n.find((x) => x.key === "auto_reframe")!.text).toMatch(/not the metric as asked.*d1/);
   });
+  it("a rescoped panel says which panel and dataset it came from", () => {
+    const n = panelNotes([], { auto: { transform: "rescope", source_dataset: "d1", reason: "rescoped from p1" } } as never);
+    expect(n.find((x) => x.key === "auto_rescope")).toMatchObject({ kind: "info" });
+    expect(n.find((x) => x.key === "auto_rescope")!.text).toMatch(/rescoped from p1.*d1/);
+  });
 });
