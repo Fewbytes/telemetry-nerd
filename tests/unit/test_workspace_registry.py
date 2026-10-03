@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from telemetry_nerd.model.errors import NotFound
@@ -63,28 +65,65 @@ def test_note_source_records_once_and_never_default(tmp_path):
     reg.note_source("w1", "prom", {"kind": "promql", "url": "a"})
     reg.note_source("w1", "prom", {"kind": "promql", "url": "b"})
     assert reg.sources("w1") == {"prom": {"kind": "promql", "url": "a"}}
+    reg.note_source("w1", "default", {"kind": "promql", "url": "d"})
     assert "default" not in reg.sources("w1")
 
 
-def test_counts_and_last_activity_are_derived(tmp_path):
+def _obj(con, oid, kind, ts, data, anchor=None, deleted=0, ws="w2"):
+    con.execute(
+        "INSERT INTO objects (id, kind, anchor, deleted, created_at_ms, data, workspace)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (oid, kind, anchor, deleted, ts, json.dumps(data), ws),
+    )
+
+
+def test_counts_are_open_panels_live_objects_and_open_threads(tmp_path):
     reg, con = make(tmp_path)
     reg.create("two")
+    for pid, closed in (("p1", 0), ("p2", 1)):
+        con.execute(
+            "INSERT INTO panels (id, question, spec, dataset_ids, created_at_ms, closed,"
+            " workspace) VALUES (?, 'q', '{}', '[]', 7000, ?, 'w2')",
+            (pid, closed),
+        )
+    _obj(con, "h1", "hypothesis", 1, {})
+    _obj(con, "h2", "hypothesis", 1, {}, deleted=1)
+    _obj(con, "f1", "finding", 1, {})
+    _obj(con, "a1", "annotation", 1, {})
+    _obj(con, "t1", "thread", 1, {})  # last message by user: open
+    _obj(con, "m1", "message", 2, {"author": "user"}, anchor="t1")
+    _obj(con, "t2", "thread", 1, {})  # claude answered last: closed
+    _obj(con, "m2", "message", 2, {"author": "user"}, anchor="t2")
+    _obj(con, "m3", "message", 3, {"author": "claude"}, anchor="t2")
+    _obj(con, "t3", "thread", 1, {}, ws="w1")
+    _obj(con, "m4", "message", 2, {"author": "user"}, anchor="t3", ws="w1")
+    assert reg.get("w2").counts == {
+        "panels": 1,
+        "hypotheses": 1,
+        "findings": 1,
+        "open_threads": 1,
+    }
+    assert reg.get("w1").counts == {
+        "panels": 0,
+        "hypotheses": 0,
+        "findings": 0,
+        "open_threads": 1,
+    }
+    assert reg.get("w2").to_dict()["counts"]["findings"] == 1
+
+
+def test_last_activity_is_the_newest_event_only(tmp_path):
+    reg, con = make(tmp_path)
+    reg.create("two")
+    assert reg.get("w2").last_activity_ms == 0
     con.execute("UPDATE workspaces SET opened_at_ms = 1")
     con.execute(
         "INSERT INTO panels (id, question, spec, dataset_ids, created_at_ms, workspace)"
-        " VALUES ('p1', 'q', '{}', '[]', 7000, 'w2')"
-    )
-    con.execute(
-        "INSERT INTO objects (id, kind, created_at_ms, data, workspace)"
-        " VALUES ('h1', 'hypothesis', 8000, '{}', 'w2')"
+        " VALUES ('p1', 'q', '{}', '[]', 99999, 'w2')"
     )
     con.execute(
         "INSERT INTO events (ts_ms, actor, type, klass, payload, workspace)"
         " VALUES (9000, 'user', 't', 'intentional', '{}', 'w2')"
     )
-    info = reg.get("w2")
-    assert info.counts == {"panel": 1, "hypothesis": 1}
-    assert info.last_activity_ms == 9000
-    assert reg.get("w1").counts == {}
-    assert reg.list()[0].id == "w2"
-    assert info.to_dict()["counts"] == {"panel": 1, "hypothesis": 1}
+    assert reg.get("w2").last_activity_ms == 9000
+    assert reg.list()[0].id == "w2"  # 9000 beats w1's opened_at_ms of 1

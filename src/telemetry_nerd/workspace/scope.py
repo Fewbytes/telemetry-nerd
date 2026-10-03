@@ -58,6 +58,8 @@ class ActiveWorkspace:
         self._subscribers.discard(queue)
 
     def notify(self, frame: dict) -> None:
+        """Fan a frame out to subscribers. asyncio.Queue is not thread-safe: call this on
+        the event-loop thread only."""
         for queue in list(self._subscribers):
             try:
                 queue.put_nowait(frame)

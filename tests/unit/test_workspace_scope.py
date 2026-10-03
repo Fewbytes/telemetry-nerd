@@ -50,3 +50,9 @@ def test_notify_reaches_subscribers_and_drops_when_full():
     a.unsubscribe(q)
     a.notify({"n": 3})
     assert q.qsize() == 100
+
+
+async def test_to_thread_inherits_the_pin():
+    a = ActiveWorkspace("w1")
+    with a.using("w4"):
+        assert await asyncio.to_thread(a) == "w4"

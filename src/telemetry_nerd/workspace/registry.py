@@ -117,6 +117,8 @@ class WorkspaceRegistry:
         return self._json(wid, "sources")
 
     def note_source(self, wid: str, name: str, spec: dict) -> None:
+        if name == "default":  # daemon-owned, never recorded
+            return
         sources = self._json(wid, "sources")
         if name in sources:
             return
@@ -137,22 +139,27 @@ class WorkspaceRegistry:
 
     def _info(self, row: tuple) -> WorkspaceInfo:
         wid = row[0]
-        counts: dict[str, int] = {}
+        # Derived, never stored (spec): open panels, live hypotheses/findings, and open
+        # threads (the last message is the user's: the brief's definition).
         (panels,) = self._con.execute(
-            "SELECT COUNT(*) FROM panels WHERE workspace = ?", (wid,)
+            "SELECT COUNT(*) FROM panels WHERE workspace = ? AND closed = 0", (wid,)
         ).fetchone()
-        if panels:
-            counts["panel"] = panels
-        for kind, n in self._con.execute(
-            "SELECT kind, COUNT(*) FROM objects WHERE workspace = ? AND deleted = 0 GROUP BY kind",
+        counts = {"panels": panels}
+        for key, kind in (("hypotheses", "hypothesis"), ("findings", "finding")):
+            (counts[key],) = self._con.execute(
+                "SELECT COUNT(*) FROM objects WHERE workspace = ? AND kind = ? AND deleted = 0",
+                (wid, kind),
+            ).fetchone()
+        (counts["open_threads"],) = self._con.execute(
+            "SELECT COUNT(*) FROM objects t WHERE t.workspace = ? AND t.kind = 'thread'"
+            " AND t.deleted = 0 AND (SELECT json_extract(m.data, '$.author') FROM objects m"
+            " WHERE m.kind = 'message' AND m.anchor = t.id"
+            " ORDER BY m.created_at_ms DESC, CAST(substr(m.id, 2) AS INTEGER) DESC,"
+            " m.rowid DESC LIMIT 1) = 'user'",
             (wid,),
-        ):
-            counts[kind] = n
+        ).fetchone()
         (last,) = self._con.execute(
-            "SELECT MAX(t) FROM (SELECT MAX(ts_ms) AS t FROM events WHERE workspace = ?"
-            " UNION ALL SELECT MAX(created_at_ms) FROM panels WHERE workspace = ?"
-            " UNION ALL SELECT MAX(created_at_ms) FROM objects WHERE workspace = ?)",
-            (wid, wid, wid),
+            "SELECT MAX(ts_ms) FROM events WHERE workspace = ?", (wid,)
         ).fetchone()
         return WorkspaceInfo(
             id=wid,
