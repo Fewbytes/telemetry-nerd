@@ -107,7 +107,9 @@ class SourceSpec(BaseModel):
     name: str = Field(pattern=NAME_PATTERN)
     url: str
     flavor: Literal["prometheus", "victoriametrics"] = "prometheus"
-    resolution_ms: int = Field(15_000, ge=1_000, le=3_600_000)
+    #: None: learned from the series' scrape spacing (PromQLSource.learn_resolution); a value
+    #: overrides what is learned
+    resolution_ms: int | None = Field(None, ge=1_000, le=3_600_000)
     auth: AuthRef | None = None
     politeness: Politeness = Field(default_factory=Politeness)
     #: another registered source with downsampled data of the same series (e.g. Thanos

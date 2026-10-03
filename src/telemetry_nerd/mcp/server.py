@@ -693,7 +693,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         name: str,
         url: str | None = None,
         flavor: str = "prometheus",
-        resolution: str = "15s",
+        resolution: str = "auto",
         auth_env: str | None = None,
         auth_file: str | None = None,
         auth_scheme: str = "bearer",
@@ -714,7 +714,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         https://<grafana>/api/datasources/proxy/uid/<uid>.
         flavor: "victoriametrics" (MetricsQL rollup) or "prometheus" (also works on VM,
         Thanos, Mimir).
-        resolution: the source's scrape interval, e.g. 15s, 30s, 60s.
+        resolution: "auto" (default): measured from the series' scrape spacing (median sample
+        spacing per job; the coarsest job's when they differ), re-measured by source_learn; or
+        a duration (e.g. 15s, 60s) that overrides the measurement. source_status shows both.
         Secrets: NEVER pass a token. Ask the user to put it in a file (auth_file, absolute
         path; picked up immediately) or an env var of the daemon (auth_env, the variable
         NAME; needs a daemon restart if set later). auth_scheme: bearer | basic ("user:pass").
@@ -745,7 +747,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                     "name": name,
                     "url": url,
                     "flavor": flavor,
-                    "resolution_ms": parse_duration(resolution),
+                    "resolution_ms": None if resolution == "auto" else parse_duration(resolution),
                     "auth": auth,
                     "politeness": {
                         "max_concurrency": max_concurrency,
@@ -780,8 +782,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
     @mcp.tool()
     async def source_status(name: str) -> str:
-        """Probe a source now: {reachable, latency_ms, application?, version?} or
-        {reachable: false, error, hint}."""
+        """Probe a source now: {reachable, latency_ms, application?, version?, resolution} or
+        {reachable: false, error, hint}. resolution: the step the source is read at, its origin
+        (learned from scrape spacing | configured | assumed) and the spacing measured per job."""
         try:
             return _dump(await service.source_status(name))
         except SourceError as e:

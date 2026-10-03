@@ -51,7 +51,7 @@ export const fmtDuration = (ms: number): string => {
 
 export const qualityRows = (q: MetricCard["quality"]): { label: string; value: string; note?: string }[] => [
   { label: "step", value: fmtDuration(q.step_ms) },
-  { label: "configured resolution", value: fmtDuration(q.resolution_ms) },
+  { label: "source resolution", value: fmtDuration(q.resolution_ms) },
   q.scrape_interval_ms
     ? { label: "scrape interval", value: fmtDuration(q.scrape_interval_ms), note: q.scrape_interval_ms > q.step_ms ? "coarser than the step" : undefined }
     : { label: "scrape interval", value: "unknown", note: q.scrape_interval_reason ?? undefined },

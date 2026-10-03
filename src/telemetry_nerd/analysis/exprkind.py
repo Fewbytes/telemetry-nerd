@@ -64,6 +64,11 @@ def rate_interval_ms(step_ms: int, resolution_ms: int) -> int:
     return max(4 * resolution_ms, step_ms + resolution_ms)
 
 
+def range_windows_ms(expr: str) -> list[int]:
+    """The range windows written in an expression (x[1m], subqueries' ranges), in ms."""
+    return [parse_duration(w) for w in _WINDOW.findall(_strip_comments(expr))]
+
+
 def expand(expr: str, step_ms: int, resolution_ms: int) -> str:
     if RATE_INTERVAL not in expr:
         return expr

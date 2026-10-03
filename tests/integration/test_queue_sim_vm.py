@@ -185,3 +185,29 @@ async def test_scrapes_on_the_tile_edges_do_not_inflate_lambda(vm, tmp_path, nam
     assert out["classification"]["systematic"] is None, out["summary"]
     assert abs(out["discrepancy"]["ratio"] - 1) < 0.05
     assert_covers_exact(out, truth)
+
+
+async def test_a_5s_source_connected_without_a_resolution_learns_it_and_takes_1m_windows(
+    vm, tmp_path
+):
+    """wbw: the round-3 overload run read a 5 s source at the default 15 s; check_littles_law
+    refused 1m windows and analyze had too few points for the 3x arrival surge. Connected with
+    no resolution, the source measures its scrape spacing (the series pushed at 5 s) and the
+    default settings take 1m windows."""
+    t0 = now_ms() - 1_100_000  # the last samples fall inside the probe's 10m lookback
+    truth = seed_vm(vm, "overload_spike", t0)
+    svc = build_service(Settings(data_dir=tmp_path / "d", source_url="http://127.0.0.1:9"))
+    await svc.source_connect(SourceSpec(name="vm", url=vm, flavor="victoriametrics"))
+    learned = await svc.learn("vm")  # catalog names: push sources have no `up` to probe
+    assert learned["resolution"]["origin"] == "learned", learned["resolution"]
+    assert svc.sources["vm"].resolution_ms == SCRAPE_S * 1000
+    status = await svc.source_status("vm")
+    assert status["resolution"]["resolution"] == f"{SCRAPE_S}s"
+    sel = lambda m: f'{m}{{scenario="{truth["label"]}"}}'
+    end = t0 + int(truth["duration_s"] * 1000)
+    out = await svc.check_littles_law(
+        source="vm", by=["pod"], window="1m", start=str(t0 + WARMUP_S * 1000), end=str(end),
+        **{k: sel(v) for k, v in truth["metrics"].items()},
+    )  # fmt: skip
+    assert out["window"] == "1m"
+    assert_covers_exact(out, truth)

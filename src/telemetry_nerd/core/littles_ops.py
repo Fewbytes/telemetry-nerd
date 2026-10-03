@@ -345,9 +345,9 @@ class LittlesOps:
         self, source: str, selector: str, res: int, start: str, end: str
     ) -> tuple[int, str | None]:
         """The gauge's scrape interval (median sample spacing at the range end) against the
-        source's configured resolution: the sub-step grid, the gauge's sample count and the
-        counters' tiles follow the configured one, so a mismatch is stated (and a refused window
-        says which to reconnect with). Returns (the spacing used for the error terms: the larger,
+        source's resolution (learned from scrape spacing or configured): the sub-step grid, the
+        gauge's sample count and the counters' tiles follow the source's, so a mismatch is
+        stated (and a refused window says how to change it). Returns (the spacing used for the error terms: the larger,
         a note or None)."""
         if self._scrape is None:
             return res, None
@@ -360,14 +360,16 @@ class LittlesOps:
             return res, None
         note = (
             f"{selector.split('{')[0]} is scraped every {format_duration(got)} (median sample "
-            f"spacing at the range end) but source {source!r} is configured with resolution "
+            f"spacing at the range end) but source {source!r} is read at resolution "
             f"{format_duration(res)}"
         )
         if got < res:
             note += (
                 f": the check reads one sample per {format_duration(res)} (hint: "
+                f"source_status({source!r}) shows where the resolution comes from; "
+                f"source_learn(source={source!r}) re-measures the scrape spacing, or "
                 f'source_connect(name={source!r}, url=..., resolution="{format_duration(got)}", '
-                "replace=true) to use them all)"
+                "replace=true) sets it, to use them all)"
             )
         else:
             note += ": samples are re-read between scrapes; the error terms use the scrape spacing"

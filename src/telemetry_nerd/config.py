@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from telemetry_nerd.model.time import parse_duration
+
 DEFAULT_ALLOWED_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 
 
@@ -39,7 +41,7 @@ class Settings:
     data_dir: Path = Path(".tn-data")
     source_url: str = "http://127.0.0.1:8428"
     source_flavor: str = "victoriametrics"
-    resolution_ms: int = 15_000
+    resolution_ms: int | None = None  # None: learned from scrape spacing; TN_RESOLUTION overrides
     host: str = "127.0.0.1"
     port: int = 7070
     ui_dir: Path | None = field(default_factory=default_ui_dir)
@@ -56,6 +58,8 @@ class Settings:
         s.source_url = os.environ.get("TN_SOURCE_URL", s.source_url)
         s.source_flavor = os.environ.get("TN_SOURCE_FLAVOR", s.source_flavor)
         s.host = os.environ.get("TN_HOST", s.host)
+        if raw_res := os.environ.get("TN_RESOLUTION"):
+            s.resolution_ms = parse_duration(raw_res)
         if extra := os.environ.get("TN_ALLOWED_HOSTS"):
             s.allowed_hosts += [h.strip() for h in extra.split(",") if h.strip()]
         s.kernel_idle_timeout_s = _env_num("TN_KERNEL_IDLE_TIMEOUT_S", s.kernel_idle_timeout_s)

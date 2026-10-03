@@ -240,10 +240,12 @@ default port:
 source_connect(
   name="prod",
   url="http://127.0.0.1:8428",
-  flavor="victoriametrics",
-  resolution="15s"
+  flavor="victoriametrics"
 )
 ```
+`resolution` is measured from the series' scrape spacing (median sample spacing per job,
+the coarsest job's when they differ); pass e.g. `resolution="15s"` only to override it.
+`source_status` shows the resolution in use and where it came from.
 Expected return: `{"source": {"name": "prod", "url": "http://127.0.0.1:8428", "flavor": "victoriametrics", ...}, "status": {"reachable": true, ...}}`.
 If `status.reachable` is `false`, see Troubleshooting "source_connect unreachable".
 

@@ -874,10 +874,13 @@ def create_app(
             service.code.startup()  # fail runs a previous daemon left running; GC run dirs
         except Exception:
             log.warning("run_code startup housekeeping failed", exc_info=True)
+        # the sources' scrape spacing (bead wbw), in the background: startup never waits on it
+        learning = asyncio.create_task(service.learn_resolutions())
         try:
             async with mcp.session_manager.run() if mcp is not None else contextlib.nullcontext():
                 yield
         finally:
+            learning.cancel()
             # Inside uvicorn's shutdown, before it re-raises SIGTERM/SIGINT: kill tier-2 kernels.
             if service.kernels is not None:
                 await service.kernels.aclose()

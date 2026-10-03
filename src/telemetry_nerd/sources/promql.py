@@ -38,6 +38,11 @@ from telemetry_nerd.sources.semantics import (
 from telemetry_nerd.sources.spec import SourceSpec
 
 MAX_STEPS_PER_QUERY = 11_000
+#: resolution assumed until the source's scrape spacing is learned (and when it cannot be)
+DEFAULT_RESOLUTION_MS = 15_000
+#: series per selector whose raw samples the resolution probe reads
+SPACING_SERIES = 50
+SPACING_WINDOW = "10m"
 _SELECTOR = re.compile(r"^\s*[a-zA-Z_:][a-zA-Z0-9_:]*\s*(\{[^{}]*\})?\s*$")
 _DEFAULT_LIMITS = Limits()
 _FIELDS = ("avg", "min", "max", "count")
@@ -161,7 +166,7 @@ class PromQLSource:
         base_url: str,
         *,
         flavor: Literal["victoriametrics", "prometheus"] = "victoriametrics",
-        resolution_ms: int = 15_000,
+        resolution_ms: int | None = None,
         limits: Limits = _DEFAULT_LIMITS,
         client: httpx.AsyncClient | None = None,
         headers: Mapping[str, str] | None = None,
@@ -172,7 +177,13 @@ class PromQLSource:
         self.backend = backend
         self.base_url = base_url.rstrip("/")
         self.flavor = flavor
-        self.resolution_ms = resolution_ms
+        #: the configured resolution overrides what is learned; None: learn it (learn_resolution)
+        self.configured_resolution_ms = resolution_ms
+        self.resolution_ms = resolution_ms or DEFAULT_RESOLUTION_MS
+        self.resolution_origin: Literal["configured", "learned", "assumed"] = (
+            "configured" if resolution_ms else "assumed"
+        )
+        self.resolution_learned: dict | None = None  # the last probe's measurement
         self.limits = limits
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient()
@@ -749,6 +760,104 @@ class PromQLSource:
             return {str(r["name"]): int(r["value"]) for r in rows}
         except (SourceError, KeyError, TypeError, ValueError):
             return None
+
+    async def sample_spacing(self, selector: str, at_ms: int | None = None) -> dict[str, list[int]]:
+        """Per job label: the median sample spacing (ms) of each series of `selector` with >= 3
+        raw samples in the SPACING_WINDOW up to `at_ms` (default now), for at most SPACING_SERIES
+        series. Series without a job label are keyed ''."""
+        params = {"query": f"{selector.strip()}[{SPACING_WINDOW}]", "limit": str(SPACING_SERIES)}
+        if at_ms is not None:
+            params["time"] = f"{at_ms / 1000:.3f}"
+        body = await self._get_json("/api/v1/query", params)
+        result = (body.get("data") or {}).get("result")
+        out: dict[str, list[int]] = {}
+        for r in result if isinstance(result, list) else []:
+            values = r.get("values") if isinstance(r, dict) else None
+            if not isinstance(values, list) or len(values) < 3:
+                continue
+            gaps = sorted(float(b[0]) - float(a[0]) for a, b in itertools.pairwise(values))
+            ms = round(gaps[len(gaps) // 2] * 1000)
+            if ms > 0:
+                job = str((r.get("metric") or {}).get("job", ""))
+                out.setdefault(job, []).append(ms)
+        return out
+
+    async def learn_resolution(self, candidates: Sequence[str] = ()) -> dict:
+        """Measure the scrape spacing (bead wbw): the median raw-sample spacing per series of
+        `up` (one series per scrape target), else of the first candidate metric that has recent
+        samples (push-based sources have no `up`); per job, the median over its series.
+
+        The resolution becomes the COARSEST job's spacing: every job's series then hold at least
+        one sample per resolution step, so windows built on it (rate intervals, increase tiles,
+        sub-steps) are never empty; finer jobs are read at that coarser step (stated). A
+        configured resolution is kept (it overrides) and only compared. Returns what was found."""
+        by_job: dict[str, list[int]] = {}
+        probed = None
+        for sel in ["up", *candidates]:
+            try:
+                by_job = await self.sample_spacing(sel)
+            except SourceError:
+                continue
+            if by_job:
+                probed = sel
+                break
+        info: dict = {"probed": probed, "window": SPACING_WINDOW}
+        if not by_job:
+            info["note"] = (
+                f"no series with >= 3 samples in the last {SPACING_WINDOW}: scrape spacing unknown"
+            )
+            self.resolution_learned = info
+            return self.resolution_info()
+        # scrape intervals are whole seconds: the median of jittered spacings (5.038 s) is
+        # rounded to one, so steps and windows built on it stay round
+        jobs = {
+            j: max(1_000, round(sorted(v)[len(v) // 2] / 1_000) * 1_000)
+            for j, v in sorted(by_job.items())
+        }
+        learned = min(max(max(jobs.values()), 1_000), 3_600_000)
+        info |= {
+            "resolution_ms": learned,
+            "by_job": {j or "(no job label)": format_duration(ms) for j, ms in jobs.items()},
+            "series": sum(len(v) for v in by_job.values()),
+        }
+        if len(set(jobs.values())) > 1:
+            info["note"] = (
+                "jobs are scraped at different intervals: the resolution is the coarsest, so "
+                "every series has a sample per step; finer jobs are read at it"
+            )
+        self.resolution_learned = info
+        if self.configured_resolution_ms is None:
+            self.resolution_ms, self.resolution_origin = learned, "learned"
+        return self.resolution_info()
+
+    def resolution_info(self) -> dict:
+        """The resolution in use, where it came from, and what the scrape spacing probe saw."""
+        out: dict = {
+            "resolution": format_duration(self.resolution_ms),
+            "origin": self.resolution_origin,
+        }
+        if self.resolution_origin == "assumed":
+            out["note"] = (
+                f"assumed {format_duration(DEFAULT_RESOLUTION_MS)}: the scrape spacing is not "
+                "learned yet (source_learn measures it; or connect with resolution=...)"
+            )
+        m = self.resolution_learned
+        if m is not None:
+            out["measured"] = {k: v for k, v in m.items() if k != "resolution_ms"}
+            got = m.get("resolution_ms")
+            if got is not None:
+                out["measured"]["resolution"] = format_duration(got)
+            if (
+                self.resolution_origin == "configured"
+                and got
+                and abs(got - self.resolution_ms) > (self.resolution_ms // 5)
+            ):
+                out["mismatch"] = (
+                    f"configured {format_duration(self.resolution_ms)} but series are scraped "
+                    f"every {format_duration(got)} (hint: reconnect without resolution to use "
+                    "the measured spacing)"
+                )
+        return out
 
     async def scrape_interval(self, selector: str, at_ms: int | None = None) -> int | None:
         """Median sample spacing of one series over the 10m up to `at_ms` (default now) (ms);

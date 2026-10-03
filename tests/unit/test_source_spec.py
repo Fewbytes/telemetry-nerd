@@ -12,7 +12,7 @@ def test_minimal_spec_defaults():
     spec = SourceSpec(name="play", url=GRAFANA + "/")
     assert spec.url == GRAFANA  # trailing slash stripped
     assert spec.flavor == "prometheus"
-    assert spec.resolution_ms == 15_000
+    assert spec.resolution_ms is None  # learned from the scrape spacing (wbw)
     assert spec.auth is None
     assert spec.politeness == Politeness()
 

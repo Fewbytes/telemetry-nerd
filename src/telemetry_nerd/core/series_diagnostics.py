@@ -19,6 +19,7 @@ from telemetry_nerd.analysis.diagnostics import (
     diagnose,
     violation_sources,
 )
+from telemetry_nerd.analysis.exprkind import range_windows_ms, rate_interval_ms
 from telemetry_nerd.analysis.profile import seasonal_shape
 from telemetry_nerd.analysis.seasonal import DEFAULT_K, cycle_shifts
 from telemetry_nerd.analysis.sources import COMMON, SPECIAL
@@ -123,6 +124,28 @@ def absent_as_zero(prep: Prepared, sid: str, sibling: str | None) -> dict | None
         ),
         "assumption": born_counters.ASSUMPTION, "onset_bias": born_counters.ONSET_BIAS,
     }  # fmt: skip
+
+
+def window_hint(meta: DatasetMeta) -> str | None:
+    """When the expression's own range window spans many steps (rate(x[1m]) read every 5 s),
+    each point averages over it and neighbours share most of their data: the series holds about
+    span / window independent values whatever the step (wbw). Says so, with the shorter window
+    this source's resolution allows."""
+    ws = range_windows_ms(meta.expr)
+    if not ws:
+        return None
+    w = max(ws)
+    k = w // max(meta.step_ms, 1)
+    short = rate_interval_ms(meta.step_ms, meta.resolution_ms)
+    if k < 4 or short >= w:
+        return None
+    return (
+        f"the expression's own [{format_duration(w)}] window spans {k} steps: each point averages "
+        f"over it, so neighbouring points share most of their data and the range holds only "
+        f"~{max(1, (meta.end_ms - meta.start_ms) // w)} independent values; a shorter window "
+        f"keeps more: [$__rate_interval] is {format_duration(short)} at this step and the "
+        f"source's {format_duration(meta.resolution_ms)} resolution"
+    )
 
 
 class SeriesDiagnostics:
@@ -330,6 +353,8 @@ class SeriesDiagnostics:
                     "events: " + born_counters.ASSUMPTION, caveat=born_counters.CAVEAT,
                     steps=zero["steps"],
                 ))  # fmt: skip
+            if item["verdict"] == "insufficient_data" and (hint := window_hint(prep.meta)):
+                item["hint"] = hint
             series.append(item)
             add_caveats(caveats, d.caveats)
         for sk in prep.skipped:

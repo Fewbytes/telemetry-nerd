@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import math
 import time
 from collections.abc import Callable, Sequence
@@ -161,7 +162,25 @@ from telemetry_nerd.workspace.store import Panel, WorkspaceStore
 
 _NICE_STEPS = [
     parse_duration(s)
-    for s in ("15s", "30s", "1m", "2m", "5m", "10m", "15m", "30m", "1h", "2h", "6h", "12h", "1d")
+    for s in (
+        "1s",
+        "2s",
+        "5s",
+        "10s",
+        "15s",
+        "30s",
+        "1m",
+        "2m",
+        "5m",
+        "10m",
+        "15m",
+        "30m",
+        "1h",
+        "2h",
+        "6h",
+        "12h",
+        "1d",
+    )
 ]
 
 
@@ -171,6 +190,8 @@ def auto_step(rng: TimeRange, resolution_ms: int, target_buckets: int = 600) -> 
 
 
 MAX_BUCKETS_PER_QUERY = 50_000
+RESOLUTION_RETRY_MS = 60_000  # an unlearned source re-probes its scrape spacing at most this often
+_logger = logging.getLogger(__name__)
 DEFAULT_SCAN = 25
 MAX_SCAN = 100  # queries per scan call: a scan is never "all metrics"
 SCAN_BUDGET_S = 60.0
@@ -264,6 +285,8 @@ class TelemetryService:
     fleets: FleetOps = field(init=False)
     littles: LittlesOps = field(init=False)
     _scrape_cache: dict = field(default_factory=dict, init=False, repr=False)
+    #: source name -> clock ms of the last resolution probe (unlearned sources retry lazily)
+    _resolution_tried: dict = field(default_factory=dict, init=False, repr=False)
     #: compute a T1 operating profile in the background when a time-series panel is shown
     auto_profile: bool = False
     #: tier-2 kernels (spec §5.2); None when tier-2 is not wired (tests, tools)
@@ -323,6 +346,7 @@ class TelemetryService:
 
     async def check_littles_law(self, actor: Actor = "claude", **kw) -> dict:
         """L vs lambda W per window and group, with a propagated interval (czt.2)."""
+        await self.ensure_resolution(kw.get("source", "default"))
         return await self.littles.check(actor=actor, **kw)
 
     def _profile_periods(self, source: str, expr: str) -> list[str]:
@@ -443,6 +467,7 @@ class TelemetryService:
                 hint="pass the output's dataset handle to show or the op instead of its expr",
             )
         src = self._source(source)
+        await self.ensure_resolution(source)
         expr = self._expand_families(expr, source, src)
         now = self.clock()
         rng = TimeRange(parse_time(start, now), parse_time(end, now))
@@ -546,6 +571,7 @@ class TelemetryService:
         actor: Actor = "claude",
     ) -> dict:
         src = self._source(source)
+        await self.ensure_resolution(source)
         now = self.clock()
         rng = TimeRange(parse_time(start, now), parse_time(end, now))
         floor = 2 * src.resolution_ms  # increase() needs two samples per window
@@ -958,10 +984,12 @@ class TelemetryService:
 
     async def show_binding(self, **kw) -> PanelGroup:
         """A bound USE / RED / Little's law metric set as one linked panel group (bead czt.3)."""
+        await self.ensure_resolution(kw.get("source", "default"))
         return await self.bindings.show(**kw)
 
     async def binding_verdict(self, actor: Actor = "claude", **kw) -> dict:
         """Per-signal verdicts for a binding or panel group against reference windows (czt.4)."""
+        await self.ensure_resolution(kw.get("source") or "default")
         return await self.verdicts.verdict(actor=actor, **kw)
 
     async def reframe_group(
@@ -1707,21 +1735,71 @@ class TelemetryService:
         old = self.sources.add(spec, source, replace=replace)
         if old is not None:
             await self._close(old)
+        self._resolution_tried.pop(spec.name, None)
+        res = await self.learn_resolution(spec.name)
         public = spec.public()
         self.log.append(actor, "source.connected", spec.name, {"source": public})
-        return {"source": public, "status": status}
+        out = {"source": public, "status": status}
+        if res is not None:
+            out["resolution"] = res
+        return out
 
     def source_list(self) -> list[dict]:
-        return self.sources.describe()
+        out = self.sources.describe()
+        for entry in out:
+            info = getattr(self.sources.get(entry["name"]), "resolution_info", None)
+            if info is not None:
+                entry["resolution"] = info()
+        return out
 
     async def source_status(self, name: str) -> dict:
         source = self.sources.get(name)
         if source is None:
             raise SourceError(f"unknown source {name!r}", hint="see source_list for names")
         try:
-            return await source.probe()
+            out = await source.probe()
         except SourceError as e:
             return {"reachable": False, "error": str(e), "hint": e.hint}
+        if getattr(source, "resolution_origin", None) == "assumed":
+            self._resolution_tried.pop(name, None)  # a status check is a good time to retry
+        if (res := await self.learn_resolution(name, once=True)) is not None:
+            out["resolution"] = res
+        return out
+
+    async def learn_resolution(self, name: str, once: bool = False) -> dict | None:
+        """Measure the source's scrape spacing and use it as its resolution unless one is
+        configured (bead wbw). once: skip when already learned or tried. None for sources that
+        cannot measure it (replays, fakes). A failed probe leaves the resolution as it was."""
+        src = self.sources.get(name)
+        learn = getattr(src, "learn_resolution", None)
+        if learn is None:
+            return None
+        if once and name in self._resolution_tried:
+            return src.resolution_info()  # type: ignore[union-attr]
+        self._resolution_tried[name] = self.clock()
+        names = [n for n in self.ws.catalog.names(name, None, 5) if n != "up"]
+        try:
+            return await learn(names)
+        except Exception as e:  # noqa: BLE001 - best effort: the resolution stays as it was
+            _logger.info("resolution probe of %s failed: %r", name, e)
+            return src.resolution_info()  # type: ignore[union-attr]
+
+    async def learn_resolutions(self) -> None:
+        """At daemon start: measure every live source whose resolution is not configured."""
+        for name in list(self.sources):
+            if getattr(self.sources.get(name), "resolution_origin", None) == "assumed":
+                await self.learn_resolution(name)
+
+    async def ensure_resolution(self, name: str) -> None:
+        """Before a query: a source whose resolution is still assumed (nothing to measure when
+        it was connected, e.g. a fresh VM) re-probes, at most once a minute."""
+        src = self.sources.get(name)
+        if getattr(src, "resolution_origin", None) != "assumed":
+            return
+        last = self._resolution_tried.get(name)
+        if last is not None and self.clock() - last < RESOLUTION_RETRY_MS:
+            return
+        await self.learn_resolution(name)
 
     async def source_disconnect(self, name: str, actor: Actor = "claude") -> None:
         self._refuse_reserved(name)
@@ -1731,9 +1809,13 @@ class TelemetryService:
         self.log.append(actor, "source.disconnected", name, {})
 
     async def learn(self, source: str = "default", actor: Actor = "system") -> dict:
-        """Discover a source and (re-)learn its catalog from the result."""
+        """Discover a source and (re-)learn its catalog from the result, and its resolution
+        from the scrape spacing of its series (bead wbw)."""
         discovery = await self._source(source).discover()
-        return self.ws.catalog_learn(source, discovery, actor)
+        out = self.ws.catalog_learn(source, discovery, actor)
+        if (res := await self.learn_resolution(source)) is not None:
+            out = {**out, "resolution": res}
+        return out
 
     def show(
         self,
