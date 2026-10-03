@@ -84,3 +84,17 @@ async def test_status_unknown_source_is_tool_error(tmp_path):
     mcp = build_mcp(make_service(tmp_path), "http://x")
     r = await call(mcp, "source_status", {"name": "ghost"})
     assert r.is_error and "source_list" in text(r)
+
+
+async def test_unknown_argument_is_rejected_not_ignored(tmp_path):
+    """source_connect(resolution_ms=...) used to be dropped silently (the default 15s applied):
+    every tool now rejects arguments it does not take, and its schema says so."""
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    r = await call(mcp, "source_connect", {"name": "vm", "url": URL, "resolution_ms": 5000})
+    assert r.is_error
+    assert "resolution_ms" in text(r)
+    names = [s["name"] for s in json.loads(text(await call(mcp, "source_list", {})))["sources"]]
+    assert "vm" not in names
+    async with Client(mcp) as client:
+        tools = (await client.list_tools()).tools
+    assert all(t.input_schema.get("additionalProperties") is False for t in tools)

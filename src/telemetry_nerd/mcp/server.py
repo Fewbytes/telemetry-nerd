@@ -6,7 +6,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ConfigDict, TypeAdapter, ValidationError
 
 from telemetry_nerd.charts.spec import Window
 from telemetry_nerd.charts.yview import YView
@@ -1517,4 +1517,20 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         """What happened since sequence number `since` (default: the most recent events)."""
         return _dump(ws.activity(since))
 
+    _forbid_unknown_arguments(mcp)
     return mcp
+
+
+def _forbid_unknown_arguments(mcp: MCPServer) -> None:
+    """Reject arguments a tool does not take (e.g. source_connect(resolution_ms=...) instead of
+    resolution): the SDK's argument models ignore them, so a misspelt or invented argument would
+    be dropped silently and its default used. The schema says so too (additionalProperties)."""
+    for tool in mcp._tool_manager.list_tools():
+        base = tool.fn_metadata.arg_model
+        strict = type(
+            base.__name__,
+            (base,),
+            {"model_config": ConfigDict(**base.model_config, extra="forbid")},
+        )
+        tool.fn_metadata.arg_model = strict
+        tool.parameters = {**tool.parameters, "additionalProperties": False}
