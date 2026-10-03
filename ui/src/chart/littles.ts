@@ -6,7 +6,8 @@ import { sourceText, type VariationSource } from "../lib/sources";
  * Little's law panel (czt.2, 60j): per window the discrepancy L ÷ λW with its measurement interval
  * and the common-cause envelope, and L and λ·W themselves. Variation is labelled by source:
  * measurement system (the interval; a systematic offset), common cause (small-system / the
- * windows' own variation), special cause (transient windows beyond both).
+ * windows' own variation), special cause (transient windows beyond both, and load-peak windows
+ * PROMOTED on evidence of leaving steady state: backlog growth, W rising, growing peaks; 83w).
  */
 export type DeviationSource = Exclude<VariationSource, "undetermined">;
 type Pair = [number | null, number | null];
@@ -28,7 +29,12 @@ export interface LittlesSystematic {
   direction: "L_high" | "L_low"; ratio: number | null; ci95: Pair | null;
   windows: [number, number]; drifting: boolean;
 }
-export interface LittlesTransient { index: number; phase: "peak" | "drain" | "other"; source: DeviationSource }
+export interface LittlesTransient { index: number; phase: "peak" | "drain" | "other"; source: DeviationSource; promoted?: boolean }
+/** A load-peak window promoted to special cause: what it was, and why (with the numbers). */
+export interface LittlesPromoted {
+  index: number; from: DeviationSource; deviation: "within_envelope" | "within_measurement";
+  reason: string; evidence: ("backlog_growth" | "latency_rise" | "peak_growth")[];
+}
 export interface LittlesCommonCause {
   completions_per_window: number | null; rel95: number | null; spread_rel: number | null; warning: string | null;
 }
@@ -39,6 +45,7 @@ export interface LittlesSeries {
   reference?: number | null;
   systematic?: LittlesSystematic | null;
   transient?: LittlesTransient[];
+  promoted?: LittlesPromoted[];
   common_cause?: LittlesCommonCause;
 }
 export interface LittlesUnmatched { labels: Record<string, string>; present_in: string[]; missing_in: string[] }
@@ -142,6 +149,16 @@ export function transientSpans(s: LittlesSeries): { x0: number; x1: number; sour
   });
 }
 
+/** Promoted load-peak windows (special cause on evidence of leaving steady state), in seconds. */
+export function promotedSpans(s: LittlesSeries): { x0: number; x1: number; from: DeviationSource; reason: string }[] {
+  return (s.promoted ?? []).flatMap((p) => {
+    const w = s.windows[p.index];
+    return w ? [{ x0: w.start_ms / 1000, x1: w.end_ms / 1000, from: p.from, reason: p.reason }] : [];
+  });
+}
+
+export const PEAK_COMMON = "at a load peak; inside expected fluctuation — not a signal by itself; watch if it repeats or grows";
+
 export { sourceText };
 
 /** "systematic offset ×2.1 [1.87, 2.34] in 9/12 windows (measurement system)", or null. */
@@ -168,13 +185,16 @@ export function windowTip(s: LittlesSeries, xs: number): string | null {
   if (w.ratio == null) return `${head}${w.reason ? `\n${w.reason}` : ""}`;
   const i = s.windows.indexOf(w);
   const t = (s.transient ?? []).find((x) => x.index === i);
+  const pr = (s.promoted ?? []).find((x) => x.index === i);
   const e = envelope(s, w);
+  const phase = (p: string) => (p === "peak" ? "at a load peak" : p === "drain" ? "backlog draining" : "not at a peak");
   return [
     head,
     `L − λW ${signed(w.diff)} ${iv(w.diff_ci)} · L ÷ λW ${n3(w.ratio)} ${iv(w.ci95)} (measurement 95%)`,
     `L ${n3(w.L)} ${iv(w.L_ci)} · λ·W ${n3(w.lambda_W)} ${iv(w.lambda_W_ci)}`,
     ...(e != null ? [`common cause ±${Math.round(100 * e)}% around ${n3(w.reference ?? s.reference ?? 1)}`] : []),
-    ...(t ? [`TRANSIENT (${sourceText(t.source)}, ${t.phase === "peak" ? "at a load peak" : t.phase === "drain" ? "backlog draining" : "not at a peak"})`]
+    ...(pr ? [`SPECIAL CAUSE — promoted from ${sourceText(pr.from)}: at a load peak, leaving steady state`, `why: ${pr.reason}`]
+      : t ? [t.phase === "peak" && t.source === "common_cause" ? `TRANSIENT (common cause): ${PEAK_COMMON}` : `TRANSIENT (${sourceText(t.source)}, ${phase(t.phase)})`]
       : w.source ? [`source: ${sourceText(w.source)}`] : []),
     ...(w.flags.length ? [`flags: ${w.flags.join(", ").replaceAll("_", " ")}`] : []),
   ].join("\n");
@@ -191,12 +211,14 @@ export function discrepancyText(s: LittlesSeries): string {
 export function littlesLegend(s: LittlesSeries, windowMs: number): string {
   const tr = transientSpans(s);
   const special = tr.filter((t) => t.source === "special_cause").length;
+  const promoted = s.promoted?.length ?? 0;
   const cc = s.common_cause;
   const parts = [
     `Whole range ${discrepancyText(s)}`,
     `per ${Math.round(windowMs / 60000)} min window: discrepancy strip L ÷ λW (1 = Little's law holds), dark band = measurement interval (measurement system), light band = common-cause envelope${cc?.rel95 != null ? ` (±${Math.round(100 * cc.rel95)}% at N≈${n3(cc.completions_per_window)}/window)` : ""}`,
     systematicLabel(s) ?? "no systematic offset",
     `${tr.length} transient window${tr.length === 1 ? "" : "s"}${tr.length ? ` (${special} special cause)` : ""} marked`,
+    ...(promoted ? [`${promoted} load-peak window${promoted === 1 ? "" : "s"} promoted to special cause on evidence of leaving steady state (bar on top; hover for why)`] : []),
     "L = mean in flight (gauge), λ·W = throughput × mean latency (_sum ÷ _count)",
   ];
   return parts.join(" · ");

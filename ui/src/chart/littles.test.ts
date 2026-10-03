@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { RATIO_FLOOR, discrepancyText, envelope, flaggedSpans, ratioRange, littlesLegend, seriesTitle, systematicLabel, toLittlesUplot, toRatioUplot, transientSpans, verdictText, windowTip, type LittlesSeries, type LittlesWindow } from "./littles";
+import { PEAK_COMMON, RATIO_FLOOR, discrepancyText, envelope, flaggedSpans, promotedSpans, ratioRange, littlesLegend, seriesTitle, systematicLabel, toLittlesUplot, toRatioUplot, transientSpans, verdictText, windowTip, type LittlesSeries, type LittlesWindow } from "./littles";
 
 const w = (i: number, over: Partial<LittlesWindow> = {}): LittlesWindow => ({
   start_ms: i * 300_000, end_ms: (i + 1) * 300_000, n: 20, verdict: "consistent",
@@ -91,4 +91,26 @@ test("transients are marked with their source; the systematic offset is labelled
   expect(legend).toContain("2 transient windows (1 special cause) marked");
   expect(legend).toContain("±10% at N≈600/window");
   expect(flaggedSpans(sysSeries)).toEqual([]);
+});
+
+test("promoted load-peak windows: marked, the hover says why; a common-cause peak is not a signal by itself", () => {
+  const reason = "backlog grew +376 requests in the window (gauge +376, arrivals − completions +377): 155× the steady-state scale √2·σ_N = 2.42 (threshold 26.8; Cantelli p ≤ 4.1e-05)";
+  const p: LittlesSeries = {
+    ...s, verdict: "consistent",
+    windows: [
+      w(0, { source: "measurement_system", common: 0.17 }),
+      w(1, { ratio: 1.0, source: "special_cause", common: 0.17 }),
+      w(2, { ratio: 1.12, source: "common_cause", common: 0.17 }),
+    ],
+    transient: [{ index: 2, phase: "peak", source: "common_cause", promoted: false }],
+    promoted: [{ index: 1, from: "measurement_system", deviation: "within_measurement", reason, evidence: ["backlog_growth"] }],
+  };
+  expect(promotedSpans(p)).toEqual([{ x0: 300, x1: 600, from: "measurement_system", reason }]);
+  expect(promotedSpans(s)).toEqual([]);
+  const tip = windowTip(p, 400)!;
+  expect(tip).toContain("SPECIAL CAUSE — promoted from measurement system: at a load peak, leaving steady state");
+  expect(tip).toContain(`why: ${reason}`);
+  expect(windowTip(p, 700)).toContain(`TRANSIENT (common cause): ${PEAK_COMMON}`);
+  expect(littlesLegend(p, 300_000)).toContain("1 load-peak window promoted to special cause on evidence of leaving steady state");
+  expect(littlesLegend(s, 300_000)).not.toContain("promoted");
 });

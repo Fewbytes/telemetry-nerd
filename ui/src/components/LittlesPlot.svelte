@@ -1,7 +1,7 @@
 <script lang="ts">
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
-  import { discrepancyText, littlesLegend, ratioRange, seriesTitle, systematicLabel, toLittlesUplot, toRatioUplot, transientSpans, verdictText, windowTip } from "../chart/littles";
+  import { discrepancyText, littlesLegend, promotedSpans, ratioRange, seriesTitle, systematicLabel, toLittlesUplot, toRatioUplot, transientSpans, verdictText, windowTip } from "../chart/littles";
   import { fmtRatio } from "../chart/indexed";
   import { HIDDEN_SERIES, plotAxes, axisGutterSize, tipAt, type HoverTip } from "../chart/plotKit";
   import { plotColors, theme } from "../lib/theme.svelte";
@@ -20,17 +20,30 @@
   let wrap = $state<HTMLDivElement | null>(null);
   let tip = $state<HoverTip | null>(null);
   const spans = $derived(transientSpans(series));
+  const promoted = $derived(promotedSpans(series));
   const sysLabel = $derived(systematicLabel(series));
   const warning = $derived(series.common_cause?.warning ?? null);
 
-  /** Transient windows: special cause solid (investigate), common cause hatched (do not chase). */
+  /**
+   * Transient windows: special cause solid (investigate), common cause hatched (do not chase).
+   * Promoted load-peak windows (special cause on evidence of leaving steady state): solid, with a
+   * bar along the top; the hover says why.
+   */
   function shade(p: uPlot, mode: string) {
     const c = p.ctx;
     c.save();
+    const solid = mode === "dark" ? "rgba(213,94,0,0.24)" : "rgba(213,94,0,0.16)";
+    for (const s of promoted) {
+      const x0 = p.valToPos(s.x0, "x", true), x1 = p.valToPos(s.x1, "x", true);
+      if (!spans.some((t) => t.x0 === s.x0)) {
+        c.fillStyle = solid;
+        c.fillRect(x0, p.bbox.top, x1 - x0, p.bbox.height);
+      }
+    }
     for (const s of spans) {
       const x0 = p.valToPos(s.x0, "x", true), x1 = p.valToPos(s.x1, "x", true);
       if (s.source === "special_cause") {
-        c.fillStyle = mode === "dark" ? "rgba(213,94,0,0.24)" : "rgba(213,94,0,0.16)";
+        c.fillStyle = solid;
         c.fillRect(x0, p.bbox.top, x1 - x0, p.bbox.height);
       } else {
         c.strokeStyle = mode === "dark" ? "rgba(204,121,167,0.45)" : "rgba(204,121,167,0.40)";
@@ -42,6 +55,11 @@
         }
         c.stroke();
       }
+    }
+    c.fillStyle = mode === "dark" ? "rgba(230,120,40,0.9)" : "rgba(213,94,0,0.85)";
+    for (const s of promoted) {
+      const x0 = p.valToPos(s.x0, "x", true), x1 = p.valToPos(s.x1, "x", true);
+      c.fillRect(x0, p.bbox.top, x1 - x0, Math.max(3, 4 * devicePixelRatio));
     }
     c.restore();
   }
@@ -125,7 +143,7 @@
   });
 </script>
 
-<div class="littles" data-littles-verdict={series.verdict} data-littles-transient={spans.length} data-littles-systematic={series.systematic ? series.systematic.direction : ""}>
+<div class="littles" data-littles-verdict={series.verdict} data-littles-transient={spans.length} data-littles-systematic={series.systematic ? series.systematic.direction : ""} data-littles-promoted={promoted.length}>
   <div class="verdict">
     {seriesTitle(series)}: <b data-littles-discrepancy>{discrepancyText(series)}</b> · {verdictText(series.verdict)}
     <span class="key"><i style="background:{L_COLOR}"></i>L <i class="dash" style="border-color:{LW_COLOR}"></i>λ·W</span>
