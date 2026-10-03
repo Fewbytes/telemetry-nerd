@@ -50,3 +50,24 @@ def test_panel_rescoped_is_internal_for_a_claude_actor():
 def test_describe_event_renders_panel_rescoped():
     e = Event(1, 0, "user", "panel.rescoped", "p2", "ambient", {"from": "p1"})
     assert describe_event(e) == "user rescoped p1 to p2"
+
+
+async def test_preview_returns_a_dataset_over_the_new_range_without_touching_the_panel(tmp_path):
+    svc = make_service(tmp_path)
+    shown = svc.show((await svc.query("rate(node_cpu_seconds_total[5m])"))["dataset"], "cpu?")
+    pid = shown.panel.id
+    before = svc.workspace.get_panel(pid)
+    out = await svc.preview(pid, "now-3h", "now")
+    meta = svc.datasets.meta(out["dataset"])
+    assert meta.end_ms - meta.start_ms == pytest.approx(3 * 3600_000, rel=0.05)
+    after = svc.workspace.get_panel(pid)
+    assert after == before  # untouched: same question, status, spec, dataset_ids
+
+
+async def test_preview_logs_no_ambient_or_intentional_event(tmp_path):
+    svc = make_service(tmp_path)
+    shown = svc.show((await svc.query("rate(node_cpu_seconds_total[5m])"))["dataset"], "cpu?")
+    before_seq = svc.log.last_seq
+    await svc.preview(shown.panel.id, "now-3h", "now")
+    new_events = svc.log.since(before_seq)
+    assert all(e.klass == "internal" for e in new_events)

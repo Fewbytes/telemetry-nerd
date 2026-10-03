@@ -952,6 +952,20 @@ class TelemetryService:
             error_matcher=g.error_matcher, actor=actor, reframed_from=g.id,
         )  # fmt: skip
 
+    async def preview(
+        self, panel_id: str, start: str, end: str, actor: Actor = "user"
+    ) -> dict:
+        """A dataset over a different range for `panel_id`, without touching it (bead aqk):
+        the server side of a client-side zoom preview. Nothing is persisted or logged beyond
+        the routine internal dataset.created event any fetch makes."""
+        p = self.workspace.get_panel(panel_id)
+        meta = self.datasets.meta(p.dataset_ids[0])
+        refuse_requery(meta, "a time-range preview")
+        return await self.query(
+            meta.expr, start=start, end=end, step=format_duration(meta.step_ms),
+            source=meta.source, actor=actor,
+        )
+
     async def reframe(self, panel_id: str, index: int, actor: Actor = "user") -> ShowResult:
         """Accept a proposed reframing (bead 2as.15): a NEW panel over the same window and step,
         marked as reframed from this one, which is left exactly as it was. Never applied silently."""
