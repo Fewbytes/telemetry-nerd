@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import signal
 import socket
@@ -122,6 +123,12 @@ def collect(url: str) -> dict:
         ws = c.get("/api/workspace").json()
         events = c.get("/api/events", params={"limit": 1000}).json().get("events", [])
         exprs = exprs_from(events)
+        for e in events:  # dataset.created: {object_id: "d1", payload: {"expr": ...}}
+            expr = (e.get("payload") or {}).get("expr")
+            if isinstance(expr, str) and e.get("object_id"):
+                exprs.setdefault(e["object_id"], [])
+                if expr not in exprs[e["object_id"]]:
+                    exprs[e["object_id"]].append(expr)
         for p in ws.get("panels", []):
             try:
                 data = c.get(f"/api/panels/{p['id']}/data", params={"width": 50}).json()
@@ -181,7 +188,25 @@ def stage_plugin(root: Path, dest: Path) -> Path:
             shutil.copytree(src, dst, dirs_exist_ok=True)
         elif src.exists():
             shutil.copy2(src, dst)
+    patch_mcp_json(dest / ".mcp.json")
     return dest
+
+
+#: Claude Code substitutes `${CLAUDE_PLUGIN_ROOT}` in a plugin's .mcp.json, but the shell-style
+#: `${CLAUDE_PLUGIN_ROOT:-.}` falls back to "." (the session's cwd): the bridge then fails with
+#: "sh: ./scripts/tn-launch: No such file or directory" (found by this harness; see the
+#: eval-finding bead). The staged copy uses the substituted form so the eval can run at all.
+MCP_ROOT_FALLBACK = "${CLAUDE_PLUGIN_ROOT:-.}"
+
+
+def patch_mcp_json(path: Path) -> bool:
+    if not path.exists():
+        return False
+    text = path.read_text()
+    if MCP_ROOT_FALLBACK not in text:
+        return False
+    path.write_text(text.replace(MCP_ROOT_FALLBACK, "${CLAUDE_PLUGIN_ROOT}"))
+    return True
 
 
 def claude_env(root: Path, daemon_url: str) -> dict:
@@ -244,6 +269,10 @@ def mcp_connected(init_servers: list[dict]) -> bool:
     )
 
 
+_DENIED_RX = re.compile(r"permission|haven't granted|not allowed|denied", re.IGNORECASE)
+MAX_DENIALS = 3
+
+
 def run_claude(cmd: list[str], env: dict, cwd: Path, transcript: Path, timeout_s: float) -> dict:
     """Run headless Claude, streaming its transcript to a file. Stops it at once when the init
     event shows the telemetry-nerd MCP server is not connected (nothing to evaluate: no tokens
@@ -255,6 +284,7 @@ def run_claude(cmd: list[str], env: dict, cwd: Path, transcript: Path, timeout_s
     )  # fmt: skip
     lines: list[str] = []
     aborted = None
+    denials = 0
     assert proc.stdout is not None
     with transcript.open("w") as fh:
         import selectors
@@ -282,6 +312,10 @@ def run_claude(cmd: list[str], env: dict, cwd: Path, transcript: Path, timeout_s
                 if not mcp_connected(init["mcp_servers"]):
                     aborted = f"telemetry-nerd MCP server not connected: {init['mcp_servers']}"
                     break
+            denials += sum(_DENIED_RX.search(e) is not None for e in parse_stream([line])["errors"])
+            if denials >= MAX_DENIALS:
+                aborted = f"{denials} permission denials: the tool allowlist does not match"
+                break
     if proc.poll() is None:
         os.killpg(proc.pid, signal.SIGTERM)
         try:

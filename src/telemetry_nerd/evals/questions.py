@@ -70,7 +70,8 @@ QUEUE_SIM = ScenarioEval(
 UNATTENDED = (
     "You are running unattended for an evaluation: nobody can answer questions. Do not ask; make "
     "the most reasonable assumption, state it, and continue. The data source is already "
-    "connected. Finish with the short report the command asks for."
+    "connected. You have about {max_turns} turns: record what you establish in the workspace as "
+    "you go rather than at the end. Finish with the short report the command asks for."
 )
 
 

@@ -47,7 +47,8 @@ ACCEPTANCE = ("findings_scoped", "findings_evidenced", "annotation_onset", "zero
 
 _UP = re.compile(
     r"\b(increas\w*|rose|rise[sn]?|rising|spik\w*|jump\w*|higher|grew|grow\w*|elevated|surg\w*|"
-    r"climb\w*|doubl\w*|tripl\w*|went up|up from|exceed\w*|burst\w*)\b",
+    r"climb\w*|doubl\w*|tripl\w*|went up|up from|exceed\w*|burst\w*|failed|failing|"
+    r"started failing)\b",
     re.IGNORECASE,
 )
 _DOWN = re.compile(
@@ -374,8 +375,13 @@ def score_finding(
         problems.append("blames an unaffected control")
     if dir_errs:
         problems.append("direction disagrees with ground truth")
-    implicated = set(ents) & truth.implicated
-    incident = bool(implicated or rc) and asserts_change(claim) and f.get("stance") != "against"
+    # an incident finding: some sentence names an implicated entity (or the root cause) and
+    # asserts a change (judged per sentence: long claims also say what did not change)
+    incident = f.get("stance") != "against" and any(
+        (named(s, truth.implicated) or names_term(s, truth.root_cause_terms, truth.entities))
+        and asserts_change(s)
+        for s in sentences(claim)
+    )
     sources = list(
         dict.fromkeys(e["source"] for e in ev if e.get("kind") == "statistic" and e.get("source"))
     )

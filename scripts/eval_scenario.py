@@ -202,7 +202,7 @@ def live_run(a: argparse.Namespace) -> int:
                 model=a.model,
                 max_turns=a.max_turns,
                 max_budget_usd=a.max_budget_usd,
-                append_system=UNATTENDED,
+                append_system=UNATTENDED.format(max_turns=a.max_turns),
             )
             (d / "command.json").write_text(json.dumps(cmd, indent=1))
             print(f"claude ({a.model}, <= {a.max_turns} turns, <= ${a.max_budget_usd}): "

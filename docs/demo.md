@@ -168,6 +168,40 @@ Probed, not shipped as scenarios: `productCatalogFailure` (no error spans in 3 m
 `paymentUnreachable` (not tried). `uv run scripts/scenario.py reverify <run.json>` re-judges a run
 against the current YAML using the run's recorded window (VM history), for threshold tuning.
 
+## Scenario evals (bead d77.3, spec §10)
+
+`just eval <scenario>` scores an investigation's workspace against a ground truth
+(`telemetry_nerd.evals`; runner `scripts/eval_scenario.py`):
+
+```
+just eval payment-failure                      # offline: canned snapshot tests/fixtures/evals/
+just eval payment-failure --snapshot build/evals/<run>/snapshot.json --truth <gt.json>
+just eval payment-failure --live               # run the scenario (or --attach <run.json>), start an
+                                               # isolated daemon on the demo VM, YOU investigate
+just eval payment-failure --live --attach scenarios/runs/<run>.json --claude   # SPENDS TOKENS
+just eval overload_spike --live --claude --duration 600   # queue-sim: throwaway VM, no demo
+```
+
+`--claude` runs `claude -p "/telemetry-nerd:investigate <neutral question>"` from an empty
+directory with a staged copy of the plugin (commands, skills, hooks, MCP config: no sources,
+tests or ground truth), `--setting-sources project`, `--permission-mode dontAsk`, only the plugin's
+MCP tools (+ Skill, ToolSearch) allowed and Bash/Read/Write/Web denied; the bridge reaches the eval
+daemon via `TN_DAEMON_URL`. Caps: `--model sonnet`, `--max-turns 40` (hard cap), `--max-budget-usd
+5`, `--timeout-s 1800`; a run whose init shows the MCP server not connected is stopped at once.
+Never part of `just test`.
+
+Criteria (pass/fail/n/a each; report.md + report.json in `build/evals/<scenario>-<ts>/`):
+findings present, **scoped** (source, selector, step, aggregation, time range in the run, every
+entity the claim names covered by the selector or the cited evidence), **evidenced** (a statistic
+or an existing panel), uncertainty flags repeated, root cause named by an in-window finding,
+controls never blamed, directions consistent with the expected signals, incident findings
+labelled with the expected source of variation (special cause for a demo fault), **annotation
+onset** within `fault_window.start` ± `tolerance.start_s` and none off target, **zero unscoped
+claims** (findings and causal sentences of the final answer that cite no f/h/p/a id), a root-cause
+hypothesis supported, hypotheses blaming a control refuted or inconclusive. Bold = d77
+acceptance; the exit status is 0 only when they pass. Text rules are word heuristics; each flag
+lists the sentence it fired on.
+
 ## Verifying Telemetry Nerd against it
 
 After ~10 minutes of traffic (daemon started with `--source-url http://127.0.0.1:8429`):

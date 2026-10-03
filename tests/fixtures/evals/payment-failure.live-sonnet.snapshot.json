@@ -1,0 +1,192 @@
+{
+ "_fixture": "Real headless run (claude sonnet, 29 turns, $0.32) of /telemetry-nerd:investigate on the live demo payment-failure scenario, 2026-10-03; events dropped.",
+ "workspace": {
+  "panels": [
+   {
+    "id": "p1",
+    "question": "When do payment/charge calls start and stop failing (errors vs OK per minute)?",
+    "status": "open",
+    "spec": {
+     "layers": [
+      {
+       "mark": "line+envelope",
+       "data": "d3",
+       "windows": [],
+       "color": "count",
+       "quantiles": [
+        0.5,
+        0.9,
+        0.99
+       ],
+       "role": "main",
+       "segment_ms": null,
+       "overlap": null,
+       "min_period_ms": null,
+       "max_period_ms": null,
+       "seasonal": null,
+       "spc": null,
+       "fleet": null,
+       "littles": null
+      }
+     ],
+     "y": {
+      "range_mode": "reference",
+      "unit": "count",
+      "unit_provenance": "inferred from metric name",
+      "label": null,
+      "views": [],
+      "selected": null,
+      "context": {
+       "natural_lo": null,
+       "natural_hi": null,
+       "bounds": null,
+       "bounds_origin": null,
+       "bounds_basis": null,
+       "bounds_confidence": null,
+       "lines": [],
+       "reframes": [],
+       "profile": {
+        "lo": 0.0,
+        "hi": 27.82,
+        "label": "normal range (30d)"
+       },
+       "typical": null,
+       "notes": [
+        "natural_bounds_unknown: the expression is not a single metric"
+       ],
+       "limit": null
+      },
+      "asserted_bounds": null
+     },
+     "references": {},
+     "marginal": null,
+     "signal": null,
+     "overlays": {
+      "normal": true,
+      "limit": true,
+      "ghost": false
+     },
+     "auto": null,
+     "group": null
+    },
+    "dataset_ids": [
+     "d3"
+    ],
+    "created_at_ms": 1791030051622,
+    "answered_by": null,
+    "closed": false
+   }
+  ],
+  "annotations": [],
+  "hypotheses": [
+   {
+    "id": "h1",
+    "statement": "Order placement failed between 2026-10-03 12:04 and 12:19 UTC due to a fault in one service on the order path (error rate rose there first); other services only saw downstream effects.",
+    "status": "supported",
+    "author": "claude",
+    "evidence_for": [
+     "f1"
+    ],
+    "evidence_against": [],
+    "created_at_ms": 1791030032785,
+    "updated_at_ms": 1791030074712
+   }
+  ],
+  "findings": [
+   {
+    "claim": "Payment 'charge' calls failed ~100% from ~12:12-12:13 to ~12:17 UTC (79 errors, 0 successes 12:13-12:16; successes resume 12:17, errors gone by 12:18). The same 79 errors appear on checkout PlaceOrder/PaymentService.Charge and frontend /api/checkout, i.e. the failure propagates payment -> checkout -> frontend. Timestamps are 1m increase() window ends, so edges are \u00b11 min. Measurement-system caveat: span-metric series exist only when errors occur (gaps are absence, not missing data). The reported 12:04-12:12 part of the window shows no errors in these metrics.",
+    "scope": {
+     "source": "default",
+     "selector": "traces_span_metrics_calls_total{service_name=\"payment\",span_name=\"charge\"} by status_code",
+     "time_range": {
+      "start_ms": 1791027000000,
+      "end_ms": 1791031800000
+     },
+     "step": "1m",
+     "aggregation": "increase",
+     "baseline_range": null
+    },
+    "evidence": [
+     {
+      "kind": "panel",
+      "panel": "p1"
+     }
+    ],
+    "caveats": [
+     "d3: 2 of 2 series have fewer samples than expected in the claim window: {status_code=\"STATUS_CODE_UNSET\"}, {status_code=\"STATUS_CODE_ERROR\"}.",
+     "d3: Long gaps (\u2265 5m, samples on both sides): {status_code=\"STATUS_CODE_UNSET\"} has no samples 2026-10-03T11:57:00+00:00\u20132026-10-03T12:04:00+00:00 (scrape loss, or the series left and rejoined; not distinguished yet). {status_code=\"STATUS_CODE_ERROR\"} has no samples 2026-10-03T11:57:00+00:00\u20132026-10-03T12:11:00+00:00 (scrape loss, or the series left and rejoined; not distinguished yet).",
+     "d3: Each series is judged over its own span in the window. {status_code=\"STATUS_CODE_UNSET\"}: no samples since 2026-10-03T12:21:00+00:00 in this evidence (it may have left, or may return after the window). {status_code=\"STATUS_CODE_ERROR\"}: no samples since 2026-10-03T12:21:00+00:00 in this evidence (it may have left, or may return after the window). Membership changes within the window: check whether set(status_code) per bucket is consistent over a wider window (e.g. count by (status_code) (traces_span_metrics_calls_total{service_name=\"payment\",span_name=\"charge\"} by status_code) over a longer range).",
+     "d3: Values right after a gap (2m in the claim window on {status_code=\"STATUS_CODE_UNSET\"}, {status_code=\"STATUS_CODE_ERROR\"}) are computed from the sample before the gap, not real spikes; do not cite them as one.",
+     "d3: scope.selector not read into label matchers (several selectors): the claim is judged over every evidence series."
+    ],
+    "hypothesis": "h1",
+    "stance": "for",
+    "answers_panel": null,
+    "id": "f1",
+    "author": "claude",
+    "created_at_ms": 1791030071104,
+    "verdict": null,
+    "verdict_comment": null,
+    "evidence_flags": []
+   }
+  ],
+  "gaps": [],
+  "groups": [],
+  "code": [
+   {
+    "id": "c1",
+    "status": "ok",
+    "exec_status": "ok",
+    "inputs": [
+     "d2"
+    ],
+    "outputs": [],
+    "author": "claude",
+    "created_at_ms": 1791030059749,
+    "finished_at_ms": 1791030060364,
+    "duration_s": 0.607,
+    "rerun_of": null,
+    "error": null,
+    "restarted": false
+   },
+   {
+    "id": "c2",
+    "status": "ok",
+    "exec_status": "ok",
+    "inputs": [
+     "d3"
+    ],
+    "outputs": [],
+    "author": "claude",
+    "created_at_ms": 1791030064876,
+    "finished_at_ms": 1791030064889,
+    "duration_s": 0.009,
+    "rerun_of": null,
+    "error": null,
+    "restarted": false
+   }
+  ],
+  "threads": [],
+  "last_seq": 15
+ },
+ "exprs": {
+  "d1": [
+   "sum by (service_name) (rate(traces_span_metrics_calls_total{status_code=\"STATUS_CODE_ERROR\"}[1m]))"
+  ],
+  "d2": [
+   "sum by (service_name, span_name) (increase(traces_span_metrics_calls_total{status_code=\"STATUS_CODE_ERROR\"}[1m]))"
+  ],
+  "d3": [
+   "sum by (status_code) (increase(traces_span_metrics_calls_total{service_name=\"payment\",span_name=\"charge\"}[1m]))"
+  ],
+  "op-178f06d72c94": [
+   "sum by (status_code) (increase(traces_span_metrics_calls_total{service_name=\"payment\",span_name=\"charge\"}[1m]))"
+  ],
+  "p1": [
+   "sum by (status_code) (increase(traces_span_metrics_calls_total{service_name=\"payment\",span_name=\"charge\"}[1m]))"
+  ]
+ },
+ "transcript": {
+  "result": "**Scope:** order placement on the default source (VictoriaMetrics, UTC), 11:30\u201312:50 on 2026-10-03, using span-call metrics by service and status. I didn't compare against a baseline window, and I took no seasonal reference.\n\n**What happened:** `payment` `charge` calls failed almost completely for about five minutes. The failure then showed up in each service that calls it, which is the order path: payment \u2192 checkout \u2192 frontend `/api/checkout`.\n\n**Timeline** (\u00b11 min, because the rates are 1-minute `increase()` windows):\n- Up to 12:12, charge calls were all succeeding at about 9\u201319 per minute.\n- From about 12:13 to 12:16, every charge call errored (20, 19, 18 and 15 errors per minute) and there were no successes.\n- At 12:17 it was mixed, with 7 errors and 9 successes.\n- By 12:18 the errors had stopped, and successes continued at 6\u201319 per minute.\n- Across the whole incident that is 79 errors. The identical count of 79 on checkout's `PaymentService/Charge` and `PlaceOrder` spans and on frontend's `/api/checkout` and `PlaceOrder` spans is what puts them downstream of payment.\n\n**Services involved:** `payment` is where the failures start. `checkout` and `frontend` see the same errors as downstream effects. `load-generator`, `flagd`, `ad`, `cart` and `recommendation` show a few stray errors, but none of them line up with this window.\n\n**Hypothesis:** h1 (a fault in one service on the order path, with the others only seeing downstream effects) is marked supported. Finding f1 backs it, with panel p1 as evidence. The data cannot rank payment as the origin over a fault in something payment itself depends on.\n\n**Unexplained or unmeasurable:**\n- **Start time:** the report says 12:04, but these metrics show no errors before about 12:13. Either the earlier failures aren't in these metrics, or the report's start is off. I did not resolve this.\n- **Cause:** I found no error-reason label and no deploy, config or flag events. I did not look at the `feature_flag` metrics. The gap is not recorded in the workspace, because `gap_create` rejected my input twice and I stopped retrying.\n- **Gaps in the error series:** the error series only exist while errors happen, so the gaps mean no errors, not missing data.\n- **No statistical tests:** I read onsets directly from the per-minute data rather than running a changepoint or binding verdict. `analyze` skipped the error series as too gappy.\n\n**Next step:** if you can tell me about deploys or flag changes near 12:12, I'll annotate them and check them against the onset. Otherwise, traces for `payment` `charge` would show the error type.\n\nWorkspace: http://127.0.0.1:53116 (open p1, then f1)."
+ }
+}
