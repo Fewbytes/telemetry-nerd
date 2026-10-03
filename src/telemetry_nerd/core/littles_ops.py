@@ -199,6 +199,24 @@ def _exprs(
     }
 
 
+def _fill_empty_tiles(v: np.ndarray, n: np.ndarray, gauge: bool) -> tuple[np.ndarray, np.ndarray]:
+    """A sub-step of one tile in which no scrape landed (jitter around the tile edge: the scrape
+    before it was a little late, the one after a little early) comes back without a value: the
+    source drops buckets without an observed sample. Its tile's increase is 0 — the next tile,
+    which holds two scrapes, carries it — and the gauge still reads its last sample there. Left
+    out, the next tile's two intervals of counts would be set against one gauge reading (lambda
+    inflated: measured 1.4-1.6x with scrapes on the tile edges). Isolated gaps only (observed on
+    both sides); a longer gap is missing data and stays out of all four signals."""
+    gap = np.zeros(v.size, bool)
+    gap[1:-1] = np.isnan(v[1:-1]) & np.isfinite(v[:-2]) & np.isfinite(v[2:])
+    if not gap.any():
+        return v, n
+    v = v.copy()
+    i = np.flatnonzero(gap)
+    v[i] = v[i - 1] if gauge else 0.0
+    return v, n
+
+
 def _key(labels: dict, by: list[str]) -> tuple[str, ...]:
     return tuple(labels.get(b, "") for b in by)
 
@@ -499,6 +517,10 @@ class LittlesOps:
         keys = sorted(set().union(*(set(v) for v in per_role.values())))
         nan = np.full(grid.size, np.nan)
 
+        if cfg.get("tile_s"):
+            for role, groups in per_role.items():
+                for k, (v, n) in groups.items():
+                    groups[k] = _fill_empty_tiles(v, n, gauge=role == "concurrency")
         # increase() tiles: per-tile counts -> per second
         per_s = 1 / cfg["tile_s"] if cfg.get("tile_s") else 1.0
         arr_s = 1.0 if cfg["arrival_is_rate"] else per_s

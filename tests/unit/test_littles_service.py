@@ -3,6 +3,7 @@
 import asyncio
 import json
 
+import numpy as np
 import pytest
 from mcp import Client
 
@@ -443,3 +444,16 @@ def test_scrape_interval_differing_from_the_source_resolution_is_stated(tmp_path
     (g,) = [a for a in out["assumptions"] if a["name"] == "gauge_sampling"]
     assert g["status"] == "flagged" and "scraped every 5s" in g["detail"]
     assert src.probes and src.probes[-1][0] == CONCURRENCY and src.probes[-1][1] == NOW
+
+
+def test_an_empty_scrape_tile_is_an_increase_of_zero_not_missing_data():
+    from telemetry_nerd.core.littles_ops import _fill_empty_tiles
+
+    v = np.array([np.nan, 3.0, np.nan, 7.0, np.nan, np.nan, 2.0])
+    n = np.array([0, 1, 0, 2, 0, 0, 1.0])
+    c, _ = _fill_empty_tiles(v, n, gauge=False)
+    g, gn = _fill_empty_tiles(v, n, gauge=True)
+    # isolated gaps only: a leading gap and a two-tile gap stay missing
+    assert np.array_equal(c, [np.nan, 3, 0, 7, np.nan, np.nan, 2], equal_nan=True)
+    assert np.array_equal(g, [np.nan, 3, 3, 7, np.nan, np.nan, 2], equal_nan=True)
+    assert np.array_equal(gn, n)  # no sample was read there
