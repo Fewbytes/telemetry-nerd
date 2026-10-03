@@ -1,6 +1,6 @@
 ---
 description: Show the Telemetry Nerd workspace UI URL
-allowed-tools: Bash(sh:*), Bash(open:*), Bash(xdg-open:*), mcp__plugin_telemetry-nerd_telemetry-nerd__workspace_get
+allowed-tools: Bash(sh *scripts/tn-launch*), Bash(open:*), Bash(xdg-open:*), mcp__plugin_telemetry-nerd_telemetry-nerd__workspace_get
 ---
 
 Open the workspace UI.

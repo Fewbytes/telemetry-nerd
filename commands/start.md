@@ -1,7 +1,7 @@
 ---
 description: Get going - make sure the daemon runs, connect your data, learn it, open the workspace
 argument-hint: "[prometheus-url | registry-name | grafana-url]"
-allowed-tools: Bash(sh:*), mcp__plugin_telemetry-nerd_telemetry-nerd__source_list, mcp__plugin_telemetry-nerd_telemetry-nerd__source_connect, mcp__plugin_telemetry-nerd_telemetry-nerd__source_status, mcp__plugin_telemetry-nerd_telemetry-nerd__source_learn, mcp__plugin_telemetry-nerd_telemetry-nerd__public_sources, mcp__plugin_telemetry-nerd_telemetry-nerd__binding_suggest
+allowed-tools: Bash(sh *scripts/tn-launch*), mcp__plugin_telemetry-nerd_telemetry-nerd__source_list, mcp__plugin_telemetry-nerd_telemetry-nerd__source_connect, mcp__plugin_telemetry-nerd_telemetry-nerd__source_status, mcp__plugin_telemetry-nerd_telemetry-nerd__source_learn, mcp__plugin_telemetry-nerd_telemetry-nerd__public_sources, mcp__plugin_telemetry-nerd_telemetry-nerd__binding_suggest
 ---
 
 Start a Telemetry Nerd session. Data location given: `$ARGUMENTS` (may be empty).
