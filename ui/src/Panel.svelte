@@ -9,6 +9,7 @@
   import { rgba, seriesName, toUplot } from "./chart/toUplot";
   import { drawRug, facetTop, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, rugMoreLabel, type RugCell } from "./chart/rug";
   import { describeShown, intervalLegend, panelNotes, provenanceParts, provenanceText } from "./lib/panelNotes";
+  import { sourceText } from "./lib/sources";
   import { getContext } from "svelte";
   import { windowBadge } from "./lib/coverage";
   import { focusRects, hasFocus, notesAt, unknownReasons } from "./chart/focus";
@@ -852,6 +853,7 @@
             onfocus={() => setFocus(hasFocus(note) ? note.where ?? null : null)} onblur={() => setFocus(null)}
           >
             <span class="tag">{note.kind === "caveat" ? "Caveat" : "Note"}</span>
+            {#if note.source}<span class="tag source" title="source of variation (spec §5.4)">{sourceText(note.source)}</span>{/if}
             {note.text}
           </li>
         {/each}

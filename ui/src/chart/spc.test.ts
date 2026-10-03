@@ -34,6 +34,9 @@ test("baseline is clipped to the plot; violations split into deciding and supple
 test("legend states the baseline, mode and verdict on control", () => {
   expect(spcLegend(s, b)).toContain("first half (default)");
   expect(spcLegend(s, b)).toContain("out of control: 1 point");
+  expect(spcLegend(s, b)).toContain("3σ band (the common-cause envelope)");
+  const labelled = { ...s, violations: (s.violations ?? []).map((v, i) => ({ ...v, source: i ? "undetermined" as const : "special_cause" as const })) };
+  expect(spcLegend(labelled, b)).toContain("signals: 1 special cause");
   expect(spcLegend({ ...s, mode: "ar1_residuals" }, b)).toContain("AR(1) residuals");
   expect(spcLegend({ ...s, mode: "insufficient_data", reason: "baseline has 3 points" }, b)).toBe(
     "No control limits: baseline has 3 points.",
@@ -69,6 +72,7 @@ test("supplementary run rules can be hidden; hover finds the nearest mark and na
   expect(tip.split("\n")[0]).toBe("00:04–00:05 UTC · 9");
   expect(tip).toContain("outside centre ± 3σ");
   expect(tip).toContain("CUSUM (k 0.5, h 5)");
+  expect(markTip({ ...marks[0], source: "special_cause" }, 60_000)).toContain("source: special cause");
   expect(markTip(marks[1], 60_000)).toContain("8 points in a row on one side of the centre (supplementary)");
 });
 

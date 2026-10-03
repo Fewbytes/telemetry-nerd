@@ -1,4 +1,5 @@
 import type uPlot from "uplot";
+import { sourceText, type VariationSource } from "../lib/sources";
 import { seriesName } from "./toUplot";
 
 /** Seasonal comparison panel (bead lkn.2): now vs previous cycles, their median and 90% band. */
@@ -7,7 +8,7 @@ export interface SeasonalSeries {
   id: string; labels: Record<string, string>; ts: number[]; now: (number | null)[];
   verdict: "usual" | "unusual" | "insufficient_history"; direction: string | null; reasons: string[];
   scheme: "previous" | "1d" | "1w"; label: string; scale: "log" | "linear";
-  cycles: SeasonalCycle[]; excluded: { j: number; start_ms: number; reason: string }[]; n: number;
+  cycles: SeasonalCycle[]; excluded: { j: number; start_ms: number; reason: string; source?: VariationSource }[]; n: number;
   centre?: (number | null)[]; lo?: (number | null)[]; hi?: (number | null)[];
   ratio?: { kind: "ratio" | "difference"; value: (number | null)[]; lo: (number | null)[]; hi: (number | null)[] };
   flagged?: { ts: number; value: number; z: number }[]; n_eff?: number;
@@ -47,9 +48,9 @@ const SCHEME_TEXT: Record<string, string> = { previous: "preceding windows", "1d
 export function seasonalLegend(s: SeasonalSeries, tz: string, view: SeasonalView): string {
   if (s.verdict === "insufficient_history") return `Not enough history: ${s.reasons[0] ?? ""}.`;
   const excl = s.excluded.length
-    ? ` · excluded: ${s.excluded.map((e) => `−${e.j} (${e.reason})`).join(", ")}`
+    ? ` · excluded: ${s.excluded.map((e) => `−${e.j} (${e.reason}${e.source ? `: ${sourceText(e.source)}` : ""})`).join(", ")}`
     : "";
-  const band = "90% band = median ± quantiles of leave-one-cycle-out residuals (spread across cycles)";
+  const band = "90% band = median ± quantiles of leave-one-cycle-out residuals (spread across cycles: the common-cause envelope)";
   const what = view === "ratio"
     ? `now ${s.ratio?.kind === "difference" ? "minus" : "÷"} reference, with the band in the same units`
     : `bold: now · faint: ${s.cycles.length} ${SCHEME_TEXT[s.scheme] ?? s.scheme} · dashed: their median`;
@@ -76,6 +77,6 @@ export function seriesDisplayName(s: SeasonalSeries, exprFallback: string): stri
 
 export function verdictText(s: SeasonalSeries): string {
   if (s.verdict === "insufficient_history") return "insufficient history";
-  if (s.verdict === "usual") return "usual for this time";
-  return `unusual${s.direction ? ` (${s.direction})` : ""}`;
+  if (s.verdict === "usual") return "usual for this time (common cause)";
+  return `unusual${s.direction ? ` (${s.direction})` : ""}: special cause`;
 }

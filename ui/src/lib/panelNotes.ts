@@ -1,12 +1,15 @@
 import { provenance } from "../chart/overlays";
 import type { Caveat, DatasetMeta, Where, YContext } from "./api";
 import { fmtValue } from "../chart/axis";
+import { caveatSource, type VariationSource } from "./sources";
 
 export interface Note {
   kind: "caveat" | "info";
   key: string;
   text: string;
   where?: Where | null;
+  /** spec §5.4: the caveat is about the instruments (measurement system), not the process */
+  source?: VariationSource | null;
 }
 
 type Describe = (nMin: number | null, dist: boolean) => string;
@@ -109,9 +112,13 @@ export function panelNotes(
       kind: key.startsWith(SOURCE_WARNING) ? "info" : "caveat",
       key,
       text: caveatText(key, opts.nMin, opts.representation),
+      ...(caveatSource(key) ? { source: caveatSource(key) } : {}),
     }));
   (opts.located ?? []).forEach((c, i) =>
-    notes.push({ kind: c.severity === "info" ? "info" : "caveat", key: `${c.code}:${i}`, text: c.message, where: c.where ?? null }),
+    notes.push({
+      kind: c.severity === "info" ? "info" : "caveat", key: `${c.code}:${i}`, text: c.message, where: c.where ?? null,
+      ...(caveatSource(c.code) ? { source: caveatSource(c.code) } : {}),
+    }),
   );
   if (opts.filter) {
     notes.push({ kind: "info", key: "filter", text: `Filtered: ${opts.filter.label} — ${opts.filter.reason}. Raw is one click away.` });

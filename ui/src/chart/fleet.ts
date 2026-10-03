@@ -1,5 +1,6 @@
 import type uPlot from "uplot";
 import type { Caveat, YContext, YView } from "../lib/api";
+import { sourceText, type VariationSource } from "../lib/sources";
 import { resolveY, yStats, type YResolved } from "./yview";
 
 /** Fleet panel (bead lkn.3): many series of one metric as a group band + outlying members. */
@@ -9,6 +10,8 @@ export interface FleetOutlier {
   since_ms: number | null; episodes: [number, number][];
   /** behaviour group the member was judged in (lkn.10), when the fleet is split */
   cluster?: string;
+  /** spec §5.4: special cause, or undetermined when the deviation rests on partial buckets */
+  source?: VariationSource;
 }
 /** A behaviour group (lkn.10): its own median and interquartile band per step. */
 export interface FleetCluster {
@@ -92,7 +95,8 @@ export function outlierText(o: FleetOutlier, fmtTime: (ms: number) => string): s
     ? o.episodes.length ? ` · ${o.episodes.length === 1 ? "episode" : `${o.episodes.length} episodes`} from ${fmtTime(o.episodes[0][0])}` : ""
     : o.since_ms !== null ? ` since ${fmtTime(o.since_ms)}` : "";
   const group = o.cluster ? ` within group ${o.cluster}` : "";
-  return `${o.id}: ${KIND_TEXT[o.kind]} ${o.direction}${group}${since}`;
+  const src = o.source && o.source !== "special_cause" ? ` (${sourceText(o.source)})` : "";
+  return `${o.id}: ${KIND_TEXT[o.kind]} ${o.direction}${group}${since}${src}`;
 }
 
 export function fleetLegend(d: FleetData): string {
@@ -104,9 +108,9 @@ export function fleetLegend(d: FleetData): string {
   const out = d.outlier_count === 0 ? "no outliers" : `${d.outlier_count} outlier${d.outlier_count > 1 ? "s" : ""}${more > 0 ? ` (${shown} drawn)` : ""}`;
   if (grouped(d)) {
     const gs = d.clusters!.map((c) => `${c.id} (${c.size})`).join(", ");
-    return `${d.members} members in ${d.clusters!.length} behaviour groups: ${gs} · ${out}, each judged within its group · ${n} · shading: min–max across all members; per group 25–75% and its median${units}`;
+    return `${d.members} members in ${d.clusters!.length} behaviour groups (systemic structure): ${gs} · ${out}, each judged within its group (special causes) · ${n} · shading: min–max across all members; per group 25–75% and its median (common-cause envelope)${units}`;
   }
-  return `${d.members} members · ${out} · ${n} · shading: min–max, 10–90%, 25–75% across reporting members · line: median${units}`;
+  return `${d.members} members · ${out}${d.outlier_count ? " (special causes)" : ""} · ${n} · shading: min–max, 10–90%, 25–75% across reporting members (the common-cause envelope) · line: median${units}`;
 }
 
 /** Steps where fewer members reported than were alive: the coverage strip's cells. */

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { postJSON, type Annotation, type Finding } from "../lib/api";
   import { flagLabel, refLabel, scopeLine, statLine } from "../lib/format";
+  import { sourceText } from "../lib/sources";
   import PinButton from "./PinButton.svelte";
 
   let {
@@ -49,6 +50,7 @@
             <a href="#/catalog" title="open the catalog to see the claims side by side">{refLabel(ref)}</a>{#if ref.note} <span class="basis">— {ref.note}</span>{/if}
           {:else}
             {statLine(ref)}
+            {#if ref.source}<span class="chip source" data-source={ref.source} title="source of variation (spec §5.4)">{sourceText(ref.source)}</span>{/if}
           {/if}
           {#each flagsOf(i) as f (f.flag)}
             <span class="chip uncertainty-flag" data-flag={f.flag} title={f.message}>{flagLabel(f.flag)}</span>

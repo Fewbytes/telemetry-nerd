@@ -2,6 +2,7 @@ import type { FleetData } from "../chart/fleet";
 import type { SeasonalSeries } from "../chart/seasonal";
 import type { SpcBaseline, SpcSeries } from "../chart/spc";
 import type { LittlesSeries, LittlesUnmatched } from "../chart/littles";
+import type { VariationSource } from "./sources";
 export interface ChartSpec {
   layers: {
     mark: string; data: string;
@@ -175,6 +176,8 @@ export type EvidenceRef =
       params: Record<string, unknown>;
       /** spec §5.3: the value's uncertainty is not known (citable, flagged) */
       uncertainty_unknown?: boolean;
+      /** spec §5.4: what the op attributed the variation to */
+      source?: VariationSource | null;
     };
 /** Server-derived uncertainty flag on one evidence item of a finding (spec §5.3). */
 export interface EvidenceFlag {
@@ -264,6 +267,8 @@ export interface RoleVerdict {
   status: "changed" | "no_change" | "insufficient" | "error" | string;
   direction: "higher" | "lower" | null; pattern: string | null; text: string | null; at_capacity: boolean;
   onset?: { at: string | null; interval?: [string | null, string]; before?: string; basis: string };
+  /** spec §5.4: special_cause (changed), common_cause (no change), undetermined (change on suspect data) */
+  source?: VariationSource;
 }
 /** binding_verdict's summary: which golden signal moved first, against what, at what alpha. */
 export interface GroupVerdict {

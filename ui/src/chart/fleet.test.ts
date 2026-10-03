@@ -37,6 +37,9 @@ test("outlier text says kind, direction and since; coverage gaps are shares of a
   const t = (ms: number) => `t${ms / 1000}`;
   expect(outlierText(d.outliers[0], t)).toBe("pod=a: consistently higher since t0");
   expect(outlierText(d.outliers[1], t)).toBe("pod=b: briefly lower · episode from t600");
+  // spec §5.4: special cause is the default reading; an undetermined source is said
+  expect(outlierText({ ...d.outliers[1], source: "undetermined" }, t)).toBe("pod=b: briefly lower · episode from t600 (source undetermined)");
+  expect(fleetLegend(d)).toContain("the common-cause envelope");
   const gaps = coverageGaps(d);
   expect(gaps.map((g) => g.x)).toEqual([300, 600]);
   expect(gaps[0].share).toBeCloseTo(0.03);
@@ -166,7 +169,7 @@ test("grouped fleet (oyi): whole min-max, then each group's IQR ribbon and media
 
 test("grouped legend, key and axis label name the groups; outliers are tagged with theirs", async () => {
   const { groupEnds, untrustedSpans } = await import("./fleet");
-  expect(fleetLegend(g)).toContain("2 behaviour groups: c1 (60), c2 (40)");
+  expect(fleetLegend(g)).toContain("2 behaviour groups (systemic structure): c1 (60), c2 (40)");
   expect(fleetLegend(g)).toContain("each judged within its group");
   expect(fleetAxisLabel(g, "s")).toContain("2 behaviour groups (per group: 25–75 band + median; all: min–max)");
   const key = fleetKey(false, g);

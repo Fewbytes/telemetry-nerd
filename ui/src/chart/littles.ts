@@ -1,5 +1,6 @@
 import type uPlot from "uplot";
 import { fmtRange } from "../lib/format";
+import { sourceText, type VariationSource } from "../lib/sources";
 
 /**
  * Little's law panel (czt.2, 60j): per window the discrepancy L ÷ λW with its measurement interval
@@ -7,7 +8,7 @@ import { fmtRange } from "../lib/format";
  * measurement system (the interval; a systematic offset), common cause (small-system / the
  * windows' own variation), special cause (transient windows beyond both).
  */
-export type DeviationSource = "measurement_system" | "common_cause" | "special_cause";
+export type DeviationSource = Exclude<VariationSource, "undetermined">;
 type Pair = [number | null, number | null];
 export interface LittlesWindow {
   start_ms: number; end_ms: number; n: number;
@@ -141,12 +142,7 @@ export function transientSpans(s: LittlesSeries): { x0: number; x1: number; sour
   });
 }
 
-const SOURCE_TEXT: Record<DeviationSource, string> = {
-  measurement_system: "measurement system",
-  common_cause: "common cause",
-  special_cause: "special cause",
-};
-export const sourceText = (v: DeviationSource) => SOURCE_TEXT[v] ?? v;
+export { sourceText };
 
 /** "systematic offset ×2.1 [1.87, 2.34] in 9/12 windows (measurement system)", or null. */
 export function systematicLabel(s: LittlesSeries): string | null {

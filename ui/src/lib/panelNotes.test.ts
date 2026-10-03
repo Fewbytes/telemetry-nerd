@@ -19,6 +19,15 @@ describe("panelNotes", () => {
       ["caveat", expect.stringContaining("no data")],
     ]);
   });
+  it("labels caveats about the instruments as measurement system (spec §5.4)", () => {
+    const notes = panelNotes(["gaps", "heavy_tails"], {
+      yScaledToData: false, nMin: null,
+      located: [{ code: "untrusted_data", severity: "warn", message: "Data unknown for 5m.", where: null, source: "bucket_state" }],
+    });
+    expect(notes.map((n) => [n.key, n.source ?? null])).toEqual([
+      ["gaps", "measurement_system"], ["heavy_tails", null], ["untrusted_data:0", "measurement_system"],
+    ]);
+  });
   it("adds the y-scale note as info, after the caveats", () => {
     const notes = panelNotes(["gaps"], { yScaledToData: true, nMin: null });
     expect(notes.map((n) => [n.kind, n.key])).toEqual([

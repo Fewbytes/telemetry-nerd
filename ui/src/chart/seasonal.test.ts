@@ -37,7 +37,11 @@ test("legend states reference, band method and exclusions; flags follow the view
     .toBe("Not enough history: 2 usable previous 1w cycles (< 3).");
   expect(flagMarks(s, "overlay")).toEqual([{ x: 600, y: 30, text: "z +6.1" }]);
   expect(flagMarks(s, "ratio")[0].y).toBe(2.6);
-  expect(verdictText(s)).toBe("unusual (higher)");
+  expect(verdictText(s)).toBe("unusual (higher): special cause");
+  expect(verdictText({ ...s, verdict: "usual" })).toBe("usual for this time (common cause)");
+  expect(seasonalLegend(s, "UTC", "overlay")).toContain("the common-cause envelope");
+  expect(seasonalLegend({ ...s, excluded: [{ j: 2, start_ms: 0, reason: "missing", source: "measurement_system" }] }, "UTC", "overlay"))
+    .toContain("−2 (missing: measurement system)");
 });
 
 test("seriesDisplayName: labelled series keep their name; a fully unlabelled series (sum without()) falls back to the expr", () => {

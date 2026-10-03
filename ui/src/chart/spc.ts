@@ -1,8 +1,10 @@
 import type uPlot from "uplot";
 import { fmtRange } from "../lib/format";
+import { sourceCounts, sourceText, type VariationSource } from "../lib/sources";
 
 /** SPC panel (bead lkn.1): series, centre line, 3-sigma band from a stated baseline, violations. */
-export interface SpcViolation { ts: number; value: number; rules: string[] }
+/** `source` (spec §5.4): special cause, a common-cause false alarm, or undetermined. */
+export interface SpcViolation { ts: number; value: number; rules: string[]; source?: VariationSource }
 export interface SpcSeries {
   id: string; labels: Record<string, string>; ts: number[]; value: (number | null)[];
   verdict: string; also: string[]; n: number;
@@ -86,14 +88,14 @@ export function baselineSpan(b: SpcBaseline, xmin: number, xmax: number): [numbe
   return z > a ? [a, z] : null;
 }
 
-export interface SpcMark { x: number; y: number; deciding: boolean; text: string; rules: string[] }
+export interface SpcMark { x: number; y: number; deciding: boolean; text: string; rules: string[]; source?: VariationSource }
 
 /** Flagged points; `supplementary: false` keeps only those a deciding rule flagged. */
 export function violationMarks(s: SpcSeries, supplementary = true): SpcMark[] {
   return (s.violations ?? [])
     .map((p) => ({
       x: p.ts / 1000, y: p.value, deciding: p.rules.some((r) => DECIDING.has(r)),
-      text: p.rules.map(ruleText).join(", "), rules: p.rules,
+      text: p.rules.map(ruleText).join(", "), rules: p.rules, source: p.source,
     }))
     .filter((m) => supplementary || m.deciding);
 }
@@ -114,7 +116,11 @@ export function nearestMark<M extends { x: number; y: number }>(
 /** Hover text for a flagged point: when, value, and every rule it broke with what it means. */
 export function markTip(m: SpcMark, stepMs: number): string {
   const t = m.x * 1000;
-  return [`${fmtRange(t - stepMs, t)} UTC · ${Number(m.y.toPrecision(4))}`, ...m.rules.map((r) => `• ${ruleDetail(r)}`)].join("\n");
+  return [
+    `${fmtRange(t - stepMs, t)} UTC · ${Number(m.y.toPrecision(4))}`,
+    ...m.rules.map((r) => `• ${ruleDetail(r)}`),
+    ...(m.source ? [`source: ${sourceText(m.source)}${m.source === "common_cause" ? " (a false alarm the chart in control expects)" : ""}`] : []),
+  ].join("\n");
 }
 
 export function spcLegend(s: SpcSeries, b: SpcBaseline, supplementary = true): string {
@@ -136,5 +142,7 @@ export function spcLegend(s: SpcSeries, b: SpcBaseline, supplementary = true): s
   const iv = limitIntervals(s);
   const unc = iv ? " · darker strips: 99% intervals of the centre and limits (from n_eff)" : "";
   const marks = supplementary ? "hollow: supplementary run rules" : "supplementary run rules hidden";
-  return `Centre and 3σ band from the ${where}${base} only (n ${s.n_baseline}, n_eff ${s.n_eff_baseline}; σ = 1.4826·MAD, marginal)${seasonal}${unc} · ${seq} · ${state}: ${nv} point${nv === 1 ? "" : "s"} flagged by deciding rules (filled), ${marks}; hover a point for its rules`;
+  const counts = sourceCounts(s.violations ?? []);
+  const srcs = counts ? ` · signals: ${counts}` : "";
+  return `Centre and 3σ band (the common-cause envelope) from the ${where}${base} only (n ${s.n_baseline}, n_eff ${s.n_eff_baseline}; σ = 1.4826·MAD, marginal)${seasonal}${unc} · ${seq} · ${state}: ${nv} point${nv === 1 ? "" : "s"} flagged by deciding rules (filled), ${marks}${srcs}; hover a point for its rules`;
 }

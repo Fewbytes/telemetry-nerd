@@ -82,5 +82,11 @@ describe("verdictBadge", () => {
     expect(verdictBadge({ status: "no_change", direction: null, pattern: null, at_capacity: false, text: "rate: no change" })?.tone).toBe("steady");
     expect(verdictBadge({ status: "insufficient", direction: null, pattern: null, at_capacity: false, text: null })).toEqual({ label: "insufficient", tone: "unknown", title: "insufficient" });
     expect(verdictBadge(undefined)).toBeNull();
+    // spec §5.4: the source leads the hover; an undetermined change says so on the badge
+    const und = verdictBadge({ status: "changed", direction: "lower", pattern: "level", at_capacity: false, text: "rate lower (level)", source: "undetermined" });
+    expect(und?.label).toBe("↓ level · source?");
+    expect(und?.title).toBe("source undetermined: rate lower (level)");
+    expect(verdictBadge({ status: "no_change", direction: null, pattern: null, at_capacity: false, text: "rate: no change", source: "common_cause" })?.title).toBe("common cause: rate: no change");
+    expect(verdictBadge({ status: "no_change", direction: null, pattern: null, at_capacity: false, text: "rate: no change (common cause)", source: "common_cause" })?.title).toBe("rate: no change (common cause)");
   });
 });

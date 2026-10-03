@@ -1,6 +1,7 @@
 // Panel groups (bead czt.3): a USE / RED / Little's law binding drawn as one linked set of panels.
 // Pure helpers: which panels belong to which group, in what order, and how the roles read.
 import type { Panel, PanelGroup, RoleVerdict } from "./api";
+import { sourceText } from "./sources";
 
 /** Role order per binding kind (the catalog's BINDING_ROLES). */
 const ROLE_ORDER: Record<string, string[]> = {
@@ -105,12 +106,16 @@ export function basisText(g: Pick<PanelGroup, "basis" | "binding_origin" | "sugg
 /** A role's verdict badge (bead czt.4): what moved, how, from when; title = the full sentence. */
 export function verdictBadge(v: RoleVerdict | null | undefined): { label: string; tone: "moved" | "steady" | "unknown"; title: string } | null {
   if (!v) return null;
-  const title = v.text ?? v.status;
+  const base = v.text ?? v.status;
+  // the server's role text already names the source; older verdicts or bare statuses get it here
+  const title = v.source && !base.includes(sourceText(v.source)) ? `${sourceText(v.source)}: ${base}` : base;
   if (v.status === "changed") {
     const arrow = v.direction === "higher" ? "↑" : v.direction === "lower" ? "↓" : "";
     const when = v.onset?.at ? ` from ${v.onset.at.slice(11, 16)}Z` : v.onset?.before ? " before the window" : "";
     const cap = v.at_capacity ? " · at capacity" : "";
-    return { label: `${arrow} ${v.pattern ?? "changed"}${cap}${when}`.trim(), tone: "moved", title };
+    // spec §5.4: a change whose source cannot be told says so on the badge itself
+    const und = v.source === "undetermined" ? " · source?" : "";
+    return { label: `${arrow} ${v.pattern ?? "changed"}${cap}${when}${und}`.trim(), tone: "moved", title };
   }
   if (v.status === "no_change") return { label: "no change", tone: "steady", title };
   return { label: v.status.replace(/_/g, " "), tone: "unknown", title };

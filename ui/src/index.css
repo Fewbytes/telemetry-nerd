@@ -45,6 +45,7 @@ a.obj-id:hover { text-decoration: underline; }
 .panel .note.active { outline: 1px solid var(--warn); }
 .panel .note .tag { font-weight: 600; text-transform: uppercase; font-size: 10px; letter-spacing: 0.04em; margin-right: 6px; color: var(--warn); }
 .panel .note.info .tag { color: var(--off); }
+.panel .note .tag.source { color: var(--muted); font-weight: 500; text-transform: none; letter-spacing: 0; }
 .error { color: var(--error); }
 .empty { color: var(--muted); }
 .panel a.answered-by { color: var(--muted); font-size: 0.85em; text-decoration: none; }
@@ -107,6 +108,9 @@ a.obj-id:hover { text-decoration: underline; }
 .chip { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--badge); border: 1px solid var(--border); margin-right: 4px; }
 .chip.caveat { color: var(--muted); }
 .uncertainty-flag { color: var(--warn); border-color: var(--warn); }
+/* spec §5.4: source of variation on an evidence statistic */
+.chip.source { color: var(--muted); }
+.chip.source[data-source="special_cause"] { color: var(--fg); border-color: var(--ann-claude); }
 .status-chip.proposed { background: var(--badge); }
 .status-chip.supported { background: #2e7d32; color: #fff; border-color: #2e7d32; }
 .status-chip.refuted { background: var(--error); color: #fff; border-color: var(--error); }
