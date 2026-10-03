@@ -277,6 +277,36 @@ async def test_gc_keeps_running_recent_and_referenced(svc):
     assert sorted(p.name for p in root.iterdir()) == ["c1", "c3"]
 
 
+async def test_gc_keeps_run_dirs_of_other_workspaces(svc):
+    svc.code.keep_recent = 1
+    a = await svc.code.run(PUT_CI, ["d1"])  # c1 in w1 -> d2, drawn on a w1 panel
+    svc.show(a.outputs[0].dataset, "CI per instance?")
+    await svc.code.run("x = 1")  # c2
+    await svc.code.run("y = 2")  # c3
+    svc.registry.create("second", None)
+    svc.active.set_active("w2")
+    assert svc.code.gc() == []
+    assert sorted(p.name for p in svc.code.runs.root.iterdir()) == ["c1", "c3"]
+
+
+async def test_kernel_keyed_by_active_workspace(svc, kernels):
+    svc.registry.create("second", None)
+    with svc.active.using("w2"):
+        await svc.code.run("x = 1")
+    await svc.code.run("y = 2")
+    assert [c["ws"] for c in kernels.calls] == ["w2", "w1"]
+
+
+async def test_recover_fails_stale_runs_in_every_workspace(svc):
+    svc.registry.create("second", None)
+    stale1 = svc.ws.objects.create_code("x = 1", [], "claude")
+    with svc.active.using("w2"):
+        stale2 = svc.ws.objects.create_code("y = 2", [], "claude")
+    assert sorted(svc.code.recover()) == sorted([stale1.id, stale2.id])
+    assert svc.code.get(stale1.id).exec_status == "interrupted"
+    assert svc.code.get(stale2.id).exec_status == "interrupted"
+
+
 async def test_startup_fails_interrupted_runs(svc):
     stale = svc.ws.objects.create_code("x = 1", [], "claude")
     svc.code.startup()

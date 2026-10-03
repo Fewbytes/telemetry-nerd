@@ -10,17 +10,20 @@ code's own doing (actor `code`: `dataset.created` per output, `code.finished`).
 GC policy for run directories (`gc`): a run dir is kept while its node is running, among the
 `keep_recent` newest nodes (re-run, debugging), or referenced: one of its outputs is drawn on a
 panel (open or closed), cited by a finding, or a parent of another dataset. Everything else,
-including directories with no node in this workspace, is removed. Removing a run dir never
+including directories with no node in any workspace, is removed. Run directories are shared by
+all workspaces, so recovery and GC look at every workspace, not just the active one. Removing a run dir never
 loses data: outputs are datasets in the store and the code + inputs live on the node.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import json
 import logging
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -41,7 +44,6 @@ from telemetry_nerd.workspace.models import CodeIssue, CodeNode, CodeOutput, Pan
 
 log = logging.getLogger(__name__)
 
-WORKSPACE_ID = "w1"  # one workspace per daemon in the MVP
 MAX_CODE_CHARS = 100_000
 MAX_TIMEOUT_S = 3600.0
 #: what run_code returns of stdout/stderr/traceback (the node keeps the kernel's bounded copy)
@@ -84,6 +86,12 @@ class CodeOps:
     runs: RunExchange | None = None
     clock: Callable[[], int] = now_ms
     keep_recent: int = 20
+    #: the workspace a run belongs to (its kernel is keyed by it)
+    scope: Callable[[], str] = lambda: "w1"
+    #: every workspace id: recovery and GC span them all
+    workspace_ids: Callable[[], list[str]] = lambda: ["w1"]
+    #: pin the workspace for the duration of a block
+    using: Callable[[str], AbstractContextManager[None]] = lambda wid: contextlib.nullcontext()
     _running: set[str] = field(default_factory=set, init=False, repr=False)
 
     @property
@@ -162,7 +170,7 @@ class CodeOps:
             return self._finish(node, ExecResult("error", error=f"inputs: {e}"), None, "not_run")
         try:
             res = await self.kernels.execute(
-                WORKSPACE_ID,
+                self.scope(),
                 node.code,
                 env={fmt.ENV_RUN_DIR: str(run_dir)},
                 cwd=run_dir,
@@ -249,23 +257,30 @@ class CodeOps:
 
     def recover(self) -> list[str]:
         """Fail nodes left `running` by a daemon that stopped mid-run (startup only)."""
-        stale = [
-            c
-            for c in self.ws.objects.list_code()
-            if c.status == "running" and c.id not in self._running
-        ]
-        for c in stale:
-            self._finish(
-                c,
-                ExecResult("crashed", error="interrupted: the daemon stopped during this run"),
-                None,
-                "interrupted",
-            )
-        return [c.id for c in stale]
+        failed: list[str] = []
+        for wid in self.workspace_ids():
+            with self.using(wid):
+                stale = [
+                    c
+                    for c in self.ws.objects.list_code()
+                    if c.status == "running" and c.id not in self._running
+                ]
+                for c in stale:
+                    self._finish(
+                        c,
+                        ExecResult(
+                            "crashed", error="interrupted: the daemon stopped during this run"
+                        ),
+                        None,
+                        "interrupted",
+                    )
+                failed.extend(c.id for c in stale)
+        return failed
 
     # --- GC ---------------------------------------------------------------------------------
 
     def _referenced_datasets(self) -> set[str]:
+        """Datasets drawn or cited in the current workspace, plus every dataset's parents."""
         refs: set[str] = set()
         for p in self.ws.workspace.list_panels(include_closed=True):
             refs.update(p.dataset_ids)
@@ -284,9 +299,13 @@ class CodeOps:
 
     def keep(self) -> Callable[[str], bool]:
         """The GC predicate (see the module docstring), computed once per GC pass."""
-        nodes = self.ws.objects.list_code()
+        nodes: list[CodeNode] = []
+        refs: set[str] = set()
+        for wid in self.workspace_ids():
+            with self.using(wid):
+                nodes.extend(self.ws.objects.list_code())
+                refs |= self._referenced_datasets()
         recent = {c.id for c in sorted(nodes, key=lambda c: int(c.id[1:]))[-self.keep_recent :]}
-        refs = self._referenced_datasets()
         keep = set(self._running) | recent
         for c in nodes:
             if c.status == "running" or any(o.dataset in refs for o in c.outputs):

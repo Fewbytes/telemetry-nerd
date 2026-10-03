@@ -342,6 +342,7 @@ class TelemetryService:
         self.code = CodeOps(
             self.datasets, self.ws, self.log, self.kernels,
             build_runs(self.datasets, self.ws, self.runs_root), self.clock,
+            scope=self.active, workspace_ids=self.registry.ids, using=self.active.using,
         )  # fmt: skip
 
     def _littles_binding(self, source: str, key: str):
