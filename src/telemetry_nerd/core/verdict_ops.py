@@ -106,10 +106,6 @@ class _Role:
     absent_as_zero: bool = False
 
 
-def _labels_key(labels: str) -> str:
-    return json.dumps(json.loads(labels), sort_keys=True)
-
-
 class VerdictOps:
     def __init__(self, svc: TelemetryService) -> None:
         self.svc = svc
