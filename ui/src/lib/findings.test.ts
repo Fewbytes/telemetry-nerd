@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CodeBrief, Finding, Hypothesis, Panel } from "./api";
-import { evidenceViews, hypothesisView, scopeFields, verdictText } from "./findings";
+import { evidenceViews, hypothesisView, scopeFields, scopeNotice, verdictText } from "./findings";
 
 const scope = {
   source: "default", selector: "tn_demo_latency_seconds",
@@ -92,4 +92,31 @@ describe("hypothesisView", () => {
 it("verdictText", () => {
   expect(verdictText(null)).toBe("awaiting verdict");
   expect(verdictText("needs-more")).toBe("needs more evidence");
+});
+
+describe("evidence discipline (qxp)", () => {
+  it("shows a claim beyond its evidence with its note, and nothing when covered", () => {
+    const check = { status: "beyond_evidence", named: [], not_covered: ['service_name="checkout"'], undetermined: [], message: "m" };
+    const n = scopeNotice(fnd({ scope_check: check, scope_note: "read off d2" }));
+    expect(n?.status).toBe("beyond_evidence");
+    expect(n?.text).toContain('service_name="checkout"');
+    expect(n?.note).toBe("read off d2");
+    expect(scopeNotice(fnd({ scope_check: { ...check, status: "covered" } }))).toBeNull();
+    expect(scopeNotice(fnd({}))).toBeNull();
+    const u = scopeNotice(fnd({ scope_check: { ...check, status: "undetermined", message: "scope undetermined: x" } }));
+    expect(u?.text).toBe("scope undetermined: x");
+  });
+  it("labels derived and undetermined sources per evidence item", () => {
+    const f = fnd({
+      evidence: [stat({ source: "special_cause" }), { kind: "panel", panel: "p1" }],
+      source_flags: [
+        { evidence: 0, flag: "source_derived", source: "special_cause", message: "from analyze" },
+        { evidence: 1, flag: "source_undetermined", source: "undetermined", message: "none cited" },
+      ],
+    });
+    const v = evidenceViews(f, ctx);
+    expect(v[0].sourceFlag?.label).toBe("source from op");
+    expect(v[1].sourceFlag?.label).toBe("source undetermined");
+    expect(v[0].flags).toEqual([]);
+  });
 });

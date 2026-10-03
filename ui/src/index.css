@@ -114,6 +114,9 @@ a.obj-id:hover { text-decoration: underline; }
 .uncertainty-flag { color: var(--warn); border-color: var(--warn); }
 /* spec §5.4: source of variation on an evidence statistic */
 .chip.source { color: var(--muted); }
+.chip.source-flag { color: var(--muted); }
+.chip.source-flag[data-flag="source_undetermined"] { color: var(--warn); border-color: var(--warn); }
+.finding .scope-notice { margin: 0 0 6px; padding: 4px 8px; font-size: 12px; color: var(--warn); border-left: 3px solid var(--warn); }
 .chip.source[data-source="special_cause"] { color: var(--fg); border-color: var(--ann-claude); }
 .status-chip.proposed { background: var(--badge); }
 .status-chip.supported { background: var(--ok); color: var(--on-ok); border-color: var(--ok); }

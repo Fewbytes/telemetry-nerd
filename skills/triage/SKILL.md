@@ -76,8 +76,11 @@ subset). Report the discrepancy first, then the verdict and assumptions (`model-
 
 ## 7. Hypotheses and ruling out
 
-Open competing hypotheses early with `hypothesis_create`; for each, look first for the
-observation that would refute it. Attach results with `finding_create(...,
+Open competing hypotheses early with `hypothesis_create`, each naming the suspected service,
+resource or metric ("payment `charge` calls fail", not "a fault in one service"); for each,
+look first for the observation that would refute it. `supported` is refused until a finding
+backs it and an alternative is refuted / inconclusive (or `alternatives_considered` says how
+it was ruled out). Attach results with `finding_create(...,
 hypothesis=<id>, stance="for" | "against")` (finding anatomy, scope and source labels: the
 `evidence` skill) and move status with `hypothesis_update`. The cheap
 alternatives to rule out first, and the test for each: `references/ruling-out.md`. Do not chase

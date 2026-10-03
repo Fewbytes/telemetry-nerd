@@ -185,6 +185,18 @@ export interface EvidenceFlag {
   flag: "uncertainty_unknown" | "input_uncertainty_unknown" | "uncertainty_not_propagated";
   message: string;
 }
+/** Server verdict on a finding's claim against its evidence (bead qxp). */
+export interface ScopeCheck {
+  status: "covered" | "beyond_evidence" | "undetermined";
+  named: string[]; not_covered: string[]; undetermined: string[]; message: string;
+}
+/** Where a finding's source of variation came from, when not as cited (spec §5.4). */
+export interface SourceFlag {
+  evidence: number;
+  flag: "source_derived" | "source_undetermined";
+  source?: VariationSource | null;
+  message: string;
+}
 export interface Annotation {
   id: string; kind: "event" | "region" | "threshold" | "band" | "note";
   panel: string | null; t_start_ms: number | null; t_end_ms: number | null;
@@ -194,6 +206,7 @@ export interface Annotation {
 export interface Hypothesis {
   id: string; statement: string; status: "proposed" | "supported" | "refuted" | "inconclusive";
   author: string; evidence_for: string[]; evidence_against: string[];
+  alternatives_considered?: string | null;
   created_at_ms: number; updated_at_ms: number;
 }
 export interface Finding {
@@ -202,6 +215,9 @@ export interface Finding {
   author: string; created_at_ms: number;
   verdict: "accepted" | "rejected" | "needs-more" | null; verdict_comment: string | null;
   evidence_flags?: EvidenceFlag[];
+  scope_note?: string | null;
+  scope_check?: ScopeCheck | null;
+  source_flags?: SourceFlag[];
 }
 export interface Gap {
   id: string; missing_signal: string; needed_for: string;

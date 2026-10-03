@@ -28,6 +28,8 @@ export interface EvidenceView {
   } | null;
   source: { code: string; text: string } | null;
   flags: { flag: string; label: string; message: string }[];
+  /** source derived from the op that emitted the statistic, or undetermined (spec §5.4) */
+  sourceFlag: { flag: string; label: string; message: string } | null;
   links: ObjectLink[];
   note: string | null;
 }
@@ -52,9 +54,13 @@ export function evidenceViews(finding: Finding, ctx: LinkContext): EvidenceView[
     (finding.evidence_flags ?? [])
       .filter((f) => f.evidence === i)
       .map((f) => ({ flag: f.flag, label: flagLabel(f.flag), message: f.message }));
+  const sourceFlagOf = (i: number) => {
+    const f = (finding.source_flags ?? []).find((x) => x.evidence === i);
+    return f ? { flag: f.flag, label: f.flag === "source_derived" ? "source from op" : "source undetermined", message: f.message } : null;
+  };
   const panelsById = new Map(ctx.panels.map((p) => [p.id, p]));
   return finding.evidence.map((ref, index): EvidenceView => {
-    const base = { index, flags: flagsOf(index), note: null as string | null, source: null, stat: null };
+    const base = { index, flags: flagsOf(index), sourceFlag: sourceFlagOf(index), note: null as string | null, source: null, stat: null };
     switch (ref.kind) {
       case "panel": {
         const p = panelsById.get(ref.panel);
@@ -93,6 +99,19 @@ export function evidenceViews(finding: Finding, ctx: LinkContext): EvidenceView[
       }
     }
   });
+}
+
+export interface ScopeNotice { status: "beyond_evidence" | "undetermined"; text: string; note: string | null }
+
+/** A claim reaching beyond its evidence, or whose coverage is not established: shown, never
+ * hidden (principle 2; bead qxp). Null when the server found it covered or did not check. */
+export function scopeNotice(f: Finding): ScopeNotice | null {
+  const c = f.scope_check;
+  if (!c || c.status === "covered") return null;
+  const text = c.status === "beyond_evidence"
+    ? `Claim names ${c.not_covered.join(", ")}, which its evidence does not cover`
+    : c.message || "scope undetermined";
+  return { status: c.status, text, note: f.scope_note ?? null };
 }
 
 export interface ScopeField { label: string; value: string }

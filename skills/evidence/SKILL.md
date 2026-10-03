@@ -31,7 +31,14 @@ baseline_end?}`. `step` is the dataset's resolved step from its summary (`1m`), 
 (refused). Write the claim so it is true **only** inside that scope:
 
 - **Service and selector**: the metric and label filter the numbers came from, not the service
-  name in general. Two members measured is "s0 and s1", not "the fleet".
+  name in general. Two members measured is "s0 and s1", not "the fleet". Write `selector` as
+  PromQL (`x{service_name="payment"}`, groupings as `sum by (code) (...)`); one that cannot be
+  read leaves the scope `undetermined`.
+- **Every entity the claim names is in its evidence.** The server reads which services, pods,
+  jobs... each cited dataset covers (series labels, and the matchers of its own query) and
+  refuses a claim naming others (`claim_beyond_evidence`, with the datasets that hold them):
+  cite those too, or split the claim. `scope_note` (why the claim reaches further) records it
+  flagged `beyond_evidence` instead; use it rarely and repeat it in the report.
 - **Time range and reference**: the window judged and what it was compared with ("against the 4
   previous hours", "the same hour on 7 previous days"). A verdict without its reference is not a
   claim.
@@ -86,6 +93,11 @@ items and on `evidence` statistics, `variation` lists in results.
 
 Rules: report the label **with** the number, never instead of it. Pass `source` through to
 `finding_create` unchanged; never relabel and never upgrade `undetermined` to `special_cause`.
+A statistic cited without it gets the source its op gave it (flag source_derived in the
+result's source_flags); one no op emitted, or a finding whose evidence attributes no variation
+(a panel only), is flagged source_undetermined and lists `undetermined` in `sources`: for an
+incident claim, cite the op statistic (`analyze`, `compare_seasonal`, `fleet`,
+`binding_verdict`) that labels it.
 Separate measurement-system findings from process findings: "the gauge misses instance i3" is
 its own finding, not a caveat on a latency claim. A `common_cause` result supports "nothing
 beyond normal variation was detected", which can rule a hypothesis out.
@@ -102,7 +114,9 @@ another look; count the looks (principle 14).
 
 1. `hypothesis_create(statement)` as soon as an explanation is entertained, and record the
    competing ones too (load, saturation, one bad member, the daily peak, a dependency, the
-   instruments). A statement names what would be true in the data.
+   instruments). A statement names its subject (the service, resource or metric) and what
+   would be true in the data: "payment `charge` calls fail and checkout errors follow", not "a
+   fault in one service".
 2. For each, find the observation that could **refute** it, and look for that first.
 3. Attach evidence with `finding_create(..., hypothesis=<id>, stance="for" | "against")`. A user
    reply that contradicts a hypothesis still needs a finding with `stance="against"` built from
@@ -110,6 +124,9 @@ another look; count the looks (principle 14).
 4. Move the status with `hypothesis_update(hypothesis, status, note)`: `proposed` (default),
    `supported`, `refuted`, `inconclusive`. `supported` needs evidence for **and** the obvious
    alternatives refuted; timing alone (A moved before B) is `proposed`, not `supported`.
+   The server refuses `supported` without a concrete subject in the statement, a standing
+   `stance="for"` finding, and an alternative considered: another hypothesis `refuted` /
+   `inconclusive`, or `alternatives_considered` (which, and how each was ruled out).
    Refuted hypotheses stay visible: ruling out is a result.
 
 Causation is never claimed from ordering or correlation. "Latency moved first, 09:56-10:02Z,
@@ -130,7 +147,8 @@ missing signal changes what can be concluded; say in the report what stays unkno
   for an onset or event.
 - Caveats from the op (`overdispersed`, `heavy_tails`, `settling`, gaps) in `caveats`.
 - `scope.baseline_start` / `baseline_end` when the claim is relative to a reference.
-- After the call: report the finding id, its `uncertainty` flags and its `sources`.
+- After the call: report the finding id, its `scope` status (when not `covered`), its
+  `uncertainty` flags and its `sources` (including `undetermined`).
 
 ## Additional resources
 

@@ -21,12 +21,15 @@ per finding
   asserting a change); directions agree with the expected signals per entity and measure.
 - source label: an incident finding (names an implicated entity, asserts a change) labels its
   statistics with an expected source (special cause for a demo fault); common cause alone is wrong.
+  The daemon's structured verdicts count too (bead qxp): `scope_check.not_covered` entities are
+  unscoped, and a `source_undetermined` source flag lists `undetermined` among the sources.
 
 workspace
 - findings present; root cause named by an in-window finding; annotations: at least one onset
   within fault_window.start +- tolerance and none off target; unscoped claims (findings and the
   final transcript) == 0; a root-cause hypothesis supported; no hypothesis blaming a control
-  supported.
+  supported; every supported hypothesis has a finding for it and an alternative considered
+  (another hypothesis refuted / inconclusive, or `alternatives_considered`).
 
 The text checks (entity mentions, direction and causal wording) are deliberately simple word rules,
 reported with the sentence they fired on so a reader can overrule them.
@@ -245,6 +248,7 @@ class HypothesisScore:
     role: Literal["root_cause", "blames_control", "other"]
     evidence_for: int
     evidence_against: int
+    alternatives_considered: bool = False  # a note, or another hypothesis ruled out
 
 
 @dataclass
@@ -320,7 +324,12 @@ def score_finding(
     ev_cov: set[str] = set()
     for x in _evidence_exprs(f, exprs):
         ev_cov |= coverage(x, truth)[0]
-    uncovered = sorted(set(ents) - sel_cov - ev_cov)
+    uncovered = set(ents) - sel_cov - ev_cov
+    # the daemon's own verdict on the claim's scope against its evidence (bead qxp)
+    for item in (f.get("scope_check") or {}).get("not_covered", []):
+        value = item.split("=", 1)[-1].strip('"')
+        uncovered |= {e for e in truth.entities if _value_names(value, e)}
+    uncovered = sorted(uncovered)
     if uncovered:
         problems.append(f"claim names {', '.join(uncovered)} outside its scope and evidence")
     scoped = fields_ok and time_ok and not uncovered
@@ -385,6 +394,8 @@ def score_finding(
     sources = list(
         dict.fromkeys(e["source"] for e in ev if e.get("kind") == "statistic" and e.get("source"))
     )
+    if any(x.get("flag") == "source_undetermined" for x in f.get("source_flags") or []):
+        sources = list(dict.fromkeys([*sources, "undetermined"]))  # as the daemon lists them
     source_ok: bool | None = None
     if incident and sources:
         source_ok = any(s in truth.expected_sources for s in sources)
@@ -438,7 +449,7 @@ def score_annotation(a: dict, truth: Truth) -> AnnotationScore:
     return AnnotationScore(a.get("id", "?"), a.get("kind", ""), label, t0, t1, d0, d1, verdict)
 
 
-def score_hypothesis(h: dict, truth: Truth) -> HypothesisScore:
+def score_hypothesis(h: dict, truth: Truth, others: list[dict] | None = None) -> HypothesisScore:
     st = h.get("statement", "")
     if names_term(st, truth.root_cause_terms, truth.entities):
         role = "root_cause"
@@ -457,6 +468,11 @@ def score_hypothesis(h: dict, truth: Truth) -> HypothesisScore:
         role,
         len(h.get("evidence_for", [])),
         len(h.get("evidence_against", [])),
+        bool((h.get("alternatives_considered") or "").strip())
+        or any(
+            o.get("id") != h.get("id") and o.get("status") in ("refuted", "inconclusive")
+            for o in others or []
+        ),
     )
 
 
@@ -488,7 +504,8 @@ def score(snapshot: dict, truth: Truth) -> Report:
         for a in ws.get("annotations", [])
         if not a.get("deleted") and a.get("author") != "user"
     ]
-    hyps = [score_hypothesis(h, truth) for h in ws.get("hypotheses", [])]
+    all_h = ws.get("hypotheses", [])
+    hyps = [score_hypothesis(h, truth, all_h) for h in all_h]
     result = ((snapshot.get("transcript") or {}).get("result")) or ""
     t_unscoped = transcript_unscoped(result, truth)
     unscoped = [
@@ -597,6 +614,16 @@ def score(snapshot: dict, truth: Truth) -> Report:
             all(h.status in ("refuted", "inconclusive") for h in decoys) if decoys else None,
             "hypotheses blaming a control end refuted or inconclusive",
             [h.id for h in decoys if h.status not in ("refuted", "inconclusive")],
+        )
+    )
+    supported = [h for h in hyps if h.status == "supported"]
+    undisciplined = [h.id for h in supported if not h.evidence_for or not h.alternatives_considered]
+    checks.append(
+        _c(
+            "supported_hypotheses_disciplined",
+            not undisciplined if supported else None,
+            "every supported hypothesis has a finding for it and an alternative considered",
+            undisciplined,
         )
     )
     app = [c for c in checks if c.status != "n/a"]

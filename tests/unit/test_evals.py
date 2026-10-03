@@ -507,4 +507,34 @@ def test_real_sonnet_run_scores_as_observed():
     assert rep.findings[0].uncovered == ["checkout", "frontend"]
     assert st["annotation_onset"] == "fail" and rep.annotations == []
     assert st["root_cause_hypothesis_supported"] == "fail"  # h1 names no service
+    assert st["supported_hypotheses_disciplined"] == "fail"  # h1: no alternative considered
     assert not rep.acceptance
+
+
+def test_daemon_scope_and_source_verdicts_are_used():
+    def m(s):
+        f = finding(s, "f1")
+        f["scope_check"] = {"status": "beyond_evidence", "not_covered": ['service_name="checkout"']}
+        f["source_flags"] = [{"evidence": 0, "flag": "source_undetermined", "message": "x"}]
+
+    rep = mutate(m)
+    f1 = next(f for f in rep.findings if f.id == "f1")
+    assert f1.uncovered == ["checkout"] and not f1.scoped
+    assert "undetermined" in f1.sources
+
+
+def test_supported_hypothesis_needs_an_alternative():
+    assert status(mutate(lambda s: None), "supported_hypotheses_disciplined") == "pass"
+
+    def m(s):
+        for h in s["workspace"]["hypotheses"]:
+            if h["id"] == "h2":
+                h["status"] = "proposed"
+
+    assert status(mutate(m), "supported_hypotheses_disciplined") == "fail"
+
+    def noted(s):
+        m(s)
+        s["workspace"]["hypotheses"][0]["alternatives_considered"] = "checkout ruled out by f2"
+
+    assert status(mutate(noted), "supported_hypotheses_disciplined") == "pass"

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { postJSON, type Annotation, type CodeBrief, type Finding, type Panel } from "../lib/api";
-  import { evidenceViews, scopeFields, verdictText } from "../lib/findings";
+  import { evidenceViews, scopeFields, scopeNotice, verdictText } from "../lib/findings";
   import PinButton from "./PinButton.svelte";
   import ObjectLinks from "./ObjectLinks.svelte";
 
@@ -17,6 +17,7 @@
 
   const evidence = $derived(evidenceViews(finding, { panels, code, annotations }));
   const scope = $derived(scopeFields(finding.scope));
+  const notice = $derived(scopeNotice(finding));
   const flagged = $derived(evidence.filter((e) => e.flags.length > 0).length);
 
   const verdict = (v: "accepted" | "rejected" | "needs-more") => {
@@ -50,6 +51,11 @@
       <div><dt>{f.label}</dt><dd>{f.value}</dd></div>
     {/each}
   </dl>
+  {#if notice}
+    <p class="scope-notice" data-status={notice.status} role="note">
+      {notice.text}{#if notice.note}<span class="basis"> (note: {notice.note})</span>{/if}
+    </p>
+  {/if}
 
   {#if evidence.length > 0}
     <h4 class="sub">Evidence</h4>
@@ -66,6 +72,7 @@
             {#if e.note}<span class="basis">{e.note}</span>{/if}
           {/if}
           {#if e.source}<span class="chip source" data-source={e.source.code} title="source of variation (spec §5.4)">{e.source.text}</span>{/if}
+          {#if e.sourceFlag}<span class="chip source-flag" data-flag={e.sourceFlag.flag} title={e.sourceFlag.message}>{e.sourceFlag.label}</span>{/if}
           {#each e.flags as f (f.flag)}
             <span class="chip uncertainty-flag" data-flag={f.flag} title={f.message}>{f.label}</span>
           {/each}

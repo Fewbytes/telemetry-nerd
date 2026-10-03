@@ -36,7 +36,11 @@ generalises from a member to the service, from one source to production, or from
 
 - Decided: 2026-09-30.
 - Enforced by: `Scope` in `src/telemetry_nerd/workspace/models.py` (required on `FindingIn`;
-  `step` a positive duration, `auto` refused); MVP spec §3.3; `skills/evidence/SKILL.md` ("Scope every claim").
+  `step` a positive duration, `auto` refused); MVP spec §3.3; `skills/evidence/SKILL.md` ("Scope every claim");
+  claim vs evidence (bead qxp): `check_claim` in `src/telemetry_nerd/core/evidence_discipline.py`
+  refuses a claim naming entities its evidence does not cover unless it carries `scope_note`
+  (then `Finding.scope_check.status = beyond_evidence`); an unreadable `scope.selector` is
+  `undetermined`, never judged silently over every series (`core/claim_scope.py`).
 
 ## 3. Correct over conventional
 
@@ -130,7 +134,9 @@ principle names; 14 governs the flags drawn against it.)
 - Decided: 2026-10-03, user (beads 60j, gkk); fleet band 2026-10-03 (bead nq6).
 - Enforced by: MVP spec §5.4 (vocabulary and per-op mapping); `src/telemetry_nerd/analysis/sources.py`;
   `source` on `StatisticRef` and `FindingIn.sources` in `src/telemetry_nerd/workspace/models.py`;
-  `skills/evidence/SKILL.md` and `skills/evidence/references/sources-of-variation.md`; fleet
+  `skills/evidence/SKILL.md` and `skills/evidence/references/sources-of-variation.md`;
+  `Finding.source_flags` (bead qxp: a source taken from the op that emitted the statistic, or
+  `source_undetermined`, never upgraded); fleet
   band: `control_band` / `missing_bounds` in `src/telemetry_nerd/analysis/fleet.py`, fleet spec
   "Band: the SPC reference".
 
@@ -227,7 +233,10 @@ result.
 
 - Decided: 2026-09-30 (MVP spec §1.1, §3.3 invariants).
 - Enforced by: `Hypothesis`, `Finding.verdict` in `src/telemetry_nerd/workspace/models.py`;
-  `hypothesis_create` / `hypothesis_update` / `finding_create(stance=...)`;
+  `hypothesis_create` / `hypothesis_update` / `finding_create(stance=...)`; `supported` (set by
+  Claude) refused without a concrete subject, a standing finding for it and an alternative
+  refuted / inconclusive or `alternatives_considered` (`support_problems` in
+  `src/telemetry_nerd/core/evidence_discipline.py`, bead qxp);
   `skills/evidence/SKILL.md` ("Hypotheses: for, against, ruled out");
   `skills/triage/references/ruling-out.md`.
 
