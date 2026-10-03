@@ -39,6 +39,15 @@ conclusions.
    summaries; the server holds the data.
 7. **The workspace is the single source of truth.** Claude, the UI, and tier-2 code all
    mutate the same object model through the same operation layer.
+8. **Every variation is labelled with its source** (SPC's central insight; user decision
+   2026-10-03). Variance, noise and error do not share one cause: **common cause** (the
+   system's inherent variability; the limits/bands are its envelope; act by changing the
+   system, never chase a point inside it), **special cause** (assignable: out-of-limit points,
+   run-rule signals, shifts, transients, leaving steady state; investigate) and the
+   **measurement system** (instrumentation error and bias: sampling, edges, unmeasured
+   segments, units, missing members, partial or untrusted data). When the data cannot tell
+   them apart the label is **source undetermined** — never a guess. Labels add context; they
+   never hide or replace the measured numbers (§5.4).
 
 ### 1.3 Personas
 
@@ -481,6 +490,37 @@ derived server-side from each cited item (`core.uncertainty.evidence_flags`) plu
 | `uncertainty_not_propagated` | the interval leaves out the inputs' known intervals: a lower bound |
 
 The `finding_create` result, `workspace_get` (per finding) and the findings UI show them.
+
+### 5.4 Sources of variation
+
+**Decision (2026-10-03, user; beads 60j, gkk).** Every op that reports variation or a
+deviation labels each item with its source (principle 8). Vocabulary
+(`analysis.sources`; wire values):
+
+| Source | Wire value | Meaning | Action |
+|---|---|---|---|
+| common cause | `common_cause` | inherent variability of the system as it is, incl. a small system's per-window fluctuation and systemic structure (cycles, strata); the limits / bands are the common-cause envelope | change the system; never chase points inside the envelope |
+| special cause | `special_cause` | assignable: out-of-limit points, run-rule / EWMA / CUSUM signals, shifts, drift, transient deviations, leaving steady state, an unusual window or member | investigate the cause |
+| measurement system | `measurement_system` | instrumentation error or bias: sampling, edge effects, unmeasured segments, units, missing members, partial / untrusted / missing data, unknown input uncertainty | fix or qualify the instruments before reading the process |
+| source undetermined | `undetermined` | the data cannot tell the sources apart (a signal no more frequent than the envelope's false alarms; a deviation coinciding with partial data; a member that went silent) | say so; gather what would separate them |
+
+**Where the label lives.** An `evidence` statistic carries a first-class `source` (optional,
+backward compatible: `core.wire.statistic(..., source=)`, `StatisticRef.source`); a finding
+citing it keeps it, and `workspace_get` / `finding_create` list a finding's `sources`.
+Each op's result also carries a `variation` list of `{source, finding}` items (per series /
+member / role), so every labelled finding is readable in one place; measurement-system items
+come from the result's caveats (`analysis.sources.MEASUREMENT_CAVEATS`). Numbers are never
+changed by a label; a verdict stays context.
+
+**Mapping per op.**
+
+| Op | common cause | special cause | measurement system | undetermined |
+|---|---|---|---|---|
+| `analyze` (SPC) | control limits (centre ± 3σ from the baseline), stable / periodic structure, wandering or heavy-tailed noise | points beyond limits, run rules, EWMA/CUSUM signals when the chart is out of control; level shifts; drift; variance change | gaps, partial / missing / untrusted data, post-gap spikes, coarsening, unknown input uncertainty | violations no more frequent than the chart's false-alarm expectation (in control) |
+| `compare_seasonal` | the cycle-to-cycle spread (normal band) and a usual window | an unusual level, extremes, too many points outside the band; atypical reference cycles (a special cause in the history) | cycles excluded as missing; data caveats | cycles the user excluded (reason not stated) |
+| `fleet` | the fleet's per-step spread; behaviour groups (systemic structure: strata of the fleet) | outlying members (persistent, shifted, drifting, transient) | unknown spans, members missing / skipped, ended members | a member that went silent (ended or sick); an outlier episode on partial buckets |
+| `binding_verdict` | a role with no change against its reference cycles | a role that changed (level / episode) and its onset | data caveats per role | a change on data with measurement-system caveats |
+| `check_littles_law` | the small-system envelope; windows inside it | transient windows beyond measurement interval and envelope | the measurement interval; a systematic offset | — |
 
 ## 6. Charts and UI
 
