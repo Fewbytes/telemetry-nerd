@@ -374,13 +374,49 @@ class DatasetStore:
     def statistic_sources(
         self, dataset: str, name: str, method: str, value: float
     ) -> set[str] | None:
-        """Variation sources ('' = none) ops gave this statistic: those emitted with this value,
-        else any value of (dataset, name, method); None when no op emitted it."""
-        key = {"d": dataset, "n": name, "m": method}
-        base = (
-            "SELECT DISTINCT source FROM op_statistics WHERE dataset=$d AND name=$n AND method=$m"
-        )
-        rows = self._con.execute(base + " AND value=$v", key | {"v": float(value)}).fetchall()
+        """Variation sources ('' = none) ops gave the statistic `name` of `dataset`; None when no
+        op emitted it.
+
+        (dataset, name) identifies it; the cited value then narrows the rows (exact, else equal
+        to the precision it was cited at, else every value) and the method only breaks ties: a
+        finding's `method` is descriptive text an agent shortens or renames ("check_littles_law"
+        for the op's long METHOD), never an identity. Several sources left = the ops disagree,
+        which the caller reports as undetermined."""
+        rows: list[tuple[str, float, str]] = self._con.execute(
+            "SELECT DISTINCT method, value, source FROM op_statistics WHERE dataset=? AND name=?",
+            (dataset, name),
+        ).fetchall()
         if not rows:
-            rows = self._con.execute(base, key).fetchall()
-        return {r[0] for r in rows} if rows else None
+            return None
+        rows = _narrow_by_value(rows, float(value))
+        want = _norm_method(method)
+        same = [r for r in rows if want and _norm_method(r[0]) == want]
+        return {r[2] for r in same or rows}
+
+
+def _norm_method(method: str | None) -> str:
+    return " ".join((method or "").lower().split())
+
+
+def _cited_precision(value: float) -> float:
+    """Half a unit in the last significant digit `value` was written with (as repr prints it)."""
+    text = repr(abs(value))
+    if "e" in text or "inf" in text or "nan" in text:
+        return 0.0
+    whole, _, frac = text.partition(".")
+    frac = frac.rstrip("0")
+    if frac:
+        return 0.5 * 10.0 ** -len(frac)
+    return 0.5 * 10.0 ** (len(whole) - len(whole.rstrip("0")))
+
+
+def _narrow_by_value(
+    rows: list[tuple[str, float, str]], value: float
+) -> list[tuple[str, float, str]]:
+    """The rows whose value is the cited one: exact, else within the cited rounding, else all."""
+    exact = [r for r in rows if r[1] == value]
+    if exact:
+        return exact
+    tol = _cited_precision(value)
+    near = [r for r in rows if abs(r[1] - value) <= tol * (1 + 1e-9)]
+    return near or rows
