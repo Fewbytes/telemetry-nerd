@@ -11,6 +11,7 @@
   import { layoutItems } from "./lib/groups";
   import Sidebar from "./components/Sidebar.svelte";
   import ConnectionPill from "./components/ConnectionPill.svelte";
+  import WorkspaceSwitcher from "./components/WorkspaceSwitcher.svelte";
   import CatalogView from "./components/CatalogView.svelte";
   import { setContext } from "svelte";
   import { refTargets } from "./lib/refs";
@@ -82,6 +83,7 @@
       <a href="#/catalog" aria-current={route === "catalog" ? "page" : undefined}>Catalog</a>
     </nav>
     <div class="header-controls">
+      <WorkspaceSwitcher active={ws.snapshot?.workspace ?? null} workspaces={ws.workspaces} />
       <ConnectionPill daemon={ws.daemon} presence={ws.presence} />
       <select
         class="theme-toggle"
@@ -101,7 +103,7 @@
   <div class="layout" hidden={route === "catalog"}>
     <div class="panels">
       {#if panels.length === 0}
-        <p class="empty">No panels yet. Ask Claude a question about your metrics.</p>
+        <p class="empty">No panels yet in {ws.snapshot?.workspace.title ?? "this workspace"}. Ask Claude a question about your metrics.</p>
       {/if}
       {#each items as item (item.kind === "group" ? item.group.id : item.panel.id)}
         {#if item.kind === "group"}

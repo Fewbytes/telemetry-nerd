@@ -114,7 +114,8 @@ export function createWorkspace() {
           if (needsReload(e)) schedule();
         }, () => lastSeq, {
           onPresence: (p) => (presence = p),
-          onWorkspace: () => onSwitched(true),
+          // a rename/archive of another workspace changes only the list; the board is untouched
+          onWorkspace: (f) => (f.active.id === snapshot?.workspace.id ? refreshList() : onSwitched(true)),
           onOpen: () => {
             daemon = "connected";
             // resync after an outage: the daemon may have restarted with other state

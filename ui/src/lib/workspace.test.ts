@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchWorkspace, subscribe, type Snapshot, type WorkspaceEvent } from "./api";
+import { fetchWorkspace, fetchWorkspaces, subscribe, type Snapshot, type WorkspaceEvent } from "./api";
 import { createWorkspace, needsReload } from "./workspace.svelte";
 
-vi.mock("./api", async (orig) => ({ ...(await orig<typeof import("./api")>()), fetchWorkspace: vi.fn() }));
+vi.mock("./api", async (orig) => ({ ...(await orig<typeof import("./api")>()), fetchWorkspace: vi.fn(), fetchWorkspaces: vi.fn() }));
 
 const ev = (type: string, klass: WorkspaceEvent["klass"]): WorkspaceEvent => ({
   seq: 1, ts_ms: 0, actor: "claude", type, object_id: null, klass, payload: {}, workspace: "w1",
@@ -138,5 +138,74 @@ describe("snapshot load retry", () => {
     expect(ws.snapshot?.last_seq).toBe(3);
     await vi.advanceTimersByTimeAsync(60000); // success stops the retries
     expect(load).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("workspace frames in the store", () => {
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  const snap = (id: string, last_seq: number) => ({ last_seq, workspace: { id } }) as unknown as Snapshot;
+  const frame = (id: string) => JSON.stringify({ kind: "workspace", active: { id, title: "t" } });
+  const highlight = JSON.stringify({
+    seq: 5, ts_ms: 0, actor: "claude", type: "object.highlighted", object_id: "p1",
+    klass: "ambient", payload: {}, workspace: "w1",
+  });
+
+  async function started(first: Snapshot) {
+    const sockets: { onmessage: ((m: { data: string }) => void) | null }[] = [];
+    class FakeWS {
+      onopen = null; onmessage: ((m: { data: string }) => void) | null = null; onclose = null;
+      constructor() { sockets.push(this); }
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", FakeWS);
+    vi.stubGlobal("location", { protocol: "http:", host: "h:1" });
+    const load = vi.mocked(fetchWorkspace);
+    load.mockReset();
+    load.mockResolvedValue(first);
+    vi.mocked(fetchWorkspaces).mockReset();
+    vi.mocked(fetchWorkspaces).mockResolvedValue({ active: first.workspace.id, workspaces: [], more: 0 });
+    const ws = createWorkspace();
+    const stop = ws.start();
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    sockets[0].onmessage!({ data: highlight });
+    expect(ws.highlights.size).toBe(1);
+    return { ws, load, stop, send: (d: string) => sockets[0].onmessage!({ data: d }) };
+  }
+
+  it("a frame for a different workspace clears highlights and reloads the snapshot once", async () => {
+    const { ws, load, stop, send } = await started(snap("w1", 1));
+    load.mockResolvedValue(snap("w2", 6));
+    send(frame("w2"));
+    expect(ws.highlights.size).toBe(0);
+    await vi.waitFor(() => expect(ws.snapshot?.workspace.id).toBe("w2"));
+    expect(load).toHaveBeenCalledTimes(2); // initial load + one reload
+    stop();
+  });
+
+  it("a frame for the shown workspace refreshes the list only", async () => {
+    const { ws, load, stop, send } = await started(snap("w1", 1));
+    const lists = vi.mocked(fetchWorkspaces);
+    const before = lists.mock.calls.length;
+    send(frame("w1"));
+    await vi.waitFor(() => expect(lists.mock.calls.length).toBe(before + 1));
+    expect(ws.highlights.size).toBe(1);
+    expect(load).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  it("drops a stale snapshot that arrives after a newer one", async () => {
+    vi.mocked(fetchWorkspace).mockReset();
+    const resolvers: ((s: Snapshot) => void)[] = [];
+    vi.mocked(fetchWorkspace).mockImplementation(() => new Promise((r) => resolvers.push(r)));
+    const ws = createWorkspace();
+    const a = ws.reload();
+    const b = ws.reload();
+    resolvers[1](snap("w2", 9));
+    await b;
+    resolvers[0](snap("w1", 3));
+    await a;
+    expect(ws.snapshot?.workspace.id).toBe("w2");
+    expect(ws.snapshot?.last_seq).toBe(9);
   });
 });
