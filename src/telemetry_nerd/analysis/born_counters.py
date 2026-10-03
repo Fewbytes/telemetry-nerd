@@ -77,6 +77,11 @@ _MATCHER = re.compile(
 _NEGATE = {"=": "!=", "=~": "!~"}
 
 
+def _metric(sel: str) -> str:
+    """The metric name of a selector (empty when it has none)."""
+    return sel.split("{", 1)[0].strip()
+
+
 @dataclass(frozen=True)
 class BornCounter:
     """An expression over a counter whose outcome children are born on their first event."""
@@ -97,7 +102,7 @@ def born_counter(expr: str, type_of: Callable[[str], str | None]) -> BornCounter
         return None
     sel, by = src
     brace = sel.find("{")
-    metric = (sel if brace < 0 else sel[:brace]).strip()
+    metric = _metric(sel)
     if not metric or type_of(metric) != "counter":
         return None
     matchers = list(_MATCHER.finditer(sel[brace:])) if brace >= 0 else []
@@ -245,8 +250,7 @@ def born_ratio(expr: str, type_of: Callable[[str], str | None]) -> BornRatio | N
         return None
     if set(sa[1]) != set(sb[1]) or range_windows_ms(a) != range_windows_ms(b):
         return None
-    metric_b = sb[0].split("{", 1)[0].strip()
-    if rate_functions(a) != rate_functions(b) or metric_b != born.metric:
+    if rate_functions(a) != rate_functions(b) or _metric(sb[0]) != born.metric:
         return None
     ma, mb = _matchers(sa[0]), _matchers(sb[0])
     if {m for m in ma if m[0] not in OUTCOME_LABELS} != {m for m in mb if m[0] not in OUTCOME_LABELS}:  # fmt: skip

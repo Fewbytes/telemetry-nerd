@@ -165,28 +165,9 @@ from telemetry_nerd.workspace.registry import WorkspaceRegistry
 from telemetry_nerd.workspace.scope import ActiveWorkspace
 from telemetry_nerd.workspace.store import Panel, WorkspaceStore
 
-_NICE_STEPS = [
-    parse_duration(s)
-    for s in (
-        "1s",
-        "2s",
-        "5s",
-        "10s",
-        "15s",
-        "30s",
-        "1m",
-        "2m",
-        "5m",
-        "10m",
-        "15m",
-        "30m",
-        "1h",
-        "2h",
-        "6h",
-        "12h",
-        "1d",
-    )
-]
+_NICE_STEPS = [parse_duration(s) for s in ("1s", "2s", "5s", "10s", "15s", "30s", "1m", "2m",
+                                            "5m", "10m", "15m", "30m", "1h", "2h", "6h", "12h",
+                                            "1d")]  # fmt: skip
 
 
 def auto_step(rng: TimeRange, resolution_ms: int, target_buckets: int = 600) -> int:

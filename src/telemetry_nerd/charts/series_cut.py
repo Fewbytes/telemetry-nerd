@@ -108,7 +108,8 @@ def split(series: list[dict], keep: Sequence[str], other_names: Sequence[str]) -
     maximums, their summed counts, and how many reported (`reporting`)."""
     by_id = {s["id"]: s for s in series}
     kept = [by_id[s] for s in keep if s in by_id]
-    rest = [s for s in series if s["id"] not in set(keep)]
+    kept_ids = set(keep)
+    rest = [s for s in series if s["id"] not in kept_ids]
     if not rest:
         return kept
     cols: dict[int, dict[str, list]] = {}
