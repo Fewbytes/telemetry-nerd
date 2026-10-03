@@ -484,14 +484,6 @@ def test_exprs_from_event_payloads():
     assert live.exprs_from(events) == {"ds1": ["rate(x[1m])"], "p1": ["sum(y)"]}
 
 
-def test_stage_plugin_patches_the_root_fallback(tmp_path):
-    root = Path(__file__).resolve().parents[2]
-    dest = live.stage_plugin(root, tmp_path / "plugin")
-    cfg = (dest / ".mcp.json").read_text()
-    assert live.MCP_ROOT_FALLBACK not in cfg and "${CLAUDE_PLUGIN_ROOT}/scripts/tn-launch" in cfg
-    assert live.patch_mcp_json(dest / ".mcp.json") is False  # idempotent
-
-
 def test_failing_counts_as_a_change_and_needs_a_source_label():
     def m(s):
         f = finding(s, "f1")

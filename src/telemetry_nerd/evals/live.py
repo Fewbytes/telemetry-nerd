@@ -188,25 +188,7 @@ def stage_plugin(root: Path, dest: Path) -> Path:
             shutil.copytree(src, dst, dirs_exist_ok=True)
         elif src.exists():
             shutil.copy2(src, dst)
-    patch_mcp_json(dest / ".mcp.json")
     return dest
-
-
-#: Claude Code substitutes `${CLAUDE_PLUGIN_ROOT}` in a plugin's .mcp.json, but the shell-style
-#: `${CLAUDE_PLUGIN_ROOT:-.}` falls back to "." (the session's cwd): the bridge then fails with
-#: "sh: ./scripts/tn-launch: No such file or directory" (found by this harness; see the
-#: eval-finding bead). The staged copy uses the substituted form so the eval can run at all.
-MCP_ROOT_FALLBACK = "${CLAUDE_PLUGIN_ROOT:-.}"
-
-
-def patch_mcp_json(path: Path) -> bool:
-    if not path.exists():
-        return False
-    text = path.read_text()
-    if MCP_ROOT_FALLBACK not in text:
-        return False
-    path.write_text(text.replace(MCP_ROOT_FALLBACK, "${CLAUDE_PLUGIN_ROOT}"))
-    return True
 
 
 def claude_env(root: Path, daemon_url: str) -> dict:

@@ -3,8 +3,30 @@
   "version": "0.0.3",
   "description": "Evidence-first telemetry analysis workspace for Claude",
   "license": "Apache-2.0",
-  "author": { "name": "Avishai Ish-Shalom" },
+  "author": {
+    "name": "Avishai Ish-Shalom"
+  },
   "homepage": "https://github.com/Fewbytes/telemetry-nerd",
   "repository": "https://github.com/Fewbytes/telemetry-nerd",
-  "keywords": ["telemetry", "observability", "metrics", "prometheus", "victoriametrics", "mcp", "analysis"]
+  "keywords": [
+    "telemetry",
+    "observability",
+    "metrics",
+    "prometheus",
+    "victoriametrics",
+    "mcp",
+    "analysis"
+  ],
+  "mcpServers": {
+    "telemetry-nerd": {
+      "command": "sh",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/tn-launch",
+        "bridge"
+      ],
+      "env": {
+        "TN_SOURCE_URL": "${TN_SOURCE_URL:-http://127.0.0.1:8428}"
+      }
+    }
+  }
 }

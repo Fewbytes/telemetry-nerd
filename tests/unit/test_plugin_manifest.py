@@ -39,9 +39,18 @@ def test_plugin_metadata_complete():
 
 
 def test_mcp_and_hooks_use_launcher():
+    # Installed / --plugin-dir: the manifest's mcpServers (it replaces a same-named server from the
+    # root .mcp.json) uses plain ${CLAUDE_PLUGIN_ROOT}, which Claude Code substitutes. The
+    # shell-default form `${CLAUDE_PLUGIN_ROOT:-.}` is not substituted for plugins and resolves to
+    # the session cwd (eval finding 981).
+    plugin = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
+    pmcp = plugin["mcpServers"]["telemetry-nerd"]
+    assert pmcp["args"] == ["${CLAUDE_PLUGIN_ROOT}/scripts/tn-launch", "bridge"]
+    # Dev (this repo as the project, no plugin): the project-level .mcp.json has no
+    # CLAUDE_PLUGIN_ROOT, so it falls back to the cwd (the repo root).
     mcp = json.loads((ROOT / ".mcp.json").read_text())["mcpServers"]["telemetry-nerd"]
-    # project-level .mcp.json (dev, not loaded as a plugin) has no CLAUDE_PLUGIN_ROOT: fall back to cwd
     assert mcp["args"] == ["${CLAUDE_PLUGIN_ROOT:-.}/scripts/tn-launch", "bridge"]
+    assert pmcp["command"] == mcp["command"] and pmcp["env"] == mcp["env"]
     hooks = json.loads((ROOT / "hooks/hooks.json").read_text())["hooks"]
     cmds = [h["command"] for ev in hooks.values() for g in ev for h in g["hooks"]]
     assert cmds and all("scripts/tn-launch" in c for c in cmds)
