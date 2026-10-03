@@ -1,0 +1,16 @@
+name: leak
+description: >
+  From t = 120 s, 2% of requests get stuck (in flight forever, never timed): L - lambda W grows
+  linearly (completions counter).
+duration_s: 600
+seed: 15
+scrape_interval_s: 5
+service: checkout
+instances: 3
+defaults: {lambda: 8.0, mu: 1.0, c: 10, counter: completions, timer: arrival}
+faults:
+  - kind: leak
+    at: 120
+    set: {leak: 0.02}
+    expect: {verdict: inconsistent_in_windows, classification: growing}
+expect: {verdict: inconsistent_in_windows, classification: growing}

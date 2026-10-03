@@ -1,0 +1,9 @@
+name: consistent
+description: Three healthy M/M/10 instances at rho 0.8; the timer covers the whole time in system.
+duration_s: 600
+seed: 11
+scrape_interval_s: 5
+service: checkout
+instances: 3
+defaults: {lambda: 8.0, mu: 1.0, c: 10, counter: completions, timer: arrival}
+expect: {verdict: consistent, classification: none}

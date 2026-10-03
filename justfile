@@ -23,6 +23,11 @@ dev-down:
 seed hours="6":
     uv run python scripts/seed_synthetic.py --url http://127.0.0.1:8428 --hours {{hours}}
 
+# Run a queue-sim scenario (deploy/queue-sim/scenarios/<name>.yaml) as an exporter on :9201;
+# ground truth goes to build/queue-sim/<name>.json. Extra args: --port N --speed X --truth F.
+queue-sim scenario *args:
+    uv run scripts/queue_sim.py {{scenario}} {{args}}
+
 serve *args:
     uv run telemetry-nerd serve {{args}}
 

@@ -1,0 +1,17 @@
+name: missing_instance
+description: >
+  One of three instances does not export its in-flight gauge (its histogram and counter are
+  there): concurrency covers 2/3 of the traffic, L / lambda W ~ 2/3.
+duration_s: 600
+seed: 13
+scrape_interval_s: 5
+service: checkout
+instances: 3
+defaults: {lambda: 8.0, mu: 1.0, c: 10, counter: completions, timer: arrival}
+faults:
+  - kind: missing_instance
+    at: 0
+    instances: [checkout-2]
+    set: {export_gauge: false}
+    expect: {verdict: L_low, classification: systematic}
+expect: {verdict: L_low, classification: systematic}

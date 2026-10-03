@@ -1,0 +1,16 @@
+# Scrape target for the queue-sim exporter (bead telemetry-nerd-1h9.17).
+#
+#   just queue-sim <scenario>            # exporter on :9201 (override with --port), real time
+#   curl localhost:9201/metrics          # also /truth (ground-truth JSON) and /healthz
+#
+# From a container (podman): host.containers.internal:9201; inside a compose network that runs
+# the exporter as a service: queue-sim:9201. Metrics: http_requests_total,
+# http_request_duration_seconds_{bucket,sum,count}, http_server_active_requests with labels
+# service and pod. The check: arrival_rate=http_requests_total, latency=http_request_duration_seconds,
+# concurrency=http_server_active_requests, by=["pod"]. Scrape interval 5s-15s.
+scrape_configs:
+  - job_name: queue-sim
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["host.containers.internal:9201"]
+        labels: {scenario: consistent}

@@ -1,0 +1,16 @@
+name: hidden_queueing
+description: >
+  The latency timer starts at service start, so queueing (rho 0.9) is in the in-flight gauge but
+  not in the latency: L > lambda W by Wq/W throughout.
+duration_s: 600
+seed: 12
+scrape_interval_s: 5
+service: checkout
+instances: 3
+defaults: {lambda: 9.0, mu: 1.0, c: 10, counter: completions, timer: arrival}
+faults:
+  - kind: hidden_queueing
+    at: 0
+    set: {timer: service_start}
+    expect: {verdict: L_high, classification: systematic}
+expect: {verdict: L_high, classification: systematic}

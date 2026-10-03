@@ -31,3 +31,4 @@ node_modules/
 # claude code local settings
 .claude/settings.local.json
 ui/e2e-shots/
+build/

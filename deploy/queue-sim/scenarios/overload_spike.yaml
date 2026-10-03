@@ -1,0 +1,18 @@
+name: overload_spike
+description: >
+  Base rho 0.5; rho 1.5 for 60 s (t = 300..360) on every instance, with an ARRIVALS counter: a
+  backlog of ~300 requests per instance builds and drains by ~t = 420. Arrivals and completions
+  diverge while it lasts, so lambda W (from arrivals) and L disagree only in the transient windows.
+duration_s: 900
+seed: 14
+scrape_interval_s: 5
+service: checkout
+instances: 3
+defaults: {lambda: 5.0, mu: 1.0, c: 10, counter: arrivals, timer: arrival}
+faults:
+  - kind: overload
+    at: 300
+    until: 360
+    set: {lambda: 15.0}
+    expect: {verdict: inconsistent_in_windows, classification: transient}
+expect: {verdict: inconsistent_in_windows, classification: transient}
