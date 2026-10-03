@@ -321,6 +321,16 @@ async def test_red_verdict_orders_a_latency_shift_before_an_error_burst(tmp_path
         for e in r.get("evidence", [])
     )
     assert "input_uncertainty_unknown" not in out["caveats"]
+    # spec §5.4: moved roles are special causes, the unchanged one sits in the envelope
+    assert roles["duration"]["source"] == roles["errors"]["source"] == "special_cause"
+    assert roles["rate"]["source"] == "common_cause"
+    assert ev["errors_odds_ratio_vs_reference"]["source"] == "special_cause"
+    assert ev["errors_onset_ms"]["source"] == "special_cause"
+    assert "source" not in ev["errors_share_now"]  # a level, not a variation
+    assert "special cause" in out["summary"]["text"]
+    assert {(v["role"], v["source"]) for v in out["variation"]} >= {
+        ("duration", "special_cause"), ("errors", "special_cause"), ("rate", "common_cause"),
+    }  # fmt: skip
 
 
 async def test_quiet_red_verdict_flags_nothing(tmp_path):
@@ -330,6 +340,26 @@ async def test_quiet_red_verdict_flags_nothing(tmp_path):
     )
     assert {r["status"] for r in out["roles"].values()} == {"no_change"}
     assert out["summary"]["moved"] == [] and out["summary"]["text"].startswith("No golden signal")
+    assert {v["source"] for v in out["variation"]} == {"common_cause"}
+
+
+async def test_a_change_on_data_with_measurement_issues_is_source_undetermined(
+    tmp_path, monkeypatch
+):
+    from telemetry_nerd.core import verdict_ops
+
+    svc = await _svc(tmp_path, seed=3, error_burst=(40, 47))
+    real = verdict_ops.measurement_caveats
+    # every role's data comes from a partial fetch
+    monkeypatch.setattr(verdict_ops, "measurement_caveats", lambda meta: [*real(meta), "partial"])
+    out = await svc.binding_verdict(
+        source="default", suggestion="RED:otel_http", reference="previous", **RANGE
+    )
+    e = out["roles"]["errors"]
+    assert e["status"] == "changed" and e["source"] == "undetermined"
+    assert {v["source"] for v in e["variation"]} == {"undetermined", "measurement_system"}
+    assert "source undetermined" in e["text"]
+    assert out["roles"]["rate"]["source"] == "common_cause"  # no change: still the envelope
 
 
 async def test_use_saturation_episode_is_at_capacity_and_annotates_the_group(tmp_path):
@@ -347,6 +377,7 @@ async def test_use_saturation_episode_is_at_capacity_and_annotates_the_group(tmp
     g2 = svc.ws.group_get(g.id)
     rv = {r.role: r.verdict for r in g2.roles}
     assert rv["utilization"]["status"] == "changed" and rv["utilization"]["at_capacity"]
+    assert rv["utilization"]["source"] == "special_cause"  # the group card's badge reads it
     assert rv["errors"] is None  # the gap card stays a gap
     assert g2.verdict["moved"] and g2.verdict["reference"] == "previous windows"
     snap = svc.ws.snapshot()
@@ -381,6 +412,10 @@ async def test_littles_law_binding_carries_the_model_check_on_concurrency(tmp_pa
     assert "model_check" in c
     mc = c["model_check"]
     assert "error" in mc or (mc["verdict"] and "not a test in this family" in mc["note"])
+    if "error" not in mc:
+        assert mc["variation"] and all(
+            v in out["variation"] for v in ({**x, "role": "concurrency"} for x in mc["variation"])
+        )
     assert set(out["roles"]) == {"arrival_rate", "latency", "concurrency"}
 
 

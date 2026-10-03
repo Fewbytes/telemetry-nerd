@@ -87,6 +87,20 @@ def test_fleet_names_planted_members_with_labels_kind_and_evidence(tmp_path):
     assert out["tests"]["family_wise_alpha"] == 0.01 and not out["tests"]["leave_one_out"]
     assert out["draw"] == f'show("{d}", question, mark="fleet")'
     assert len(json.dumps(out)) < 9000  # compact for Claude: 100 members, no per-step arrays
+    # spec §5.4: the fleet's spread is the common-cause envelope; outliers are special causes
+    assert out["spread"]["source"] == "common_cause"
+    for o in out["outliers"]:
+        assert o["source"] == o["evidence"]["source"] == "special_cause"
+    srcs = {v["source"] for v in out["variation"]}
+    assert srcs == {"common_cause", "special_cause"}
+
+
+def test_homogeneous_fleet_is_common_cause_only(tmp_path):
+    svc = make_service(tmp_path)
+    y, _ = fleet(11, m=60)
+    out = svc.fleet(put(svc, y))
+    assert out["outliers"] == []
+    assert {v["source"] for v in out["variation"]} == {"common_cause"}
 
 
 def test_churn_gaps_and_honest_n_per_step(tmp_path):
@@ -103,6 +117,11 @@ def test_churn_gaps_and_honest_n_per_step(tmp_path):
     cov = out["coverage"]
     assert cov["n_per_step"]["max"] <= 40 and cov["n_per_step"]["min"] < 36
     assert 0.08 < cov["missing_share"] < 0.15 and "members_missing" in out["caveats"]
+    # churn and missing members are the measurement system's; a silent member is undetermined
+    assert churn["appeared"][0]["source"] == "measurement_system"
+    assert churn["stopped_reporting"][0]["source"] == "undetermined"
+    meas = [v for v in out["variation"] if v["source"] == "measurement_system"]
+    assert any(v.get("caveat") == "members_missing" for v in meas)
 
 
 @pytest.mark.parametrize(
@@ -180,6 +199,8 @@ def test_heterogeneous_fleet_is_split_into_explained_groups(tmp_path):
     assert small["label_values"] == {"size": ["small"]}
     assert 1.8 < small["level_vs_fleet"]["ratio"] < 2.2
     assert "clustered" in out["caveats"] and "many_outliers" not in out["caveats"]
+    assert any("systemic structure" in v["finding"] and v["source"] == "common_cause"
+               for v in out["variation"])  # fmt: skip
     found = {o["member"]: o for o in out["outliers"]}
     assert set(found) == {f"pod=api-{i:03d}" for i in planted.values()}
     assert found[f"pod=api-{planted['persistent']:03d}"]["cluster"] == small["id"]
@@ -188,6 +209,7 @@ def test_heterogeneous_fleet_is_split_into_explained_groups(tmp_path):
         StatisticRef.model_validate(o["evidence"])
     data = svc.panel_data(svc.show(d, "CPU by size: who is off?", mark="fleet").panel.id, 800)
     assert data["outlier_count"] == 3 and all("cluster" in o for o in data["outliers"])
+    assert {o["source"] for o in data["outliers"]} == {"special_cause"}
     assert [c["size"] for c in data["clusters"]] == [70, 30]
     assert len(data["clusters"][0]["band"]["median"]) == 288
 
@@ -204,6 +226,9 @@ def test_unknown_spans_leave_n_and_alive_and_are_located(tmp_path):
     assert out["coverage"]["n_per_step"]["min"] == 0  # n drops, alive drops with it
     assert out["churn"]["stopped_reporting"] == [] and out["churn"]["appeared"] == []
     assert "untrusted_data" in out["caveats"]
+    assert {"source": "measurement_system", "caveat": "untrusted_data"}.items() <= next(
+        v for v in out["variation"] if v.get("caveat") == "untrusted_data"
+    ).items()
     (unk,) = [c for c in out["located"] if c["code"] == "untrusted_data"]
     assert "TimeoutError" in unk["message"] and unk["where"]["series"] is None
     assert [tuple(x) for x in unk["where"]["spans"]] == [(T0 + 99 * STEP, T0 + 129 * STEP)]
@@ -230,6 +255,9 @@ def test_partial_buckets_are_flagged_on_members_and_episodes(tmp_path):
     assert "members_partial" not in out["caveats"]  # under 5% of member-steps: info only
     o = next(o for o in out["outliers"] if o["member"] == f"pod=api-{tr:03d}")
     assert o["partial_buckets"] == 6 and o["episode_partial_buckets"][0] == 6
+    # the excursion rests on half-empty buckets: special cause or measurement, not guessed
+    assert o["source"] == "undetermined"
+    assert o["evidence"]["source"] == "undetermined"
     heavy = counts.copy()
     heavy[:, :40] = 10  # every member, 14% of the window
     out = svc.fleet(put(svc, y, counts=heavy))
@@ -275,6 +303,8 @@ def test_a_staleness_marker_tells_an_ended_member_from_a_silent_one(tmp_path, mo
     out = svc.fleet(put(svc, y))
     states = {c["member"]: c["state"] for c in out["churn"]["stopped_reporting"]}
     assert states == {"pod=api-004": "ended", "pod=api-009": "silent"}
+    srcs = {c["member"]: c["source"] for c in out["churn"]["stopped_reporting"]}
+    assert srcs == {"pod=api-004": "measurement_system", "pod=api-009": "undetermined"}
 
 
 async def test_mcp_fleet_tool_and_refusal(tmp_path):

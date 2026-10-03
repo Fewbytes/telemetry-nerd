@@ -307,6 +307,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         numbers carry an `evidence` statistic for finding_create. Caveats: coarsened, gaps,
         red_noise, short_baseline, near_random_walk, seasonal_not_in_baseline.
         Refused with a hint on percentile series, distributions and raw counters (use a rate).
+        Sources of variation (`variation` per series and dataset-wide, `source` on items and
+        evidence): limits / centre / sigma = common cause (the envelope; never chase points in
+        it); shifts, drift, significant detectors = special cause; gaps, partial / untrusted
+        data = measurement system; run-rule signals that cannot be told apart = undetermined.
         Draw it with show(dataset, question, mark="spc", windows=[{start, end}] = the baseline)."""
         try:
             if baseline != "window":
@@ -356,7 +360,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         edge where the reference's share above is nearest 1%), band = t prediction interval of
         the cycles' logit shares; verdict on that share (1%); `shape` = CDF distance per cycle
         (descriptive). `share_over.evidence` is a statistic; each cycle lists its dataset for
-        show(mark="histogram"). Summary quantiles (no histogram) are refused."""
+        show(mark="histogram"). Summary quantiles (no histogram) are refused.
+        Sources (`variation`, `source`): the band = common cause (cycle-to-cycle spread);
+        unusual = special cause; cycles excluded as missing = measurement system, atypical =
+        special cause back then, user-excluded = undetermined."""
         try:
             return _dump(
                 await service.compare_seasonal(dataset, cycles, tz, exclude, threshold=threshold)
@@ -403,7 +410,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         systematic offset: time outside the latency timer, stuck/leaked requests, latency on a
         subset / concurrency missing instances, gauge missing bursts, latency on a superset) |
         inconsistent_in_windows (transients only); ≤5% false alarms overall. No concurrency
-        signal: the check says it cannot be done. `total` is the
+        signal: the check says it cannot be done. `variation` lists the labelled findings.
+        `total` is the
         ungrouped view; `groups` per `by` value; `unmatched` = groups missing from a signal
         (localises a missing instance). `assumptions` (steady state, arrivals vs completions,
         label sets, units, alignment, warm-up, gauge sampling) each ok/assumed/flagged. Each
@@ -455,7 +463,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         members with different sizes; the level test is off). Ranges over 1440 steps are
         averaged per member first. Refused on percentile series (median of p99s is not the
         fleet p99), distributions, raw counters, < 5 members, members with different units.
-        Draw with show(dataset, question, mark="fleet")."""
+        Sources (`variation`, `source`): the spread = common cause; behaviour groups = systemic
+        structure (common cause); outliers = special cause (undetermined when they rest on
+        partial buckets); churn, missing / unknown members = measurement system (a silent
+        member: undetermined). Draw with show(dataset, question, mark="fleet")."""
         try:
             return _dump(service.fleet(dataset, by, scale, normalise))
         except (NotFound, ValueError) as e:
@@ -980,8 +991,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         episodes for onsets), Bonferroni over roles at family-wise `alpha`. Returns {reference,
         family, roles {role: {status changed|no_change|insufficient|gap|error, direction,
         pattern level|shift|blip|burst|sustained, onset {at, interval}, level, episodes,
-        evidence, ...}}, summary {moved, first, order, text}}. Ordering is claimed only when
-        onset intervals do not overlap ("simultaneous" otherwise)."""
+        evidence, source, ...}}, summary {moved, first, order, text}, variation}. Sources: a
+        changed role = special cause (undetermined when its data has measurement-system
+        issues), no change = common cause; the Little's law model_check carries its own.
+        Ordering is claimed only when onset intervals do not overlap ("simultaneous" otherwise)."""
         try:
             if range is not None:
                 start, end = f"now-{range.strip()}", "now"

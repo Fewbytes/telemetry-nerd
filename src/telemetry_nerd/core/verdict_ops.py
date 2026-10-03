@@ -18,9 +18,11 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import polars as pl
 
+from telemetry_nerd.analysis import sources
 from telemetry_nerd.analysis.exprkind import rate_interval_ms
 from telemetry_nerd.analysis.seasonal import DEFAULT_K, cycle_shifts
 from telemetry_nerd.analysis.seasonal_dist import Hist, common_edges, distance, expit, pool
+from telemetry_nerd.analysis.sources import COMMON, SPECIAL, UNDETERMINED
 from telemetry_nerd.analysis.verdicts import (
     SLOW_SHARE,
     Judgement,
@@ -37,7 +39,7 @@ from telemetry_nerd.core.binding_view import RolePlan, natural_bound
 from telemetry_nerd.core.events import Actor
 from telemetry_nerd.core.littles_ops import NOT_POSSIBLE
 from telemetry_nerd.core.uncertainty import mark_statistics
-from telemetry_nerd.core.wire import add_caveats, sig, sig_pair, statistic
+from telemetry_nerd.core.wire import add_caveats, measurement_caveats, sig, sig_pair, statistic
 from telemetry_nerd.model.time import TimeRange, format_duration, iso
 from telemetry_nerd.workspace.models import PanelGroup
 
@@ -283,6 +285,11 @@ class VerdictOps:
                 add_caveats(caveats, d.get("caveats", []))
                 out_roles[role] = d
         summary = self._summary(out_roles, results, order)
+        variation = [
+            {**v, "role": role}
+            for role, d in out_roles.items()
+            for v in [*d.get("variation", []), *(d.get("model_check") or {}).get("variation", [])]
+        ]
         out: dict[str, Any] = {
             "binding": {"kind": b.kind, "key": b.key, "basis": b.basis,
                         **({"suggestion": b.suggestion} if b.suggestion else {})},
@@ -306,6 +313,8 @@ class VerdictOps:
             },
             "roles": out_roles,
             "summary": summary,
+            # spec §5.4: every role's labelled findings (and the Little's law check's) in one list
+            "variation": variation,
             "caveats": caveats,
         }  # fmt: skip
         if g is not None:
@@ -460,7 +469,8 @@ class VerdictOps:
         return {
             "summary": out["summary"], "discrepancy": out["discrepancy"],
             "verdict": out["verdict"], "classification": out["classification"],
-            "warnings": out["warnings"], "ratio": t.get("ratio"), "ci95": t.get("ci95"),
+            "warnings": out["warnings"], "variation": out["variation"],
+            "ratio": t.get("ratio"), "ci95": t.get("ci95"),
             "L": t.get("L"), "lambda_W": t.get("lambda_W"), "W_s": t.get("W_s"),
             "window": out["window"], "dataset": out["datasets"]["concurrency"],
             "evidence": t.get("evidence", []),
@@ -505,6 +515,7 @@ class VerdictOps:
                 statistic(ds, f"{role}_{name}", sig(val), sig_pair(iv),
                           d["method"], {**params, "p": sig(lv.p), "scale": lv.scale})
             )  # fmt: skip
+            evidence[-1]["_varies"] = True
         if j.now_value is not None and j.kind != "value":
             evidence.append(
                 statistic(ds, f"{role}_{'share' if j.kind == 'share' else 'rate'}_now",
@@ -527,6 +538,7 @@ class VerdictOps:
                               "interval reaches back one block and the rate window",
                               params)
                 )  # fmt: skip
+                evidence[-1]["_varies"] = True
         near = {m: nb for m, nb in res.near.items() if nb.runs}
         if res.near:
             any_nb = next(iter(res.near.values()))
@@ -549,8 +561,28 @@ class VerdictOps:
         if st.notes:
             d["notes"] = st.notes
         d["evidence"] = evidence
+        d = mark_statistics(d, self.svc.datasets, st.inputs)
+        # spec §5.4: a change beyond the reference cycles is a special cause, unless the data
+        # it rests on has measurement-system issues (then the two cannot be told apart); no
+        # change is the common-cause envelope
+        meas = sources.measurement_caveats([
+            *d.get("caveats", []),
+            *(c for did in st.inputs for c in measurement_caveats(self.svc.datasets.meta(did))),
+        ])  # fmt: skip
+        src = {"changed": UNDETERMINED if meas else SPECIAL, "no_change": COMMON}.get(j.status)
+        for e in evidence:
+            if e.pop("_varies", False) and src:
+                e["source"] = src
+        if src:
+            d["source"] = src
         d["text"] = _role_text(role, d)
-        return mark_statistics(d, self.svc.datasets, st.inputs)
+        d["variation"] = (
+            [sources.item(src, d["text"] + (
+                ": the data has measurement-system issues, so special cause and measurement "
+                "cannot be told apart" if src == UNDETERMINED else ""
+            ))] if src else []
+        ) + sources.measurement_items(meas)  # fmt: skip
+        return d
 
     def _summary(self, roles: dict[str, dict], results: dict[str, RoleResult], order) -> dict:
         moved = [r for r in order.order]
@@ -605,6 +637,7 @@ class VerdictOps:
                 "status": d["status"], "direction": d.get("direction"),
                 "pattern": d.get("pattern"), "text": d.get("text") or d.get("error"),
                 "at_capacity": bool(d.get("at_capacity")),
+                **({"source": d["source"]} if d.get("source") else {}),
                 **({"onset": d["onset"]} if d.get("onset") else {}),
             }  # fmt: skip
             new.append(r.model_copy(update={"verdict": v}))
@@ -705,7 +738,7 @@ def _hm(s: str | None) -> str:
 def _role_text(role: str, d: dict) -> str:
     st = d["status"]
     if st == "no_change":
-        return f"{role}: no change"
+        return f"{role}: no change" + (" (common cause)" if d.get("source") else "")
     if st != "changed":
         return f"{role}: {st}" + (f" ({'; '.join(d['reasons'])})" if d.get("reasons") else "")
     o = d.get("onset") or {}
@@ -721,4 +754,7 @@ def _role_text(role: str, d: dict) -> str:
         "",
     )  # fmt: skip
     cap = ", at capacity" if d.get("at_capacity") else ""
-    return f"{role} {d['direction']} ({d['pattern']}{cap}) {when}" + (f", {eff}" if eff else "")
+    src = f" — {sources.text(d['source'])}" if d.get("source") else ""
+    return (
+        f"{role} {d['direction']} ({d['pattern']}{cap}) {when}" + (f", {eff}" if eff else "") + src
+    )

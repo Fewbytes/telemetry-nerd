@@ -17,6 +17,7 @@ from typing import NamedTuple
 import numpy as np
 import polars as pl
 
+from telemetry_nerd.analysis import sources
 from telemetry_nerd.analysis.fleet import (
     ALPHA,
     EXCURSIONS,
@@ -36,9 +37,10 @@ from telemetry_nerd.analysis.fleet_clusters import (
     analyse_groups,
 )
 from telemetry_nerd.analysis.resample import lod
+from telemetry_nerd.analysis.sources import COMMON, MEASUREMENT, SPECIAL, UNDETERMINED
 from telemetry_nerd.catalog.rules import Facts
 from telemetry_nerd.core.signal_ops import SignalOps
-from telemetry_nerd.core.wire import Memo, sig, sig_list, statistic
+from telemetry_nerd.core.wire import Memo, measurement_caveats, sig, sig_list, statistic
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
 from telemetry_nerd.model.bucket_state import Flag, State, coarsen, grid
 from telemetry_nerd.model.caveats import (
@@ -322,6 +324,10 @@ class FleetOps:
         missing = 1 - float(np.sum(sp.n)) / alive_sum if alive_sum else 0.0
         if missing > MISSING_WARN and "members_missing" not in caveats:
             caveats.append("members_missing")
+        for a in appeared:
+            a["source"] = MEASUREMENT  # the fleet measured changes membership: n moves
+        for st in stopped:  # ended: membership; silent: ended or sick, the data cannot tell
+            st["source"] = MEASUREMENT if st["state"] == "ended" else UNDETERMINED
         churn: dict = {"appeared": appeared[:MAX_LISTED], "stopped_reporting": stopped[:MAX_LISTED]}
         if len(appeared) > MAX_LISTED or len(stopped) > MAX_LISTED:
             churn["counts"] = {"appeared": len(appeared), "stopped_reporting": len(stopped)}
@@ -332,6 +338,12 @@ class FleetOps:
                 "silent (the sick one): check them"
                 + (" - as many appeared, likely replacement" if appeared and abs(len(appeared) - len(stopped)) <= 1 else "")
             )  # fmt: skip
+        listed = [
+            _labelled(
+                self._outlier(dataset_id, eff, gf, o, gn, gl, ts) | extra | self._partial(cov, gi, o), o
+            )
+            for gf, o, gn, gl, extra, gi in ranked[:MAX_LISTED]
+        ]  # fmt: skip
         out = {
             "dataset": dataset_id,
             "effective_step": eff,
@@ -349,9 +361,7 @@ class FleetOps:
                 "alive_max": int(sp.alive.max()), "missing_share": sig(missing, 3),
             },
             "churn": churn,
-            "outliers": [self._outlier(dataset_id, eff, gf, o, gn, gl, ts)
-                         | extra | self._partial(cov, gi, o)
-                         for gf, o, gn, gl, extra, gi in ranked[:MAX_LISTED]],
+            "outliers": listed,
             "tests": self._tests(f),
             "caveats": caveats,
             "located": [c.model_dump() for c in cov.located],
@@ -361,7 +371,37 @@ class FleetOps:
             out["clusters"] = self._clusters(f, groups, names, run.labels)
         if len(ranked) > MAX_LISTED:
             out["more_outliers"] = len(ranked) - MAX_LISTED
+        out["variation"] = self._variation(out, caveats + measurement_caveats(run.meta))
         return out
+
+    @staticmethod
+    def _variation(out: dict, caveats: list[str]) -> list[dict]:
+        """The fleet's labelled findings in one list (spec §5.4)."""
+        var = [sources.item(
+            COMMON, "the fleet's per-step spread across members (descriptive: the fleet is the "
+            "population): the common-cause envelope",
+        )]  # fmt: skip
+        if cl := out.get("clusters"):
+            var.append(sources.item(
+                COMMON, f"{cl['k']} behaviour groups: systemic structure (strata of the fleet, "
+                "e.g. sizes or placements); act on the configuration, not on members",
+            ))  # fmt: skip
+        var += [
+            sources.item(o["source"], f"{o['member']}: {o['kind']} outlier, {o['direction']}",
+                         member=o["member"])
+            for o in out["outliers"]
+        ]  # fmt: skip
+        churn = out["churn"]
+        var += [
+            sources.item(a["source"], f"{a['member']} appeared {a['first_seen']}", member=a["member"])
+            for a in churn["appeared"]
+        ]  # fmt: skip
+        var += [
+            sources.item(st["source"], f"{st['member']} stopped reporting {st['last_seen']} "
+                         f"({st['state']})", member=st["member"])
+            for st in churn["stopped_reporting"]
+        ]  # fmt: skip
+        return var + sources.measurement_items(caveats)
 
     @staticmethod
     def ranked_outliers(
@@ -474,7 +514,7 @@ class FleetOps:
             rel = sp.q75 / sp.q25 if f.scale == "log" else sp.q75 - sp.q25
         ok = np.isfinite(rel)
         if not ok.any():
-            return {"basis": "fewer than 5 members per step: no quartiles"}
+            return {"basis": "fewer than 5 members per step: no quartiles", "source": COMMON}
         third = max(1, len(ts) // 3)
         first, last = rel[:third], rel[-third:]
         widest = int(np.nanargmax(np.where(ok, rel, -np.inf)))
@@ -485,6 +525,7 @@ class FleetOps:
             "first_third": sig(float(np.nanmedian(first))) if np.isfinite(first).any() else None,
             "last_third": sig(float(np.nanmedian(last))) if np.isfinite(last).any() else None,
             "widest": {"at": iso(ts[widest]), "value": sig(float(rel[widest]))},
+            "source": COMMON,  # spec §5.4: the fleet's own spread is the common-cause envelope
         }
 
     @staticmethod
@@ -587,9 +628,10 @@ class FleetOps:
         sp = f.spread
         ranked = self.ranked_outliers(run)
         drawn = []
-        for gf, o, gn, gl, extra, _gi in ranked[:MAX_DRAWN]:
+        for gf, o, gn, gl, extra, gi in ranked[:MAX_DRAWN]:
             drawn.append({
                 "id": gn[o.member], "labels": gl[o.member], "kind": o.kind,
+                "source": outlier_source(o, self._partial(cov, gi, o)),
                 "direction": o.direction, "score": sig(o.score, 3),
                 "values": sig_list(gf.values[o.member]),
                 "since_ms": ts[o.since] if o.since is not None else None,
@@ -621,3 +663,21 @@ class FleetOps:
                 for k, g in enumerate(groups.groups)
             ]  # fmt: skip
         return payload
+
+
+def outlier_source(o: Outlier, partial: dict) -> str:
+    """An outlying member is a special cause (assignable: that member differs), unless what
+    makes it one rests on partial buckets (values from fewer samples than expected): a
+    transient whose episodes, or another kind whose buckets are half or more, are partial
+    cannot be told from the measurement system (spec §5.4)."""
+    if o.kind == "transient":
+        return UNDETERMINED if any(partial.get("episode_partial_buckets", [])) else SPECIAL
+    return UNDETERMINED if 2 * partial.get("partial_buckets", 0) >= max(o.n, 1) else SPECIAL
+
+
+def _labelled(item: dict, o: Outlier) -> dict:
+    src = outlier_source(o, item)
+    item["source"] = src
+    if "evidence" in item:
+        item["evidence"]["source"] = src
+    return item
