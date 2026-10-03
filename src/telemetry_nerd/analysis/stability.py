@@ -16,7 +16,14 @@ import numpy as np
 from telemetry_nerd.analysis.autocorr import ar1, n_eff, tau_int
 from telemetry_nerd.analysis.fraction import wilson
 from telemetry_nerd.analysis.spectrum import lomb_scargle
-from telemetry_nerd.analysis.stats import MAD_VAR, kolmogorov_sf, robust_sigma, t_ppf, z_of
+from telemetry_nerd.analysis.stats import (
+    MAD_VAR,
+    kolmogorov_sf,
+    kuiper_sf,
+    robust_sigma,
+    t_ppf,
+    z_of,
+)
 
 ALPHA = 0.01
 MIN_SEGMENT = 8
@@ -113,9 +120,15 @@ def _split_cusum(y: np.ndarray) -> tuple[int, float]:
     return k + 1, float(abs(s[k]))
 
 
-def _long_run_sigma(pos: np.ndarray, resid: np.ndarray) -> float:
+def _long_run_sigma(pos: np.ndarray, resid: np.ndarray, segments: int = 0) -> float:
+    """sigma_e / (1 - phi) of AR(1) residuals. `segments` > 0: phi is first corrected for the
+    downward bias of fitting it to that many separately demeaned segments (Kendall 1954:
+    E[phi_hat] - phi ~ -(1 + 3 phi) / n per segment mean, n samples in all)."""
     fit = ar1(pos, resid)
-    phi = min(fit.phi, PHI_CAP)
+    phi = fit.phi
+    if segments and phi > 0:
+        phi += segments * (1 + 3 * phi) / max(resid.size, 1)
+    phi = min(phi, PHI_CAP)
     return fit.sigma_e / (1 - phi) if phi > 0 else fit.sigma_e
 
 
@@ -128,19 +141,57 @@ def _delta(pos, before, after) -> tuple[float, tuple[float, float], float]:
     return delta, (delta - half, delta + half), slr
 
 
+def _split_epidemic(y: np.ndarray) -> tuple[int, int, float] | None:
+    """The segment (a, b] whose mean differs most from the rest: the largest |S_b - S_a| of the
+    CUSUM S over boundaries with every segment >= MIN_SEGMENT. (a, b, |S_b - S_a|)."""
+    n, m = y.size, MIN_SEGMENT
+    if n < 3 * m:
+        return None
+    s = np.r_[0.0, np.cumsum(y - y.mean())]  # s[i]: sum of the first i deviations
+    lefts = s[m : n - 2 * m + 1]  # a in [m, n - 2m]
+    hi_a = np.maximum.accumulate(lefts)
+    lo_a = np.minimum.accumulate(lefts)
+    bs = np.arange(2 * m, n - m + 1)  # b in [2m, n - m], a <= b - m
+    up, down = s[bs] - lo_a[bs - 2 * m], hi_a[bs - 2 * m] - s[bs]
+    j = int(np.argmax(np.maximum(up, down)))
+    b = int(bs[j])
+    prefix = lefts[: b - 2 * m + 1]
+    a = m + int(np.argmin(prefix) if up[j] >= down[j] else np.argmax(prefix))
+    return a, b, float(max(up[j], down[j]))
+
+
 def _one_split(pos, ts_ms, y) -> Shift | None:
+    """The most significant change of `y` against two alternatives, Bonferroni over both (each
+    tested at ALPHA / 2, the reported p is 2 x the smaller): one step (CUSUM, Kolmogorov null)
+    or a segment that departs and returns, a pulse (largest CUSUM range, Kuiper null). A single
+    split misses a pulse in the middle: the unmodelled return inflates the long-run sigma of the
+    two-segment residuals. A pulse is reported at whichever of its edges is the stronger single
+    change; binary segmentation then finds the other edge."""
     n = y.size
     if n < 2 * MIN_SEGMENT:
         return None
     k, s = _split_cusum(y)
     a, b = y[:k], y[k:]
     delta, interval, slr = _delta(pos, a, b)
-    if slr == 0:
+    best: Shift | None = None
+    if slr > 0:
+        stat = s / (slr * math.sqrt(n))
+        best = Shift(k, int(ts_ms[k]), delta, interval, kolmogorov_sf(stat), stat, int(a.size), int(b.size))  # fmt: skip
+    epi = _split_epidemic(y)
+    if epi is not None:
+        lo, hi, v = epi
+        parts = (y[:lo], y[lo:hi], y[hi:])
+        slr3 = _long_run_sigma(pos, np.concatenate([p - p.mean() for p in parts]), len(parts))
+        if slr3 > 0:
+            stat = v / (slr3 * math.sqrt(n))
+            p = kuiper_sf(stat)
+            if best is None or p < best.p:
+                edge = lo if abs(parts[1].mean() - parts[0].mean()) >= abs(parts[2].mean() - parts[1].mean()) else hi  # fmt: skip
+                d, iv, _ = _delta(pos, y[:edge], y[edge:])
+                best = Shift(edge, int(ts_ms[edge]), d, iv, p, stat, edge, n - edge)
+    if best is None:
         return None
-    stat = s / (slr * math.sqrt(n))
-    return Shift(
-        k, int(ts_ms[k]), delta, interval, kolmogorov_sf(stat), stat, int(a.size), int(b.size)
-    )
+    return replace(best, p=min(1.0, 2 * best.p))
 
 
 def changepoints(pos: np.ndarray, ts_ms: np.ndarray, y: np.ndarray) -> list[Shift]:

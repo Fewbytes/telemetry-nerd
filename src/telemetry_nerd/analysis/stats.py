@@ -126,6 +126,17 @@ def kolmogorov_sf(x: float) -> float:
     return float(np.clip(2 * np.sum((-1.0) ** (k - 1) * np.exp(-2 * k * k * x * x)), 0.0, 1.0))
 
 
+def kuiper_sf(x: float) -> float:
+    """P(sup B - inf B > x) for a Brownian bridge B (the range: Kuiper's distribution)
+    = 2 Σ (4 k² x² − 1) exp(−2 k² x²): the null of the largest |S_b - S_a| of a CUSUM, i.e. of
+    a segment (a, b] whose mean differs from the rest (an epidemic / pulse change)."""
+    if x <= 0.4:
+        return 1.0
+    k = np.arange(1, 101)
+    x2 = x * x
+    return float(np.clip(2 * np.sum((4 * k * k * x2 - 1) * np.exp(-2 * k * k * x2)), 0.0, 1.0))
+
+
 def poisson_sf(k: int, lam: float) -> float:
     """P(X >= k), X ~ Poisson(lam)."""
     if k <= 0:

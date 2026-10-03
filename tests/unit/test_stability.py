@@ -9,7 +9,7 @@ from telemetry_nerd.analysis.stability import (
     trend,
     variance_ratio,
 )
-from telemetry_nerd.analysis.stats import kolmogorov_sf, t_ppf
+from telemetry_nerd.analysis.stats import kolmogorov_sf, kuiper_sf, t_ppf
 from tests.unit.test_autocorr import ar1_series
 
 M = 60_000
@@ -27,6 +27,33 @@ def test_t_quantiles(df, q):
 def test_kolmogorov_tail():
     assert kolmogorov_sf(1.358) == pytest.approx(0.05, abs=0.002)
     assert kolmogorov_sf(1.628) == pytest.approx(0.01, abs=0.001)
+
+
+def test_kuiper_tail():
+    assert kuiper_sf(1.747) == pytest.approx(0.05, abs=0.002)
+    assert kuiper_sf(2.001) == pytest.approx(0.01, abs=0.001)
+
+
+@pytest.mark.parametrize("base", [0.0, 10.0])
+def test_a_pulse_is_found_at_both_edges(base):
+    # a burst that departs and returns (errors from zero during a fault): one split alone
+    # misses it, the unmodelled return inflates the two-segment sigma
+    pos, ts = grid(64)
+    noise = np.random.default_rng(3).normal(scale=0.2, size=64)
+    burst = (pos >= 20) & (pos < 40)
+    # base 0: exactly zero outside the burst (a counter born on its first event, read as 0)
+    y = np.where(burst, base + 2.0 + noise, base + (noise if base else 0.0))
+    found = changepoints(pos, ts, y)
+    assert [s.index for s in found] == [20, 40] and all(s.p < 1e-6 for s in found)
+    assert found[0].delta > 1.5 and found[1].delta < -1.5
+
+
+def test_short_white_noise_keeps_the_false_alarm_rate():
+    # step and pulse alternatives are tested at ALPHA / 2 each (Bonferroni): FAR <= 1% nominal
+    pos, ts = grid(64)
+    rng = np.random.default_rng(11)
+    found = sum(bool(changepoints(pos, ts, rng.normal(size=64))) for _ in range(400))
+    assert found <= 9  # 4 expected at 1%; P(> 9) < 1%
 
 
 def test_trend_interval_covers_truth_under_ar1():
