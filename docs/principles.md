@@ -136,7 +136,9 @@ principle names; 14 governs the flags drawn against it.)
   `source` on `StatisticRef` and `FindingIn.sources` in `src/telemetry_nerd/workspace/models.py`;
   `skills/evidence/SKILL.md` and `skills/evidence/references/sources-of-variation.md`;
   `Finding.source_flags` (bead qxp: a source taken from the op that emitted the statistic, or
-  `source_undetermined`, never upgraded); fleet
+  `source_undetermined`, never upgraded; bead i6y5: a cited source contradicting the op's is
+  refused, a downgrade to undetermined is kept as `source_downgraded`, a label no op stands
+  behind is `source_unverified`); fleet
   band: `control_band` / `missing_bounds` in `src/telemetry_nerd/analysis/fleet.py`, fleet spec
   "Band: the SPC reference".
 

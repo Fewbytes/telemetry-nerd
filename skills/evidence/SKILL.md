@@ -108,7 +108,9 @@ items and on `evidence` statistics, `variation` lists in results.
 Rules: report the label **with** the number, never instead of it. Pass `source` through to
 `finding_create` unchanged; never relabel and never upgrade `undetermined` to `special_cause`.
 A statistic cited without it gets the source its op gave it (flag source_derived in the
-result's source_flags); one no op emitted, or a finding whose evidence attributes no variation
+result's source_flags); a source that contradicts the op's label is refused
+(source_relabelled), `undetermined` over an op's label is kept but flagged source_downgraded,
+and a label on a statistic no op labelled is flagged source_unverified (counts as undetermined); one no op emitted, or a finding whose evidence attributes no variation
 (a panel only), is flagged source_undetermined and lists `undetermined` in `sources`: for an
 incident claim, cite the op statistic (`analyze`, `compare_seasonal`, `fleet`,
 `binding_verdict`) that labels it.

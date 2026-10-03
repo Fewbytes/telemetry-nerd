@@ -14,7 +14,9 @@ Server-side guardrails, pure over what the service hands in:
   hypothesis refuted or inconclusive, or an explicit `alternatives_considered` note.
 * **Sources of variation.** A cited statistic without `source` gets the one the op that emitted
   it gave (`DatasetStore.statistic_sources`), else is flagged `source_undetermined`; a finding
-  whose evidence attributes no variation at all is flagged once. Undetermined is never upgraded.
+  whose evidence attributes no variation at all is flagged once. Undetermined is never upgraded:
+  a cited source that contradicts the op's is refused (a downgrade to undetermined is kept,
+  flagged), and one no op stands behind is flagged `source_unverified` (i6y5).
 """
 
 from __future__ import annotations
@@ -523,34 +525,88 @@ _NONE_CITED = ("no cited statistic says what the variation is attributed to: if 
                "statistic, e.g. from analyze, compare_seasonal, fleet or binding_verdict)")  # fmt: skip
 
 
+_UNVERIFIED = ("not traced to an op result: the source {s} was supplied with the citation and no "
+               "op model stands behind it (principle 16), so it is shown as unverified; cite the "
+               "op statistic that labels it, or source undetermined")  # fmt: skip
+
+
+def _ops_label(found: set[str]) -> str:
+    return ", ".join(sorted(s or "none" for s in found))
+
+
 def derive_sources(
     evidence: Sequence[dict], lookup: Callable[[dict], set[str] | None]
 ) -> tuple[list[dict], list[dict]]:
     """(evidence with derived sources filled in, source flags). `lookup(statistic)`: the sources
-    ops gave it ('' = none), or None when no op emitted it."""
+    ops gave it ('' = none), or None when no op emitted it.
+
+    The op's label is authoritative (i6y5; principle 16, spec §5.4): a cited `source` that
+    differs from it is refused (ValueError naming the op's label), except a downgrade to
+    `undetermined`, kept and flagged `source_downgraded` (it can only say less than the op's
+    model; the op's label stays in the flag). Ops disagreeing make the source undetermined: any
+    other cited label is refused. A label on a statistic no op labelled is kept but flagged
+    `source_unverified`, never trusted as derived."""
     ev = [dict(e) for e in evidence]
     flags: list[dict] = []
+    refused: list[str] = []
     for i, e in enumerate(ev):
-        if e.get("kind") != "statistic" or e.get("source"):
+        if e.get("kind") != "statistic":
             continue
+        cited = e.get("source")
         found = lookup(e)
+        if cited:
+            if found is not None and len(found) == 1 and cited == next(iter(found)):
+                continue  # as the op labelled it
+            labelled = {s for s in found or () if s}
+            if cited == "undetermined":  # ops disagreeing: undetermined is their answer too
+                if labelled and len(found or ()) == 1:
+                    flags.append({"evidence": i, "flag": "source_downgraded",
+                                  "source": "undetermined",
+                                  "message": f"cited as undetermined; the op that emitted it "
+                                  f"labelled it {_ops_label(labelled)}"})  # fmt: skip
+                continue
+            if not labelled:  # untraced, or an op that attributes no variation to it
+                flags.append({"evidence": i, "flag": "source_unverified", "source": cited,
+                              "message": _UNVERIFIED.format(s=cited)})  # fmt: skip
+                continue
+            what = f"evidence[{i}] ({e.get('dataset')} {e.get('name')!r})"
+            if len(found or ()) > 1:
+                refused.append(f"{what}: cited source {cited}, but ops gave this statistic "
+                               f"different sources ({_ops_label(found or set())}), so its source "
+                               "is undetermined; cite it with the value and method of the op "
+                               "result that emitted it, or with source undetermined")  # fmt: skip
+            else:
+                refused.append(f"{what}: cited source {cited}, but the op that emitted it "
+                               f"labelled it {_ops_label(labelled)} (method: "
+                               f"{_short(e.get('method'))}); an op's label is a model's output "
+                               "and is kept as is (undetermined is never upgraded, a label is "
+                               "never swapped): cite it without source (taken from the op) or "
+                               "with source undetermined")  # fmt: skip
+            continue
         if found is None:
             if not e.get("exact"):  # an exact count reports no variation
                 flags.append({"evidence": i, "flag": "source_undetermined",
                               "source": "undetermined", "message": _UNTRACED})  # fmt: skip
             continue
         if len(found) > 1:
-            names = ", ".join(sorted(s or "none" for s in found))
             flags.append({"evidence": i, "flag": "source_undetermined", "source": "undetermined",
-                          "message": f"ops gave this statistic different sources ({names}): "
-                          "source undetermined; cite the op's statistic as is"})  # fmt: skip
+                          "message": f"ops gave this statistic different sources "
+                          f"({_ops_label(found)}): source undetermined; cite the op's statistic "
+                          "as is"})  # fmt: skip
         elif (s := next(iter(found))) != "":
             e["source"] = s
             flags.append({"evidence": i, "flag": "source_derived", "source": s,
                           "message": f"source {s} taken from the op result that emitted this "
                           "statistic"})  # fmt: skip
+    if refused:
+        raise ValueError("source_relabelled: " + "; ".join(refused) + ".")
     data = [i for i, e in enumerate(ev) if e.get("kind") in ("panel", "statistic")]
     if data and not flags and not any(e.get("source") for e in ev):
         flags.append({"evidence": data[0], "flag": "source_undetermined",
                       "source": "undetermined", "message": _NONE_CITED})  # fmt: skip
     return ev, flags
+
+
+def _short(method: object, width: int = 80) -> str:
+    text = " ".join(str(method or "").split())
+    return text if len(text) <= width else text[: width - 1].rsplit(" ", 1)[0] + "…"

@@ -1850,7 +1850,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         {kind: annotation, id: "a1"}. A dataset alone is not evidence: draw it (show) or cite a
         statistic. Pass an op's evidence statistic as is: its
         `source` (common_cause | special_cause | measurement_system | undetermined) says what
-        the variation is attributed to; never relabel it. hypotheses: the hypotheses this
+        the variation is attributed to; never relabel it (a source contradicting the op's
+        label is refused; one no op gave is flagged source_unverified). hypotheses: the hypotheses this
         finding bears on, one stance each: [{"id": "h1", "stance": "for"}, {"id": "h2",
         "stance": "against"}] (one observation may back one cause and rule out another);
         hypothesis + stance (for|against) is the one-link form. Coverage of the window is checked per evidence series that

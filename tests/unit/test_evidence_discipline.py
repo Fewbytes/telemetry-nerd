@@ -222,6 +222,25 @@ async def test_source_comes_back_from_the_op_that_emitted_the_statistic(run):
     assert f.sources == ["special_cause"]
 
 
+async def test_finding_create_refuses_a_relabelled_op_statistic(run):
+    """i6y5: the op's label is authoritative; nothing is stored when a cited source contradicts
+    it, and a downgrade to undetermined is kept with the op's label in its flag."""
+    st = _stat(dataset="d3", source="undetermined")
+    mark_statistics({"series": [{"evidence": st}]}, run.datasets, ["d3"])
+    upgraded = st | {"source": "special_cause"}
+    with pytest.raises(ValueError, match="source_relabelled.*labelled it undetermined"):
+        run.ws.finding_create(f1_in(claim="payment charge errors shifted", evidence=[upgraded]),
+                              "claude")  # fmt: skip
+    assert run.ws.objects.list_findings() == []
+    special = _stat(dataset="d3", name="level_shift", source="special_cause")
+    mark_statistics({"series": [{"evidence": special}]}, run.datasets, ["d3"])
+    f = run.ws.finding_create(
+        f1_in(claim="payment charge errors shifted",
+              evidence=[special | {"source": "undetermined"}]), "claude")  # fmt: skip
+    assert f.sources == ["undetermined"]
+    assert [s.flag for s in f.source_flags] == ["source_downgraded"]
+
+
 # --- hypotheses ------------------------------------------------------------------------------
 
 

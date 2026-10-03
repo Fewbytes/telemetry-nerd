@@ -128,4 +128,16 @@ describe("evidence discipline (qxp)", () => {
     expect(v[1].sourceFlag?.label).toBe("source undetermined");
     expect(v[0].flags).toEqual([]);
   });
+  it("labels a downgraded and an unverified source (i6y5)", () => {
+    const f = fnd({
+      evidence: [stat({ source: "undetermined" }), stat({ source: "special_cause" })],
+      source_flags: [
+        { evidence: 0, flag: "source_downgraded", source: "undetermined", message: "op said special_cause" },
+        { evidence: 1, flag: "source_unverified", source: "special_cause", message: "no op" },
+      ],
+    });
+    const v = evidenceViews(f, ctx);
+    expect(v[0].sourceFlag?.label).toBe("op label downgraded");
+    expect(v[1].sourceFlag?.label).toBe("source unverified");
+  });
 });

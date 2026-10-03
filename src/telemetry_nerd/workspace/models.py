@@ -342,7 +342,10 @@ class SourceFlag(_Strict):
     """Where a finding's source of variation (spec §5.4) came from, when not as cited."""
 
     evidence: int  # index into Finding.evidence
-    flag: Literal["source_derived", "source_undetermined"]
+    #: source_derived: taken from the op; source_undetermined: none could be established;
+    #: source_downgraded: cited undetermined where the op labelled it (kept, the op's label in
+    #: the message); source_unverified: a cited label no op stands behind (i6y5)
+    flag: Literal["source_derived", "source_undetermined", "source_downgraded", "source_unverified"]
     source: VariationSource | None = None
     message: str
 

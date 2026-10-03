@@ -26,7 +26,8 @@ per finding
   Results are model outputs (principle 16): when an op itself labelled a cited statistic
   undetermined (its cautious model cannot decide), a finding that keeps that label passes; one
   whose text calls it special cause anyway fails. An untraced statistic or a finding citing none
-  (`source_undetermined` flag) is the finding's omission and still fails.
+  (`source_undetermined` flag) is the finding's omission and still fails; a label no op stands
+  behind (`source_unverified`) counts as undetermined.
 
 workspace
 - special-cause windows (queue-sim overload; n/a without a finding citing check_littles_law):
@@ -492,10 +493,17 @@ def score_finding(
         and any(asserts_change(c) for c in [s, *_CLAUSES.split(s)])
         for s in sentences(claim)
     )
+    sflags = f.get("source_flags") or []
+    # a label no op stands behind (`source_unverified`, i6y5) is not trusted: undetermined
+    unverified = {x.get("evidence") for x in sflags if x.get("flag") == "source_unverified"}
     sources = list(
-        dict.fromkeys(e["source"] for e in ev if e.get("kind") == "statistic" and e.get("source"))
+        dict.fromkeys(
+            UNDETERMINED if i in unverified else e["source"]
+            for i, e in enumerate(ev)
+            if e.get("kind") == "statistic" and e.get("source")
+        )
     )
-    if any(x.get("flag") == "source_undetermined" for x in f.get("source_flags") or []):
+    if any(x.get("flag") == "source_undetermined" for x in sflags):
         sources = list(dict.fromkeys([*sources, "undetermined"]))  # as the daemon lists them
     source_ok: bool | None = None
     if incident and sources:
@@ -683,13 +691,19 @@ _OPEN_LABEL = re.compile(
 
 def op_undetermined(f: dict) -> bool:
     """Does the finding cite a statistic that an op itself labelled undetermined? The daemon fills
-    the source from the op result and flags it `source_derived`; a source the caller typed is
-    taken as given (the daemon does not check it). A `source_undetermined` flag (statistic not
-    traced to an op, ops disagreeing, or no statistic cited) is the finding's omission, not the
-    op's verdict."""
+    the source from the op result and flags it `source_derived`; a typed source that contradicts
+    the op is refused (i6y5), so a cited undetermined is the op's own unless flagged
+    `source_downgraded` (the caller said less than the op) or `source_unverified` (no op label).
+    A `source_undetermined` flag (statistic not traced to an op, ops disagreeing, or no
+    statistic cited) is the finding's omission, not the op's verdict."""
+    not_ops = {
+        x.get("evidence")
+        for x in f.get("source_flags") or []
+        if x.get("flag") in ("source_downgraded", "source_unverified")
+    }
     if any(
-        e.get("kind") == "statistic" and e.get("source") == UNDETERMINED
-        for e in f.get("evidence", [])
+        e.get("kind") == "statistic" and e.get("source") == UNDETERMINED and i not in not_ops
+        for i, e in enumerate(f.get("evidence", []))
     ):
         return True
     return any(

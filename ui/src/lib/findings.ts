@@ -1,4 +1,4 @@
-import type { CodeBrief, Finding, Hypothesis, HypothesisScope, Panel, Scope } from "./api";
+import type { CodeBrief, Finding, Hypothesis, HypothesisScope, Panel, Scope, SourceFlag } from "./api";
 import { fmtRange, flagLabel } from "./format";
 import { sourceText } from "./sources";
 
@@ -49,6 +49,13 @@ const panelLink = (p: Panel): ObjectLink => ({
   domId: p.closed ? null : `panel-${p.id}`,
 });
 
+const SOURCE_FLAG_LABEL: Record<SourceFlag["flag"], string> = {
+  source_derived: "source from op",
+  source_undetermined: "source undetermined",
+  source_downgraded: "op label downgraded",
+  source_unverified: "source unverified",
+};
+
 export function evidenceViews(finding: Finding, ctx: LinkContext): EvidenceView[] {
   const flagsOf = (i: number) =>
     (finding.evidence_flags ?? [])
@@ -56,7 +63,7 @@ export function evidenceViews(finding: Finding, ctx: LinkContext): EvidenceView[
       .map((f) => ({ flag: f.flag, label: flagLabel(f.flag), message: f.message }));
   const sourceFlagOf = (i: number) => {
     const f = (finding.source_flags ?? []).find((x) => x.evidence === i);
-    return f ? { flag: f.flag, label: f.flag === "source_derived" ? "source from op" : "source undetermined", message: f.message } : null;
+    return f ? { flag: f.flag, label: SOURCE_FLAG_LABEL[f.flag], message: f.message } : null;
   };
   const panelsById = new Map(ctx.panels.map((p) => [p.id, p]));
   return finding.evidence.map((ref, index): EvidenceView => {

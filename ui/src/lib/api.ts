@@ -200,7 +200,7 @@ export interface ScopeCheck {
 /** Where a finding's source of variation came from, when not as cited (spec §5.4). */
 export interface SourceFlag {
   evidence: number;
-  flag: "source_derived" | "source_undetermined";
+  flag: "source_derived" | "source_undetermined" | "source_downgraded" | "source_unverified";
   source?: VariationSource | null;
   message: string;
 }
