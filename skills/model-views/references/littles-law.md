@@ -94,7 +94,10 @@ the gap; never compute L from lambda x W.
   light band common-cause envelope, dashed systematic level; special-cause transients shaded,
   common-cause ones hatched, promoted load-peak windows shaded with a bar on top and the reason
   in the hover), L and lambda x W under it.
-- Series: re-run with `by=["instance"]` (or the join label). `groups` give a verdict per member;
+- Series: re-run with `by=["instance"]` (or the join label). `groups` is a table (one row per
+  member, `group_columns`; flagged first, at most 10, the rest counted in `other_groups`);
+  `flagged_groups` holds every flagged member in full with its evidence. `group="pod=x"` gives
+  one member in full, `detail=true` everything (large);
   `unmatched` lists groups missing from a signal (`missing_in: concurrency` is a missing
   instance in the gauge and explains `L_low` for the total).
 - `total` is the ungrouped view: what a check without `by` sees.

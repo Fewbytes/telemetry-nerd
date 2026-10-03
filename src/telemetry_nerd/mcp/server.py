@@ -15,6 +15,8 @@ from telemetry_nerd.charts.spec import Window
 from telemetry_nerd.charts.yview import YView
 from telemetry_nerd.core.cause_hint import cause_hint
 from telemetry_nerd.core.code_ops import CodeDisabled
+from telemetry_nerd.core.littles_compact import compact as littles_compact
+from telemetry_nerd.core.littles_compact import statistics as littles_statistics
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
 from telemetry_nerd.mcp.shapes import EvidenceContext, ShapeError, finding_in, hypothesis_scope
 from telemetry_nerd.model.errors import NotFound
@@ -520,6 +522,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         latency_unit: str | None = None,
         arrivals: str = "auto",
         source: str = "default",
+        detail: bool = False,
+        group: str | None = None,
     ) -> str:
         """Is measured mean concurrency L consistent with throughput x mean latency (L = λ·W)?
 
@@ -556,15 +560,23 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         (localises a missing instance). `assumptions` (steady state, arrivals vs completions,
         label sets, units, alignment, warm-up, gauge sampling) each ok/assumed/flagged. Each
         group's `evidence` statistics go to finding_create as is. Draw: show(<datasets.concurrency>,
-        question, mark="littles")."""
+        question, mark="littles").
+        Compact by default: the total and every flagged group (not consistent, flagged/transient
+        windows, promoted peaks) in full minus consistent windows' rows; other groups one row
+        each in `groups` (`group_columns`; at most 10, flagged first, the rest counted in
+        `other_groups`). detail=true: everything (large with many groups); group="pod=x": that
+        group in full (`group`)."""
         try:
-            return _dump(
-                await service.check_littles_law(
-                    source=source, binding=binding, arrival_rate=arrival_rate, latency=latency,
-                    concurrency=concurrency, by=by, start=start, end=end, window=window,
-                    warmup=warmup, latency_unit=latency_unit, arrivals=arrivals,
-                )
+            out = await service.check_littles_law(
+                source=source, binding=binding, arrival_rate=arrival_rate, latency=latency,
+                concurrency=concurrency, by=by, start=start, end=end, window=window,
+                warmup=warmup, latency_unit=latency_unit, arrivals=arrivals,
             )  # fmt: skip
+            if detail:
+                return _dump(out)
+            res = littles_compact(out, group)
+            service.datasets.record_statistics(littles_statistics(res))
+            return _dump(res)
         except SourceError as e:
             raise _source_error(e) from e
         except (NotFound, ValueError) as e:
