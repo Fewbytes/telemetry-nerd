@@ -376,8 +376,6 @@ def explain(e: ValidationError, evidence: list[dict]) -> str:
     return "; ".join(parts)
 
 
-_FINDING_FIELDS = ("claim", "caveats", "hypothesis", "stance", "answers_panel", "scope_note")
-
 # --- hypothesis links (aiy) -----------------------------------------------------------------
 
 HYPOTHESES_EXAMPLE = [{"id": "h1", "stance": "for"}, {"id": "h2", "stance": "against"}]
@@ -436,6 +434,10 @@ def hypothesis_scope(raw: Any, to_ms: Callable[[Any], int | None]) -> tuple[dict
     sc = {k: v for k, v in sc_read.value.items() if not k.startswith("baseline")}
     sc["time_range"] = {"start_ms": to_ms(sc.pop("start")), "end_ms": to_ms(sc.pop("end"))}
     return sc, sc_read.notes
+
+
+#: finding_create's own arguments (beside scope, evidence and hypotheses)
+_FINDING_FIELDS = ("claim", "caveats", "hypothesis", "stance", "answers_panel", "scope_note")
 
 
 def finding_in(

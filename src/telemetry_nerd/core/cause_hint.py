@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import re
 
+from telemetry_nerd.analysis.sources import SPECIAL
 from telemetry_nerd.workspace.models import Finding, Hypothesis
 
 _NAMED = re.compile(r'^[\w.]+="(.*)"$')
@@ -23,7 +24,7 @@ def subjects(f: Finding) -> list[str]:
 
 
 def cause_hint(f: Finding, hypotheses: list[Hypothesis]) -> str | None:
-    if "special_cause" not in f.sources:
+    if SPECIAL not in f.sources:
         return None
     if any(x.stance == "for" for x in f.hypotheses):
         return None  # it already backs a hypothesis
