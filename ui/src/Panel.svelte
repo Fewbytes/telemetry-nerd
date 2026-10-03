@@ -15,7 +15,7 @@
   import { windowBadge } from "./lib/coverage";
   import { focusRects, hasFocus, notesAt, unknownReasons } from "./chart/focus";
   import ChartTip from "./components/ChartTip.svelte";
-  import { fmtSI, fmtStep } from "./lib/format";
+  import { fmtRange, fmtSI, fmtStep } from "./lib/format";
   import { axisGutterSize, placeTip, type HoverTip } from "./chart/plotKit";
   import { setupCanvas } from "./chart/canvas";
   import { drawnFor, VIEW_LABELS, type DataViewName } from "./chart/dataview";
@@ -217,8 +217,10 @@
   };
 
   // time-range selector (task 11): viewport is null while showing the panel's committed/fetched range.
-  // Picking a preset/typed range previews it (server round-trip only if it's outside what's already
-  // fetched); "keep this range" rescopes the panel for real, which opens a new panel for that range.
+  // Picking a preset/typed range selects it (fetching it from the server when it's outside what's
+  // already loaded); "keep this range" rescopes the panel for real, which opens a new panel for that
+  // range. The chart itself does NOT re-render the selected range yet (no rendering pipeline for an
+  // unattached preview dataset), so the badge only says what was fetched/selected, never "previewing".
   let viewport = $state<Viewport | null>(null);
   let previewData = $state<{ dataset: string; summary: unknown } | null>(null);
   let rangeBusy = $state(false);
@@ -235,7 +237,7 @@
     viewport = v;
     rangeError = null;
     if (isInBounds(v, fetchedBounds())) {
-      previewData = null; // in-bounds: client-side resample only, no preview round-trip needed
+      previewData = null; // in-bounds: nothing to fetch (the chart is not re-windowed yet either)
       return;
     }
     rangeBusy = true;
@@ -862,10 +864,12 @@
         type="text" placeholder="now-3h" disabled={rangeBusy}
         onkeydown={(e) => e.key === "Enter" && pickTyped((e.target as HTMLInputElement).value)}
       />
-      {#if previewData}
-        <span class="hint" data-preview-badge>previewing a different range</span>
+      {#if viewport && !rangeBusy && !rangeError}
+        <span class="hint" data-preview-badge>
+          {previewData ? "fetched" : "selected"} {fmtRange(viewport.start_ms, viewport.end_ms)} — the chart still shows the
+          current range; click 'keep this range' to open a panel over it
+        </span>
         <button type="button" disabled={rangeBusy} onclick={keepThisRange}>keep this range</button>
-        <span class="hint">keep this range to annotate or ask about it</span>
       {/if}
       {#if rangeError}<span class="hint" data-range-error>{rangeError}</span>{/if}
     </div>

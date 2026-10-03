@@ -150,6 +150,12 @@ export function panelNotes(
       text: `Reframed, not the metric as asked: ${opts.auto.reason}. The original is dataset ${opts.auto.source_dataset}.`,
     });
   }
+  if (opts.auto?.transform === "rescope") {
+    notes.push({
+      kind: "info", key: "auto_rescope",
+      text: `Over a different time range than the panel it came from: ${opts.auto.reason}. That panel's data is dataset ${opts.auto.source_dataset}, unchanged.`,
+    });
+  }
   if (opts.auto?.transform === "rate") {
     notes.push({
       kind: "info", key: "auto_rate",

@@ -9,7 +9,12 @@ test("preset range change previews, then keep-this-range creates a new panel", a
   const panelCountBefore = await page.locator("[data-panel-id]").count();
 
   await row.getByRole("button", { name: "6h" }).click();
-  await expect(el.locator("[data-preview-badge]")).toBeVisible();
+  const badge = el.locator("[data-preview-badge]");
+  await expect(badge).toBeVisible();
+  // honest copy: the chart does not re-render the fetched range yet (deferred), so never "previewing"
+  await expect(badge).toContainText("fetched");
+  await expect(badge).toContainText("keep this range");
+  await expect(badge).not.toContainText("previewing");
 
   await row.getByRole("button", { name: "keep this range" }).click();
   await expect(page.locator("[data-panel-id]")).toHaveCount(panelCountBefore + 1);
