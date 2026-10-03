@@ -553,25 +553,27 @@ def create_app(
         queue = service.log.subscribe()
         changes = presence.subscribe()
         switches = service.active.subscribe()
-        # Subscribed first, so nothing is lost between replay and live; dedupe by seq.
-        # Unpinned scope: the replay reads the active workspace's events.
-        last_sent = since
-        while batch := service.log.since(last_sent):
-            for event in batch:
-                await websocket.send_json(event.to_dict())
-                last_sent = event.seq
-        # Presence frames are control messages: no seq, never logged or replayed.
-        await websocket.send_json(_ui_presence_frame())
 
         async def until_disconnect() -> None:
             while (await websocket.receive())["type"] != "websocket.disconnect":
                 pass
 
-        reader = asyncio.ensure_future(until_disconnect())
-        getter = asyncio.ensure_future(queue.get())
-        changed = asyncio.ensure_future(changes.get())
-        switched = asyncio.ensure_future(switches.get())
+        tasks: list[asyncio.Future] = []
         try:
+            # Subscribed first, so nothing is lost between replay and live; dedupe by seq.
+            # Unpinned scope: the replay reads the active workspace's events.
+            last_sent = since
+            while batch := service.log.since(last_sent):
+                for event in batch:
+                    await websocket.send_json(event.to_dict())
+                    last_sent = event.seq
+            # Presence frames are control messages: no seq, never logged or replayed.
+            await websocket.send_json(_ui_presence_frame())
+            reader = asyncio.ensure_future(until_disconnect())
+            getter = asyncio.ensure_future(queue.get())
+            changed = asyncio.ensure_future(changes.get())
+            switched = asyncio.ensure_future(switches.get())
+            tasks = [reader, getter, changed, switched]
             while True:
                 done, _ = await asyncio.wait(
                     {reader, getter, changed, switched}, return_when=asyncio.FIRST_COMPLETED
@@ -581,24 +583,24 @@ def create_app(
                 if switched in done:
                     # Workspace frames are control messages too: the UI reloads its snapshot.
                     await websocket.send_json(switched.result())
-                    switched = asyncio.ensure_future(switches.get())
+                    switched = tasks[3] = asyncio.ensure_future(switches.get())
                 if getter in done:
                     event = getter.result()
-                    getter = asyncio.ensure_future(queue.get())
+                    getter = tasks[1] = asyncio.ensure_future(queue.get())
                     # Only the active workspace's events; read per frame (spec "HTTP").
                     if event["seq"] > last_sent and event["workspace"] == service.active.active:
                         await websocket.send_json(event)
                         last_sent = event["seq"]
                 if changed in done:
                     consumer = changed.result()
-                    changed = asyncio.ensure_future(changes.get())
+                    changed = tasks[2] = asyncio.ensure_future(changes.get())
                     # any consumer's change can alter the session list the UI shows (dtk)
                     if consumer == UI_CONSUMER or kind_of(consumer) != "ui":
                         await websocket.send_json(_ui_presence_frame())
         except WebSocketDisconnect:
             pass
         finally:
-            for task in (reader, getter, changed, switched):
+            for task in tasks:
                 task.cancel()
             service.log.unsubscribe(queue)
             presence.unsubscribe(changes)

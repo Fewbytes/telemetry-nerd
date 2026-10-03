@@ -366,8 +366,15 @@ export const fetchPanelData = (id: string, width: number) =>
 export const reportRender = (r: { panel_id: string; render_ms: number; points: number; width_px: number; height_px?: number }) =>
   postJSON<{ budget_exceeded: boolean }>("/api/render-report", r);
 
+/** Control frame on every workspace switch or update: no seq, never logged. */
+export interface WorkspaceFrame {
+  kind: "workspace";
+  active: { id: string; title: string; question: string | null; archived: boolean; created_at_ms: number };
+}
+
 export interface SocketHandlers {
   onPresence?: (p: Presence) => void;
+  onWorkspace?: (w: WorkspaceFrame) => void;
   onOpen?: () => void;
   onClose?: () => void;
 }
@@ -387,6 +394,7 @@ export function subscribe(
       try {
         const frame = JSON.parse(m.data);
         if (frame.kind === "presence") handlers.onPresence?.(frame as Presence);
+        else if (frame.kind === "workspace") handlers.onWorkspace?.(frame as WorkspaceFrame);
         else onEvent(frame as WorkspaceEvent);
       } catch (e) {
         console.error("malformed workspace event", e, m.data);

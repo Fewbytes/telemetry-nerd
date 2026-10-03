@@ -91,6 +91,30 @@ describe("subscribe frame routing", () => {
     stop();
     vi.useRealTimers();
   });
+  it("routes seq-less workspace control frames apart from events", () => {
+    const sockets: FakeWS[] = [];
+    class FakeWS {
+      onmessage: ((m: { data: string }) => void) | null = null;
+      onclose: (() => void) | null = null;
+      constructor() { sockets.push(this); }
+      close() {}
+    }
+    vi.stubGlobal("WebSocket", FakeWS);
+    vi.stubGlobal("location", { protocol: "http:", host: "h:1" });
+    const events: unknown[] = [];
+    const switches: unknown[] = [];
+    const frame = { kind: "workspace", active: { id: "w2", title: "t" } };
+    const stop = subscribe((e) => events.push(e), () => 0, { onWorkspace: (w) => switches.push(w) });
+    sockets[0].onmessage!({ data: JSON.stringify(frame) });
+    expect(events).toEqual([]);
+    expect(switches).toEqual([frame]);
+    stop();
+    // without a handler the frame is dropped, never mistaken for an event
+    const bare = subscribe((e) => events.push(e));
+    sockets[1].onmessage!({ data: JSON.stringify(frame) });
+    expect(events).toEqual([]);
+    bare();
+  });
 });
 
 describe("snapshot load retry", () => {

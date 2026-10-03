@@ -166,7 +166,6 @@ def test_ui_socket_forwards_only_active_workspace_events(client, service):
 
 
 def test_ui_socket_replays_since_through_the_active_workspace(client, service):
-    w1 = service.active.active
     _annotate(client, "old")
     w2 = _create(client, "two")["workspace"]["id"]
     _annotate(client, "new")
@@ -174,5 +173,5 @@ def test_ui_socket_replays_since_through_the_active_workspace(client, service):
         replay = []
         while (frame := ui.receive_json()).get("kind") != "presence":
             replay.append(frame)
+    # replay may span a switch; the queued workspace control frame then makes the UI reload
     assert replay and {f["workspace"] for f in replay} == {w2}
-    assert w1 != w2
