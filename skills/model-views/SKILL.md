@@ -107,6 +107,12 @@ role `status`, `direction`, `pattern`, `onset`, and `evidence`. Report:
    mean the interval is a lower bound; say so (the finding carries "uncertainty unknown").
 7. **Caveats** (`overdispersed`, `heavy_tails`, `noisier_than_reference`) go into the sentence,
    not into a footnote.
+8. **The source of each change** (`roles.<role>.source`, also on the level and onset evidence and
+   in `variation`): a changed role is a **special cause** (investigate), no change is **common
+   cause** (inside the reference cycles' spread), and a change on data with measurement-system
+   issues (partial fetch, failed spans, unknown input uncertainty) is **source undetermined**:
+   say "it moved, but the data cannot tell a real change from a collection problem", and name
+   the issue. Never upgrade undetermined to special cause.
 
 Absence of a flag is "no change detected against this reference at this power", not "healthy".
 Choose the range before looking at the verdict: every re-run with another range, reference or
@@ -145,6 +151,26 @@ lambda x W (arrival rate times MEAN latency from histogram `_sum` / `_count`).
 - Draw with `show(<datasets.concurrency>, question, mark="littles")`.
 
 Assumptions, what each violation implies, hints and worked reading: `references/littles-law.md`.
+
+## Sources of variation
+
+Every op that reports variation labels each finding (spec §5.4): `source` on items and on
+`evidence` statistics, and a `variation` list of `{source, finding}` in the result.
+
+- **common cause**: the system's inherent variability (control limits, the seasonal band, the
+  fleet's spread, behaviour groups as systemic structure, the small-system envelope). Do not
+  chase points inside it; the lever is changing the system.
+- **special cause**: assignable (SPC signals of a significant detector, shifts, drift, an unusual
+  window or member, a changed role, a transient). Investigate.
+- **measurement system**: the instruments (gaps, partial / untrusted data, churn and missing
+  members, units, unknown input uncertainty, a systematic Little's law offset). Fix or qualify
+  them before reading the process.
+- **source undetermined**: the data cannot tell them apart (run rules on an out-of-control chart
+  without their own evidence, an outlier episode on partial buckets, a silent member, a
+  user-excluded cycle). Say so; propose what would separate them.
+
+Report the label with the number, never instead of it, and pass `source` through to
+`finding_create` unchanged.
 
 ## Gaps and instrumentation
 

@@ -146,6 +146,15 @@ as a panel). Uncertainty problems come back as flags in the result
 (`uncertainty: [{evidence, flag, message}]`: `uncertainty_unknown`, `input_uncertainty_unknown`,
 `uncertainty_not_propagated`), are stored on the finding and shown to the user: quote them.
 
+**When code reports variation or a deviation, declare its source** (spec §5.4) on the cited
+statistic, `"source": ...`, and in the claim: `common_cause` (the system's inherent spread: a
+fit's residual scatter, a prediction band, a fleet or cycle-to-cycle spread), `special_cause`
+(beyond that envelope: a shift, an outlier, a trend break), `measurement_system` (error the
+instruments add: sampling, edges, gaps, partial data, units, unknown input uncertainty) or
+`undetermined` when the data cannot separate them. Never guess: a deviation that coincides with
+gaps or partial buckets is `undetermined` unless something rules the instruments out. A level, a
+count or a fit parameter that reports no variation carries no `source`.
+
 ## When a run fails
 
 `run_code` returns a short stdout and the tail of the traceback. To read more, call

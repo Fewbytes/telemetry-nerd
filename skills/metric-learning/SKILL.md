@@ -43,6 +43,12 @@ a suggestion from a short window: a quiet counter looks constant, a slow gauge l
 Read the findings before overriding a pack or the source's declaration, and cite the scan
 (`basis`) when you write a claim that rests on it.
 
+What a scan and the catalog record about the instruments (resets, a counter that decreases, the
+scrape interval, units, which members report) is the **measurement system**, one of the three
+sources of variation the analysis ops label (spec §5.4). Analyses lean on it to tell instrument
+error apart from process variation, so a wrong unit or interval claim moves variation into the
+wrong source: record such facts with evidence, and say when they are unknown.
+
 ## Learning from the repo, dashboards and docs
 
 If you can read the code that exposes a metric, that is the best evidence there is: the help text,
