@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
+import time
 from pathlib import Path
 
 _EVENTS_DDL = """CREATE TABLE IF NOT EXISTS events (
@@ -175,6 +177,16 @@ CREATE TABLE IF NOT EXISTS sources (
     created_at_ms INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS workspace_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS workspaces (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL CHECK (length(trim(title)) > 0),
+    question TEXT,
+    created_at_ms INTEGER NOT NULL,
+    opened_at_ms INTEGER NOT NULL,
+    archived INTEGER NOT NULL DEFAULT 0,
+    settings TEXT NOT NULL DEFAULT '{}',
+    sources TEXT NOT NULL DEFAULT '{}'
+);
 """
 
 _PANEL_COLUMNS = {
@@ -188,6 +200,41 @@ _METRIC_COLUMNS = {
     "dimension": "ALTER TABLE catalog_metrics ADD COLUMN dimension TEXT",
     "is_family": "ALTER TABLE catalog_metrics ADD COLUMN is_family INTEGER NOT NULL DEFAULT 0",
 }
+
+
+# Workspace-scoped tables (spec D2). The default exists only for rows written before
+# workspaces; every insert passes the workspace explicitly.
+_WORKSPACE_TABLES = ("panels", "objects", "events")
+_WORKSPACE_COLUMN = "ALTER TABLE {table} ADD COLUMN workspace TEXT NOT NULL DEFAULT 'w1'"
+_WORKSPACE_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS panels_workspace ON panels (workspace)",
+    "CREATE INDEX IF NOT EXISTS objects_workspace ON objects (workspace, kind, anchor)",
+    "CREATE INDEX IF NOT EXISTS events_workspace ON events (workspace, seq)",
+)
+
+
+def _seed_w1(con: sqlite3.Connection) -> None:
+    """Existing data becomes workspace w1 (spec Migration): its creation time is the earliest
+    event or panel, its settings the old workspace_settings rows. Ids continue at w2."""
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        if con.execute("SELECT 1 FROM workspaces LIMIT 1").fetchone() is None:
+            (earliest,) = con.execute(
+                "SELECT MIN(t) FROM (SELECT MIN(ts_ms) AS t FROM events"
+                " UNION ALL SELECT MIN(created_at_ms) FROM panels)"
+            ).fetchone()
+            now = int(time.time() * 1000)
+            settings = dict(con.execute("SELECT key, value FROM workspace_settings"))
+            con.execute(
+                "INSERT INTO workspaces (id, title, created_at_ms, opened_at_ms, settings)"
+                " VALUES ('w1', 'Workspace 1', ?, ?, ?)",
+                (earliest if earliest is not None else now, now, json.dumps(settings)),
+            )
+        con.execute("INSERT INTO counters VALUES ('w', 1) ON CONFLICT DO UPDATE SET n = MAX(n, 1)")
+        con.execute("COMMIT")
+    except BaseException:
+        con.execute("ROLLBACK")
+        raise
 
 
 def _migrate_event_actors(con: sqlite3.Connection) -> None:
@@ -227,4 +274,10 @@ def open_workspace_db(path: str | Path) -> sqlite3.Connection:
     con.execute(
         "CREATE INDEX IF NOT EXISTS catalog_metrics_family ON catalog_metrics (source, family)"
     )
+    for table in _WORKSPACE_TABLES:
+        if "workspace" not in {row[1] for row in con.execute(f"PRAGMA table_info({table})")}:
+            con.execute(_WORKSPACE_COLUMN.format(table=table))
+    for ddl in _WORKSPACE_INDEXES:
+        con.execute(ddl)
+    _seed_w1(con)
     return con
