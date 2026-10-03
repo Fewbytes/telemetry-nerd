@@ -131,6 +131,7 @@ from telemetry_nerd.core.summary import summarize, summarize_distribution
 from telemetry_nerd.core.uncertainty import mark_statistics
 from telemetry_nerd.core.verdict_ops import VerdictOps
 from telemetry_nerd.core.workspace_service import WorkspaceService
+from telemetry_nerd.core.workspaces import WorkspaceOps
 from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore, Lineage, is_code_expr
 from telemetry_nerd.exchange.fmt import NO_UNCERTAINTY, UNCERTAINTY_STATUS
@@ -315,8 +316,13 @@ class TelemetryService:
     bindings: BindingOps = field(init=False)
     verdicts: VerdictOps = field(init=False)
     entity_index: EntityOps = field(init=False)
+    workspaces: WorkspaceOps = field(init=False)
 
     def __post_init__(self) -> None:
+        self.workspaces = WorkspaceOps(
+            self.registry, self.active, self.log, self.sources, self.source_connect,
+            self._open_threads,
+        )  # fmt: skip
         self.bindings = BindingOps(self)
         self.verdicts = VerdictOps(self)
         self.entity_index = EntityOps(
@@ -344,6 +350,13 @@ class TelemetryService:
             build_runs(self.datasets, self.ws, self.runs_root), self.clock,
             scope=self.active, workspace_ids=self.registry.ids, using=self.active.using,
         )  # fmt: skip
+
+    def _open_threads(self) -> list[dict]:
+        return [
+            {"id": t.id, "anchor": t.anchor, "last": t.messages[-1].text[:200]}
+            for t in reversed(self.ws.objects.list_threads())
+            if t.messages and t.messages[-1].author == "user"
+        ]
 
     def _littles_binding(self, source: str, key: str):
         found = self.ws.relations.bindings("catalog", source, kind="littles_law")
@@ -489,6 +502,7 @@ class TelemetryService:
         end = end or "now"
         src = self._source(source)
         await self.ensure_resolution(source)
+        self.workspaces.note_source(source)
         expr = self._expand_families(expr, source, src)
         now = self.clock()
         rng = TimeRange(parse_time(start, now), parse_time(end, now))
@@ -605,6 +619,7 @@ class TelemetryService:
     ) -> dict:
         src = self._source(source)
         await self.ensure_resolution(source)
+        self.workspaces.note_source(source)
         now = self.clock()
         rng = TimeRange(parse_time(start, now), parse_time(end, now))
         floor = 2 * src.resolution_ms  # increase() needs two samples per window

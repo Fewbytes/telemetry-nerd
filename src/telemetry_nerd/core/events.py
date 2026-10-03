@@ -31,6 +31,7 @@ INTENTIONAL_TYPES = frozenset(
         "binding.claimed",
         "catalog.family_confirmed",
         "catalog.family_split",
+        "workspace.opened",
     }
 )
 AMBIENT_TYPES = frozenset(
@@ -42,6 +43,7 @@ AMBIENT_TYPES = frozenset(
         "panel.y_view_selected",
         "panel.marginal_set",
         "panel.data_view_selected",
+        "workspace.updated",
     }
 )
 
