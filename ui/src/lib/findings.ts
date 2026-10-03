@@ -56,6 +56,12 @@ const SOURCE_FLAG_LABEL: Record<SourceFlag["flag"], string> = {
   source_unverified: "source unverified",
 };
 
+function describeUncertainty(ref: { exact?: boolean; uncertainty_unknown?: boolean; interval: [number, number] | null }): { kind: UncertaintyKind; text: string } {
+  if (ref.exact) return { kind: "exact", text: "exact" };
+  if (ref.uncertainty_unknown === true || ref.interval === null) return { kind: "unknown", text: "uncertainty unknown" };
+  return { kind: "interval", text: `[${fmtValue(ref.interval[0])}, ${fmtValue(ref.interval[1])}]` };
+}
+
 export function evidenceViews(finding: Finding, ctx: LinkContext): EvidenceView[] {
   const flagsOf = (i: number) =>
     (finding.evidence_flags ?? [])
@@ -85,13 +91,7 @@ export function evidenceViews(finding: Finding, ctx: LinkContext): EvidenceView[
           note: ref.note ?? null, links: [{ kind: "catalog", id: ref.metric, label: "catalog", domId: null }],
         };
       case "statistic": {
-        const unknown = ref.uncertainty_unknown === true || (!ref.exact && ref.interval === null);
-        const uncertainty: UncertaintyKind = ref.exact ? "exact" : unknown ? "unknown" : "interval";
-        const uncertaintyText = ref.exact
-          ? "exact"
-          : unknown || ref.interval === null
-            ? "uncertainty unknown"
-            : `[${fmtValue(ref.interval[0])}, ${fmtValue(ref.interval[1])}]`;
+        const { kind: uncertainty, text: uncertaintyText } = describeUncertainty(ref);
         const links: ObjectLink[] = [
           ...ctx.panels.filter((p) => p.dataset_ids.includes(ref.dataset)).map(panelLink),
           ...ctx.code.filter((c) => c.outputs.includes(ref.dataset)).map((c): ObjectLink => ({ kind: "code", id: c.id, label: `${c.id} (code)`, domId: null })),

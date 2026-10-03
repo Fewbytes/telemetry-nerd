@@ -143,16 +143,8 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
   const legendHidden: number[] = [];
   const palette = opts.palette ?? PALETTE;
 
-  const contextColumn = (c: SeriesData, f: "avg" | "min" | "max") => {
-    const out: (number | null)[] = Array(xs.length).fill(null);
-    c.ts.forEach((t, i) => {
-      const idx = index.get(t);
-      if (idx !== undefined) out[idx] = c[f][i];
-    });
-    return out;
-  };
-
-  const onGrid = (ts: number[], values: (number | null)[]) => {
+  /** `values` (one per time in `ts`) laid onto the shared x grid; null where a series has no point. */
+  const onGrid = (ts: number[], values: (number | null)[]): (number | null)[] => {
     const out: (number | null)[] = Array(xs.length).fill(null);
     ts.forEach((t, i) => {
       const idx = index.get(t);
@@ -160,6 +152,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
     });
     return out;
   };
+  const contextColumn = (c: SeriesData, f: "avg" | "min" | "max") => onGrid(c.ts, c[f]);
 
   series.forEach((s, k) => {
     // the "others" band (14y) is a summary, not a series: neutral grey, dashed, said in its label
@@ -193,15 +186,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
         points: { filter: isolatedPointsFilter },
       });
     }
-    const column = (values: (number | null)[]) => {
-      const out: (number | null)[] = Array(xs.length).fill(null);
-      // xs contains every s.ts, so every lookup hits
-      s.ts.forEach((t, i) => {
-        const idx = index.get(t);
-        if (idx !== undefined) out[idx] = values[i];
-      });
-      return out;
-    };
+    const column = (values: (number | null)[]) => onGrid(s.ts, values);
     const name = s.summary ? base : seriesName(s.labels);
     if (opts.quantile) {
       // Percentiles are never aggregated: no min/max envelope. Buckets with too few
