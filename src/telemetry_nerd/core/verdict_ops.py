@@ -24,6 +24,7 @@ from telemetry_nerd.analysis.seasonal import DEFAULT_K, cycle_shifts
 from telemetry_nerd.analysis.seasonal_dist import Hist, common_edges, distance, expit, pool
 from telemetry_nerd.analysis.sources import COMMON, SPECIAL, UNDETERMINED
 from telemetry_nerd.analysis.verdicts import (
+    DISPERSION_SOURCE,
     SLOW_SHARE,
     Judgement,
     Level,
@@ -78,6 +79,18 @@ METHOD = {
         "level (day/week shape removed), AR(1)-prewhitened when the reference is autocorrelated"
     ),
 }
+
+
+#: share and count: the dispersion two ways (analysis.verdicts.Dispersion, principle 16)
+DISPERSION_METHOD = (
+    "; dispersion two ways: typical (the reference windows' median Pearson phi; independence "
+    "when they saw no events) and cautious (the largest reference phi; with no reference "
+    "events, the judged window's own long-run phi x tau, the change included: a conservative "
+    "bound); blocks of >= 5 expected clusters (events / the cautious phi); the source label "
+    "rests on the cautious model: special cause only when the level is flagged under it or an "
+    "episode fired (the CUSUM's scale is the reference residuals' own), else undetermined "
+    "with both p"
+)
 
 
 @dataclass
@@ -654,7 +667,8 @@ class VerdictOps:
         ds = st.now or ""
         d: dict[str, Any] = {
             "status": j.status, "metric": p.metric, "form": p.form, "dataset": st.now,
-            "method": METHOD[j.kind].format(k=k, scale=j.level.scale if j.level else "log"),
+            "method": METHOD[j.kind].format(k=k, scale=j.level.scale if j.level else "log")
+            + (DISPERSION_METHOD if j.dispersion else ""),
         }  # fmt: skip
         if j.direction:
             d["direction"] = j.direction
@@ -677,11 +691,16 @@ class VerdictOps:
         lv = j.level
         if lv is not None:
             name, val, iv, d["level"] = _level_wire(j, lv)
+            lc = j.level_cautious
+            extra = {"p_cautious": sig(lc.p)} if j.dispersion and lc is not None else {}
             evidence.append(
                 statistic(ds, f"{role}_{name}", sig(val), sig_pair(iv),
-                          d["method"], {**params, "p": sig(lv.p), "scale": lv.scale})
+                          d["method"], {**params, "p": sig(lv.p), **extra, "scale": lv.scale})
             )  # fmt: skip
             evidence[-1]["_varies"] = True
+        if j.dispersion is not None:
+            d["models"] = _models_wire(j)
+            d["label_rests_on"] = "cautious"
         if j.now_value is not None and j.kind != "value":
             evidence.append(
                 statistic(ds, f"{role}_{'share' if j.kind == 'share' else 'rate'}_now",
@@ -741,19 +760,26 @@ class VerdictOps:
         # data: it is reported as a measurement-system item but does not blur the attribution
         # (as in analyze)
         blurred = [c for c in meas if c != born_counters.CAVEAT]
-        src = {"changed": UNDETERMINED if blurred else SPECIAL, "no_change": COMMON}.get(j.status)
+        # principle 16: a count change that only the typical dispersion model sees is not
+        # labelled (both p are in `models`)
+        weak = j.status == "changed" and not j.holds_cautious
+        changed = UNDETERMINED if blurred or weak else SPECIAL
+        src = {"changed": changed, "no_change": COMMON}.get(j.status)
         for e in evidence:
             if e.pop("_varies", False) and src:
                 e["source"] = src
         if src:
             d["source"] = src
         d["text"] = _role_text(role, d)
+        why = []
+        if src == UNDETERMINED and blurred:
+            why.append("the data has measurement-system issues, so special cause and "
+                       "measurement cannot be told apart")  # fmt: skip
+        if src == UNDETERMINED and weak:
+            why.append("flagged only under the typical dispersion model; " + d["models"]["text"])
         d["variation"] = (
-            [sources.item(src, d["text"] + (
-                ": the data has measurement-system issues, so special cause and measurement "
-                "cannot be told apart" if src == UNDETERMINED else ""
-            ))] if src else []
-        ) + sources.measurement_items(blurred)  # fmt: skip
+            [sources.item(src, d["text"] + (": " + "; ".join(why) if why else ""))] if src else []
+        ) + sources.measurement_items(blurred)
         if st.absent_as_zero:
             d["variation"].append(sources.item(
                 sources.MEASUREMENT, "an absent error series was counted as 0 errors where its "
@@ -837,6 +863,40 @@ def _utilization_bound(p: RolePlan, members: dict) -> float | None:
 
 def _shape(now: Hist, refs: list[Hist], edges: np.ndarray) -> float:
     return distance(now, pool(refs), edges) if refs else math.nan
+
+
+def _models_wire(j: Judgement) -> dict:
+    """The level test under the typical and the cautious dispersion (principle 16)."""
+    dp = j.dispersion
+    assert dp is not None
+    lv, lc = j.level, j.level_cautious
+    indep = not dp.reference
+    typical = {
+        "dispersion": sig(dp.typical, 3),
+        "p": sig(lv.p, 2) if lv else None,
+        "flagged": bool(lv and lv.flagged),
+        "assumes": "independent events (binomial / Poisson): no reference window had events "
+        "to estimate dispersion from" if indep else "the window as dispersed as the median "
+        "reference window",
+    }  # fmt: skip
+    cautious = {
+        "dispersion": sig(dp.cautious, 3),
+        "dispersion_source": dp.source,
+        "p": sig(lc.p, 2) if lc else None,
+        "flagged": bool(lc and lc.flagged),
+        "assumes": "dispersion from " + DISPERSION_SOURCE[dp.source],
+        **({"dispersion_judged": sig(dp.judged, 3)} if dp.judged is not None else {}),
+        **({"dispersion_reference": [sig(v, 3) for v in dp.reference]} if dp.reference else {}),
+    }  # fmt: skip
+    fmt = lambda p: "n/a" if p is None else f"{p:.2g}"
+    text = (
+        f"level test p={fmt(lv.p if lv else None)} under {typical['assumes']} (dispersion "
+        f"{dp.typical:.3g}); p={fmt(lc.p if lc else None)} allowing dispersion "
+        f"{dp.cautious:.3g} ({DISPERSION_SOURCE[dp.source]})"
+    )
+    if j.episodes:
+        text += "; an episode fired (its scale is the reference residuals' own: both models)"
+    return {"typical": typical, "cautious": cautious, "text": text}
 
 
 def _level_wire(j: Judgement, lv: Level) -> tuple[str, float, list[float], dict]:

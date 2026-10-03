@@ -51,6 +51,12 @@ class Scenario:
     rate_drop: int | None = None  # from this step, requests x0.6
     error_factor: float = 10.0
     latency_factor: float = 1.6
+    error_share: float = 0.002
+    #: errors in clusters (e.g. retries of one request): mean cluster size (geometric sizes,
+    #: negative-binomial counts), drawn per window lognormal with this log-sd (heterogeneous
+    #: clustering across windows); None: independent errors
+    error_cluster: float | None = None
+    cluster_sd: float = 0.0
 
 
 def window(rng: np.random.Generator, sc: Scenario | None = None, n: int = N) -> Window:
@@ -59,11 +65,17 @@ def window(rng: np.random.Generator, sc: Scenario | None = None, n: int = N) -> 
     if sc.rate_drop is not None:
         lam[sc.rate_drop :] *= 0.6
     req = rng.poisson(lam * 60).astype(float)
-    p = 0.002 * math.exp(rng.normal(0, 0.1)) * np.exp(_ar(rng, n, 0.5, 0.2))
+    p = sc.error_share * math.exp(rng.normal(0, 0.1)) * np.exp(_ar(rng, n, 0.5, 0.2))
     if sc.error_burst:
         a, b = sc.error_burst
         p[a : b + 1] *= sc.error_factor
-    err = rng.binomial(req.astype(int), np.clip(p, 0, 1)).astype(float)
+    if sc.error_cluster is None:
+        err = rng.binomial(req.astype(int), np.clip(p, 0, 1)).astype(float)
+    else:
+        size = max(1.0, sc.error_cluster * math.exp(rng.normal(0, sc.cluster_sd)))
+        k = rng.binomial(req.astype(int), np.clip(p / size, 0, 1))
+        extra = rng.negative_binomial(np.maximum(k, 1), 1 / size) * (k > 0)
+        err = np.minimum(k + extra, req).astype(float)
     med = 0.08 * math.exp(rng.normal(0, 0.03)) * np.exp(_ar(rng, n, 0.6, 0.04))
     if sc.latency_shift is not None:
         med[sc.latency_shift :] *= sc.latency_factor
@@ -78,9 +90,12 @@ def window(rng: np.random.Generator, sc: Scenario | None = None, n: int = N) -> 
     return Window(req, err, slow, req / 60, np.clip(util, 0, 1), queue, med)
 
 
-def cycles(seed: int, sc: Scenario | None = None, k: int = K) -> list[Window]:
+def cycles(
+    seed: int, sc: Scenario | None = None, k: int = K, null: Scenario | None = None
+) -> list[Window]:
+    """Now (`sc`) and k reference windows (`null`: the in-control process, default)."""
     rng = np.random.default_rng(seed)
-    return [window(rng, sc)] + [window(rng) for _ in range(k)]
+    return [window(rng, sc)] + [window(rng, null) for _ in range(k)]
 
 
 def ts(n: int = N) -> np.ndarray:

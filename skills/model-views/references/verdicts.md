@@ -42,7 +42,15 @@ change that matches it.
   bound. `model_check` (concurrency in a Little's law binding): the `check_littles_law` result — its
   `summary`, `discrepancy` (report it first), verdict, `classification` and `warnings`;
   `status: not_possible` when the binding has no concurrency signal.
-- `evidence`: statistics for `finding_create`, citing the role dataset.
+- `source`: `special_cause` | `common_cause` | `undetermined` (spec §5.4). For error and
+  latency shares and event rates the label rests on the cautious dispersion model: `models`
+  gives the level test under the typical dispersion (reference median; independence when the
+  reference saw no events) and the cautious one (the noisiest reference window, or the judged
+  window's own counts when the reference had none), each with `p`, `flagged` and `assumes`;
+  `label_rests_on: cautious`. `changed` with `undetermined` means only the typical model sees
+  it: report "a change under <typical assumes> (p=...), not under <cautious assumes> (p=...)",
+  never as a special cause.
+- `evidence`: statistics for `finding_create`, citing the role dataset (`p_cautious` beside `p`).
 - `caveats`: `overdispersed`, `heavy_tails`, `noisier_than_reference`, input uncertainty flags.
 
 ## Ordering
@@ -88,5 +96,7 @@ makes the interval a lower bound.
 - Claim an order from overlapping intervals, or a cause from an order.
 - Quote latency as a percentile or a mean here; quote the share above the stated edge.
 - Treat `at_capacity` or `model_check` as test results.
+- Call an `undetermined` change a special cause, or quote the typical model's p without the
+  cautious one.
 - Re-run with different `alpha`, references or ranges until something flags: the family budget is
   per call, and the range is chosen before seeing the verdict.

@@ -496,3 +496,89 @@ async def test_mcp_binding_verdict(tmp_path):
     out = json.loads(res.content[0].text)
     assert out["roles"]["errors"]["status"] == "changed"
     assert out["summary"]["moved"][0] == "errors"
+
+
+# --- principle 16 (8jjy): a count change is labelled only when it holds under the cautious
+# dispersion ------------------------------------------------------------------------------------
+def test_counts_flagged_only_under_the_median_dispersion_do_not_hold_under_the_cautious():
+    """Three reference windows at independence, one far noisier (6 quiet steps, 6 busy, in
+    turn: phi ~ 8 on its blocks): the typical model (median phi) flags now's doubled level, the
+    cautious one (the noisiest reference window) does not, so the change holds only under the
+    optimistic model. Blocks hold >= 5 clusters under the cautious phi (3 steps here)."""
+    req = np.full(60, 3000.0)
+    noisy = np.where(np.arange(60) % 12 < 6, 2.0, 10.0)
+    refs = [(np.full(60, 6.0), req)] * 3 + [(noisy, req)]
+    j = judge_counts(
+        (np.full(60, 12.0), req), refs, T, STEP_MS, alpha_level=0.0083, alpha_episode=0.0083
+    )
+    assert j.status == "changed" and j.level.flagged and not j.episodes
+    dp = j.dispersion
+    assert j.block == 3 and dp.source == "reference_max"
+    assert max(dp.reference) == pytest.approx(8.4, abs=0.1)  # phi; x tau ~ 1.1 in typical, cautious
+    assert dp.typical < 1.2 and dp.cautious == pytest.approx(max(dp.reference) * dp.tau)
+    assert j.level_cautious.p > j.level.p and not j.level_cautious.flagged
+    assert not j.holds_cautious
+
+
+def test_clustered_errors_raise_no_episode_at_the_family_alpha():
+    """8jjy: errors in negative-binomial clusters (size ~5, heterogeneous across windows) in
+    now and the reference: per-step blocks left skewed residuals that drifted the CUSUM (14%
+    false alarms); blocks of >= 5 clusters under the cautious phi keep it at the family alpha."""
+    sc = Scenario(error_cluster=5, cluster_sd=0.5)
+    n = 150
+    flagged = sum(
+        judge_roles(red_inputs(cycles(s, sc, null=sc)), T, STEP_MS)[0]["errors"].judgement.status
+        == "changed"
+        for s in range(n)
+    )
+    assert flagged / n <= 0.05 + 2.6 * math.sqrt(0.05 * 0.95 / n)
+
+
+def test_counts_after_an_all_zero_reference_take_the_judged_window_as_the_cautious_bound():
+    """8jjy: no reference events -> the typical model is independence (phi = 1); a burst of
+    2000 errors in 4 minutes is also one clustered episode, which the judged window's own
+    dispersion (the burst included: conservative) allows for. Spread evenly, the same errors are
+    no more dispersed than independence, so the change holds under both."""
+    req = np.full(60, 3000.0)
+    zero = (np.zeros(60), req)
+    burst = np.zeros(60)
+    burst[30:34] = 500.0
+    even = np.random.default_rng(3).poisson(2000 / 60, 60).astype(float)
+    for now, holds in ((burst, False), (even, True)):
+        j = judge_counts((now, req), [zero] * 7, T, STEP_MS, alpha_level=0.0083,
+                         alpha_episode=0.0083)  # fmt: skip
+        assert j.status == "changed" and j.dispersion.typical == 1.0 and not j.dispersion.reference
+        assert j.holds_cautious is holds
+        if holds:
+            assert j.dispersion.source == "poisson_floor"
+        else:
+            assert j.dispersion.source == "judged" and j.dispersion.cautious > 100
+
+
+def test_a_count_change_only_the_typical_model_sees_is_undetermined_with_both_p():
+    from types import SimpleNamespace
+
+    from telemetry_nerd.analysis.verdicts import RoleResult
+    from telemetry_nerd.core.binding_view import RolePlan
+    from telemetry_nerd.core.verdict_ops import VerdictOps, _Role
+
+    req = np.full(60, 3000.0)
+    zero = (np.zeros(60), req)
+    burst = np.zeros(60)
+    burst[30:34] = 500.0
+    j = judge_counts((burst, req), [zero] * 7, T, STEP_MS, alpha_level=0.0083,
+                     alpha_episode=0.0083)  # fmt: skip
+    ds = SimpleNamespace(record_statistics=lambda _: None, meta=lambda _: None)
+    ops = VerdictOps(SimpleNamespace(datasets=ds))  # type: ignore[arg-type]
+    plan = RolePlan("errors", "errors_total", "error_ratio", "errors?")
+    d = ops._wire("errors", _Role(plan), RoleResult(j, 0.0083, 0.0083), 7, T, STEP_MS)
+    assert d["status"] == "changed" and d["source"] == "undetermined"
+    assert d["label_rests_on"] == "cautious"
+    m = d["models"]
+    assert m["typical"]["flagged"] and not m["cautious"]["flagged"]
+    assert m["cautious"]["dispersion_source"] == "judged"
+    assert "independent events" in m["typical"]["assumes"]
+    assert "cautious" in d["method"] and "undetermined" in d["method"]
+    ev = d["evidence"][0]
+    assert ev["source"] == "undetermined" and "p_cautious" in ev["params"]
+    assert "only under the typical dispersion model" in d["variation"][0]["finding"]

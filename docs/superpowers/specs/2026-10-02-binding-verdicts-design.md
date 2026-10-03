@@ -58,11 +58,24 @@ Two detectors per role, each on now against the reference cycles:
 
 | role | per-step data | level | episode residual |
 |---|---|---|---|
-| RED errors (error ratio) | errors a_t, requests n_t = rate x step (summed over members) | logit of the window share on **effective n** = N / (phi tau): phi the Pearson dispersion of per-step counts (reference median, >= 1), tau the integrated autocorrelation of the Pearson residuals | Pearson (a - n p_c) / sqrt(phi n p_c (1 - p_c)), steps merged into blocks with >= 5 expected errors |
+| RED errors (error ratio) | errors a_t, requests n_t = rate x step (summed over members) | logit of the window share on **effective n** = N / (phi tau): phi the Pearson dispersion of per-step counts (reference median, >= 1; and the cautious model below), tau the integrated autocorrelation of the Pearson residuals | Pearson (a - n p_c) / sqrt(phi n p_c (1 - p_c)), steps merged into blocks with >= 5 expected errors and >= 5 expected clusters (errors / the cautious phi) |
 | duration / latency (histogram) | requests above a threshold x and all requests, per step, from the histogram | as errors (the share above x) | as errors |
 | rate / arrival_rate, concurrency, saturation, utilization | the per-step value (log scale when all > 0, else linear) | mean of the window | (value - day/week phase shape - now's median) / within-cycle robust sigma of the reference |
-| USE errors (a rate of events) | events a_t = rate x step | log rate, quasi-Poisson | Pearson for Poisson, blocks >= 5 expected |
+| USE errors (a rate of events) | events a_t = rate x step | log rate, quasi-Poisson | Pearson for Poisson, blocks >= 5 expected (and >= 5 clusters) |
 
+- **Two dispersion models for counts (principle 16, bead 8jjy).** Results are model outputs:
+  the level test runs under the *typical* dispersion (the reference windows' median phi;
+  independence when no reference window saw an event) and the *cautious* one (the largest
+  reference phi: now may be as noisy as the noisiest normal window; with no reference events,
+  the judged window's own long-run phi x tau, the change included, a conservative bound as in
+  analyze's departure test). A request sibling is not used: a share is binomial given the
+  requests, so traffic burstiness is conditioned out. Blocks hold >= 5 expected clusters under
+  the cautious phi (fewer: the residuals stay skewed, now's CUSUM drifts on clustered noise and
+  the 4-7 reference peaks of the heavy-tail guard are too few to stop it: 14.5% false alarms
+  under negative-binomial errors before). `changed` stays the detection; the role's `source` is
+  special cause only when the change holds under the cautious model (the level flagged under
+  it, or an episode), else `undetermined`, with both results in `models` and
+  `label_rests_on: cautious`.
 - **Latency threshold** from the reference only (never from now): the bucket edge shared by
   all cycles whose pooled share above is nearest 5% (the reference's ~p95 edge) with >= 20
   expected above per cycle; exact at a bucket edge (fraction_over). The share above it is a
@@ -132,23 +145,35 @@ Service tests (`ScenarioSource`: values keyed by minute and member, so every ref
 is reproducible) run the same scenarios end to end through `binding_verdict`, the group
 annotation and the MCP tool.
 
-Calibration (`uv run scripts/calibrate_verdicts.py`, 400 seeds each):
+Calibration (`uv run scripts/calibrate_verdicts.py`, 400 seeds each; flagged = `changed`,
+special = holds under the cautious dispersion; clustered rows draw negative-binomial errors in
+now and the reference):
 
-| scenario | any role flagged | planted role(s) flagged | onset error (min) | onset interval covers | order right / wrong / simultaneous |
-|---|---|---|---|---|---|
-| quiet RED | 0.5% | - | - | - | - |
-| quiet USE | 1.2% | - | - | - | - |
-| error burst x10, min 30-37 | 100.0% | errors 100.0% | 0.0 | 100.0% | - |
-| latency median x1.6 from min 20 | 100.0% | duration 100.0% | 0.0 | 92.0% | - |
-| error burst x3, min 30-37 | 97.0% | errors 97.0% | 0.0 | 100.0% | - |
-| latency median x1.2 from min 20 | 97.8% | duration 97.5% | 0.0 | 90.3% | - |
-| request rate x0.6 from min 30 | 100.0% | rate 100.0% | 0.0 | 93.5% | - |
-| latency x1.6 from 20, then errors x10 at 40-47 | 100.0% | duration 100.0%, errors 100.0% | 0.0 | 97.0% | 400 / 0 / 0 |
-| saturation: util 0.97 min 20-40, queue x5 from 22 | 100.0% | utilization 100.0%, saturation 100.0% | 0.0 | 99.1% | 8 / 0 / 392 |
+| scenario | any role flagged | any role special | planted role(s) flagged | planted special | onset error (min) | onset interval covers | order right / wrong / simultaneous |
+|---|---|---|---|---|---|---|---|
+| quiet RED | 0.5% | 0.5% | - | - | - | - | - |
+| quiet USE | 1.2% | 1.2% | - | - | - | - | - |
+| quiet RED, clustered errors (NB, size ~5, log-sd 0.5) | 1.5% | 1.5% | - | - | - | - | - |
+| quiet RED, rare clustered errors (~5/h, size ~10) | 1.5% | 1.5% | - | - | - | - | - |
+| error burst x10, min 30-37 | 100.0% | 100.0% | errors 100.0% | errors 100.0% | 0.0 | 100.0% | - |
+| latency median x1.6 from min 20 | 100.0% | 100.0% | duration 100.0% | duration 100.0% | 0.0 | 93.0% | - |
+| error burst x3, min 30-37 | 79.8% | 79.8% | errors 79.8% | errors 79.8% | 0.0 | 100.0% | - |
+| latency median x1.2 from min 20 | 97.8% | 97.8% | duration 97.5% | duration 97.5% | 0.0 | 90.5% | - |
+| request rate x0.6 from min 30 | 100.0% | 100.0% | rate 100.0% | rate 100.0% | 0.0 | 91.8% | - |
+| latency x1.6 from 20, then errors x10 at 40-47 | 100.0% | 100.0% | duration 100.0%, errors 100.0% | duration 100.0%, errors 100.0% | 0.0 | 97.6% | 396 / 0 / 4 |
+| error burst x3, min 30-37, clustered errors | 1.2% | 1.2% | errors 0.0% | errors 0.0% | - | - | - |
+| saturation: util 0.97 min 20-40, queue x5 from 22 | 100.0% | 100.0% | utilization 100.0%, saturation 100.0% | utilization 100.0%, saturation 100.0% | 0.0 | 99.2% | 7 / 0 / 393 |
+
+Before the cautious blocks (8jjy): clustered errors (size ~5) 14.5% false alarms, rare clustered
+errors 1.5%; error burst x3 97.0% (79.8% now: phi ~1.2-2 from the share's rate jitter already
+asks for 2-step blocks, phi bounds the cluster size from above); x3 burst amid clustered errors
+24.5% (on a detector that false-alarmed 14.5%; 0% now: at the cautious phi ~10-20 the window
+holds < 8 blocks, so only the level test runs). Clustered-event power is what the data allows
+under the cautious model, not a tuned number.
 
 Quiet, 2000 seeds: any role flagged 2.0% (RED) / 1.8% (USE) at the nominal family-wise 5%
 (conservative; per role 0.3-1.1%). Onset intervals cover the truth 90-100% (Bai's interval
 for a shift covering most of the window runs slightly below its nominal 95%). Power is what k
 reference windows allow at alpha / 2m: a 20% latency median shift is caught ~98% of the time,
-a 3x error burst of 8 minutes ~97%; the episode detector carries most of it (the level
+a 3x error burst of 8 minutes ~80% (97% before the cautious blocks); the episode detector carries most of it (the level
 detector's t with k-1 = 3 df at 0.8% is strict).

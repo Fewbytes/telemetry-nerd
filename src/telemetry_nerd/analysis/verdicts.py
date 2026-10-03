@@ -12,7 +12,9 @@ Two detectors per signal, each with a stated alpha:
 
 Shares (RED errors, the share of requests above a latency threshold) are binomial counts per
 step with effective n = n / (phi tau) (Pearson dispersion, autocorrelation); event rates are
-quasi-Poisson; everything else is a per-step value. Onset = Page's estimator (the first block of
+quasi-Poisson; everything else is a per-step value. Counts are judged under two dispersion
+models (`Dispersion`: typical and cautious); a change is labelled special cause only when it
+holds under the cautious one (principle 16, bead 8jjy; `Judgement.holds_cautious`). Onset = Page's estimator (the first block of
 the excursion that fired), with an interval reaching back over a block and the rate window's
 lookback and forward to the detection. Design:
 docs/superpowers/specs/2026-10-02-binding-verdicts-design.md.
@@ -313,10 +315,27 @@ class Judgement:
     reasons: list[str] = field(default_factory=list)
     caveats: list[str] = field(default_factory=list)
     extra: dict = field(default_factory=dict)
+    #: counts only: the dispersion two ways (`Dispersion`) and the level test under the
+    #: cautious one (principle 16)
+    dispersion: Dispersion | None = None
+    level_cautious: Level | None = None
 
     @property
     def episodes(self) -> list[Episode]:
         return self.stage.episodes if self.stage else []
+
+    @property
+    def holds_cautious(self) -> bool:
+        """A change that holds under the cautious model: what a special-cause label may rest
+        on. Values: their scale is the reference's own (no dispersion model), so any change.
+        Counts: an episode (blocks of MIN_EXPECTED clusters under the cautious phi; the CUSUM's
+        scale is the reference residuals' own, at its 95% upper bound) or the level flagged
+        under the cautious dispersion."""
+        if self.status != "changed":
+            return False
+        if self.dispersion is None or self.episodes:
+            return True
+        return bool(self.level_cautious and self.level_cautious.flagged)
 
 
 def _shift(cp_y: np.ndarray, side: int | None) -> tuple[int, int, object] | None:
@@ -394,6 +413,82 @@ def _finish(j: Judgement, ts: np.ndarray, step_ms: int, lookback_ms: int, cp_y: 
 
 
 # shares and counts ------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Dispersion:
+    """The variance inflation of a count window over binomial (Poisson) independence, two
+    ways (principle 16: results are model outputs; the label rests on the cautious one).
+
+    - typical: the reference cycles' median Pearson dispersion phi (>= 1): now is as dispersed
+      as a typical reference window;
+    - cautious: the largest of them (now may be as dispersed as the noisiest normal window).
+      When no reference cycle can estimate it (no events there: e.g. an error counter born
+      later), the typical model is independence (phi = 1) and the cautious one the judged
+      window's own long-run dispersion (Pearson phi around its own share x the
+      autocorrelation time of its residuals; it includes the change itself, so it over-states
+      clustering under no change: a conservative bound; a single judged step: all its events
+      one cluster), as analyze's departure test (analysis.diagnostics.Departure).
+
+    No request sibling: a share is binomial given the requests per step, so traffic burstiness
+    is conditioned out (only errors clustering beyond their requests, e.g. retries, inflate it).
+    Both are the variance inflation (phi x tau): the reference phis times the autocorrelation
+    time tau of the reference residuals (1 without them); the judged one carries its own tau."""
+
+    typical: float  # phi x tau
+    cautious: float  # phi x tau
+    source: str  # reference_max | judged | poisson_floor
+    tau: float
+    reference: list[float]  # per reference cycle with events
+    judged: float | None  # the judged window's own (only without reference estimates)
+
+
+DISPERSION_SOURCE = {
+    "reference_max": "the noisiest reference window",
+    "judged": "the judged window's own counts, the change included: a conservative bound",
+    "poisson_floor": "independence (no source shows more)",
+}
+
+
+def own_dispersion(a: np.ndarray, n: np.ndarray, family: str) -> float | None:
+    """Long-run dispersion of one window's per-step counts around its own share (rate):
+    Pearson phi x the integrated autocorrelation time of the residuals. None with fewer than 2
+    steps or no events."""
+    a, n = np.asarray(a, float), np.asarray(n, float)
+    ok = ~np.isnan(a) & ~np.isnan(n) & (n > 0)
+    A, N = float(a[ok].sum()), float(n[ok].sum())
+    if ok.sum() < 2 or A <= 0 or (family == "binomial" and A >= N):
+        return None
+    p = A / N
+    nv = n[ok]
+    var = nv * p * (1 - p) if family == "binomial" else nv * p
+    r = (a[ok] - nv * p) / np.sqrt(var)
+    phi = float(np.sum(r**2)) / (r.size - 1)
+    tau = tau_int(np.flatnonzero(ok), r) if r.size >= 8 else 1.0
+    return phi * tau
+
+
+def _skewness(cycles: list[tuple[np.ndarray, np.ndarray]], family: str) -> float:
+    """Skewness of the per-step counts around each cycle's own share (rate), pooled over the
+    cycles: the third standardised moment of the Pearson residuals (each cycle standardised by
+    its own spread). 0 without data."""
+    rs = []
+    for a, n in cycles:
+        a, n = np.asarray(a, float), np.asarray(n, float)
+        ok = ~np.isnan(a) & ~np.isnan(n) & (n > 0)
+        A, N = float(a[ok].sum()), float(n[ok].sum())
+        if ok.sum() < 3 or A <= 0 or (family == "binomial" and A >= N):
+            continue
+        p = A / N
+        nv = n[ok]
+        r = (a[ok] - nv * p) / np.sqrt(nv * p * (1 - p) if family == "binomial" else nv * p)
+        sd = float(np.std(r))
+        if sd > 0:
+            rs.append((r - r.mean()) / sd)
+    if not rs:
+        return 0.0
+    z = np.concatenate(rs)
+    return float(np.mean(z**3))
+
+
 def _link(a: float, n: float, family: str, infl: float) -> tuple[float, float]:
     """(level, variance) of a window's share (logit) or rate (log) on effective counts."""
     if family == "binomial":
@@ -444,36 +539,64 @@ def judge_counts(
     med_n = float(np.nanmedian(np.concatenate([n for _, n in rs])))
     e_step = max(p_ref, 0.5 / N_r) * med_n
     b = max(1, math.ceil(MIN_EXPECTED / e_step)) if e_step > 0 else a0.size
-    j.block = b
     a0[~ok0], n0[~ok0] = np.nan, np.nan
-    blocks = [(block_sums(a, b), block_sums(n, b)) for a, n in rs]
-    ab0, nb0 = block_sums(a0, b), block_sums(n0, b)
 
     def var_fn(n: np.ndarray, p: float) -> np.ndarray:
         return n * p * (1 - p) if family == "binomial" else n * p
 
+    def dispersions(b: int):
+        """Per reference cycle: its block sums, Pearson residuals and phi (cycles with events)."""
+        blocks = [(block_sums(a, b), block_sums(n, b)) for a, n in rs]
+        phis, resid = [], []
+        for ab, nb in blocks:
+            ok = ~np.isnan(ab) & ~np.isnan(nb) & (nb > 0)
+            p = float(ab[ok].sum() / nb[ok].sum())
+            if p <= 0 or (family == "binomial" and p >= 1) or ok.sum() < 3:
+                resid.append(np.full(ab.size, np.nan))
+                continue
+            r = np.where(ok, (ab - nb * p) / np.sqrt(var_fn(nb, p)), np.nan)
+            phis.append(float(np.nansum(r**2)) / (ok.sum() - 1))
+            resid.append(r)
+        return blocks, phis, resid
+
     # dispersion and autocorrelation from the reference cycles
-    phis, resid = [], []
-    for ab, nb in blocks:
-        ok = ~np.isnan(ab) & ~np.isnan(nb) & (nb > 0)
-        p = float(ab[ok].sum() / nb[ok].sum())
-        if p <= 0 or (family == "binomial" and p >= 1) or ok.sum() < 3:
-            resid.append(np.full(ab.size, np.nan))
-            continue
-        r = np.where(ok, (ab - nb * p) / np.sqrt(var_fn(nb, p)), np.nan)
-        phis.append(float(np.nansum(r**2)) / (ok.sum() - 1))
-        resid.append(r)
+    blocks, phis, resid = dispersions(b)
+    # clustered events (bead 8jjy): a normal residual needs MIN_EXPECTED independent clusters
+    # per block, ~ events / phi (phi bounds the cluster size: it also carries rate variation),
+    # phi at its cautious (largest reference) value. Fewer: the residuals stay skewed (the median
+    # block far below the mean), now's CUSUM drifts on clustered noise and the reference peaks
+    # (4-7 of them) are too few to guard it (FAR 14% under negative-binomial errors)
+    if phis and (bc := math.ceil(MIN_EXPECTED * max(phis) / e_step)) > b:
+        b = min(bc, a0.size)
+        blocks, phis, resid = dispersions(b)
+    j.block = b
+    ab0, nb0 = block_sums(a0, b), block_sums(n0, b)
     disp = max(1.0, float(np.median(phis))) if phis else 1.0
     pos, vals = _concat([r / math.sqrt(disp) for r in resid])
     tau = tau_int(pos, vals) if vals.size >= 8 else 1.0
     infl = disp * tau
-    # Var(total) = phi tau x the binomial (Poisson) variance: phi and tau both from blocks
-    lv_refs = [_link(float(np.nansum(a)), float(np.nansum(n)), family, infl) for a, n in rs]
-    l0, v0 = _link(A0, N0, family, infl)
-    j.level = level_test(
-        l0, v0, np.array([x for x, _ in lv_refs]), np.array([v for _, v in lv_refs]),
-        alpha_level, "logit" if family == "binomial" else "log",
-    )  # fmt: skip
+    # cautious dispersion (Dispersion): the noisiest reference cycle, else the judged window's own
+    d_judged = None
+    if phis:
+        infl_c, src = max(1.0, max(phis)) * tau, "reference_max"
+    else:
+        d_judged = own_dispersion(a0, n0, family) if ok0.sum() > 1 else None
+        d_judged = A0 if d_judged is None else d_judged  # one judged step: one cluster
+        infl_c, src = (d_judged, "judged") if d_judged > infl else (infl, "poisson_floor")
+    j.dispersion = Dispersion(infl, float(infl_c), src, tau, [float(v) for v in phis], d_judged)
+    scale = "logit" if family == "binomial" else "log"
+
+    def level_at(inf: float) -> Level | None:
+        # Var(total) = phi tau x the binomial (Poisson) variance: phi and tau both from blocks
+        lv_refs = [_link(float(np.nansum(a)), float(np.nansum(n)), family, inf) for a, n in rs]
+        l0, v0 = _link(A0, N0, family, inf)
+        return level_test(
+            l0, v0, np.array([x for x, _ in lv_refs]), np.array([v for _, v in lv_refs]),
+            alpha_level, scale,
+        )  # fmt: skip
+
+    j.level = level_at(infl)
+    j.level_cautious = j.level if infl_c == infl else level_at(infl_c)
     j.n_eff_now = N0 / infl if family == "binomial" else A0 / infl
     j.now_value = A0 / N0
     if family == "binomial":
