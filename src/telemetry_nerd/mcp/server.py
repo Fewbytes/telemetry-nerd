@@ -23,8 +23,9 @@ from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.jsonsafe import dumps
 from telemetry_nerd.model.time import format_duration, iso, parse_duration, parse_time
 from telemetry_nerd.sources.base import SourceError
+from telemetry_nerd.sources.grafana import discover_datasources, probe_backend
 from telemetry_nerd.sources.public import PUBLIC_SOURCES
-from telemetry_nerd.sources.spec import SourceSpec
+from telemetry_nerd.sources.spec import AuthRef, SourceSpec
 from telemetry_nerd.workspace.models import AnnotationIn, GapIn, HypothesisScope, HypothesisStatus
 
 INSTRUCTIONS = """\
@@ -721,6 +722,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     async def source_connect(
         name: str,
         url: str | None = None,
+        grafana: str | None = None,
+        uid: str | None = None,
         flavor: str = "prometheus",
         resolution: str = "auto",
         auth_env: str | None = None,
@@ -741,14 +744,21 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         url: API base without /api/v1, e.g. http://prometheus:9090, a VictoriaMetrics
         /select/0/prometheus path, or a Grafana datasource proxy
         https://<grafana>/api/datasources/proxy/uid/<uid>.
+        grafana + uid: connect a datasource you found with source_discover_grafana (e.g.
+        source_connect(name="play-mimir", grafana="https://play.grafana.org",
+        uid="grafanacloud-prom")), without building the proxy url yourself. The datasource's
+        own buildinfo (through Grafana's proxy) decides `flavor` (e.g. VictoriaMetrics ->
+        victoriametrics); the given `flavor` argument is ignored. Mutually exclusive with url.
         flavor: "victoriametrics" (MetricsQL rollup) or "prometheus" (also works on VM,
-        Thanos, Mimir).
+        Thanos, Mimir); ignored when grafana+uid detect it.
         resolution: "auto" (default): measured from the series' scrape spacing (median sample
         spacing per job; the coarsest job's when they differ), re-measured by source_learn; or
         a duration (e.g. 15s, 60s) that overrides the measurement. source_status shows both.
         Secrets: NEVER pass a token. Ask the user to put it in a file (auth_file, absolute
         path; picked up immediately) or an env var of the daemon (auth_env, the variable
         NAME; needs a daemon restart if set later). auth_scheme: bearer | basic ("user:pass").
+        With grafana+uid, this is Grafana's own token (the proxy forwards it); it needs
+        access to that datasource.
         Politeness for shared/public servers: lower max_concurrency, set min_interval
         (e.g. 500ms), raise timeout (e.g. 60s).
         profile_source: name of another source with downsampled data of the same series (e.g. a
@@ -757,9 +767,43 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         timezone: IANA timezone (e.g. Europe/Berlin) the operating profile counts hour-of-day and
         hour-of-week in. Set it where load follows people (business hours, DST shifts); default UTC.
         The source is probed before it is saved; it persists across daemon restarts.
-        Returns {source, status}.
+        Returns {source, status} (plus {backend} when detected via grafana+uid).
         """
         try:
+            if grafana is not None:
+                if url is not None:
+                    raise ToolError("pass either grafana+uid or url, not both")
+                if uid is None:
+                    raise ToolError(
+                        "grafana needs uid: see source_discover_grafana(url=...) for datasource uids"
+                    )
+                auth = None
+                if auth_env is not None or auth_file is not None:
+                    auth = {"env": auth_env, "file": auth_file, "scheme": auth_scheme}
+                auth_ref = AuthRef.model_validate(auth) if auth else None
+                proxy_url = f"{grafana.rstrip('/')}/api/datasources/proxy/uid/{uid}"
+                backend, detected_flavor = await probe_backend(proxy_url, auth_ref)
+                spec = SourceSpec.model_validate(
+                    {
+                        "name": name,
+                        "url": proxy_url,
+                        "flavor": detected_flavor,
+                        "resolution_ms": None
+                        if resolution == "auto"
+                        else parse_duration(resolution),
+                        "auth": auth,
+                        "politeness": {
+                            "max_concurrency": max_concurrency,
+                            "min_interval_ms": parse_duration(min_interval),
+                            "timeout_s": parse_duration(timeout) / 1000,
+                        },
+                        "profile_source": profile_source,
+                        "timezone": timezone,
+                    }
+                )
+                out = await service.source_connect(spec, replace=replace)
+                out["backend"] = backend
+                return _dump(out)
             if url is None:
                 entry = PUBLIC_SOURCES.get(name)
                 if entry is None:
@@ -794,6 +838,45 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise _source_error(e) from e
         except ValueError as e:
             raise ToolError(str(e)) from e
+
+    @mcp.tool()
+    async def source_discover_grafana(
+        url: str,
+        auth_env: str | None = None,
+        auth_file: str | None = None,
+        auth_scheme: str = "bearer",
+    ) -> str:
+        """List datasources exposed by a Grafana instance, e.g. https://play.grafana.org or
+        https://grafana.wikimedia.org, so you can connect one by uid with
+        source_connect(name=..., grafana=url, uid=...).
+
+        Without auth_env/auth_file: /api/frontend/settings, what an anonymous visitor's own
+        browser loads (what it contains depends on the instance's anonymous-access setting).
+        With a Grafana API token or service account token (auth_env/auth_file, NEVER pass
+        the token itself; auth_scheme: bearer | basic): /api/datasources, the authoritative
+        list, including datasources hidden from anonymous users.
+        Each datasource: uid (pass to source_connect), name, type (Grafana's plugin id),
+        is_default, backend_hint (Grafana's own unverified jsonData.prometheusType, e.g.
+        Mimir/Thanos/Cortex, when an admin set it), and supported. supported=false
+        datasources (Loki, InfluxDB, Elasticsearch, ...) are listed but cannot be connected
+        (see telemetry-nerd-sgb). The actual backend/flavor
+        (Prometheus/Thanos/Mimir/VictoriaMetrics) is only established once connected:
+        source_connect(grafana=..., uid=...) asks the datasource's own buildinfo.
+        """
+        try:
+            auth = None
+            if auth_env is not None or auth_file is not None:
+                auth = AuthRef.model_validate(
+                    {"env": auth_env, "file": auth_file, "scheme": auth_scheme}
+                )
+            datasources = await discover_datasources(url, auth)
+            return _dump(
+                {"grafana_url": url.rstrip("/"), "datasources": [d.describe() for d in datasources]}
+            )
+        except ValidationError as e:
+            raise _fail(e) from e
+        except SourceError as e:
+            raise _source_error(e) from e
 
     @mcp.tool()
     def public_sources() -> str:
