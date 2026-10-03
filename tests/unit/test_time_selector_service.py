@@ -112,6 +112,49 @@ async def test_rescope_a_fleet_panel_carries_over_its_options(tmp_path):
     assert new_cfg["scale"] == "log"
 
 
+async def test_rescope_an_spc_panel_reuses_its_baseline_when_it_still_fits(tmp_path):
+    from telemetry_nerd.charts.spec import Window
+
+    svc = make_service(tmp_path)
+    d = (await svc.query("rate(node_cpu_seconds_total[5m])", start="now-6h", end="now"))["dataset"]
+    meta = svc.datasets.meta(d)
+    baseline_start, baseline_end = meta.start_ms, meta.start_ms + meta.step_ms * 3
+    shown = svc.show(
+        d, "spc?", mark="spc",
+        windows=[Window(start_ms=baseline_start, end_ms=baseline_end)],
+    )
+    pid = shown.panel.id
+    res = await svc.rescope(pid, "now-6h", "now", "user")
+    assert res.panel.spec["layers"][0]["mark"] == "spc"
+    w = res.panel.spec["layers"][0]["windows"][0]
+    assert w["start_ms"] == baseline_start and w["end_ms"] == baseline_end
+
+
+async def test_rescope_an_spc_panel_raises_when_the_baseline_no_longer_fits(tmp_path):
+    from telemetry_nerd.charts.spec import Window
+
+    svc = make_service(tmp_path)
+    d = (await svc.query("rate(node_cpu_seconds_total[5m])", start="now-6h", end="now"))["dataset"]
+    meta = svc.datasets.meta(d)
+    baseline_start, baseline_end = meta.start_ms, meta.start_ms + meta.step_ms * 3
+    shown = svc.show(
+        d, "spc?", mark="spc",
+        windows=[Window(start_ms=baseline_start, end_ms=baseline_end)],
+    )
+    pid = shown.panel.id
+    with pytest.raises(ValueError, match="baseline"):
+        await svc.rescope(pid, "now-10m", "now", "user")  # new range excludes the old baseline
+
+
+async def test_rescope_a_seasonal_panel_raises_unsupported(tmp_path):
+    svc = make_service(tmp_path)
+    d = (await svc.query("rate(node_cpu_seconds_total[5m])"))["dataset"]
+    await svc.compare_seasonal(d, cycles=["1d"])
+    pid = svc.show(d, "seasonal?", mark="seasonal").panel.id
+    with pytest.raises(ValueError, match="rescope_unsupported_for_mark"):
+        await svc.rescope(pid, "now-3h", "now", "user")
+
+
 async def test_rescope_refuses_a_code_output_panel(tmp_path):
     from telemetry_nerd.datasets.store import Lineage
     from telemetry_nerd.model.series import BUCKET_SCHEMA, SERIES_SCHEMA, FetchResult

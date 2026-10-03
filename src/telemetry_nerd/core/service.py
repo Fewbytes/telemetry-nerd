@@ -997,6 +997,12 @@ class TelemetryService:
             old_cfg = self.fleets.last_config(p.dataset_ids[0])
             self.fleets.summary(ds, **old_cfg)
             kwargs["mark"] = "fleet"
+        elif mark == "spc":
+            old_windows = spec.layers[0].windows
+            kwargs["mark"] = "spc"
+            if old_windows:
+                w = old_windows[0]
+                kwargs["windows"] = [Window(start_ms=w.start_ms, end_ms=w.end_ms)]
         res = self.show(ds, p.question, actor, auto=form, raw_ok=True, **kwargs)
         self.log.append(actor, "panel.rescoped", res.panel.id, {"from": panel_id})
         return res
