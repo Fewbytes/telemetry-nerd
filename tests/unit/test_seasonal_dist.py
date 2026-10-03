@@ -156,3 +156,28 @@ def test_summary_quantiles_are_refused_with_a_hint(tmp_path):
         pytest.skip("summary quantile not recognised as a percentile series")
     with pytest.raises(ValueError, match="histogram per cycle"):
         asyncio.run(svc.compare_seasonal(q["dataset"]))
+
+
+def test_statistics_over_inputs_of_unknown_uncertainty_are_marked(tmp_path):
+    """8qt: like the series branch, the share statistic over a dataset (or a cycle's histogram
+    dataset) of unknown uncertainty is a lower bound, flagged and caveated."""
+    from dataclasses import replace
+
+    svc = make_service(tmp_path, source=LatencySource())
+    d = _p99(svc, SAT)
+    clean = asyncio.run(svc.compare_seasonal(d, cycles=["1w"]))
+    ev = clean["series"][0]["share_over"]["evidence"]
+    assert "input_uncertainty" not in ev["params"]
+    assert "input_uncertainty_unknown" not in clean["caveats"]
+    meta = svc.datasets.meta
+    svc.datasets.meta = lambda i: (  # the input, and every fetch after it, of unknown uncertainty
+        replace(meta(i), source_caveats=["no_uncertainty"]) if i != d else meta(i)
+    )
+    marked = asyncio.run(svc.compare_seasonal(d, cycles=["1w"]))
+    assert "input_uncertainty_unknown" in marked["caveats"]
+    ev = marked["series"][0]["share_over"]["evidence"]
+    assert ev["params"]["input_uncertainty"] == "unknown"
+    assert any(
+        v.get("caveat") == "input_uncertainty_unknown" and v["source"] == "measurement_system"
+        for v in marked["series"][0]["variation"]
+    )

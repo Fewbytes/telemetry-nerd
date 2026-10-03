@@ -38,6 +38,7 @@ from telemetry_nerd.analysis.quantile import attach_counts
 from telemetry_nerd.analysis.reference import reference_window
 from telemetry_nerd.analysis.resample import lod
 from telemetry_nerd.analysis.samples import characteristic_range, pool, scan_series
+from telemetry_nerd.analysis.sources import measurement_items
 from telemetry_nerd.catalog.family_query import SLOT, FamilyQueryRefused
 from telemetry_nerd.catalog.family_query import rewrite as rewrite_families
 from telemetry_nerd.catalog.mergeability import NONMERGEABLE_CAVEAT
@@ -347,9 +348,22 @@ class TelemetryService:
             "an input dataset",
         )  # fmt: skip
         if SeasonalDistOps.applies(meta):
-            return await self.seasonal_dist.compare(
+            out = await self.seasonal_dist.compare(
                 dataset_id, cycles, tz, exclude, threshold, actor
             )
+            # the statistics rest on the dataset, the fresh "now" fetch and every cycle's
+            # histogram dataset: any of unknown uncertainty makes them a lower bound (8qt)
+            used = [dataset_id, out["histogram"]["now"]] + [
+                c["dataset"]
+                for s in out["series"]
+                for c in (*s["reference"]["cycles"], *s["reference"]["excluded"])
+            ]
+            before = set(out["caveats"])
+            mark_statistics(out, self.datasets, used)
+            for c in set(out["caveats"]) - before:  # spec 5.4: the measurement system's variation
+                for s in out["series"]:
+                    s["variation"] += measurement_items([c])
+            return out
         cfg = await self.seasonal.fetch(dataset_id, cycles, tz, exclude, actor)
         # the band is the cycles' own spread; the input's declared error is not folded in
         return mark_statistics(self.seasonal.summary(dataset_id, cfg), self.datasets, [dataset_id])
