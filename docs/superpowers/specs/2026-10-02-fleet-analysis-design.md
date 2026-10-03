@@ -112,7 +112,7 @@ reach into the missing ranks is unbounded (m >= the quantile's rank: e.g. 2 of 7
 q25 unbounded below and q75 unbounded above). The min / max envelope is unbounded on the missing
 side ("unknown beyond", never a fake limit). Payload `band_bounds.{q}_lo/_hi` (None = unbounded
 where the quantile is drawn), sparse: only the `steps` with members missing, with `missing` per
-step; absent when nobody is. Members the source marked stale (churn `ended`) are gone, not
+step; absent when nobody is. Members the source marked stale (churn `marked_stale`) are gone, not
 missing, from their stale point on: a positive observation (principle 9) that they have no value
 to bound. Trailing silence without a marker still counts as missing (alive, silent).
 
@@ -293,14 +293,14 @@ dataset whose op drops it) the fleet falls back to presence from values and says
 - `appeared`: first seen after the window start (+ tolerance max(3 steps, 5%)), counting known steps
   only.
 - `stopped_reporting`: last seen before the end (same tolerance, known steps), with `last_seen` and
-  `state`: `ended` when a staleness marker (bucket_state flag `stale_marker`) is on its buckets
+  `state`: `marked_stale` when a staleness marker (bucket_state flag `stale_marker`) is on its buckets
   from the last sample on (the source marked the target or series stale; principle 9: report it
   as "marked stale since T", not as "left": a wider window may show it return), else `silent`
   (alive, no samples, spec §5.2: listed next to the outliers, never silently dropped). Today no
   adapter sets `stale_marker`: Prometheus-family range queries never carry staleness markers
   (`stale_marker_visible` is false for Prometheus, Thanos, Mimir; VictoriaMetrics shows them only
   in raw range vectors), so every stopped member is `silent` and the note says the data cannot tell
-  ended from sick. Appeared ~ stopped suggests replacement (stated).
+  a replaced member from a sick one. Appeared ~ stopped suggests replacement (stated).
 - `missing_share` = 1 - sum n_t / sum alive_t and min n per step; caveat `members_missing` when
   > 5% (not `missing_data`: that code is the per-series bucket_state caveat on time panels),
   located: the members with silent steps and the spans where n < alive. `members_skipped` when

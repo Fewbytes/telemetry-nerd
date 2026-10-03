@@ -53,6 +53,10 @@ SCHEME_LABEL = {"previous": "previous windows", "1d": "same window, previous day
 #: forms judged per member (not additive across members); the rest on the total
 PER_MEMBER = ("utilization", "saturation", "mean", "value")
 MEMBERS_MAX = 20
+_ABSENT_ERRORS_NOTE = (
+    "no error series in the data: counted as 0 errors (error counters usually appear only after "
+    "the first error)"
+)
 
 METHOD = {
     "share": (
@@ -143,16 +147,24 @@ class VerdictOps:
         return out
 
     def _ratio_counts(
-        self, ds: str | None, grid: np.ndarray, shift: int, step_s: float
+        self, ds: str | None, grid: np.ndarray, shift: int, step_s: float, notes: list[str]
     ) -> tuple[np.ndarray, np.ndarray]:
-        """errors and requests per step (rate x step, summed over members) behind a ratio."""
+        """errors and requests per step (rate x step, summed over members) behind a ratio.
+
+        Only an error series that is entirely absent reads as 0 errors (counters usually appear
+        after the first error), and `notes` says so (principles 4, 11). A step the error series
+        does not cover (unknown, untrusted, NaN) stays NaN: judged on neither side, never 0."""
         if ds is None:
             nan = np.full(grid.size, np.nan)
             return nan, nan
         num, den = self.svc.datasets.meta(ds).parents[:2]
         n = self._total(den, grid, shift) * step_s
-        a = np.nan_to_num(self._total(num, grid, shift)) * step_s  # absent error series: 0
-        a = np.where(np.isnan(n), np.nan, np.clip(a, 0, None))
+        a = self._total(num, grid, shift) * step_s
+        if num is None or not self._values(num, shift):
+            a = np.zeros(grid.size)  # no error series at all: 0 errors, disclosed
+            if _ABSENT_ERRORS_NOTE not in notes:
+                notes.append(_ABSENT_ERRORS_NOTE)
+        a = np.where(np.isnan(n), np.nan, np.clip(a, 0, None))  # NaN (unknown step) stays NaN
         return np.minimum(a, n), n
 
     def _hist(self, ds: str, j: int, shift: int) -> tuple[Hist, pl.DataFrame, pl.DataFrame]:
@@ -396,8 +408,8 @@ class VerdictOps:
             for d, _ in ok_refs:
                 st.inputs += self.svc.datasets.meta(d).parents
             return RoleInput(
-                "share", self._ratio_counts(st.now, grid, 0, step_s),
-                [self._ratio_counts(d, grid, s, step_s) for d, s in ok_refs], lookback_ms=look,
+                "share", self._ratio_counts(st.now, grid, 0, step_s, st.notes),
+                [self._ratio_counts(d, grid, s, step_s, st.notes) for d, s in ok_refs], lookback_ms=look,
             )  # fmt: skip
         st.inputs = [st.now, *(d for d, _ in ok_refs)]
         if p.form == "distribution":

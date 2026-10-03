@@ -46,7 +46,7 @@ export interface HeatGrid {
 /**
  * Bin time columns to at most `maxBins`; a bin shows its most extreme z (so a spike is never
  * averaged away). A bin with no value is a GAP unless it lies wholly before the member's first or
- * after its last report (ABSENT).
+ * after its last report (ABSENT: drawn blank, no sample since; not a claim that it left).
  */
 export function binHeat(h: FleetHeat, cols: number, maxBins: number): HeatGrid {
   const bins = Math.max(1, Math.min(cols, maxBins));
@@ -88,7 +88,7 @@ export function labelYs(rowsAt: number[], rowH: number, gap = 12): number[] {
 export function heatLegendText(h: FleetHeat, shownRows: number): string {
   const rows = shownRows < h.rows_total ? `${shownRows} of ${h.rows_total} members (most deviating shown)` : `${h.rows_total} members`;
   return `${rows} · colour: how far a member is from the others at that step, in the fleet's robust sigma (capped at ±${h.z_cap}); `
-    + "orange above, purple below · dots: silent while alive · blank: before first / after last report · "
+    + "orange above, purple below · dots: silent while alive · blank: no samples yet (before the first) or none since the last one (it may return) · "
     + "each pixel column shows its most extreme step · rows: higher outliers first, then by median, lower outliers last";
 }
 

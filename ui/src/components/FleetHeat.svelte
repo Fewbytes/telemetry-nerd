@@ -99,7 +99,7 @@
     const r = h.rows[Math.floor(y / rowH)];
     const c = Math.min(data.ts.length - 1, Math.floor((x / plotW) * data.ts.length));
     const absent = r.first < 0 || c < r.first || c > r.last;
-    const text = absent && r.z[c] == null ? `${r.id} · ${fmtTimeZ(data.ts[c])} · not reporting (before first / after last report)` : heatTip(r, r.z[c], fmtTimeZ(data.ts[c]));
+    const text = absent && r.z[c] == null ? `${r.id} · ${fmtTimeZ(data.ts[c])} · no samples (before the first, or none since the last; it may return)` : heatTip(r, r.z[c], fmtTimeZ(data.ts[c]));
     tip = { x: e.offsetX + 12, y: e.offsetY + 12, text };
   }
 </script>

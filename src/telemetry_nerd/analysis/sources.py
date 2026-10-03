@@ -1,4 +1,4 @@
-"""Sources of variation (SPC vocabulary; spec §1.2 principle 8, §5.4; beads 60j, gkk).
+"""Sources of variation (SPC vocabulary; docs/principles.md principle 8; beads 60j, gkk).
 
 Every op that reports variation or a deviation labels each item with its source:
 
@@ -53,7 +53,8 @@ MEASUREMENT_CAVEATS: dict[str, str] = {
     "post_gap_spike": "a value right after a gap carries the whole gap's change",
     "interval_change": "the scrape interval changed within the window",
     "interval_differs": "a series sampled at another rate than configured",
-    "absent_part": "a series first seen after the window starts",
+    "absent_part": "a series first seen after the window starts (membership change is normal "
+    "lifecycle, not a fault; it moves n and so the aggregates)",
     "coarsened": "coarsened to a wider step than requested",
     "fake_resolution": "step finer than the scrape interval",
     "sampling_artifact": "a spectral peak at the sampling interval",

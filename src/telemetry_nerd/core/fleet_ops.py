@@ -336,9 +336,11 @@ class FleetOps:
                 continue
             item = {"member": names[i], "last_seen": iso(ts[last])}
             if cov.stale is not None and cov.stale[i, last:].any():
-                item["state"] = "ended"  # the source marked it stale: target or series went away
+                item["state"] = (
+                    "marked_stale"  # the source marked it stale (a marker, not a claim it left)
+                )
             else:
-                item["state"] = "silent"  # alive, no samples (spec §5.2): ended or sick
+                item["state"] = "silent"  # no samples since last_seen (source undetermined)
             stopped.append(item)
         never = sum(1 for i in range(m_) if f.first_seen[i] < 0)
         alive_sum = float(np.sum(sp.alive))
@@ -347,17 +349,17 @@ class FleetOps:
             caveats.append("members_missing")
         for a in appeared:
             a["source"] = MEASUREMENT  # the fleet measured changes membership: n moves
-        for st in stopped:  # ended: membership; silent: ended or sick, the data cannot tell
-            st["source"] = MEASUREMENT if st["state"] == "ended" else UNDETERMINED
+        for st in stopped:  # marked_stale: membership; silent: the data cannot tell the source
+            st["source"] = MEASUREMENT if st["state"] == "marked_stale" else UNDETERMINED
         churn: dict = {"appeared": appeared[:MAX_LISTED], "stopped_reporting": stopped[:MAX_LISTED]}
         if len(appeared) > MAX_LISTED or len(stopped) > MAX_LISTED:
             churn["counts"] = {"appeared": len(appeared), "stopped_reporting": len(stopped)}
         if any(s["state"] == "silent" for s in stopped):
             churn["note"] = (
                 "a silent member stopped without a staleness marker in the data (range queries do "
-                "not carry them), so the data cannot tell whether it ended (replaced) or went "
-                "silent (the sick one): check them"
-                + (" - as many appeared, likely replacement" if appeared and abs(len(appeared) - len(stopped)) <= 1 else "")
+                "not carry them), so the data cannot tell why: no samples since last_seen; it "
+                "may have been replaced, or may return; check them"
+                + (" - as many appeared, possibly replacement" if appeared and abs(len(appeared) - len(stopped)) <= 1 else "")
             )  # fmt: skip
         listed = [
             _labelled(
@@ -420,7 +422,7 @@ class FleetOps:
         ]  # fmt: skip
         churn = out["churn"]
         var += [
-            sources.item(a["source"], f"{a['member']} appeared {a['first_seen']}", member=a["member"])
+            sources.item(a["source"], f"{a['member']} appeared {a['first_seen']} (normal lifecycle, not a fault: n moves)", member=a["member"])
             for a in churn["appeared"]
         ]  # fmt: skip
         var += [

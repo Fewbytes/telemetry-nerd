@@ -76,8 +76,8 @@ def _unknown_spans(meta: DatasetMeta, df: pl.DataFrame | None) -> dict:
 
 
 def _silent_members(meta: DatasetMeta, df: pl.DataFrame, labels: dict[str, dict], top: int) -> dict:
-    """Members alive but without samples somewhere (EMPTY, spec §5.2: ended or sick, the data
-    cannot tell), worst first, `top` named and the rest counted: the series list is ranked by
+    """Members alive but without samples somewhere (EMPTY: no samples since T, source undetermined,
+    principles 9 and 11), worst first, `top` named and the rest counted: the series list is ranked by
     value, so a silent member would otherwise be anywhere in it or past its end."""
     per = (
         df.filter(pl.col("state") == int(State.EMPTY))
@@ -275,7 +275,7 @@ def _summarize_quantile(
     top: int,
     coverage: dict[str, dict],
 ) -> dict:
-    """Percentiles are reported per bucket with their n; never averaged (spec §1.2)."""
+    """Percentiles are reported per bucket with their n; never averaged (docs/principles.md, principles 4 and 10)."""
     labels = _labels_by_id(result.series)
     df = pl.from_arrow(result.buckets).with_columns(pl.col("avg").fill_nan(None))
     # a value with a missing count (0) is still a value: it is "not meaningful", not a gap

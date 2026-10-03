@@ -200,7 +200,8 @@ def from_bucket_state(
                 Caveat(
                     code="absent_part",
                     severity="info",
-                    message=f"{name}: first seen {_total(absent)} after the window starts.",
+                    message=f"{name}: first seen {_total(absent)} after the window starts "
+                    "(membership change is normal lifecycle, not a fault; n moves).",
                     where=Where(spans=absent, series=[sid]),
                     source="bucket_state",
                 )

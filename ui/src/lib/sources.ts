@@ -1,4 +1,4 @@
-/** Sources of variation (spec §1.2 principle 8, §5.4; mirrors analysis/sources.py). */
+/** Sources of variation (docs/principles.md principle 8; mirrors analysis/sources.py). */
 export type VariationSource = "common_cause" | "special_cause" | "measurement_system" | "undetermined";
 
 const TEXT: Record<VariationSource, string> = {

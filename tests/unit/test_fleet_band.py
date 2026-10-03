@@ -338,7 +338,7 @@ def test_a_member_marked_stale_is_gone_not_missing_in_the_bounds():
 
 
 def test_panel_bounds_drop_members_the_source_marked_stale(tmp_path, monkeypatch):
-    """I5: a member the source marked stale (churn `ended`) has no value to bound after its
+    """I5: a member the source marked stale (churn `marked_stale`) has no value to bound after its
     stale point; trailing silence without a marker still counts as missing (alive, silent)."""
     import dataclasses
 

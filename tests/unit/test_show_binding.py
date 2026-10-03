@@ -476,3 +476,47 @@ async def test_littles_check_without_concurrency_says_it_cannot_be_done(tmp_path
     )
     mc = out["roles"]["concurrency"]["model_check"]
     assert mc["status"] == "not_possible" and "L was not estimated" in mc["summary"]
+
+
+# --- verdict ratio counts: absent error series is 0 (disclosed); unknown steps stay unknown ------
+def _ratio(num_rows, den_rows, grid):
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from telemetry_nerd.core.verdict_ops import VerdictOps
+
+    parents = SimpleNamespace(parents=["num", "den"])
+    data = {"num": _result(num_rows) if num_rows is not None else None, "den": _result(den_rows)}
+    datasets = SimpleNamespace(meta=lambda ds: parents, get=lambda ds: (None, data[ds]))
+    ops = VerdictOps(SimpleNamespace(datasets=datasets))  # type: ignore[arg-type]
+    notes: list[str] = []
+    a, n = ops._ratio_counts("r", np.array(grid), 0, 60.0, notes)
+    return a, n, notes
+
+
+def test_verdict_absent_error_series_reads_as_zero_and_says_so():
+    den = [({"service": "a"}, 60_000, 10.0), ({"service": "a"}, 120_000, 10.0)]
+    a, n, notes = _ratio([], den, [60_000, 120_000, 180_000])
+    assert list(a[:2]) == [0.0, 0.0] and list(n[:2]) == [600.0, 600.0]
+    assert math.isnan(a[2]) and math.isnan(n[2])  # a step without requests has no share
+    assert any("no error series" in x for x in notes)
+
+
+def test_verdict_error_step_without_a_value_stays_unknown_not_zero():
+    a_ = {"service": "a"}
+    num = [(a_, 60_000, 0.5), (a_, 120_000, float("nan"))]
+    den = [(a_, 60_000, 10.0), (a_, 120_000, 10.0)]
+    a, n, notes = _ratio(num, den, [60_000, 120_000])
+    assert a[0] == pytest.approx(30.0) and math.isnan(a[1])
+    assert n[1] == 600.0  # the requests are known; the errors are not
+    assert not notes  # a present series is not disclosed as "absent"
+
+
+def test_error_ratio_step_gap_in_an_existing_error_series_is_disclosed():
+    a = {"service": "a"}
+    num = _result([(a, 60_000, 0.5)])
+    den = _result([(a, 60_000, 10.0), (a, 120_000, 10.0)])
+    out, notes = error_ratio(num, den, 60_000)
+    assert {r["ts_ms"]: r["avg"] for r in out.buckets.to_pylist()}[120_000] == 0.0
+    assert any("no error value" in x for x in notes)

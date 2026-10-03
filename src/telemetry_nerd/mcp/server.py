@@ -470,7 +470,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         level or change outlier may also carry episodes beyond its own level, `calibrated:
         false`: a lead, not a finding) and
         an `evidence` statistic for finding_create. Churn: members that appeared or stopped
-        reporting (state silent = may be the sick one; ended = staleness marker). Unknown spans
+        reporting (state silent = may be the sick one; marked_stale = the source's staleness marker). Unknown spans
         (failed fetches) leave n and alive; partial buckets are flagged on members/episodes;
         `located` caveats carry where = {series, spans}. Heterogeneous fleets (> 10% named) are
         split into behaviour groups when a SigClust test supports it (`clusters`: k, the label

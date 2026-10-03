@@ -1,4 +1,4 @@
-"""Classify PromQL so percentiles are never aggregated (spec §1.2, principles 3-4).
+"""Classify PromQL so percentiles are never aggregated (docs/principles.md, principles 4 and 10).
 
 A quantile expression must be outermost; we derive the number of observations
 behind each value from the same histogram so a percentile always travels with n.
