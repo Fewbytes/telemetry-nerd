@@ -33,7 +33,7 @@ POOL_HALF = 6  # per-step sigma pooled over +-6 steps
 POOL_CELLS = 4_000_000  # values held at once while pooling (memory bound)
 MAX_BAND_WINDOW = 121  # widest drawn band pool (steps)
 P_BEYOND_3 = math.erfc(3 / math.sqrt(2))  # 0.27%: a normal value beyond +-3 sigma
-WIDENING_ALPHA = 0.01  # per step: more members beyond 3 sigma than Bin(n_t, 0.27%) at 99%
+WIDENING_ALPHA = 0.01  # family-wise over the window's steps: chance of any widening mark
 TAIL_POINTS = (1e-3, 1e-4)  # two-sided tail points of the heavy-tail check
 TRIM = 0.2  # level/change: 20% trimmed means over time (see design: medians are miscalibrated)
 EXCURSIONS = {"spike": 1, "episode": 5, "long_episode": 15}  # rolling-median widths (steps)
@@ -315,7 +315,14 @@ class ControlBand:
     outside3: np.ndarray  # per step: unflagged member-steps beyond the drawn 3 sigma
     outside3_members: int  # members with any such step
     cells: int  # unflagged member-steps with a value and a band (the count's denominator)
-    widening: np.ndarray  # per step: more beyond 3 sigma than Bin(n_t, 0.27%) gives at 99%
+    widening: np.ndarray  # per step: a p-chart signal (see control_band)
+    p_hat: float = P_BEYOND_3  # the window's own share beyond 3 sigma (>= 0.27%)
+    phi: float = 1.0  # Pearson overdispersion of the per-step counts (>= 1)
+    alpha_step: float = WIDENING_ALPHA  # per-step level (Bonferroni over the steps tested)
+
+    @property
+    def outside3_rate(self) -> float:
+        return self.outside3_total / self.cells if self.cells else 0.0
 
     @property
     def outside3_total(self) -> int:
@@ -360,18 +367,62 @@ def check_band_window(window: int | None, steps: int | None = None) -> int:
     return window
 
 
-_WIDEN: dict[int, int] = {}
+_WIDEN: dict[tuple[int, float, float], int] = {}
 
 
-def widening_count(n: int) -> int:
-    """The smallest count of members beyond 3 sigma that Bin(n, 0.27%) reaches with probability
-    below WIDENING_ALPHA: a step with at least that many is wider than chance."""
-    if n not in _WIDEN:
+def widening_count(n: int, p: float = P_BEYOND_3, alpha: float = WIDENING_ALPHA) -> int:
+    """The smallest k with P(Bin(n, p) >= k) < alpha (n + 1 when no k reaches it)."""
+    key = (n, round(p, 10), round(alpha, 14))
+    if key not in _WIDEN:
         k = 1
-        while k <= n and binom_sf(k, n, P_BEYOND_3) >= WIDENING_ALPHA:
+        while k <= n and binom_sf(k, n, p) >= alpha:
             k += 1
-        _WIDEN[n] = k
-    return _WIDEN[n]
+        _WIDEN[key] = k
+    return _WIDEN[key]
+
+
+def widening(count: np.ndarray, n_t: np.ndarray) -> tuple[np.ndarray, float, float, float]:
+    """p-chart of the per-step counts of unflagged members beyond 3 sigma: which steps the fleet
+    widened faster than the pooled sigma tracks. Returns (marks, p_hat, phi, alpha_step).
+
+    - p_hat = max(0.27%, the window's own share): the reference is this fleet's usual share
+      (heavy tails or a MAD-based sigma put more than 0.27% beyond 3 sigma at every step: that is
+      the fleet's shape, not widening), never below the normal one.
+    - Family-wise over the steps: alpha_step = WIDENING_ALPHA / steps with n_t > 0 (Bonferroni):
+      the chance of any mark in the window is <= 1%.
+    - Overdispersion: autocorrelated or heavy-tailed members make the counts vary more than
+      binomial. Pearson phi = mean over steps of (c - n p)^2 / (n p (1 - p)), floored at 1, and
+      the test is quasi-binomial: c / phi against Bin(n / phi, p_hat). Chosen over Laney's p'
+      chart, which rescales a normal approximation: at p ~ 0.3% and counts of 0-5 the normal
+      tail is far off, while the scaled binomial keeps the exact discrete tail.
+    - Each step is judged against p_hat and phi of the OTHER steps (leave-one-out): one widened
+      step would otherwise inflate its own phi and hide itself. The returned p_hat and phi are
+      the whole window's (stated)."""
+    ok = n_t > 0
+    marks = np.zeros(count.size, bool)
+    if not ok.any():
+        return marks, P_BEYOND_3, 1.0, WIDENING_ALPHA
+    c, n = count[ok].astype(float), n_t[ok].astype(float)
+    k = int(ok.sum())
+    alpha = WIDENING_ALPHA / k
+    big_c, big_n, big_s = float(c.sum()), float(n.sum()), float(np.sum(c * c / n))
+
+    def ref(cj: float, nj: float, m: int) -> tuple[float, float]:
+        """p_hat and Pearson phi of the steps without (cj, nj): sum (c - n p)^2 / (n p (1 - p))
+        = (sum c^2 / n - 2 p C + p^2 N) / (p (1 - p))."""
+        cc, nn, ss = big_c - cj, big_n - nj, big_s - (cj * cj / nj if nj else 0.0)
+        p = min(0.5, max(P_BEYOND_3, cc / nn if nn > 0 else P_BEYOND_3))
+        phi = (ss - 2 * p * cc + p * p * nn) / (p * (1 - p)) / max(m, 1)
+        return p, max(1.0, phi)
+
+    p_all, phi_all = ref(0.0, 0.0, k)
+    if k < 2:
+        return marks, p_all, phi_all, alpha
+    for j in np.flatnonzero(ok & (count > 0)):
+        p, phi = ref(float(count[j]), float(n_t[j]), k - 1)
+        ne = max(1, round(int(n_t[j]) / phi))
+        marks[j] = count[j] / phi >= widening_count(ne, p, alpha)
+    return marks, p_all, phi_all, alpha
 
 
 def control_band(
@@ -409,9 +460,7 @@ def control_band(
         beyond &= ~flagged
         usable &= ~flagged
     count, n_t = beyond.sum(axis=0), usable.sum(axis=0)
-    widening = np.array(
-        [c_ > 0 and c_ >= widening_count(int(k)) for c_, k in zip(count, n_t, strict=True)]
-    )
+    marks, p_hat, phi, alpha_step = widening(count, n_t)
     return ControlBand(
         window=w, scale=f.scale, centre=back(c), sigma=s,
         lo2=back(c - 2 * s), hi2=back(c + 2 * s), lo3=back(c - 3 * s), hi3=back(c + 3 * s),
@@ -419,7 +468,7 @@ def control_band(
         threshold_lo=None if thr is None else back(c0 - thr * s0),
         threshold_hi=None if thr is None else back(c0 + thr * s0),
         outside3=count, outside3_members=int(beyond.any(axis=1).sum()),
-        cells=int(usable.sum()), widening=widening,
+        cells=int(usable.sum()), widening=marks, p_hat=p_hat, phi=phi, alpha_step=alpha_step,
     )  # fmt: skip
 
 

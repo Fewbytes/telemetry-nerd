@@ -204,7 +204,8 @@ const zones = (k: number): FleetSpc => ({
   centre: [10 * k, 11 * k, 12 * k], lo2: [8 * k, 9 * k, 10 * k], hi2: [12.5 * k, 13.4 * k, 14.4 * k], lo3: [7 * k, 8 * k, 9 * k], hi3: [14 * k, 15 * k, 16 * k],
   threshold_z: 5.86, threshold_lo: [5 * k, 6 * k, 7 * k], threshold_hi: [20 * k, 21 * k, 22 * k], threshold_note: "approximate: …",
   window: 13, pool_half: 6, legend: "median ± 2σ/3σ (robust, pooled ±6 steps, log scale: multiplicative)",
-  outside3_total: 2, outside3_expected: 0.8, outside3_count: "2 member-steps beyond 3σ unflagged; ≈1 expected if normal (0.27% of 297)",
+  outside3_total: 2, outside3_expected: 0.8, outside3_rate: 2 / 297, outside3_cells: 297, heavy_tails: false,
+  outside3_count: "2 member-steps beyond 3σ unflagged (0.67%; 0.27% if normal)",
   outside3_note: "outside 3σ, not significant at fleet-wide 1% (100 members tested)",
   widening: [1], widening_note: "more members beyond 3σ at this step than chance gives at 99% …", tested: 100,
 });
@@ -289,7 +290,9 @@ test("the key carries the encoding (flag bar explained on hover); the legend onl
   expect(flag.title).toMatch(/per-member bar varies with pooling.*leave-one-out σ up to 64 members/);
   expect(key.find((k) => k.id === "z3")!.title).toContain("median ± 2σ/3σ");
   const s = fleetLegend(spc, "spc");
-  expect(s).toBe("100 members · 8 outliers (2 drawn) (special causes) · 2–100 reporting per step · 2 member-steps beyond 3σ unflagged (≈1 expected if normal) · 1 step where the fleet widened beyond chance (common cause) · member measurement error not propagated");
+  expect(s).toBe("100 members · 8 outliers (2 drawn) (special causes) · 2–100 reporting per step · 2 member-steps beyond 3σ unflagged (0.67%; 0.27% if normal) · 1 step where the fleet widened faster than the ±6-step σ tracks (common cause) · member measurement error not propagated");
+  expect(fleetLegend({ ...spc, spc: { ...zones(1), heavy_tails: true } })).toContain("(0.67%; 0.27% if normal); heavy-tailed noise: more beyond 3σ is this fleet's shape");
+  expect(key.find((k) => k.id === "widening")!.title).toContain("Chance of any mark in this window ≈ 1%");
   expect(s).not.toMatch(/2σ\/3σ|dashed/); // no encoding twice
   expect(fleetAxisLabel(spc, "%", "spc")).toBe("% · median ± 2σ/3σ (robust, pooled ±6 steps, log scale: multiplicative) across 100 members");
   expect(fleetLegend(spc, "quantiles")).toContain("1 steps with members missing (bounds drawn) · member measurement error not propagated");
@@ -332,7 +335,7 @@ test("grouped SPC: each group's own zones and flag bar, no whole-fleet band; hov
   expect(m.bands.map((b) => b.series)).toEqual([[2, 1], [4, 3], [9, 8], [11, 10]]);
   expect(groupEnds(gz)).toEqual([{ j: 2, v: 12 }, { j: 2, v: 24 }]);
   expect(fleetKey(false, gz).map((k) => k.id)).toEqual(["group-c1", "group-c2", "flag", "widening", "outlier", "transient", "unknown"]);
-  expect(fleetLegend(gz)).toContain("4 member-steps beyond 3σ unflagged (≈2 expected if normal) · 1 step where the group widened");
+  expect(fleetLegend(gz)).toContain("4 member-steps beyond 3σ unflagged (0.67%; 0.27% if normal) · 1 step where the group widened");
   // pod=a is judged in c2 (zones x2): 30 is beyond c2's +3σ (28) only as a transient would be
   expect(outsideUnflagged(gz, { ...gz.outliers[0], kind: "transient", values: [30, 0, 0] }, 0)).toBe(true);
   expect(wideningMarks(gz)).toEqual([{ x: 600, j: 2, k: 1 }]);
@@ -349,4 +352,11 @@ test("decimation keeps zone edges as extremes and the transient's segments; grou
   const grp = decimate([x, c, hi3, ep], ["x", "cmedian", "hi3", "outlier"], 4);
   expect(grp[3]).toContain(50);
   expect(decimate([x, ep], ["x", "outlier"], 4)[1]).toContain(50); // no centre at all
+});
+
+test("x ticks are 24 h UTC: 'UTC' on the first, the date where the day changes", async () => {
+  const { utcTicks } = await import("./fleet");
+  const t = (iso: string) => Date.parse(iso) / 1000;
+  expect(utcTicks([t("2026-10-03T22:00:00Z"), t("2026-10-03T23:00:00Z"), t("2026-10-04T00:00:00Z"), t("2026-10-04T01:30:00Z")]))
+    .toEqual(["22:00 UTC", "23:00", "10-04 00:00", "01:30"]);
 });

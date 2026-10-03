@@ -4,7 +4,7 @@
   import {
     FLEET_HUE, MUTED_LINE, OUTLIER_COLORS, THRESHOLD_DASH, bandFills, bandView, boundFill, boundsAt, boundsText, coverageGaps, fleetAxisLabel,
     fleetKey, fleetLegend, groupEnds, groupFill, groupStyle, groupZoneFills, grouped, isolatedIdx, missingSteps, modeText, nearestOutlier,
-    outlierEnds, outlierText, outsideUnflagged, spcOf, wideningMarks, placeEndLabels, toFleetUplot, untrustedSpans, type BandView, type EndLabel,
+    outlierEnds, outlierText, outsideUnflagged, spcOf, utcTicks, wideningMarks, placeEndLabels, toFleetUplot, untrustedSpans, type BandView, type EndLabel,
   } from "../chart/fleet";
   import { drawHatch, HIDDEN_SERIES, plotAxes } from "../chart/plotKit";
   import { fmtTimeZ } from "../lib/format";
@@ -79,7 +79,8 @@
         // fleet times are UTC everywhere (labels, summaries): the axis too, like the time panels
         tzDate: (ts: number) => uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"),
         bands: m.bands.map((b, i) => ({ ...b, fill: fills[i] })),
-        axes: plotAxes(stroke, grid, { label: data.normalise === "member" ? "× own median" : unit ?? undefined, ...(gutter ? { size: gutter - GROUP_LABEL_PX, labelSize: GROUP_LABEL_PX, labelGap: 0 } : {}) }),
+        axes: plotAxes(stroke, grid, { label: data.normalise === "member" ? "× own median" : unit ?? undefined, ...(gutter ? { size: gutter - GROUP_LABEL_PX, labelSize: GROUP_LABEL_PX, labelGap: 0 } : {}) },
+          { values: (_u: uPlot, splits: number[]) => utcTicks(splits) }),
         legend: { show: false },
         scales: {
           ...(range ? { y: { range: (): [number, number] => range } } : {}),

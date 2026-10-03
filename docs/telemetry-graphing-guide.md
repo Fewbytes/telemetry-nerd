@@ -155,8 +155,9 @@ M7, C4). A pile of lines is not evidence.
     thin dashed line (approximate); points beyond 3σ that no test flagged are counted against the
     0.27% a normal fleet gives, never marked per point (with 100 members a quarter of the steps
     would carry one by chance); a drawn line's point there says "not significant at fleet-wide
-    1%" on hover. Only a step with more members beyond 3σ than chance allows (binomial, 99%) is
-    marked: the fleet widened (common cause).
+    1%" on hover. Only a step where the fleet widened faster than its pooled σ tracks is marked
+    (p-chart against the window's own share, overdispersion-corrected, family-wise over the
+    steps: ≈1% chance of any mark per window): common cause.
   - **Two outlier modes, two marks.** Consistently off / shifted / drifting: the whole member
     line coloured, labelled kind + effect ("+38% since 09:10", "drifting +2%/h"). Transient:
     the line grey where inside, only its episodes coloured and bracketed on the time axis,

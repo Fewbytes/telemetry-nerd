@@ -16,6 +16,7 @@ from telemetry_nerd.analysis.fleet import (
     loo_deviations,
     max_band_window,
     missing_bounds,
+    widening,
     widening_count,
 )
 from telemetry_nerd.analysis.stats import binom_sf
@@ -133,17 +134,38 @@ def test_unflagged_beyond_3_sigma_are_counted_and_flagged_steps_excluded():
     assert 0.3 * b.expected3 < b.outside3_total < 3 * b.expected3
 
 
-def test_widening_marks_only_steps_beyond_the_binomial_99_point():
+def test_widening_is_a_family_wise_overdispersed_p_chart():
     assert widening_count(100) == 3  # P(Bin(100, 0.27%) >= 3) < 1% <= P(>= 2)
     assert binom_sf(3, 100, P_BEYOND_3) < 0.01 <= binom_sf(2, 100, P_BEYOND_3)
-    assert widening_count(500) == 6
+    # p_hat is the window's own share, never below 0.27%; alpha is split over the steps
+    count, n_t = np.zeros(200, int), np.full(200, 100)
+    marks, p_hat, phi, alpha = widening(count, n_t)
+    assert not marks.any() and p_hat == P_BEYOND_3 and phi == 1.0 and alpha == 0.01 / 200
+    count[::10] = 3  # 3 beyond 3 sigma every 10th step: the fleet's own shape, p_hat = 0.3%
+    marks, p_hat, phi, _ = widening(count, n_t)
+    assert p_hat == pytest.approx(0.003) and phi > 1 and not marks.any()
+    count[150] = 25  # one step far wider than the fleet's own share: marked
+    marks, *_ = widening(count, n_t)
+    assert marks[150] and marks.sum() == 1
+    # planted: one step where every member's spread jumps
     y, _ = fleet(41, m=100)
-    b = control_band(analyse(y))
-    assert b.widening.mean() < 0.03  # a homogeneous normal fleet: about 1% of steps by chance
     wide = y.copy()
-    wide[:, 150] = np.exp(np.log(wide[:, 150]) * 1.0 + np.random.default_rng(0).normal(0, 0.6, 100))
+    wide[:, 150] = np.exp(np.log(wide[:, 150]) + np.random.default_rng(0).normal(0, 0.6, 100))
     wb = control_band(analyse(wide))
-    assert wb.widening[150] and wb.outside3[150] >= widening_count(100)
+    assert wb.widening[150] and wb.widening.sum() <= 3
+
+
+@pytest.mark.parametrize("df", [None, 4.0])
+def test_widening_null_any_mark_in_long_windows_is_rare(df):
+    """100 members x 1440 steps, AR(0.6) normal and t(4) noise: the chance of ANY widening mark
+    in the window is designed at 1% (offline, 150 seeds each: 0 marked fleets)."""
+    fleets_marked = 0
+    for seed in range(8):
+        y, _ = fleet(5000 + seed, m=100, t=1440, df=df)
+        f = analyse(y)
+        b = control_band(f, flagged=flagged_steps(y.shape, [(o.member, o) for o in f.outliers]))
+        fleets_marked += bool(b.widening.any())
+    assert fleets_marked <= 1
 
 
 def test_unknown_member_steps_are_neither_counted_nor_in_the_band():
@@ -186,13 +208,15 @@ def test_summary_states_the_band_and_the_3_sigma_count(tmp_path):
     assert "not propagated" in band["caveat"] and "not propagated" in out["spread"]["caveat"]
     un = band["outside_3sigma_unflagged"]
     assert re.fullmatch(
-        r"\d+ member-steps beyond 3σ unflagged; ≈\d+ expected if normal \(0\.27% of \d+\)",
-        un["note"],
+        r"\d+ member-steps beyond 3σ unflagged \([\d.]+%; 0\.27% if normal\)", un["note"]
     )
+    assert un["rate_if_normal"] == pytest.approx(0.0027, rel=1e-2)
     assert un["each"] == "outside 3σ, not significant at fleet-wide 1% (100 members tested)"
     assert un["member_steps"] > 0 and un["expected_if_normal"] > 0
     assert band["flag_threshold_z"] > 3 and "approximate" in band["flag_line"]
-    assert "Binomial" in band["widening"]["note"] and band["widening"]["source"] == "common_cause"
+    assert "faster than the ±6-step σ tracks" in band["widening"]["note"]
+    assert "chance of any mark in this window ≈ 1%" in band["widening"]["rule"]
+    assert band["widening"]["source"] == "common_cause"
     wide = svc.fleet(d, band_window=37)["band"]
     assert "pooled ±18 steps" in wide["basis"] and "37-step moving median" in wide["basis"]
     assert "lags" in wide["smoothing"]

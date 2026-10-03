@@ -38,10 +38,11 @@ export interface FleetSpc {
   legend: string;
   /** unflagged member-steps beyond 3σ, against what a normal fleet gives (0.27%) */
   outside3_total: number; outside3_expected: number | null; outside3_count: string;
+  outside3_rate?: number | null; outside3_cells?: number; heavy_tails?: boolean;
   /** hover on a drawn line beyond 3σ that no test flagged */
   outside3_note: string;
   /** step indices where more members lie beyond 3σ than Binomial(n, 0.27%) gives at 99% */
-  widening: number[]; widening_note: string;
+  widening: number[]; widening_note: string; widening_rule?: string;
   tested: number;
 }
 /** A behaviour group (lkn.10): its own median and interquartile band per step, and its own SPC band. */
@@ -288,6 +289,9 @@ export function wideningMarks(d: FleetData): { x: number; j: number; k: number |
   return grouped(d) ? d.clusters!.flatMap((c, k) => of(c.spc, k)) : of(d.spc, null);
 }
 
+/** A share as a percent, two significant digits ("0.23%"). */
+const pct = (v: number): string => `${Number((100 * v).toPrecision(2))}%`;
+
 /** Counts, n per step and caveats only: the key carries the encoding. */
 export function fleetLegend(d: FleetData, view: BandView = "spc"): string {
   const v = bandView(d, view);
@@ -300,16 +304,30 @@ export function fleetLegend(d: FleetData, view: BandView = "spc"): string {
   // principle 4, the short form: the full sentence is in the summary
   const note = d.member_error_note ? ` · ${d.member_error_note.split(" (")[0]}` : "";
   const bands = v === "spc" ? (grouped(d) ? d.clusters!.map((c) => c.spc!) : [d.spc!]) : [];
-  const total = bands.reduce((a, s) => a + s.outside3_total, 0), exp = bands.reduce((a, s) => a + (s.outside3_expected ?? 0), 0);
-  const beyond = bands.length ? ` · ${total} member-steps beyond 3σ unflagged (≈${Math.round(exp)} expected if normal)` : "";
+  const total = bands.reduce((a, s) => a + s.outside3_total, 0), cells = bands.reduce((a, s) => a + (s.outside3_cells ?? 0), 0);
+  const rate = cells ? ` (${pct(total / cells)}; 0.27% if normal)` : "";
+  const heavy = bands.some((s) => s.heavy_tails) ? "; heavy-tailed noise: more beyond 3σ is this fleet's shape" : "";
+  const beyond = bands.length ? ` · ${total} member-steps beyond 3σ unflagged${rate}${heavy}` : "";
   const wide = bands.reduce((a, s) => a + s.widening.length, 0);
-  const widened = wide ? ` · ${wide} step${wide > 1 ? "s" : ""} where the ${grouped(d) ? "group" : "fleet"} widened beyond chance (common cause)` : "";
+  const widened = wide ? ` · ${wide} step${wide > 1 ? "s" : ""} where the ${grouped(d) ? "group" : "fleet"} widened faster than the ±6-step σ tracks (common cause)` : "";
   const missing = v === "quantiles" && missingSteps(d).length ? ` · ${missingSteps(d).length} steps with members missing (bounds drawn)` : "";
   if (grouped(d)) {
     const gs = d.clusters!.map((c) => `${c.id} (${c.size})`).join(", ");
     return `${d.members} members in ${d.clusters!.length} behaviour groups (systemic structure): ${gs} · ${out}, each judged within its group (special causes) · ${n}${beyond}${widened}${missing}${units}${note}`;
   }
   return `${d.members} members · ${out}${d.outlier_count ? " (special causes)" : ""} · ${n}${beyond}${widened}${missing}${units}${note}`;
+}
+
+/** x-axis ticks in UTC, 24 h ("09:30"), the date where it changes ("10-03 00:00"), "UTC" on the first. */
+export function utcTicks(splits: number[]): string[] {
+  let day = "";
+  return splits.map((s, i) => {
+    const iso = new Date(s * 1000).toISOString();
+    const d = iso.slice(5, 10), hm = iso.slice(11, 16);
+    const label = d !== day && i > 0 ? `${d} ${hm}` : hm;
+    day = d;
+    return i === 0 ? `${hm} UTC` : label;
+  });
 }
 
 /** Steps where fewer members reported than were alive: the coverage strip's cells. */
@@ -372,8 +390,8 @@ export function fleetKey(dark: boolean, d?: FleetData, view: BandView = "spc"): 
     });
   }
   const widened: KeyEntry[] = d && v === "spc" && wideningMarks(d).length
-    ? [{ id: "widening", label: "▾ fleet widened (more beyond 3σ than chance)", swatch: MUTED_LINE[m],
-        title: "More members beyond 3σ at this step than Binomial(n, 0.27%) gives at 99%: the whole fleet spread out here (common cause), not one member's fault. About 1% of steps show this by chance." }]
+    ? [{ id: "widening", label: "▾ fleet widened faster than σ tracks", swatch: MUTED_LINE[m],
+        title: "More members beyond 3σ at this step than this window's own share allows (p-chart, overdispersion-corrected, family-wise over the steps): the whole fleet spread out here (common cause), not one member's fault. Chance of any mark in this window ≈ 1%." }]
     : [];
   if (d && grouped(d)) {
     const spc = v === "spc";

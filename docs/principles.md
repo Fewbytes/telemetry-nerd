@@ -119,9 +119,10 @@ The common-cause envelope that is drawn is a **reference**, so it must be stable
 reference: per-step median ± 2σ/3σ with the robust σ the outlier tests use, pooled over
 neighbouring steps, on the analysis scale. Points are named special causes only by the
 family-wise tests (principle 14), never because they leave a zone: points beyond 3σ that no test
-flagged are counted against what chance gives (0.27% if normal), never marked one by one, and only
-a step where more members lie beyond 3σ than chance allows is marked, as the fleet widening
-(common cause). A descriptive view (the per-step
+flagged are reported as a rate against what chance gives (0.27% if normal), never marked one by
+one; only a step where the fleet widened faster than its pooled σ tracks is marked (a p-chart
+against the window's own share, overdispersion-corrected, family-wise over the steps), as a
+common-cause signal. A descriptive view (the per-step
 quantiles across members) is a separate toggle and carries missing-member bounds (principles 9,
 11), never a sampling interval. (Here, not in 14: the band's job is to be the envelope this
 principle names; 14 governs the flags drawn against it.)

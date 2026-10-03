@@ -24,6 +24,9 @@ from telemetry_nerd.analysis.fleet import (
     EXCURSIONS,
     MIN_MEMBERS,
     MIN_TESTED,
+    P_BEYOND_3,
+    POOL_HALF,
+    WIDENING_ALPHA,
     ControlBand,
     Fleet,
     Outlier,
@@ -560,18 +563,37 @@ class FleetOps:
         return f"outside 3σ, not significant at fleet-wide {ALPHA:.0%} ({k} members tested)"
 
     @staticmethod
-    def count_text(b: ControlBand) -> str:
+    def heavy_note(f: Fleet) -> str:
         return (
-            f"{b.outside3_total} member-steps beyond 3σ unflagged; ≈{b.expected3:.0f} expected "
-            f"if normal (0.27% of {b.cells})"
+            "; heavy-tailed noise: more than 0.27% beyond 3σ is this fleet's shape, not a fault"
+            if "heavy_tailed_noise" in f.caveats
+            else ""
         )
 
     @staticmethod
-    def widening_text(b: ControlBand) -> str:
+    def pct(v: float) -> str:
+        return f"{100 * v:.2g}%"
+
+    def count_text(self, f: Fleet, b: ControlBand) -> str:
         return (
-            f"{int(b.widening.sum())} steps where more members lie beyond 3σ than "
-            f"Binomial(n, 0.27%) reaches at 99% (expected about 1% of steps by chance): a "
-            "fleet-wide widening is common cause, not a member's fault"
+            f"{b.outside3_total} member-steps beyond 3σ unflagged ({self.pct(b.outside3_rate)}; "
+            f"0.27% if normal){self.heavy_note(f)}"
+        )
+
+    @staticmethod
+    def widening_rule(b: ControlBand) -> str:
+        return (
+            f"p-chart of the per-step count of unflagged members beyond 3σ against this window's "
+            f"own share ({FleetOps.pct(b.p_hat)}, never below 0.27%), quasi-binomial with "
+            f"overdispersion φ = {b.phi:.2g}, family-wise {WIDENING_ALPHA:.0%} over the steps: "
+            "the chance of any mark in this window ≈ 1%"
+        )
+
+    def widening_text(self, b: ControlBand) -> str:
+        n = int(b.widening.sum())
+        return (
+            f"{n} step{'s' if n != 1 else ''} where the fleet widened faster than the "
+            f"±{POOL_HALF}-step σ tracks (common cause: the whole fleet, not a member)"
         )
 
     @staticmethod
@@ -612,13 +634,20 @@ class FleetOps:
         out["outside_3sigma_unflagged"] = {
             "member_steps": b.outside3_total, "members": b.outside3_members,
             "expected_if_normal": sig(b.expected3, 3), "cells": b.cells,
-            "note": self.count_text(b), "each": self.unflagged_text(f),
+            "rate": sig(b.outside3_rate, 3), "rate_if_normal": sig(P_BEYOND_3, 3),
+            "note": self.count_text(f, b), "each": self.unflagged_text(f),
         }  # fmt: skip
+        out["widening"] = self._widening(b, ts)
+        return out
+
+    def _widening(self, b: ControlBand, ts: list[int], group: str | None = None) -> dict:
         wide = np.flatnonzero(b.widening)
-        out["widening"] = {
+        out: dict = {
             "steps": int(wide.size), "at": [iso(ts[j]) for j in wide[:MAX_LISTED]],
-            "note": self.widening_text(b), "source": COMMON,
+            "note": self.widening_text(b), "rule": self.widening_rule(b), "source": COMMON,
         }  # fmt: skip
+        if group is not None:
+            out["group"] = group
         return out
 
     def _band_overall(self, run: FleetRun, window: int | None) -> dict:
@@ -632,9 +661,12 @@ class FleetOps:
             "flag threshold (clusters.groups[].band)",
             "window_steps": b.window, "source": COMMON, "caveat": MEMBER_ERROR_NOTE,
             "outside_3sigma_unflagged": {
-                "member_steps": sum(x.outside3_total for _, _, x in bands),
+                "member_steps": (tot := sum(x.outside3_total for _, _, x in bands)),
                 "expected_if_normal": sig(sum(x.expected3 for _, _, x in bands), 3),
+                "rate": sig(tot / max(1, sum(x.cells for _, _, x in bands)), 3),
+                "rate_if_normal": sig(P_BEYOND_3, 3),
             },
+            "widening": [self._widening(x, run.ts, gid) for gid, _, x in bands],
         }  # fmt: skip
 
     @staticmethod
@@ -867,10 +899,13 @@ class FleetOps:
             "threshold_note": self.threshold_note(),
             "window": b.window, "pool_half": b.pool_half, "legend": self.band_text(b),
             "outside3_total": b.outside3_total, "outside3_expected": sig(b.expected3, 3),
-            "outside3_count": self.count_text(b), "outside3_note": self.unflagged_text(f),
+            "outside3_rate": sig(b.outside3_rate, 3), "outside3_cells": b.cells,
+            "heavy_tails": "heavy_tailed_noise" in f.caveats,
+            "outside3_count": self.count_text(f, b), "outside3_note": self.unflagged_text(f),
             "widening": [int(j) for j in np.flatnonzero(b.widening)],
-            "widening_note": "more members beyond 3σ at this step than chance gives at 99% "
-            "(Binomial(n, 0.27%)): the fleet widened here (common cause)",
+            "widening_note": f"the fleet widened here faster than the ±{POOL_HALF}-step σ tracks "
+            "(common cause)",
+            "widening_rule": self.widening_rule(b),
             "tested": len(f.tested),
         }  # fmt: skip
 

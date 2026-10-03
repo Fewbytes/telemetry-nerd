@@ -66,14 +66,25 @@ judge against:
   stay inside it.
 - **Beyond 3 sigma, unflagged.** Counted, never marked per point: in a normal fleet 0.27% of
   member-steps lie there by chance, so with 100 members about a quarter of the steps would carry
-  one (more with heavy tails), mostly on members that are not drawn. The summary and legend say
-  "N member-steps beyond 3σ unflagged; ≈0.27%·cells expected if normal"; a drawn line's point
+  one (more with heavy tails, and a MAD-based sigma under t(4) puts ~1.4% there), mostly on
+  members that are not drawn. The summary and legend give it as a rate: "66 member-steps beyond
+  3σ unflagged (0.23%; 0.27% if normal)", with a heavy-tail note when `heavy_tailed_noise`
+  holds; a drawn line's point
   there says "outside 3σ, not significant at fleet-wide 1% (k members tested)" on hover. No
   per-member run rules.
-- **Widening.** A step is marked (a small wedge at the top) when its count of unflagged members
-  beyond 3 sigma reaches the point Binomial(n_t, 0.27%) exceeds with probability < 1%: the fleet
-  as a whole spread out there, a common-cause signal (about 1% of steps by chance; `widening`
-  {steps, at, note}).
+- **Widening** (a p-chart). A step is marked (a small wedge at the top) when the fleet widened
+  faster than the +-6-step sigma tracks: its count c_t of unflagged members beyond 3 sigma, of n_t
+  usable, against p_hat = max(0.27%, the window's own share) (heavy tails are the fleet's shape,
+  not widening). Overdispersion (autocorrelated, heavy-tailed members): Pearson phi = mean over
+  steps of (c - n p)^2 / (n p (1 - p)), floored at 1, and the test is quasi-binomial, c_t / phi
+  against Bin(n_t / phi, p_hat). Chosen over Laney's p' chart, whose normal approximation is far
+  off at p ~ 0.3% and counts of 0-5; the scaled binomial keeps the exact discrete tail. Each step
+  is judged against p_hat and phi of the other steps (leave-one-out: one widened step would
+  inflate its own phi and hide itself). Family-wise over the steps: each at 1% / steps with
+  n_t > 0, so the chance of any mark in the window is <= 1%. Null (100 members x 1440 steps,
+  150 seeds): AR(0.6) normal 0 marked windows, t(4) 0 (an earlier per-step 1% rule against a
+  fixed 0.27% marked ~58% of the steps under t(4)). `widening` {steps, at, note, rule}; per group
+  when grouped, and the top-level band lists each group's.
 - **Behaviour groups**: each group has its own band, flag bar, counts and widening (its own
   centre and sigma: what its members were judged against), in `clusters.groups[].band` and per
   group in the panel; the whole-fleet band is not drawn (it would sit between the groups) and the
@@ -320,7 +331,8 @@ dataset whose op drops it) the fleet falls back to presence from values and says
   change_per_hour?}; per group `spc` zones.
   - **SPC band + outliers** (default view): +-3 sigma and +-2 sigma as nested fills of one hue
     (outer lighter), the median line, the flag bar thin dashed on both sides, widening wedges
-    along the top (hover: the note). The x axis is UTC, like every fleet time.
+    along the top (hover: the note). The x axis is UTC with 24 h ticks ("09:30 UTC" first, the
+    date where the day changes), matching the HH:MMZ times in labels and summaries.
   - **Marks per mode** (<= 6 drawn, Okabe-Ito): persistent / shifted / drifting: the whole member
     line coloured, end label kind + effect ("+38% since 09:10", "shifted +41% at 10:07",
     "drifting +2%/h"; "since window start" when the offset covers the window, the offset over
