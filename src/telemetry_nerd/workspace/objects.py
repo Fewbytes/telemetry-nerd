@@ -27,30 +27,47 @@ from telemetry_nerd.workspace.models import (
     TimeSpan,
     Verdict,
 )
+from telemetry_nerd.workspace.store import wrong_workspace
 
 M = TypeVar("M", bound=BaseModel)
 
 
 class ObjectStore:
+    """Inserts and listings belong to the scoped workspace; get by id reaches any workspace
+    (ids are global); updates are refused outside the object's own workspace."""
+
     def __init__(
         self,
         con: sqlite3.Connection,
         new_id: Callable[[str], str],
         clock: Callable[[], int] = now_ms,
+        scope: Callable[[], str] = lambda: "w1",
     ) -> None:
         self._db = con
         self._new_id = new_id
         self._clock = clock
+        self._scope = scope
+
+    def owner(self, obj_id: str) -> str | None:
+        """The workspace `obj_id` lives in; None when there is no such object."""
+        row = self._db.execute("SELECT workspace FROM objects WHERE id = ?", (obj_id,)).fetchone()
+        return row[0] if row is not None else None
+
+    def _require_here(self, obj_id: str) -> None:
+        wid = self.owner(obj_id)
+        if wid is not None and wid != self._scope():
+            raise wrong_workspace(self._db, obj_id, wid)
 
     # generic ------------------------------------------------------------
     def _insert(self, kind: str, obj: BaseModel, anchor: str | None) -> None:
         self._db.execute(
-            "INSERT INTO objects (id, kind, anchor, deleted, created_at_ms, data) "
-            "VALUES (?, ?, ?, 0, ?, ?)",
-            (obj.id, kind, anchor, obj.created_at_ms, obj.model_dump_json()),
+            "INSERT INTO objects (id, kind, anchor, deleted, created_at_ms, data, workspace) "
+            "VALUES (?, ?, ?, 0, ?, ?, ?)",
+            (obj.id, kind, anchor, obj.created_at_ms, obj.model_dump_json(), self._scope()),
         )
 
     def _update(self, obj: BaseModel) -> None:
+        self._require_here(obj.id)
         self._db.execute(
             "UPDATE objects SET data = ?, deleted = ? WHERE id = ?",
             (obj.model_dump_json(), int(bool(getattr(obj, "deleted", False))), obj.id),
@@ -65,10 +82,18 @@ class ObjectStore:
         return model.model_validate_json(row[0])
 
     def _list(
-        self, kind: str, model: type[M], anchor: str | None = None, include_deleted: bool = True
+        self,
+        kind: str,
+        model: type[M],
+        anchor: str | None = None,
+        include_deleted: bool = True,
+        scoped: bool = True,
     ) -> list[M]:
         sql = "SELECT data FROM objects WHERE kind = ?"
         args: list = [kind]
+        if scoped:
+            sql += " AND workspace = ?"
+            args.append(self._scope())
         if anchor is not None:
             sql += " AND anchor = ?"
             args.append(anchor)
@@ -218,6 +243,7 @@ class ObjectStore:
 
     def add_message(self, thread_id: str, text: str, author: str) -> Message:
         self._get("thread", Thread, thread_id)
+        self._require_here(thread_id)  # a message joins its thread's workspace
         m = Message(
             id=self._new_id("m"),
             thread=thread_id,
@@ -230,7 +256,9 @@ class ObjectStore:
 
     def get_thread(self, obj_id: str) -> Thread:
         t = self._get("thread", Thread, obj_id)
-        return t.model_copy(update={"messages": self._list("message", Message, obj_id)})
+        # get by id is global: the thread's messages come with it from any workspace
+        messages = self._list("message", Message, obj_id, scoped=False)
+        return t.model_copy(update={"messages": messages})
 
     def list_threads(self, anchor: str | None = None) -> list[Thread]:
         return [self.get_thread(t.id) for t in self._list("thread", Thread, anchor)]

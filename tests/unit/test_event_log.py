@@ -47,6 +47,7 @@ def test_append_assigns_increasing_seq_and_persists(tmp_path, clock):
         "object_id": "p1",
         "klass": "internal",
         "payload": {"question": "q?"},
+        "workspace": "w1",
     }
     reopened = EventLog(open_workspace_db(path), clock=clock)
     assert [e.seq for e in reopened.since(0)] == [1, 2]

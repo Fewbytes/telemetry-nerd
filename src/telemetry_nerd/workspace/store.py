@@ -7,10 +7,14 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from telemetry_nerd.model.errors import NotFound
+from telemetry_nerd.model.errors import NotFound, WrongWorkspace
 from telemetry_nerd.model.time import now_ms
 from telemetry_nerd.workspace.db import open_workspace_db
+
+if TYPE_CHECKING:
+    from telemetry_nerd.workspace.registry import WorkspaceRegistry
 
 _PANEL_COLS = "id, question, status, spec, dataset_ids, created_at_ms, answered_by, closed"
 
@@ -30,12 +34,28 @@ class Panel:
         return asdict(self)
 
 
+def wrong_workspace(con: sqlite3.Connection, obj_id: str, wid: str) -> WrongWorkspace:
+    """The refusal for updating `obj_id` (in workspace `wid`) from another workspace."""
+    row = con.execute("SELECT title FROM workspaces WHERE id = ?", (wid,)).fetchone()
+    return WrongWorkspace(obj_id, wid, row[0] if row is not None else None)
+
+
 class WorkspaceStore:
+    """Panel inserts and listings belong to the scoped workspace; get by id reaches any
+    workspace (ids are global); updates are refused outside the panel's own workspace.
+    Counters and label listings are global."""
+
     def __init__(
-        self, db: str | Path | sqlite3.Connection, clock: Callable[[], int] = now_ms
+        self,
+        db: str | Path | sqlite3.Connection,
+        clock: Callable[[], int] = now_ms,
+        scope: Callable[[], str] = lambda: "w1",
+        registry: WorkspaceRegistry | None = None,
     ) -> None:
         self._db = db if isinstance(db, sqlite3.Connection) else open_workspace_db(db)
         self._clock = clock
+        self._scope = scope
+        self._registry = registry
 
     @property
     def connection(self) -> sqlite3.Connection:
@@ -50,12 +70,17 @@ class WorkspaceStore:
         return f"{prefix}{n}"
 
     def get_setting(self, key: str, default: str | None = None) -> str | None:
+        if self._registry is not None:
+            return self._registry.get_setting(self._scope(), key, default)
         row = self._db.execute(
             "SELECT value FROM workspace_settings WHERE key = ?", (key,)
         ).fetchone()
         return row[0] if row is not None else default
 
     def set_setting(self, key: str, value: str) -> None:
+        if self._registry is not None:
+            self._registry.set_setting(self._scope(), key, value)
+            return
         self._db.execute(
             "INSERT INTO workspace_settings (key, value) VALUES (?, ?) "
             "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
@@ -74,8 +99,8 @@ class WorkspaceStore:
             created_at_ms=self._clock(),
         )
         self._db.execute(
-            "INSERT INTO panels (id, question, status, spec, dataset_ids, created_at_ms) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO panels (id, question, status, spec, dataset_ids, created_at_ms, "
+            "workspace) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 panel.id,
                 panel.question,
@@ -83,12 +108,25 @@ class WorkspaceStore:
                 json.dumps(spec),
                 json.dumps(panel.dataset_ids),
                 panel.created_at_ms,
+                self._scope(),
             ),
         )
         return panel
 
+    def owner(self, panel_id: str) -> str | None:
+        """The workspace `panel_id` lives in; None when there is no such panel."""
+        row = self._db.execute("SELECT workspace FROM panels WHERE id = ?", (panel_id,)).fetchone()
+        return row[0] if row is not None else None
+
+    def _require_here(self, panel_id: str) -> None:
+        wid = self.owner(panel_id)
+        if wid is None:
+            raise NotFound(f"panel {panel_id} not found")
+        if wid != self._scope():
+            raise wrong_workspace(self._db, panel_id, wid)
+
     def set_spec(self, panel_id: str, spec: dict) -> Panel:
-        self.get_panel(panel_id)
+        self._require_here(panel_id)
         self._db.execute("UPDATE panels SET spec = ? WHERE id = ?", (json.dumps(spec), panel_id))
         return self.get_panel(panel_id)
 
@@ -101,15 +139,16 @@ class WorkspaceStore:
         return self._panel(row)
 
     def list_panels(self, include_closed: bool = False) -> list[Panel]:
-        where = "" if include_closed else "WHERE closed = 0"
+        closed = "" if include_closed else " AND closed = 0"
         rows = self._db.execute(
-            f"SELECT {_PANEL_COLS} FROM panels {where} "
-            "ORDER BY created_at_ms DESC, CAST(substr(id, 2) AS INTEGER) DESC"
+            f"SELECT {_PANEL_COLS} FROM panels WHERE workspace = ?{closed} "
+            "ORDER BY created_at_ms DESC, CAST(substr(id, 2) AS INTEGER) DESC",
+            (self._scope(),),
         ).fetchall()
         return [self._panel(r) for r in rows]
 
     def set_answered(self, panel_id: str, finding_id: str) -> Panel:
-        self.get_panel(panel_id)
+        self._require_here(panel_id)
         self._db.execute(
             "UPDATE panels SET status = 'answered', answered_by = ? WHERE id = ?",
             (finding_id, panel_id),
@@ -117,7 +156,7 @@ class WorkspaceStore:
         return self.get_panel(panel_id)
 
     def close_panel(self, panel_id: str) -> Panel:
-        self.get_panel(panel_id)
+        self._require_here(panel_id)
         self._db.execute("UPDATE panels SET closed = 1 WHERE id = ?", (panel_id,))
         return self.get_panel(panel_id)
 

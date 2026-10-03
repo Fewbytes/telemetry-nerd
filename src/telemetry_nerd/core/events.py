@@ -75,22 +75,32 @@ class Event:
     object_id: str | None
     klass: str
     payload: dict
+    workspace: str = "w1"
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
-_COLS = "seq, ts_ms, actor, type, object_id, klass, payload"
+_COLS = "seq, ts_ms, actor, type, object_id, klass, payload, workspace"
 
 
 def _event(row: tuple) -> Event:
-    return Event(row[0], row[1], row[2], row[3], row[4], row[5], json.loads(row[6]))
+    return Event(row[0], row[1], row[2], row[3], row[4], row[5], json.loads(row[6]), row[7])
 
 
 class EventLog:
-    def __init__(self, con: sqlite3.Connection, clock: Callable[[], int] = now_ms) -> None:
+    """Appends and listings (`since`, `tail`, `message_seqs`) belong to the scoped workspace;
+    seqs and channel delivery (`peek`, `claim`, `cursor`, `ack`, `last_seq`) are global."""
+
+    def __init__(
+        self,
+        con: sqlite3.Connection,
+        clock: Callable[[], int] = now_ms,
+        scope: Callable[[], str] = lambda: "w1",
+    ) -> None:
         self._db = con
         self._clock = clock
+        self._scope = scope
         self._subscribers: set[asyncio.Queue] = set()
         self._depth = 0
         self._pending: list[dict] = []
@@ -130,12 +140,13 @@ class EventLog:
         body = finite(payload or {})
         klass = classify(actor, type, body)
         ts = self._clock()
+        wid = self._scope()
         cur = self._db.execute(
-            "INSERT INTO events (ts_ms, actor, type, object_id, klass, payload) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (ts, actor, type, object_id, klass, json.dumps(body)),
+            "INSERT INTO events (ts_ms, actor, type, object_id, klass, payload, workspace) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (ts, actor, type, object_id, klass, json.dumps(body), wid),
         )
-        event = Event(cur.lastrowid, ts, actor, type, object_id, klass, body)
+        event = Event(cur.lastrowid, ts, actor, type, object_id, klass, body, wid)
         if self._depth:
             self._pending.append(event.to_dict())
         else:
@@ -144,9 +155,18 @@ class EventLog:
 
     def since(self, seq: int, limit: int = 1000) -> list[Event]:
         rows = self._db.execute(
-            f"SELECT {_COLS} FROM events WHERE seq > ? ORDER BY seq LIMIT ?", (seq, limit)
+            f"SELECT {_COLS} FROM events WHERE seq > ? AND workspace = ? ORDER BY seq LIMIT ?",
+            (seq, self._scope(), limit),
         ).fetchall()
         return [_event(r) for r in rows]
+
+    def tail(self, limit: int) -> list[Event]:
+        """The workspace's last `limit` events, oldest first."""
+        rows = self._db.execute(
+            f"SELECT {_COLS} FROM events WHERE workspace = ? ORDER BY seq DESC LIMIT ?",
+            (self._scope(), limit),
+        ).fetchall()
+        return [_event(r) for r in reversed(rows)]
 
     @property
     def last_seq(self) -> int:
@@ -157,7 +177,8 @@ class EventLog:
         """Message id -> seq of its `thread.message` event (delivery state in the UI)."""
         rows = self._db.execute(
             "SELECT json_extract(payload, '$.message'), seq FROM events "
-            "WHERE type = 'thread.message'"
+            "WHERE type = 'thread.message' AND workspace = ?",
+            (self._scope(),),
         ).fetchall()
         return {mid: seq for mid, seq in rows if mid is not None}
 
