@@ -300,7 +300,8 @@ dataset whose op drops it) the fleet falls back to presence from values and says
   adapter sets `stale_marker`: Prometheus-family range queries never carry staleness markers
   (`stale_marker_visible` is false for Prometheus, Thanos, Mimir; VictoriaMetrics shows them only
   in raw range vectors), so every stopped member is `silent` and the note says the data cannot tell
-  a replaced member from a sick one. Appeared ~ stopped suggests replacement (stated).
+  a replaced member from a sick one; it does not claim that no marker was written (our channel
+  cannot show one; docs/data-source-quirks.md "Staleness markers are not observable"). Appeared ~ stopped suggests replacement (stated).
 - `missing_share` = 1 - sum n_t / sum alive_t and min n per step; caveat `members_missing` when
   > 5% (not `missing_data`: that code is the per-series bucket_state caveat on time panels),
   located: the members with silent steps and the spans where n < alive. `members_skipped` when

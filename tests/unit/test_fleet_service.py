@@ -271,6 +271,8 @@ def test_stopped_members_are_silent_unless_marked_stale(tmp_path):
     out = svc.fleet(put(svc, y))
     (stop,) = out["churn"]["stopped_reporting"]
     assert stop["state"] == "silent" and "cannot tell" in out["churn"]["note"]
+    # absence of a marker is unknown, not evidence: our range queries cannot show markers (cr4)
+    assert "not evidence that none was written" in out["churn"]["note"]
 
 
 def test_a_staleness_marker_tells_a_marked_stale_member_from_a_silent_one(tmp_path, monkeypatch):

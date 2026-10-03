@@ -353,6 +353,18 @@ reads sort them (`vm__ooo_write`). Neither marks it in query results.
 | out-of-order write | dropped ✅ | ❓ | dropped 📖 | accepted ✅ |
 | limit errors | 400/422 ✅ | 400 ✅ | 400 ✅ (points) | 422 ✅ |
 
+### Staleness markers are not observable through our query API
+
+Reading a marker needs a raw range-vector probe (`x[w]` as an instant query), and only
+VictoriaMetrics returns the stale NaN there; Prometheus hides it, Thanos/Mimir are documented-only
+(table above). Our adapters read `query_range`, which never carries markers on any backend, so no
+adapter sets `Flag.STALE_MARKER` and fleet churn reports every stopped member as `silent`. The
+absence of a marker in our data is **not** evidence that none was written (principle 9: a marker
+is a positive observation; its absence from a channel that cannot show it is unknown). Detecting
+it would take a per-member raw probe around `last_seen`, VictoriaMetrics only (bead cr4 option);
+not implemented: a backend-specific extra query per stopped member for one label of churn. The
+consumer (`marked_stale`) is ready and pinned by tests should an adapter ever set the flag.
+
 ## Future sources (not MVP, for `sgb`)
 
 Noted so the profile shape covers them:
