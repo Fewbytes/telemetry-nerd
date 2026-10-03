@@ -21,6 +21,7 @@ from mcp import Client
 from telemetry_nerd.charts.spec import Mark
 from telemetry_nerd.charts.yview import YMode
 from telemetry_nerd.mcp.server import INSTRUCTIONS, build_mcp
+from tests.unit.demo_source import DemoSource
 from tests.unit.fakes import make_service
 from tests.unit.test_verdicts import ScenarioSource
 
@@ -68,9 +69,15 @@ def resolve(value: Any, results: dict[str, Any]) -> Any:
     return value
 
 
+def scenario_source(scenario: str):
+    if scenario == "triage":
+        return ScenarioSource(seed=3, latency_shift=20, error_burst=(40, 47))
+    assert scenario == "payment"
+    return DemoSource()
+
+
 async def run(tmp_path, scenario: str) -> dict[str, Any]:
-    assert scenario == "triage"
-    svc = make_service(tmp_path, ScenarioSource(seed=3, latency_shift=20, error_burst=(40, 47)))
+    svc = make_service(tmp_path, scenario_source(scenario))
     results: dict[str, Any] = {}
     async with Client(build_mcp(svc, "http://x")) as c:
         for call in CALLS[scenario]:
@@ -134,9 +141,47 @@ async def test_triage_example_symptom_to_finding(tmp_path):
     assert ids == ["f1", "f2", "f3", "f4"] and r["f_errors"]["sources"] == ["special_cause"]
 
 
+@pytest.mark.slow
+async def test_discovery_example_finds_the_root_cause_service(tmp_path):
+    """rbz/t75: services first (entities), RED from span metrics over all of them, then a cause
+    hypothesis for the episode with a refuted competitor."""
+    r = await run(tmp_path, "payment")
+    assert r["search"]["results"][0]["metric"].startswith("http_server_request_duration_seconds")
+    by = {e["value"]: e for e in r["services"]["entities"]}
+    assert len(by) == 15 and "payment" in by
+    pay = by["payment"]
+    assert "http_server" not in pay["families"] and "rpc_server" not in pay["families"]
+    assert "RED:spanmetrics" in pay["bindings"]
+    assert pay["next"] == 'binding_suggest(kind="RED", key="payment")'
+    assert by["quote"]["active_recent"] is False
+    top = r["suggest"]["suggestions"][0]
+    assert (top["id"], top["key"]) == ("RED:spanmetrics", "payment")
+    failing = sorted(s["labels"]["service_name"] for s in r["errors"]["summary"]["series"])
+    assert failing == ["checkout", "frontend", "payment"]
+    err = r["an"]["series"][1]
+    assert err["labels"] == {"status_code": "STATUS_CODE_ERROR"}
+    assert err["verdict"] == "level_shifted" and r["an"]["series"][0]["verdict"] == "stable"
+    assert err["stability"]["shifts"][0]["at"].endswith("10:15:00+00:00")
+    assert r["f_cause"]["sources"] == ["special_cause"] and "hint" not in r["f_cause"]
+    assert r["f_cause"]["scope"]["status"] == "covered"
+    assert r["f_alt"]["scope"]["status"] == "covered"
+    statuses = {h["id"]: h["status"] for h in r["_workspace"]["hypotheses"]}
+    assert statuses == {"h1": "supported", "h2": "refuted"}
+
+
+def test_discovery_example_has_the_flow():
+    tools = [c["tool"] for c in CALLS["payment"]]
+    # services before the blast radius; a cause hypothesis only once the episode is found
+    assert tools.index("entities") < tools.index("query")
+    assert tools.index("binding_suggest") < tools.index("query")
+    assert tools.index("annotate") < tools.index("hypothesis_create")
+    assert tools.count("hypothesis_create") >= 2
+    assert tools[-2:] == ["hypothesis_update", "hypothesis_update"]
+
+
 def test_triage_example_has_the_flow():
     tools = [c["tool"] for c in CALLS["triage"]]
-    assert set(CALLS) == {"triage"}
+    assert set(CALLS) == {"triage", "payment"}
     for t in ("binding_suggest", "binding_accept", "show_binding", "binding_verdict",
               "query_distribution", "compare_seasonal", "hypothesis_create", "finding_create",
               "hypothesis_update", "annotate"):  # fmt: skip

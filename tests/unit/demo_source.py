@@ -6,6 +6,7 @@ answers `sum by (...) (rate(metric{matchers}[w]))` from the fixture's constant p
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from collections import defaultdict
@@ -121,7 +122,10 @@ class DemoSource:
     def _value(self, s: dict, t: int) -> float | None:
         if not self._alive(s, t, t):
             return None
-        return s.get("fault_rate", s["rate"]) if t >= self.onset_ms else s["rate"]
+        rate = s.get("fault_rate", s["rate"]) if t >= self.onset_ms else s["rate"]
+        # deterministic +-10% noise per series and time: real rates are never flat
+        h = hashlib.blake2b(f"{s['labels']}|{t}".encode(), digest_size=4).digest()
+        return rate * (1 + 0.2 * (int.from_bytes(h, "big") / 2**32 - 0.5))
 
     async def fetch(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
         known = {s["metric"] for s in self.series}

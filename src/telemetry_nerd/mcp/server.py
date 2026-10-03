@@ -11,6 +11,7 @@ from pydantic import ConfigDict, TypeAdapter, ValidationError
 
 from telemetry_nerd.charts.spec import Window
 from telemetry_nerd.charts.yview import YView
+from telemetry_nerd.core.cause_hint import cause_hint
 from telemetry_nerd.core.code_ops import CodeDisabled
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
 from telemetry_nerd.model.errors import NotFound
@@ -1680,6 +1681,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             out["sources"] = f.sources  # spec §5.4: variation sources of the cited statistics
         if f.source_flags:
             out["source_flags"] = [e.model_dump() for e in f.source_flags]
+        if hint := cause_hint(f, ws.objects.list_hypotheses()):
+            out["hint"] = hint
         return _dump(out)
 
     @mcp.tool()

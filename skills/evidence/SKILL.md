@@ -59,6 +59,16 @@ is "no samples since 10:45Z", not "left"; a gap with samples on both sides is an
 disconnect. When the negative question matters, name the wider check that would test it (for
 example: is the set of `pod` values per bucket the same over the previous day). Principle 9.
 
+**Absence of an entity or signal.** "There is no payment service", "no 5xx anywhere", "checkout
+emits no metrics" are negative claims about a whole source. An empty query, an empty
+`catalog_search` or one metric family without the entity is absence of evidence, not evidence of
+absence: the entity may report through other metrics (span metrics) or under another label.
+Before such a claim, run `entities(kind="service")` (or `entities(label=..., metric=...)`) and
+cite it; then scope the claim to what it searched: "payment is not found under `service_name`,
+`service`, `app`, `job` in 09:40-10:40Z". Without that check, say "not seen in the metrics
+queried (list them)", never "does not exist". The `empty_result` and catalog `note` fields on
+empty results say the same.
+
 ## Uncertainty policy (principle 4)
 
 1. **Every statistic states its uncertainty**: an interval, `exact`, or

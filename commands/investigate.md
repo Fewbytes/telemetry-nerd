@@ -1,7 +1,7 @@
 ---
 description: Investigate a question about your systems, evidence first
 argument-hint: "<question, e.g. why did checkout p95 spike at 14:00?>"
-allowed-tools: mcp__plugin_telemetry-nerd_telemetry-nerd__workspace_get, mcp__plugin_telemetry-nerd_telemetry-nerd__source_list, mcp__plugin_telemetry-nerd_telemetry-nerd__source_learn, mcp__plugin_telemetry-nerd_telemetry-nerd__hypothesis_create, mcp__plugin_telemetry-nerd_telemetry-nerd__hypothesis_update, mcp__plugin_telemetry-nerd_telemetry-nerd__finding_create, mcp__plugin_telemetry-nerd_telemetry-nerd__catalog_search, mcp__plugin_telemetry-nerd_telemetry-nerd__catalog_family, mcp__plugin_telemetry-nerd_telemetry-nerd__catalog_relations, mcp__plugin_telemetry-nerd_telemetry-nerd__binding_suggest, mcp__plugin_telemetry-nerd_telemetry-nerd__binding_accept, mcp__plugin_telemetry-nerd_telemetry-nerd__show_binding, mcp__plugin_telemetry-nerd_telemetry-nerd__binding_verdict, mcp__plugin_telemetry-nerd_telemetry-nerd__query, mcp__plugin_telemetry-nerd_telemetry-nerd__query_distribution, mcp__plugin_telemetry-nerd_telemetry-nerd__fraction_over, mcp__plugin_telemetry-nerd_telemetry-nerd__show, mcp__plugin_telemetry-nerd_telemetry-nerd__show_marginal, mcp__plugin_telemetry-nerd_telemetry-nerd__analyze, mcp__plugin_telemetry-nerd_telemetry-nerd__compare_seasonal, mcp__plugin_telemetry-nerd_telemetry-nerd__fleet, mcp__plugin_telemetry-nerd_telemetry-nerd__spectrum, mcp__plugin_telemetry-nerd_telemetry-nerd__operating_profile, mcp__plugin_telemetry-nerd_telemetry-nerd__check_littles_law, mcp__plugin_telemetry-nerd_telemetry-nerd__split_outcome, mcp__plugin_telemetry-nerd_telemetry-nerd__run_code, mcp__plugin_telemetry-nerd_telemetry-nerd__code_get, mcp__plugin_telemetry-nerd_telemetry-nerd__annotate, mcp__plugin_telemetry-nerd_telemetry-nerd__gap_create, mcp__plugin_telemetry-nerd_telemetry-nerd__reply
+allowed-tools: mcp__plugin_telemetry-nerd_telemetry-nerd__workspace_get, mcp__plugin_telemetry-nerd_telemetry-nerd__source_list, mcp__plugin_telemetry-nerd_telemetry-nerd__source_learn, mcp__plugin_telemetry-nerd_telemetry-nerd__hypothesis_create, mcp__plugin_telemetry-nerd_telemetry-nerd__hypothesis_update, mcp__plugin_telemetry-nerd_telemetry-nerd__finding_create, mcp__plugin_telemetry-nerd_telemetry-nerd__catalog_search, mcp__plugin_telemetry-nerd_telemetry-nerd__catalog_family, mcp__plugin_telemetry-nerd_telemetry-nerd__catalog_relations, mcp__plugin_telemetry-nerd_telemetry-nerd__entities, mcp__plugin_telemetry-nerd_telemetry-nerd__binding_suggest, mcp__plugin_telemetry-nerd_telemetry-nerd__binding_accept, mcp__plugin_telemetry-nerd_telemetry-nerd__show_binding, mcp__plugin_telemetry-nerd_telemetry-nerd__binding_verdict, mcp__plugin_telemetry-nerd_telemetry-nerd__query, mcp__plugin_telemetry-nerd_telemetry-nerd__query_distribution, mcp__plugin_telemetry-nerd_telemetry-nerd__fraction_over, mcp__plugin_telemetry-nerd_telemetry-nerd__show, mcp__plugin_telemetry-nerd_telemetry-nerd__show_marginal, mcp__plugin_telemetry-nerd_telemetry-nerd__analyze, mcp__plugin_telemetry-nerd_telemetry-nerd__compare_seasonal, mcp__plugin_telemetry-nerd_telemetry-nerd__fleet, mcp__plugin_telemetry-nerd_telemetry-nerd__spectrum, mcp__plugin_telemetry-nerd_telemetry-nerd__operating_profile, mcp__plugin_telemetry-nerd_telemetry-nerd__check_littles_law, mcp__plugin_telemetry-nerd_telemetry-nerd__split_outcome, mcp__plugin_telemetry-nerd_telemetry-nerd__run_code, mcp__plugin_telemetry-nerd_telemetry-nerd__code_get, mcp__plugin_telemetry-nerd_telemetry-nerd__annotate, mcp__plugin_telemetry-nerd_telemetry-nerd__gap_create, mcp__plugin_telemetry-nerd_telemetry-nerd__reply
 ---
 
 Investigate: `$ARGUMENTS`
@@ -17,15 +17,16 @@ instructions apply throughout.
    window), the symptom (latency, errors, saturation, throughput, missing data), and the source.
    Ask the user for whatever you cannot infer; at most one short round of questions. State the
    resulting scope in one line.
-3. **Hypothesis.** `hypothesis_create` with a falsifiable statement that names the scope and the
-   suspected service or resource (a label value or metric you will query, not "a service on the
-   order path"). The user sees it in the workspace; keep its status current with
-   `hypothesis_update` as evidence arrives. `supported` is refused unless the statement names a
-   concrete subject, at least one finding with stance=for backs it, and an alternative was
-   considered: another hypothesis refuted or inconclusive, or `alternatives_considered` saying
-   which alternatives and how they were ruled out.
-4. **Triage** per the `triage` skill: blast radius, RED/USE per service, changepoints against the
-   baseline, rule things out. Every panel answers an explicit question.
+3. **Services first.** `entities(kind="service")`: which services exist, which metric families
+   each reports, which binding_suggest ids they fill. Then `binding_suggest(kind="RED")` and query
+   the RED binding that covers the most services, for all of them (span metrics,
+   `traces_span_metrics_*`, cover traced services that emit no HTTP/RPC metrics). Never conclude
+   that a service or signal is absent from an empty query or catalog lookup: cite the `entities`
+   result and scope the claim to the labels and window it searched.
+4. **Triage** per the `triage` skill: blast radius over those services, RED/USE per affected
+   service, changepoints against the baseline, rule things out. Every panel answers an explicit
+   question. A question you want to test up front may be a hypothesis (`hypothesis_create`, naming
+   the scope and a concrete subject), but it does not replace step 5.
    **Annotate as you go** (the user reads the chart, not the log): once the evidence places the
    onset, `annotate(kind="event", at=<onset>, panel=<the panel that shows it>, label="onset: ...")`;
    for a fault, outage or degradation window with a start and an end, `annotate(kind="region",
@@ -33,7 +34,16 @@ instructions apply throughout.
    onset interval's best estimate and put its bounds in the label. Annotate deploys, config
    changes and other events the user gave you the same way. Ask the user for such events once;
    if there are none, say so.
-5. **Never claim without evidence.** (A signal you wish existed: `gap_create`.) A claim becomes `finding_create` with scope (source,
+5. **Cause hypotheses for the episode.** Once an episode is found (onset or window annotated),
+   `hypothesis_create` a cause that names its concrete subject (the failing service, a flag, a
+   deploy, an arrival surge vs. a slow service) and at least one competing cause, then test them:
+   `finding_create(..., hypothesis=<id>, stance="for" | "against")` and keep their status current
+   with `hypothesis_update`. `supported` is refused unless the statement names a concrete
+   subject, at least one finding with stance=for backs it, and an alternative was considered:
+   another hypothesis refuted or inconclusive, or `alternatives_considered` saying which
+   alternatives and how they were ruled out. A `hint` in finding_create's result means a
+   special-cause finding's subject has no open hypothesis yet.
+6. **Never claim without evidence.** (A signal you wish existed: `gap_create`.) A claim becomes `finding_create` with scope (source,
    selector, range, step) and evidence (cite the annotation id for an onset or window), and attaches to a hypothesis with its stance. Refuting
    evidence is recorded too. Name only the entities (services, pods, jobs) your cited evidence
    covers: a claim naming one outside it is refused with the datasets that hold it, so cite
@@ -42,5 +52,5 @@ instructions apply throughout.
    undetermined) and `source_flags` (variation source derived from an op, or undetermined) are
    part of the finding: report them. If the data cannot answer (gaps, settling data, too few
    samples), say so as the finding.
-6. **Report** in a few lines: scope, hypotheses with status, findings with ids (f1, p3 ...) with
+7. **Report** in a few lines: scope, hypotheses with status, findings with ids (f1, p3 ...) with
    their scope status and source flags, and what remains unexplained or unmeasurable. Share the workspace URL.

@@ -24,8 +24,16 @@ means), `tier2-code` (custom statistics). Load them when a step needs them.
 
 ## 2. Blast radius
 
-Which services, instances, regions carry the symptom?
+Which services, instances, regions carry the symptom? Start from the services, not from the
+first metric family you find.
 
+- `entities(kind="service")` lists every service the source knows, the families each reports and
+  the bindings its metrics fill. Then `binding_suggest(kind="RED")` and query the binding that
+  covers the most services for all of them at once: span metrics (`traces_span_metrics_*`,
+  `traces_spanmetrics_*`) cover traced services that emit no HTTP/RPC metrics of their own.
+- An empty query or catalog lookup is absence of evidence. Never say a service or signal does
+  not exist without an `entities` result (or series check) cited and scoped to its labels and
+  window; otherwise "not found under these labels in this window".
 - Query by the identifying label (`sum by (service_name) (...)`); for latency,
   `query_distribution(selector, by=[...])`: aggregate buckets, never average percentiles
   across members.
@@ -73,12 +81,19 @@ histogram: `check_littles_law(binding=...)`. No in-flight gauge: skip the check,
 and record the gap.
 `L_high` means time outside the latency timer (queueing before it, stuck requests, latency on a
 subset). Report the discrepancy first, then the verdict and assumptions (`model-views`).
+A surge in L with Little's law consistent and λ up is an arrival-driven backlog: open it as a
+cause hypothesis ("arrival surge") against "the service slowed" and separate them by onset order
+in `binding_verdict` (λ moved first, or W).
 
 ## 7. Hypotheses and ruling out
 
 Open competing hypotheses early with `hypothesis_create`, each naming the suspected service,
 resource or metric ("payment `charge` calls fail", not "a fault in one service"); for each,
-look first for the observation that would refute it. `supported` is refused until a finding
+look first for the observation that would refute it. **Once an episode is found** (an onset,
+an annotated window), open a cause hypothesis for it that names the concrete subject (the
+failing service, a flag, a deploy, an arrival surge), plus at least one competing cause, and
+test both: a question-framing or decoy hypothesis does not explain the episode.
+`finding_create` returns a `hint` when a special-cause finding's subject has no open hypothesis. `supported` is refused until a finding
 backs it and an alternative is refuted / inconclusive (or `alternatives_considered` says how
 it was ruled out). Attach results with `finding_create(...,
 hypothesis=<id>, stance="for" | "against")` (finding anatomy, scope and source labels: the
@@ -121,4 +136,6 @@ finding the user should open first. Never claim cause from ordering (principle 1
 - **`references/worked-example.md`**: an executed incident on a seeded scenario, symptom →
   binding → verdict → blast radius → ruled-out hypotheses → finding → report. Every call in it
   is run by the test suite.
+- **`references/discovery-example.md`**: services first (`entities`), RED from span metrics over
+  all of them, the failing service, a cause hypothesis with a refuted competitor. Run by the tests.
 - **`references/ruling-out.md`**: common hypotheses and the tool and reading that tests each.
