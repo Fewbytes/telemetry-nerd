@@ -1,0 +1,628 @@
+{
+  "version": 1,
+  "scenario": "payment-failure",
+  "description": "Payment Charge fails on every call (paymentFailure=100%): errors on payment cascade to checkout and to frontend POST /api/checkout.",
+  "run": {
+    "started_at": 1791045230.943,
+    "started_at_iso": "2026-10-03T16:33:50Z",
+    "baseline_end": 1791045530.943,
+    "baseline_end_iso": "2026-10-03T16:38:50Z",
+    "finished_at": 1791046010.953,
+    "finished_at_iso": "2026-10-03T16:46:50Z",
+    "completed": true,
+    "scale": 1.0
+  },
+  "fault_window": {
+    "start": 1791045530.948,
+    "start_iso": "2026-10-03T16:38:50Z",
+    "end": 1791045830.954,
+    "end_iso": "2026-10-03T16:43:50Z"
+  },
+  "faults": [
+    {
+      "flag": "paymentFailure",
+      "variant": "100%",
+      "start": 1791045530.948,
+      "start_iso": "2026-10-03T16:38:50Z",
+      "start_served_at": 1791045532.973,
+      "start_served_at_iso": "2026-10-03T16:38:52Z",
+      "services": [
+        "payment"
+      ],
+      "end": 1791045830.954,
+      "end_iso": "2026-10-03T16:43:50Z",
+      "end_served_at": 1791045831.976,
+      "end_served_at_iso": "2026-10-03T16:43:51Z",
+      "effect_end": 1791045830.954,
+      "effect_end_iso": "2026-10-03T16:43:50Z"
+    }
+  ],
+  "applied": [
+    {
+      "kind": "set",
+      "flags": {
+        "paymentFailure": "100%"
+      },
+      "applied_at": 1791045530.948,
+      "applied_at_iso": "2026-10-03T16:38:50Z",
+      "served_at": {
+        "paymentFailure": 1791045532.973
+      }
+    },
+    {
+      "kind": "set",
+      "flags": {
+        "paymentFailure": "off"
+      },
+      "applied_at": 1791045830.954,
+      "applied_at_iso": "2026-10-03T16:43:50Z",
+      "served_at": {
+        "paymentFailure": 1791045831.976
+      }
+    }
+  ],
+  "root_cause": {
+    "service": "payment",
+    "flag": "paymentFailure",
+    "summary": "payment Charge returns an error for every call; checkout PlaceOrder and frontend POST /api/checkout fail as a consequence."
+  },
+  "affected_services": {
+    "origin": [
+      "payment"
+    ],
+    "propagated": [
+      "checkout",
+      "frontend"
+    ],
+    "unaffected_control": [
+      "cart",
+      "ad",
+      "product-catalog",
+      "shipping"
+    ]
+  },
+  "tolerance": {
+    "start_s": 150,
+    "end_s": 180,
+    "note": "Observable onset lags the flag change: demo exports metrics and span-metrics every 60s and queries use 2m rate windows (expect 1-3 min of lag); judge annotations against fault_window.start/end within these tolerances."
+  },
+  "settle_s": 120,
+  "expected_signals": [
+    {
+      "id": "payment-errors",
+      "service": "payment",
+      "description": "error span rate on payment",
+      "metric": "traces_span_metrics_calls_total",
+      "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"payment\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+      "direction": "up",
+      "min_abs_delta": 0.05
+    },
+    {
+      "id": "checkout-errors",
+      "service": "checkout",
+      "description": "error span rate on checkout (propagated)",
+      "metric": "traces_span_metrics_calls_total",
+      "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"checkout\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+      "direction": "up",
+      "min_abs_delta": 0.05
+    },
+    {
+      "id": "frontend-errors",
+      "service": "frontend",
+      "description": "error span rate on frontend (propagated)",
+      "metric": "traces_span_metrics_calls_total",
+      "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"frontend\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+      "direction": "up",
+      "min_abs_delta": 0.05
+    },
+    {
+      "id": "cart-errors-control",
+      "service": "cart",
+      "description": "cart stays clean",
+      "metric": "traces_span_metrics_calls_total",
+      "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"cart\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+      "direction": "flat",
+      "max_abs_delta": 0.05
+    }
+  ],
+  "endpoints": {
+    "victoriametrics": "http://127.0.0.1:8429",
+    "flagd_ofrep": "http://127.0.0.1:8016",
+    "frontend": "http://127.0.0.1:18080"
+  },
+  "source_labels": {
+    "service": "service_name"
+  },
+  "verification": {
+    "all_passed": true,
+    "results": [
+      {
+        "id": "payment-errors",
+        "service": "payment",
+        "metric": "traces_span_metrics_calls_total",
+        "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"payment\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+        "direction": "up",
+        "baseline_mean": 0.004583333333333333,
+        "baseline_samples": 20,
+        "fault_mean": 0.41111013900231336,
+        "fault_samples": 12,
+        "passed": true,
+        "detail": "baseline 0.004583 -> fault 0.4111 (delta +0.4065, x89.7)",
+        "series": [
+          [
+            1791045225.0,
+            0.0
+          ],
+          [
+            1791045240.0,
+            0.0
+          ],
+          [
+            1791045255.0,
+            0.0
+          ],
+          [
+            1791045270.0,
+            0.0
+          ],
+          [
+            1791045285.0,
+            0.0
+          ],
+          [
+            1791045300.0,
+            0.0
+          ],
+          [
+            1791045315.0,
+            0.0
+          ],
+          [
+            1791045330.0,
+            0.0
+          ],
+          [
+            1791045345.0,
+            0.0
+          ],
+          [
+            1791045360.0,
+            0.0
+          ],
+          [
+            1791045375.0,
+            0.0
+          ],
+          [
+            1791045390.0,
+            0.0
+          ],
+          [
+            1791045405.0,
+            0.0
+          ],
+          [
+            1791045420.0,
+            0.0
+          ],
+          [
+            1791045435.0,
+            0.016667
+          ],
+          [
+            1791045450.0,
+            0.016667
+          ],
+          [
+            1791045465.0,
+            0.016667
+          ],
+          [
+            1791045480.0,
+            0.016667
+          ],
+          [
+            1791045495.0,
+            0.008333
+          ],
+          [
+            1791045510.0,
+            0.008333
+          ],
+          [
+            1791045525.0,
+            0.008333
+          ],
+          [
+            1791045540.0,
+            0.008333
+          ],
+          [
+            1791045555.0,
+            0.0
+          ],
+          [
+            1791045570.0,
+            0.0
+          ],
+          [
+            1791045585.0,
+            0.0
+          ],
+          [
+            1791045600.0,
+            0.0
+          ],
+          [
+            1791045615.0,
+            0.499983
+          ],
+          [
+            1791045630.0,
+            0.499983
+          ],
+          [
+            1791045645.0,
+            0.499983
+          ],
+          [
+            1791045660.0,
+            0.499983
+          ],
+          [
+            1791045675.0,
+            0.383333
+          ],
+          [
+            1791045690.0,
+            0.383333
+          ],
+          [
+            1791045705.0,
+            0.383333
+          ],
+          [
+            1791045720.0,
+            0.383333
+          ],
+          [
+            1791045735.0,
+            0.400007
+          ],
+          [
+            1791045750.0,
+            0.400007
+          ],
+          [
+            1791045765.0,
+            0.400007
+          ],
+          [
+            1791045780.0,
+            0.400007
+          ],
+          [
+            1791045795.0,
+            0.433326
+          ],
+          [
+            1791045810.0,
+            0.433326
+          ],
+          [
+            1791045825.0,
+            0.433326
+          ],
+          [
+            1791045840.0,
+            0.433326
+          ],
+          [
+            1791045855.0,
+            0.366664
+          ],
+          [
+            1791045870.0,
+            0.366664
+          ],
+          [
+            1791045885.0,
+            0.366664
+          ],
+          [
+            1791045900.0,
+            0.366664
+          ],
+          [
+            1791045915.0,
+            0.200002
+          ],
+          [
+            1791045930.0,
+            0.200002
+          ],
+          [
+            1791045945.0,
+            0.200002
+          ],
+          [
+            1791045960.0,
+            0.200002
+          ],
+          [
+            1791045975.0,
+            0.008333
+          ],
+          [
+            1791045990.0,
+            0.008333
+          ],
+          [
+            1791046005.0,
+            0.008333
+          ]
+        ]
+      },
+      {
+        "id": "checkout-errors",
+        "service": "checkout",
+        "metric": "traces_span_metrics_calls_total",
+        "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"checkout\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+        "direction": "up",
+        "baseline_mean": 0.0,
+        "baseline_samples": 0,
+        "fault_mean": 0.40694354177893377,
+        "fault_samples": 12,
+        "passed": true,
+        "detail": "baseline 0 -> fault 0.4069 (delta +0.4069, xinf)",
+        "series": [
+          [
+            1791045615.0,
+            0.499983
+          ],
+          [
+            1791045630.0,
+            0.499983
+          ],
+          [
+            1791045645.0,
+            0.499983
+          ],
+          [
+            1791045660.0,
+            0.499983
+          ],
+          [
+            1791045675.0,
+            0.383333
+          ],
+          [
+            1791045690.0,
+            0.383333
+          ],
+          [
+            1791045705.0,
+            0.383333
+          ],
+          [
+            1791045720.0,
+            0.383333
+          ],
+          [
+            1791045735.0,
+            0.400007
+          ],
+          [
+            1791045750.0,
+            0.400007
+          ],
+          [
+            1791045765.0,
+            0.400007
+          ],
+          [
+            1791045780.0,
+            0.400007
+          ],
+          [
+            1791045795.0,
+            0.41666
+          ],
+          [
+            1791045810.0,
+            0.41666
+          ],
+          [
+            1791045825.0,
+            0.41666
+          ],
+          [
+            1791045840.0,
+            0.41666
+          ],
+          [
+            1791045855.0,
+            0.366664
+          ],
+          [
+            1791045870.0,
+            0.366664
+          ],
+          [
+            1791045885.0,
+            0.366664
+          ],
+          [
+            1791045900.0,
+            0.366664
+          ],
+          [
+            1791045915.0,
+            0.216668
+          ],
+          [
+            1791045930.0,
+            0.216668
+          ],
+          [
+            1791045945.0,
+            0.216668
+          ],
+          [
+            1791045960.0,
+            0.216668
+          ],
+          [
+            1791045975.0,
+            0.0
+          ],
+          [
+            1791045990.0,
+            0.0
+          ],
+          [
+            1791046005.0,
+            0.0
+          ]
+        ]
+      },
+      {
+        "id": "frontend-errors",
+        "service": "frontend",
+        "metric": "traces_span_metrics_calls_total",
+        "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"frontend\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+        "direction": "up",
+        "baseline_mean": 0.0,
+        "baseline_samples": 0,
+        "fault_mean": 0.40694354177893377,
+        "fault_samples": 12,
+        "passed": true,
+        "detail": "baseline 0 -> fault 0.4069 (delta +0.4069, xinf)",
+        "series": [
+          [
+            1791045615.0,
+            0.499983
+          ],
+          [
+            1791045630.0,
+            0.499983
+          ],
+          [
+            1791045645.0,
+            0.499983
+          ],
+          [
+            1791045660.0,
+            0.499983
+          ],
+          [
+            1791045675.0,
+            0.383333
+          ],
+          [
+            1791045690.0,
+            0.383333
+          ],
+          [
+            1791045705.0,
+            0.383333
+          ],
+          [
+            1791045720.0,
+            0.383333
+          ],
+          [
+            1791045735.0,
+            0.400007
+          ],
+          [
+            1791045750.0,
+            0.400007
+          ],
+          [
+            1791045765.0,
+            0.400007
+          ],
+          [
+            1791045780.0,
+            0.400007
+          ],
+          [
+            1791045795.0,
+            0.41666
+          ],
+          [
+            1791045810.0,
+            0.41666
+          ],
+          [
+            1791045825.0,
+            0.41666
+          ],
+          [
+            1791045840.0,
+            0.41666
+          ],
+          [
+            1791045855.0,
+            0.366664
+          ],
+          [
+            1791045870.0,
+            0.366664
+          ],
+          [
+            1791045885.0,
+            0.366664
+          ],
+          [
+            1791045900.0,
+            0.366664
+          ],
+          [
+            1791045915.0,
+            0.216668
+          ],
+          [
+            1791045930.0,
+            0.216668
+          ],
+          [
+            1791045945.0,
+            0.216668
+          ],
+          [
+            1791045960.0,
+            0.216668
+          ],
+          [
+            1791045975.0,
+            0.0
+          ],
+          [
+            1791045990.0,
+            0.0
+          ],
+          [
+            1791046005.0,
+            0.0
+          ]
+        ]
+      },
+      {
+        "id": "cart-errors-control",
+        "service": "cart",
+        "metric": "traces_span_metrics_calls_total",
+        "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"cart\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+        "direction": "flat",
+        "baseline_mean": 0.0,
+        "baseline_samples": 0,
+        "fault_mean": 0.0,
+        "fault_samples": 0,
+        "passed": true,
+        "detail": "baseline 0 -> fault 0 (delta +0), expected flat",
+        "series": []
+      }
+    ]
+  }
+}

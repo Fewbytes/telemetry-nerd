@@ -256,7 +256,9 @@ def offline(a: argparse.Namespace) -> int:
     if a.truth is None and "fixtures" in snap_path.parts:
         fx = FIXTURES / "scenarios" / f"{name}.json"
         qs = FIXTURES / "evals" / f"{name}.truth.json"
-        truth_path = fx if fx.exists() else qs if qs.exists() else truth_path
+        # a live run's trimmed fixture (<name>.live-sonnet-4.snapshot.json) has its own truth
+        own = snap_path.with_name(snap_path.name.replace(".snapshot.json", ".truth.json"))
+        truth_path = next((p for p in (own, fx, qs) if p.exists() and p != snap_path), truth_path)
     snap = json.loads(snap_path.read_text())
     if a.transcript:
         lines = Path(a.transcript).read_text().splitlines()

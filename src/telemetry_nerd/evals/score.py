@@ -57,7 +57,9 @@ ACCEPTANCE = ("findings_scoped", "findings_evidenced", "annotation_onset", "zero
 _UP = re.compile(
     r"\b(increas\w*|rose|rise[sn]?|rising|spik\w*|jump\w*|higher|grew|grow\w*|elevated|surg\w*|"
     r"climb\w*|doubl\w*|tripl\w*|went up|up from|exceed\w*|burst\w*|failed|failing|"
-    r"started failing|returned (?:\w+ ){0,2}[45]\d\ds?|started returning|shift\w* up)\b",
+    r"started failing|returned (?:\w+ ){0,2}[45]\d\ds?|started returning|shift\w* up|"
+    # errors appearing is an onset (eval round 4, payment f1: "first errors 16:41")
+    r"first (?:\w+ )?errors?|errors? (?:\w+ ){0,4}(?:appear\w*|began|started|emerged))\b",
     re.IGNORECASE,
 )
 _DOWN = re.compile(
@@ -92,7 +94,8 @@ _EPISTEMIC = re.compile(
 #: a claim that an entity does not exist in the data ("there is no payment service"): a
 #: claim about the source like any other, it needs a cited object (a query, a gap)
 _ABSENCE = re.compile(
-    r"\b(?:there (?:is|are|was|were) no|no (?:\w+ ){0,3}services?\b|"
+    # "no service label" names a label, not a missing service (eval round 4, transcript)
+    r"\b(?:there (?:is|are|was|were) no|no (?:\w+ ){0,3}(?:services\b|service\b(?!\s*(?:labels?|matchers?)\b))|"
     r"(?:does|do|did)(?: not|n't) (?:exist|emit|report|appear)|not present|absent|"
     r"(?:is|are) missing)",
     re.IGNORECASE,

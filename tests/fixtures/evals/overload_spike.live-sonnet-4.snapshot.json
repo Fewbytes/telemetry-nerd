@@ -1,0 +1,380 @@
+{
+ "_fixture": "eval round 4 (d77.3), 2026-10-03, sonnet, after gzrz/wbw/qy7q/aiy/q1p/fxej/vayr; queue-sim 600 s",
+ "workspace": {
+  "panels": [
+   {
+    "id": "p1",
+    "question": "Do concurrency, rate and latency agree (L = \u03bbW) per minute, 16:24\u201316:36?",
+    "status": "open",
+    "spec": {
+     "layers": [
+      {
+       "mark": "littles",
+       "data": "d4",
+       "windows": [],
+       "color": "count",
+       "quantiles": [
+        0.5,
+        0.9,
+        0.99
+       ],
+       "role": "main",
+       "segment_ms": null,
+       "overlap": null,
+       "min_period_ms": null,
+       "max_period_ms": null,
+       "seasonal": null,
+       "spc": null,
+       "fleet": null,
+       "littles": {
+        "source": "default",
+        "datasets": {
+         "arrival_rate": "d1",
+         "latency_sum": "d2",
+         "latency_count": "d3",
+         "concurrency": "d4"
+        },
+        "by": [],
+        "step_ms": 5000,
+        "window_ms": 60000,
+        "k": 12,
+        "skip": 1,
+        "start_ms": 1791044640000,
+        "end_ms": 1791045360000,
+        "unit_factor": 1.0,
+        "unit": "s",
+        "unit_basis": "inferred from metric name",
+        "lookback_ms": 0,
+        "counter_form": "increase_tiles",
+        "tile_s": 5.0,
+        "scrape_ms": 5000,
+        "scrape_probe": null,
+        "resolution_ms": 5000,
+        "arrivals": "unknown",
+        "arrival_is_rate": false,
+        "roles": {
+         "arrival_rate": "http_requests_total",
+         "latency": "http_request_duration_seconds",
+         "concurrency": "http_server_active_requests"
+        },
+        "binding": null,
+        "exprs": {
+         "arrival_rate": "sum (increase(http_requests_total[5s]))",
+         "latency_sum": "sum (increase(http_request_duration_seconds_sum[5s]))",
+         "latency_count": "sum (increase(http_request_duration_seconds_count[5s]))",
+         "concurrency": "sum (http_server_active_requests)"
+        },
+        "warmup": null,
+        "matchers": {
+         "arrival_rate": [],
+         "latency": [],
+         "concurrency": []
+        }
+       }
+      }
+     ],
+     "y": {
+      "range_mode": "data",
+      "unit": "count",
+      "unit_provenance": "knowledge pack",
+      "label": null,
+      "views": [],
+      "selected": null,
+      "context": null,
+      "asserted_bounds": null
+     },
+     "references": {},
+     "marginal": null,
+     "signal": null,
+     "overlays": {
+      "normal": true,
+      "limit": true,
+      "ghost": false
+     },
+     "auto": null,
+     "group": null
+    },
+    "dataset_ids": [
+     "d4",
+     "d1",
+     "d2",
+     "d3"
+    ],
+    "created_at_ms": 1791045367638,
+    "answered_by": null,
+    "closed": false
+   }
+  ],
+  "annotations": [
+   {
+    "kind": "region",
+    "panel": "p1",
+    "t_start_ms": 1791045000000,
+    "t_end_ms": 1791045150000,
+    "value": null,
+    "value_hi": null,
+    "label": "overload episode: backlog +393 in 16:30 min (L 24\u2192407), peaks ~944 in flight, drains by ~16:32:30 (bounds \u00b130s, 1m windows)",
+    "links": [],
+    "id": "a1",
+    "author": "claude",
+    "created_at_ms": 1791045379777,
+    "deleted": false
+   }
+  ],
+  "hypotheses": [
+   {
+    "id": "h1",
+    "statement": "checkout in-flight, rate and latency disagree only transiently 16:30\u201316:32:30 because an arrival surge overloaded checkout (backlog built then drained); outside it L=\u03bbW holds",
+    "status": "supported",
+    "author": "claude",
+    "evidence_for": [
+     "f2"
+    ],
+    "evidence_against": [],
+    "alternatives_considered": "h2 (persistent instrumentation mismatch) refuted by f1: ratio 1.005 over the range, windows outside the episode consistent.",
+    "status_reason": null,
+    "scope": {
+     "text": null,
+     "source": null,
+     "selector": "{service=\"checkout\"}",
+     "time_range": {
+      "start_ms": 1791044640000,
+      "end_ms": 1791045360000
+     },
+     "step": null,
+     "aggregation": null
+    },
+    "created_at_ms": 1791045380924,
+    "updated_at_ms": 1791045408487
+   },
+   {
+    "id": "h2",
+    "statement": "checkout metrics are persistently inconsistent over 16:24\u201316:36 because of an instrumentation mismatch (e.g. gauge or counter mis-scoped) in checkout",
+    "status": "refuted",
+    "author": "claude",
+    "evidence_for": [],
+    "evidence_against": [
+     "f1",
+     "f2"
+    ],
+    "alternatives_considered": null,
+    "status_reason": "f1: range-wide L/\u03bbW=1.005 (CI 0.96\u20131.05), no systematic offset; discrepancy confined to 16:30\u201316:32:30 (f2).",
+    "scope": {
+     "text": null,
+     "source": null,
+     "selector": "{service=\"checkout\"}",
+     "time_range": {
+      "start_ms": 1791044640000,
+      "end_ms": 1791045360000
+     },
+     "step": null,
+     "aggregation": null
+    },
+    "created_at_ms": 1791045381634,
+    "updated_at_ms": 1791045408265
+   }
+  ],
+  "findings": [
+   {
+    "claim": "Over 16:24\u201316:36 mean in-flight L=110.9 (CI 106.4\u2013115.4) matches \u03bb\u00b7W=110.4 (ratio 1.005, CI 0.96\u20131.05) for the aggregated series; no systematic offset, so a standing instrumentation mismatch is not supported.",
+    "scope": {
+     "source": "default",
+     "selector": "http_server_active_requests",
+     "time_range": {
+      "start_ms": 1791044640000,
+      "end_ms": 1791045360000
+     },
+     "step": "5s",
+     "aggregation": "as written in scope.selector",
+     "baseline_range": null
+    },
+    "evidence": [
+     {
+      "kind": "statistic",
+      "dataset": "d4",
+      "name": "littles_law_ratio",
+      "value": 1.005,
+      "interval": [
+       0.9636,
+       1.046
+      ],
+      "exact": false,
+      "uncertainty_unknown": false,
+      "method": "check_littles_law",
+      "params": {},
+      "source": null
+     }
+    ],
+    "caveats": [
+     "d4: 2546658abb11e6a7: 85% of expected samples in the claim window.",
+     "d4: __name__=\"http_server_active_requests\" not checked: the evidence series carry no metric name, so the claim's metric is not confirmed."
+    ],
+    "hypotheses": [
+     {
+      "id": "h2",
+      "stance": "against"
+     }
+    ],
+    "answers_panel": null,
+    "scope_note": null,
+    "id": "f1",
+    "author": "claude",
+    "created_at_ms": 1791045403800,
+    "verdict": null,
+    "verdict_comment": null,
+    "evidence_flags": [],
+    "scope_check": {
+     "status": "covered",
+     "named": [],
+     "not_covered": [],
+     "undetermined": [],
+     "message": ""
+    },
+    "source_flags": [
+     {
+      "evidence": 0,
+      "flag": "source_undetermined",
+      "source": "undetermined",
+      "message": "not traced to an op result, and it carries no source: what its variation is attributed to (common cause, special cause, measurement system) is undetermined"
+     }
+    ]
+   },
+   {
+    "claim": "Between 16:30:00 and ~16:32:30 the aggregated series left steady state: backlog +393 in the 16:30 window (z=66, p\u22640.0002, L 24\u2192407), in-flight peaked ~944, mean W rose ~1s\u219219s; the drain in 16:31:30\u201316:32:30 gave L/\u03bbW=1.36 (CI 1.22\u20131.50), L 944\u2192155. Transient overload and recovery; arrival surge vs slow service as first cause not separated.",
+    "scope": {
+     "source": "default",
+     "selector": "http_server_active_requests",
+     "time_range": {
+      "start_ms": 1791044640000,
+      "end_ms": 1791045360000
+     },
+     "step": "5s",
+     "aggregation": "as written in scope.selector",
+     "baseline_range": null
+    },
+    "evidence": [
+     {
+      "kind": "annotation",
+      "annotation": "a1"
+     },
+     {
+      "kind": "statistic",
+      "dataset": "d4",
+      "name": "littles_law_backlog_growth",
+      "value": 393.0,
+      "interval": [
+       349.1,
+       436.9
+      ],
+      "exact": false,
+      "uncertainty_unknown": false,
+      "method": "check_littles_law",
+      "params": {},
+      "source": null
+     },
+     {
+      "kind": "statistic",
+      "dataset": "d4",
+      "name": "littles_law_transient",
+      "value": 0.3601,
+      "interval": [
+       0.218,
+       0.502
+      ],
+      "exact": false,
+      "uncertainty_unknown": false,
+      "method": "check_littles_law",
+      "params": {},
+      "source": null
+     }
+    ],
+    "caveats": [
+     "d4: 2546658abb11e6a7: 85% of expected samples in the claim window.",
+     "d4: __name__=\"http_server_active_requests\" not checked: the evidence series carry no metric name, so the claim's metric is not confirmed."
+    ],
+    "hypotheses": [
+     {
+      "id": "h1",
+      "stance": "for"
+     },
+     {
+      "id": "h2",
+      "stance": "against"
+     }
+    ],
+    "answers_panel": null,
+    "scope_note": null,
+    "id": "f2",
+    "author": "claude",
+    "created_at_ms": 1791045405748,
+    "verdict": null,
+    "verdict_comment": null,
+    "evidence_flags": [],
+    "scope_check": {
+     "status": "covered",
+     "named": [],
+     "not_covered": [],
+     "undetermined": [],
+     "message": ""
+    },
+    "source_flags": [
+     {
+      "evidence": 1,
+      "flag": "source_undetermined",
+      "source": "undetermined",
+      "message": "not traced to an op result, and it carries no source: what its variation is attributed to (common cause, special cause, measurement system) is undetermined"
+     },
+     {
+      "evidence": 2,
+      "flag": "source_undetermined",
+      "source": "undetermined",
+      "message": "not traced to an op result, and it carries no source: what its variation is attributed to (common cause, special cause, measurement system) is undetermined"
+     }
+    ]
+   }
+  ],
+  "gaps": [],
+  "groups": [],
+  "code": [],
+  "threads": [],
+  "last_seq": 18
+ },
+ "exprs": {
+  "d1": [
+   "sum (increase(http_requests_total[5s]))"
+  ],
+  "d2": [
+   "sum (increase(http_request_duration_seconds_sum[5s]))"
+  ],
+  "d3": [
+   "sum (increase(http_request_duration_seconds_count[5s]))"
+  ],
+  "d4": [
+   "sum (http_server_active_requests)"
+  ],
+  "d5": [
+   "http_server_active_requests"
+  ],
+  "d6": [
+   "sum by (pod) (increase(http_requests_total[5s]))"
+  ],
+  "d7": [
+   "sum by (pod) (increase(http_request_duration_seconds_sum[5s]))"
+  ],
+  "d8": [
+   "sum by (pod) (increase(http_request_duration_seconds_count[5s]))"
+  ],
+  "d9": [
+   "sum by (pod) (http_server_active_requests)"
+  ],
+  "p1": [
+   "sum (http_server_active_requests)",
+   "sum (increase(http_requests_total[5s]))",
+   "sum (increase(http_request_duration_seconds_sum[5s]))",
+   "sum (increase(http_request_duration_seconds_count[5s]))"
+  ]
+ },
+ "transcript": {
+  "result": "Concurrency, request rate and latency agree for checkout over the whole window, except for one overload episode from about 16:30:00 to 16:32:30 UTC. Over 16:24\u201316:36, mean in-flight requests were 110.9 (CI 106.4\u2013115.4) against rate \u00d7 latency of 110.4. That is a ratio of 1.005 (CI 0.96\u20131.05), with no systematic offset.\n\n**Scope:** checkout is the only service found (`entities`, labels searched: service, job, and others). It runs as 3 pods under job `qs-overload_spike`, with `http_requests_total`, `http_request_duration_seconds` and `http_server_active_requests`.\n\n**Where and when:**\n- **Backlog build, 16:30\u201316:31:** in-flight requests went from 24 to 407, a backlog growth of +393 (CI 349\u2013437, p \u2264 0.0002). Request rate was about 1.9\u00d7 its median at the start, and mean latency rose from about 1 s to about 19 s. The ratio in that window was 1.21 (CI 0.85\u20131.56).\n- **Drain, 16:31:30\u201316:32:30:** in-flight requests fell from 944 to 155. In-flight was then 1.36\u00d7 rate \u00d7 latency (CI 1.22\u20131.50), because completions carry time spent before the window.\n- **Elsewhere:** the other judged one-minute windows are consistent with Little's law. The first window, 16:24, had too few samples to judge.\n\n**Why:** the evidence fits a transient overload and recovery, not a standing instrumentation mismatch. I did not establish whether the arrival surge or a slowdown in the service came first. The rate was already high at onset and latency rose afterwards, but one-minute windows can't order them.\n\n**Hypotheses**\n- h1, a transient overload with backlog build and drain, is supported (f2).\n- h2, a persistent instrumentation mismatch, is refuted (f1).\n\n**Findings**\n- **f1:** the range-wide ratio of 1.005 (scope covered).\n- **f2:** the episode at 16:30\u201316:32:30 (scope covered).\n- Both findings are flagged `source_undetermined`. The Little's-law dataset carries no service label, so I scoped them to the metric name instead of `{service=\"checkout\"}`.\n\n**Annotation and panel:** the episode is annotated as a region (a1) on panel p1, the Little's-law view, with bounds of \u00b130 s.\n\n**Not done:**\n- **Per-pod breakdown:** it ran, but the 54k-character result was saved to a file and I couldn't read it because Bash is disabled. So I can't say whether one pod drove the episode.\n- **Deploys or config changes:** I couldn't ask about these, so none are annotated.\n- **Source gap:** the three pods were silent for the last 15 s of the window; this didn't change the result.\n\nWorkspace: http://127.0.0.1:58286"
+ }
+}

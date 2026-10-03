@@ -1,0 +1,57 @@
+{
+  "scenario": "overload_spike",
+  "description": "Base rho 0.5; rho 1.5 for 60 s (t = 300..360) on every instance, with an ARRIVALS counter: a backlog of ~300 requests per instance builds and drains by ~t = 420. Arrivals and completions diverge while it lasts, so lambda W (from arrivals) and L disagree only in the transient windows.\n",
+  "service": "checkout",
+  "instances": [
+    "checkout-0",
+    "checkout-1",
+    "checkout-2"
+  ],
+  "group_by": "pod",
+  "metrics": {
+    "arrival_rate": "http_requests_total",
+    "latency": "http_request_duration_seconds",
+    "concurrency": "http_server_active_requests"
+  },
+  "duration_s": 600.0,
+  "scrape_interval_s": 5.0,
+  "started_unix_ms": 1791044734145,
+  "ended_unix_ms": 1791045334152,
+  "defaults": {
+    "lambda": 5.0,
+    "mu": 1.0,
+    "c": 10,
+    "counter": "arrivals",
+    "timer": "arrival"
+  },
+  "overrides": {},
+  "faults": [
+    {
+      "kind": "overload",
+      "start_s": 300.0,
+      "end_s": 360,
+      "start_unix_ms": 1791045034145,
+      "end_unix_ms": 1791045094145,
+      "instances": [
+        "checkout-0",
+        "checkout-1",
+        "checkout-2"
+      ],
+      "set": {
+        "lambda": 15.0
+      },
+      "expect": {
+        "verdict": "any",
+        "classification": "transient"
+      },
+      "effect": {
+        "backlog_peak_per_instance": 300.0,
+        "drain_end_s": 420.0
+      }
+    }
+  ],
+  "expect": {
+    "verdict": "any",
+    "classification": "transient"
+  }
+}

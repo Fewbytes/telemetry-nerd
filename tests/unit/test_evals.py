@@ -991,3 +991,92 @@ def test_scorer_reads_structured_hypothesis_links():
     assert ruled_out({"status": "refuted", "evidence_against": ["f3"]})
     assert ruled_out({"status": "inconclusive", "status_reason": "no arrivals counter"})
     assert not ruled_out({"status": "proposed", "evidence_against": ["f3"]})
+
+
+@pytest.mark.parametrize(
+    "text,flagged",
+    [
+        # eval round 4: a label name, not a missing service
+        (("The Little's-law dataset carries no service label, so I scoped them to the metric "
+          'name instead of `{service="checkout"}`.'), False),
+        ("checkout exports no service matchers we could use.", False),
+        ("There is no checkout service in this source.", True),
+        ("We found no checkout service.", True),
+        ("no checkout services label the pods.", True),
+    ],
+)  # fmt: skip
+def test_no_service_label_is_not_an_absence_claim(text, flagged):
+    assert bool(transcript_unscoped(text, _qs_truth())) is flagged, text
+
+
+def test_queue_sim_round4_scores_as_observed():
+    """Eval round 4, queue-sim (after gzrz/wbw/qy7q/aiy/q1p/fxej/vayr): at the learned 5s
+    resolution check_littles_law (1m) opens with the special cause (16:30 load peak promoted,
+    16:31:30 drain); f2 reports it, a1 marks the episode -34 s from fault start, h1 (arrival surge)
+    supported against a refuted h2. Fails only source_label: f2 cites the check's statistics with
+    a shortened method and no source, so the daemon could not trace them (product: tcfz). The
+    transcript's 'no service label' sentence is not an absence claim (scorer fix, round 4)."""
+    t = load_truth(EV / "overload_spike.live-sonnet-4.truth.json", extra_terms("overload_spike"))
+    rep = score(snap("overload_spike.live-sonnet-4"), t)
+    st = {c.id: c.status for c in rep.checks}
+    assert {k for k, v in st.items() if v == "fail"} == {"source_label"}
+    assert st["special_cause_windows"] == st["root_cause_named"] == "pass"
+    by = {f.id: f for f in rep.findings}
+    assert by["f2"].incident and by["f2"].sources == ["undetermined"] and not by["f2"].source_ok
+    assert [(h.id, h.role, h.status) for h in rep.hypotheses] == [
+        ("h1", "root_cause", "supported"), ("h2", "other", "refuted")]  # fmt: skip
+    assert [a.verdict for a in rep.annotations] == ["onset_ok"] and not rep.unscoped_claims
+    assert (rep.passed, rep.applicable) == (11, 12) and rep.acceptance
+
+
+def test_queue_sim_round4_stream_counts_rounds_not_turns():
+    out = live.parse_stream(
+        (EV / "overload_spike.live-sonnet-4.stream.jsonl").read_text().splitlines()
+    )
+    assert (out["tool_rounds"], out["num_turns"], out["tool_results"]) == (15, 28, 27)
+    assert live.caps({**out, "aborted": None}, 40, 5.0)["stopped_by"] == "finished"
+
+
+def test_payment_round4_scores_as_observed():
+    """Eval round 4, payment-failure (after gzrz/wbw/qy7q/aiy/q1p/fxej/vayr): entities + span
+    metrics found the PlaceOrder -> Charge path; h1 (payment Charge failed) supported against a
+    refuted arrival-surge h2 (f2 against it); region a1 +129 s from fault start; no uncited
+    headline. Fails only source_label: analyze(d2) skipped every born error series as
+    too_few_points (product: 7thi), so f1 cites panels only (source undetermined). f1 ("first
+    errors 16:41 ... none from 16:46") is an incident finding (scorer fix, round 4: before it,
+    source_label was n/a and the run scored 11/11)."""
+    t = load_truth(EV / "payment-failure.live-sonnet-4.truth.json")
+    rep = score(snap("payment-failure.live-sonnet-4"), t)
+    st = {c.id: c.status for c in rep.checks}
+    assert {k for k, v in st.items() if v == "fail"} == {"source_label"}
+    by = {f.id: f for f in rep.findings}
+    assert by["f1"].incident and by["f1"].sources == ["undetermined"] and not by["f1"].source_ok
+    assert not by["f2"].incident  # against h2 only
+    assert [(h.id, h.role, h.status) for h in rep.hypotheses] == [
+        ("h1", "root_cause", "supported"), ("h2", "other", "refuted")]  # fmt: skip
+    assert [a.verdict for a in rep.annotations] == ["onset_ok"] and not rep.unscoped_claims
+    assert (rep.passed, rep.applicable) == (11, 12) and rep.acceptance
+
+
+def test_payment_round4_stream_counts_rounds_not_turns():
+    out = live.parse_stream(
+        (EV / "payment-failure.live-sonnet-4.stream.jsonl").read_text().splitlines()
+    )
+    assert (out["tool_rounds"], out["num_turns"], out["tool_results"]) == (20, 32, 31)
+    assert live.caps({**out, "aborted": None}, 40, 5.0)["stopped_by"] == "finished"
+
+
+@pytest.mark.parametrize(
+    "claim,change",
+    [
+        ("Error spans appear in checkout: first errors 16:41, last 16:45.", True),
+        ("payment errors began at 16:41", True),
+        ("payment errors started at 16:41 and stopped at 16:45", True),
+        ("No errors appear in cart over the window.", False),
+        ("cart errors remained zero", False),
+    ],
+)  # fmt: skip
+def test_errors_appearing_is_a_change(claim, change):
+    from telemetry_nerd.evals.score import asserts_change
+
+    assert asserts_change(claim) is change, claim
