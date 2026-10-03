@@ -305,6 +305,41 @@ class Sim:
 # --- ground truth
 
 
+def exact_windows(sc: Scenario, spans_s: list[tuple[float, float]], dt: float = 0.02) -> list[dict]:
+    """The exact Little's law quantities per window (sim seconds, ascending, non-overlapping),
+    summed over the instances, from the simulation itself (deterministic for a seed): L the time
+    average of the EXPORTED in-flight gauge (integrated every `dt`), lambda what the request
+    counter counts per second, W the mean timed latency of the window's completions, R = L /
+    (lambda W). What a perfect instrument would report for the check's windows."""
+
+    def totals(sim: Sim) -> tuple[float, float, float, float]:
+        ins = sim.inst.values()
+        return (
+            float(sum(i.in_flight for i in ins if i.p.export_gauge)),
+            float(sum(i.requests for i in ins)),
+            float(sum(i.lat_sum for i in ins)),
+            float(sum(i.n_timed for i in ins)),
+        )
+
+    sim, out = Sim(sc), []
+    for a, b in spans_s:
+        sim.advance(a)
+        _, A0, S0, C0 = totals(sim)
+        k = max(1, round((b - a) / dt))
+        h = (b - a) / k
+        integral = 0.0
+        for j in range(k):
+            sim.advance(a + (j + 0.5) * h)
+            integral += totals(sim)[0] * h
+        sim.advance(b)
+        _, A1, S1, C1 = totals(sim)
+        L, lam = integral / (b - a), (A1 - A0) / (b - a)
+        W = (S1 - S0) / (C1 - C0) if C1 > C0 else math.nan
+        out.append({"start_s": a, "end_s": b, "L": L, "lambda": lam, "W": W,
+                    "R": L / (lam * W) if lam > 0 and W > 0 else math.nan})  # fmt: skip
+    return out
+
+
 def _overload_effect(sc: Scenario, f: Fault, end: float) -> dict:
     """Backlog built and the time it takes to drain, for the most overloaded targeted instance."""
     peak, drain_end = 0.0, f.until if f.until is not None else end

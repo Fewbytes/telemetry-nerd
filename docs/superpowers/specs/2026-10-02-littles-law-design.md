@@ -12,12 +12,30 @@ selector `name{matchers}`.
 
 Four queries at one sub-step `s` (bucket end times, `(t-s, t]`), one dataset each:
 
-| quantity | query | per sub-step |
-|---|---|---|
-| λ | `sum by (G) (rate(A[$__rate_interval]))` (a gauge rate is used as is) | arrivals/s |
-| W numerator | `sum by (G) (rate(H_sum[$__rate_interval]))` | latency-seconds/s |
-| W denominator | `sum by (G) (rate(H_count[$__rate_interval]))` | completions/s |
-| L | `sum by (G) (C)` | time-average of the gauge, with its sample count |
+| quantity | query (VictoriaMetrics) | query (Prometheus) | per sub-step |
+|---|---|---|---|
+| λ | `sum by (G) (increase(A[r]))` / r | `sum by (G) (rate(A[$__rate_interval]))` | arrivals/s |
+| W numerator | `sum by (G) (increase(H_sum[r]))` / r | `… rate(H_sum[$__rate_interval])` | latency-seconds/s |
+| W denominator | `sum by (G) (increase(H_count[r]))` / r | `… rate(H_count[$__rate_interval])` | completions/s |
+| L | `sum by (G) (C)` | same | time-average of the gauge, with its sample count |
+
+(a gauge rate is used as is.) **Counters on VictoriaMetrics (9fd, 2026-10-03)**: `r` is the
+source resolution (the scrape interval) and each sub-step averages the subquery evaluated every
+`r`: VictoriaMetrics' `increase()` counts from the last sample before its window to the last one
+in it, without extrapolation, so the `r` tiles partition the counter exactly (their sum over a
+sub-step is the counter's increase between the last scrapes before its two ends; verified on
+v1.137) and each tile ends at the very scrape the gauge is read at. No lookback by construction.
+With `rate(x[$__rate_interval])` (the Prometheus path, and what the check did before) each
+evaluation reaches back over the whole rate interval: measured on VM, the counters' window sits
+ri/2 behind the bucket (10 s at 5-60 s sub-steps with a 5 s scrape) — the old bias term assumed
+(ri − s)/2, i.e. 2.5 s at 15 s sub-steps — and the spike's counts are smeared into the next
+windows (below).
+A tile in which no scrape landed (scrapes on the tile edges with jitter: the next tile holds
+two) comes back without a value — the source drops buckets without an observed sample — and is
+taken as what VictoriaMetrics returns for it: an increase of 0, the gauge's last reading. Left
+out, the next tile's two intervals of counts were set against one gauge reading (λ 1.4-1.6×, an
+`L_low` "systematic offset" in every window at that scrape phase). Only isolated gaps; longer
+ones are missing data in all four signals.
 
 W = Σsum / Σcount over the window: the mean, never a percentile. Native histograms use
 `histogram_sum` / `histogram_count`. Latency that is only a percentile (a `quantile=` selector,
@@ -28,7 +46,14 @@ catalog, else name suffix; if none: assumed seconds and flagged `latency_unit_as
 Windows: `window` (default ≈ range/12, a nice duration) holds k ≥ 8 sub-steps (`s` = the largest
 multiple of the scrape interval giving ≥ 20 per window). Sub-steps where any of the four signals is
 missing are dropped from all four (alignment); a window with < 4 is `insufficient`. `warmup`
-drops the start of the range.
+drops the start of the range. **Windows are anchored at the requested start** (rounded up to the
+sub-step; xa4): before, the range was widened outward to wall-clock multiples of the window, so
+up to a window of data before `start` (a warm-up the caller excluded) was judged and the grid
+did not follow the data. A trailing part of ≥ half a window is judged as a short window; a range
+holding fewer than two windows is refused. **Scrape interval probed**: the gauge's median sample
+spacing at the range end is compared with the source's configured resolution; a mismatch is
+stated in `gauge_sampling` (and in a refused window's message, with the `source_connect(…,
+resolution=…, replace=true)` hint); the error terms use the larger.
 
 ## Discrepancy first (60j, user decision 2026-10-03)
 The check always reports the discrepancy, whatever the verdict: per window and pooled, the
@@ -87,7 +112,12 @@ scrape timing and the instruments' spread; the windows' standard errors; the win
 measurement sds), source special cause.
 
 ## Estimator and measurement interval (per window, per group, and pooled)
-R = L̂ / (λ̂·Ŵ) with L̂, λ̂, S̄, C̄ the sub-step means and Ŵ = S̄/C̄.
+R = L̂ / (λ̂·Ŵ) with L̂, λ̂, S̄, C̄ the sub-step means and Ŵ = S̄/C̄. **Gauge end-of-interval
+reading (trapezoid)**: the counters cover (s_{j−1}, s_j], the gauge is read at s_j, so the sum of
+readings integrates N half a scrape late: off by (N_end − N_before)·g/2 per contiguous segment
+(exact for a linear path). Its sign is known, so it is corrected, not bounded: L̂ −= (N at the
+window's last sub-step − N at the sub-step before it)·g / (2T). On the seeded spike runs it cuts
+the rms error of L̂ against the exact ∫N dt from 14.3% to 12.7% (mean error ~0 either way).
 
 The estimand is the realised path: over a window, L·T = ∫N dt and λ·W·T = Σ measured latencies of
 the window's completions describe the same requests up to those straddling its edges. So the
@@ -108,10 +138,13 @@ differ:
    neighbouring window (rate() extrapolates over them): at most one scrape interval g per edge,
    Poisson in that fragment: √(2·g·λ)/(λT) for the arrival counter and √(2·g·C)/(C·T) for the
    latency count/sum (CV 1), added linearly (correlation unknown).
-4. **rate() lookback** (bias bound, added to the half-width): each sub-step's rate() looks back
-   δ = (rate interval − s)/2 further than the gauge average; the window's counts are those of a
-   window shifted by δ: R·δ/T·|x̄_end − x̄_start|/x̄ over the sub-steps one rate interval covers at
-   each end (λ, S, C; the largest), plus that estimate's own counting noise √(2/N_end).
+4. **rate() lookback** (bias bound, added to the half-width; Prometheus path only — 0 with VM's
+   increase() tiles): each sub-step's rate() looks back δ = (rate interval − scrape)/2 further
+   than the gauge reading; the window's counts are those of a window shifted by δ:
+   R·δ/T·|x̄_end − x̄_start|/x̄ over the sub-steps one rate interval covers at each end (λ, S, C;
+   the largest), plus that estimate's own counting noise √(2/N_end). On real VM data this bound
+   was the widest term exactly where a spike is (0.38 on a peak window whose sd was 0.07) and still
+   failed to cover the truth (below): the tiles remove the cause instead of bounding it.
 
 1–3 in quadrature on R (independent instruments / instants); interval = R ± (t_{n−1}·sd + bias),
 clipped at 0. L and λ·W get their own intervals for the panel. The counts' Poisson noise (±1/√N on
@@ -142,6 +175,18 @@ differences smaller than that are not distinguishable from small-system behaviou
   `warnings` and the summary, common cause as "not a signal by itself"), `drain` (a
   backlog draining after a peak) or `other` (a change confined to those windows: a deploy, an
   instance joining/leaving, queueing the timer misses, instrumentation).
+- **Shifted grid (xa4)**: a load episode (backlog building, then draining) that starts and ends
+  inside one window balances over it — Little's law holds over that window — so where it falls
+  on the grid decided whether it was seen (real VM, 2-minute windows: a ρ 1.5 × 60 s spike was
+  missed at 1 of 3 grid phases with either counter). The windows are also judged on a second grid
+  shifted by half a window; the window tests and the promotions are Bonferroni over both grids
+  (2 × tests). Special-cause windows of the shifted grid that no special-cause window of the main
+  grid overlaps are added to `transient` / `promoted` with `grid: offset` and their own span,
+  ratio, interval and reference (panel: shaded by their own span); a non-promoted one makes the
+  verdict `inconsistent_in_windows` when the main grid alone is consistent. An episode shorter
+  than half a window can still fall inside a window of both grids. Cost (seeded, below): a change
+  filling exactly one main-grid window is found a little less often (×1.6: 52 → 45 of 75), a
+  15-minute overload 71 → 64 of 75; a 90 s spike anywhere on the grid 28 → 46 of 75.
 - **Overall verdict**: `L_high` / `L_low` when there is a systematic offset; else
   `inconsistent_in_windows` when any window is transient; else `consistent`. False alarms ≤ α by
   construction.
@@ -170,7 +215,10 @@ binding without concurrency shows a `check` card with the gauge to add, and `bin
   `missing_in`; differing matchers across roles are stated (`selectors_differ`); a `by` label
   absent on a role is reported.
 - **Units**: per-second rates; W in seconds with the unit's provenance.
-- **Window alignment**: one sub-step grid for all four; the rate lookback offset is a bias term.
+- **Window alignment**: one sub-step grid for all four, windows anchored at the requested start;
+  VM counters as increase() tiles ending at the gauge's scrapes (no lookback); elsewhere the rate
+  lookback offset is a bias term; the gauge's end-of-interval reading corrected; a load episode
+  that starts and ends inside one window balances over it (stated).
 - **Warm-up**: excluded only when `warmup` is given; stated either way.
 - **Window ≫ W**: `window_short_vs_latency` when Ŵ > T/10.
 
@@ -228,3 +276,62 @@ source is special cause, beyond the envelope or promoted):
 | overload ρ 1.05 for 15 min, arrivals counter (75): any of its windows special | 0/75 | 71/75 (backlog growth in 68, W rising across consecutive windows in 46) |
 | six peaks ρ 0.8→1.05 every 20 min, queueing the timer misses (50): last three peaks all special | 42/50 | 44/50 (15 runs promote on peak-to-peak growth) |
 | six peaks ρ 0.6→0.9, same (50): last three peaks all special | 0/50 | 12/50 (13 runs promote on peak-to-peak growth: a distribution-free trend over 6 points at 1.7% has little power) |
+
+Real-VM fixes (9fd, xa4, 00s; 2026-10-03): VM increase() tiles, windows anchored at `start`,
+the gauge's end-of-interval reading corrected, the shifted grid. Seeded calibration
+(`scripts/calibrate_littles.py`, fixed seeds; before = master at 0e6833d; the analysis layer, so
+the tiles are not in it — the sim's counters are exact per scrape already):
+
+| scenario (seeds) | before | after |
+|---|---|---|
+| consistent λ=2 c=4 (150): FAR, coverage, promotions | 3/150, 97.7%, 0 | 3/150, 97.9%, 0 |
+| consistent λ=9.5 c=10 (150) | 0/150, 99.4%, 0 | 0/150, 99.8%, 1 promotion |
+| consistent λ=19 c=25 (50) | 1/50, 98.0% | 0/50, 98.2% |
+| consistent λ=0.3 (150) | 1/150, 98.8% | 1/150, 98.8% |
+| load steps ρ 0.5→0.925→0.5 (75): alarms, promotions | 1, 2 | 1, 1 |
+| gauge ×1.05 / ×1.1 / ×1.2 at λ=9.5 (75) | 14 / 73 / 75 | 12 / 73 / 75 |
+| gauge ×1.05 / ×1.1 / ×1.2 at λ=2 (75) | 2 / 17 / 63 | 1 / 17 / 63 |
+| gauge ×1.3 / ×1.6 in exactly one main-grid window (75) | 10 / 52 (no shifted grid) | 2 / 45 |
+| overload ρ 1.05 15 min, arrivals counter (75): any window special | 71 (no shifted grid) | 64 |
+| 90 s spike ρ 1.5 at a seeded position, completions / arrivals counter (75): a special window at it; stray special windows | 28 / 27; 0 (no shifted grid) | 46 / 44; 0 |
+| ρ 1.25 spike 5 min, completions counter (75): peak window special | 75 | 75 |
+| ρ 1.25 spike 5 min, arrivals counter (75): peak window special (promoted) | 75 (75) | 75 (75) |
+| six peaks ρ 0.6→0.9, queueing the timer misses (seeds 900-949): promoted on peak-to-peak growth | 10/50 | 8/50 (part of it was the gauge's end-of-interval bias) |
+
+**Real VictoriaMetrics validation** (bead 317; `scripts/validate_queue_sim.py`: VM v1.137.0 scraping
+the queue-sim exporters every 5 s over HTTP, 3 pods, `by=["pod"]`, 20 s warm-up excluded; "exact
+R in interval" = windows whose 95% measurement interval holds the simulation's exact R, from
+`queue_sim.exact_windows`). The first runs (and the earlier notes on 317) were taken through the
+podman host gateway, which stalled scrapes for 1-19 s and dropped whole minutes (the spike's
+window was `insufficient`); the exporters now run in a container on the VM's network, addressed
+by IP (≤ 1 failed scrape per scenario). Ground truth: leak = `L_high` with `growing` (a drifting
+offset, as above; the scenario said `inconsistent_in_windows`); systematic scenarios may carry
+transients of the same fault in its own direction (hidden-queue excursions); a spike = a
+special-cause window at its episode (load + drain), none elsewhere, `peak`/`drain` labels on
+the right side. Before = master 0e6833d (rate() lookback, wall-clock windows); after = this fix.
+
+| scenario | window | before: result (exact R in interval) | after: result (exact R in interval) |
+|---|---|---|---|
+| consistent ρ 0.8 | 1m / 2m / auto (1m) | consistent ×3 (all) | consistent ×3 (10/10, 5/5, 10/10) |
+| hidden queueing ρ 0.9 | 1m / auto | L_high sys 1.72 [1.53, 1.92] (all) | L_high sys 1.61 [1.49, 1.72] + one hidden-queue excursion (2.38, other, special) (10/10) |
+| hidden queueing | 2m | L_high sys 1.62 + excursion 2.08 (all) | L_high sys 1.70 [1.49, 1.90] + excursion 2.09 on the shifted grid (5/5) |
+| missing instance (1 of 3 gauges; exact 0.667) | 1m / 2m / auto | L_low sys 0.664 / 0.665 / 0.664 (all) | L_low sys 0.661 [0.62, 0.70] / 0.663 / 0.661 (all) |
+| overload ρ 1.5 × 60 s, arrivals counter | 1m | drain 0.277 special (exact 0.740: outside its interval [0.08, 0.47]); peak 1.57 promoted (exact 1.026) (11/14) | inconsistent_in_windows: drain 1.34 special and the peak promoted (backlog growth; R 1.04, exact ≈1.03), both on the shifted grid (15/15) |
+| overload, arrivals | 2m / auto | drain 0.350 special (exact 0.787) (6/7) | drain 0.736 special (7/7) |
+| overload ρ 1.5 × 60 s, completions counter | 1m | peak 2.35 special (exact 1.534), drain 0.231 (exact 0.637) (13/14) | peak 1.35 special, drain 0.559 special (15/15) |
+| overload, completions | 2m / auto | drain 0.311 special (exact 0.728) (6/7) | peak 1.35 special + drain 0.574 special (7/7) |
+| leak 2% stuck from t=120 s | 1m / auto | L_high sys 4.29 [2.13, 6.46], growing (all) | L_high sys 4.68 [2.54, 6.83], growing, slope > 0 (10/10) |
+| leak | 2m | L_high, growing (6 windows: the range widened to wall-clock multiples) | L_high sys 4.67, growing NOT testable: 4 windows + a short one in 580 s (the trend over windows needs 6) (5/5) |
+| any | 5m on 580-600 s | judged on 2-3 widened windows; overload/leak consistent or untestable | refused: fewer than two 5m windows in the range (hint stated) |
+
+Every row at the default window (auto) matches the ground truth after the fix; the overload
+spike at 5m (on the 900 s ranges) stays `consistent`: its whole episode (≈2 min) falls inside
+one 5-minute window of both grids and balances there (exact R 0.98) — a resolution limit,
+stated in `window_alignment`. In the seeded VM integration test
+(tests/integration/test_queue_sim_vm.py) the spike is placed at three grid phases × 1m/auto ×
+both counters, plus scrapes on the tile edges: with a completions counter it is special cause at
+every placement; with an
+arrivals counter one placement (2m) stays `consistent` with nothing promoted — there the exact R
+of the episode's windows is within the intervals and close to 1 (the counter compensates) and
+the backlog growth falls just under the distribution-free promotion threshold, so the check is
+truthful but silent.

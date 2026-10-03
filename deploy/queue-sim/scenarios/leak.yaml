@@ -1,7 +1,8 @@
 name: leak
 description: >
   From t = 120 s, 2% of requests get stuck (in flight forever, never timed): L - lambda W grows
-  linearly (completions counter).
+  linearly (completions counter). Expected: L_high, a systematic offset that drifts (growing),
+  as the Little's law design classes leaked / stuck requests.
 duration_s: 600
 seed: 15
 scrape_interval_s: 5
@@ -12,5 +13,5 @@ faults:
   - kind: leak
     at: 120
     set: {leak: 0.02}
-    expect: {verdict: inconsistent_in_windows, classification: growing}
-expect: {verdict: inconsistent_in_windows, classification: growing}
+    expect: {verdict: L_high, classification: growing}
+expect: {verdict: L_high, classification: growing}

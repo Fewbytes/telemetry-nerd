@@ -12,6 +12,7 @@ from telemetry_nerd.devtools.queue_sim import (
     Params,
     Scenario,
     Sim,
+    exact_windows,
     ground_truth,
     load_scenario,
     make_params,
@@ -190,3 +191,13 @@ def test_overload_ground_truth_predicts_the_backlog_and_drain():
     assert f["kind"] == "overload" and (f["start_s"], f["end_s"]) == (300, 360)
     # (15 - 10) x 60 = 300 backlog, drained at 10 - 5 = 5/s
     assert f["effect"] == {"backlog_peak_per_instance": 300.0, "drain_end_s": 420.0}
+
+
+def test_exact_windows_give_the_realised_littles_law_quantities():
+    """Timer from arrival, no fault: over long windows L = lambda W holds on the realised path;
+    a missing gauge counts only the exported instances (R ~ 1/2 of two equal instances)."""
+    rows = exact_windows(scenario(), [(60.0, 300.0), (300.0, 600.0)], dt=0.05)
+    assert all(abs(r["R"] - 1) < 0.05 for r in rows), rows
+    sc = scenario(overrides={"b": {"export_gauge": False}})
+    (r,) = exact_windows(sc, [(60.0, 600.0)], dt=0.05)
+    assert 0.4 < r["R"] < 0.6
