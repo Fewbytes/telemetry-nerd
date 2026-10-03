@@ -2,7 +2,7 @@ import pytest
 
 from telemetry_nerd.channel.format import describe_event
 from telemetry_nerd.core.events import Event, classify
-from tests.unit.fakes import make_service
+from tests.unit.fakes import FakeSource, make_service
 
 
 async def test_query_falls_back_to_now_1h_when_no_default_set(tmp_path):
@@ -96,6 +96,19 @@ async def test_rescope_logs_a_panel_rescoped_event(tmp_path):
     res = await svc.rescope(pid, "now-3h", "now", "user")
     [e] = [e for e in svc.log.since(before_seq) if e.type == "panel.rescoped"]
     assert e.object_id == res.panel.id and e.payload["from"] == pid
+
+
+async def test_rescope_a_fleet_panel_carries_over_its_options(tmp_path):
+    svc = make_service(tmp_path, source=FakeSource(n_series=6))
+    d = (await svc.query("rate(node_cpu_seconds_total[5m])"))["dataset"]
+    shown = svc.show(d, "per-core?", mark="fleet", bounds_lo=0, bounds_hi=100)
+    pid = shown.panel.id
+    res = await svc.rescope(pid, "now-3h", "now", "user")
+    assert res.panel.id != pid
+    assert res.panel.spec["layers"][0]["mark"] == "fleet"
+    new_cfg = svc.fleets.last_config(res.panel.dataset_ids[0])
+    old_cfg = svc.fleets.last_config(d)
+    assert new_cfg == old_cfg
 
 
 async def test_rescope_refuses_a_code_output_panel(tmp_path):

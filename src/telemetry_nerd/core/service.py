@@ -993,6 +993,10 @@ class TelemetryService:
             reason=f"rescoped from {panel_id}",
         )
         kwargs: dict = {}
+        if mark == "fleet":
+            old_cfg = self.fleets.last_config(p.dataset_ids[0])
+            self.fleets.summary(ds, **old_cfg)
+            kwargs["mark"] = "fleet"
         res = self.show(ds, p.question, actor, auto=form, raw_ok=True, **kwargs)
         self.log.append(actor, "panel.rescoped", res.panel.id, {"from": panel_id})
         return res
