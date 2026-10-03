@@ -152,6 +152,22 @@ unaffected_control}`, `tolerance_s`, `settle_s`, `expected_signals`). `scripts/s
 | `endpoints` | VM, flagd OFREP, frontend; `source_labels.service` = `service_name` |
 | `verification` | `all_passed` and `results[]` per expected signal: baseline/fault means and sample counts, `passed`, `detail`, and the `series` (`[epoch, value]`, 15 s step) used as evidence |
 
+### Observed on this stack (300 s fault, 20 users)
+
+| Scenario | Observed (baseline -> fault) |
+|---|---|
+| `payment-failure` | error spans/s: payment 0.003 -> 0.41, checkout 0.003 -> 0.41, frontend 0.003 -> 0.41; cart stays 0 |
+| `cart-failure` | weak but clean: cart and checkout error spans/s 0 -> 0.008 (EmptyCart is rarely hit) |
+| `homepage-flood` | frontend request rate 2.1 -> 40 /s (x19), product-catalog 1.1 -> 1.9, frontend event-loop utilisation 0.004 -> 0.034; no errors |
+| `ad-high-cpu` | ad `jvm_cpu_recent_utilization_ratio` 0.0004 -> 0.66; ends at the container restart |
+| `shipping-slowdown` | shipping `POST /ship-order` p90 2 ms -> 8-12 s (checkout PlaceOrder inherits ~14 s); `/get-quote` unaffected |
+| `catalog-lock-contention` | product-catalog p90 4 ms -> 15 s (the histogram's top bucket, so a floor), frontend p90 -> 15 s, frontend completed rate 7.9 -> 3.7 /s; recovery takes minutes |
+
+Probed, not shipped as scenarios: `productCatalogFailure` (no error spans in 3 min; sparse by design),
+`recommendationCacheFailure` and `emailMemoryLeak=1000x` (nothing beyond noise within 3 min),
+`paymentUnreachable` (not tried). `uv run scripts/scenario.py reverify <run.json>` re-judges a run
+against the current YAML using the run's recorded window (VM history), for threshold tuning.
+
 ## Verifying Telemetry Nerd against it
 
 After ~10 minutes of traffic (daemon started with `--source-url http://127.0.0.1:8429`):

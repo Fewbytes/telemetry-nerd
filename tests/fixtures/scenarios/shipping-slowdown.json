@@ -1,0 +1,349 @@
+{
+ "version": 1,
+ "scenario": "shipping-slowdown",
+ "description": "intlShippingSlowdown=10sec: international orders wait 10 s in the shipping path; latency (not errors) on checkout PlaceOrder and the frontend checkout request.",
+ "run": {
+  "started_at": 1791027590.115,
+  "started_at_iso": "2026-10-03T11:39:50Z",
+  "baseline_end": 1791027890.115,
+  "baseline_end_iso": "2026-10-03T11:44:50Z",
+  "finished_at": 1791028370.117,
+  "finished_at_iso": "2026-10-03T11:52:50Z",
+  "completed": true,
+  "scale": 1.0
+ },
+ "fault_window": {
+  "start": 1791027890.123,
+  "start_iso": "2026-10-03T11:44:50Z",
+  "end": 1791028190.12,
+  "end_iso": "2026-10-03T11:49:50Z"
+ },
+ "faults": [
+  {
+   "flag": "intlShippingSlowdown",
+   "variant": "10sec",
+   "start": 1791027890.123,
+   "start_iso": "2026-10-03T11:44:50Z",
+   "start_served_at": 1791027892.139,
+   "start_served_at_iso": "2026-10-03T11:44:52Z",
+   "services": [
+    "shipping",
+    "checkout"
+   ],
+   "end": 1791028190.12,
+   "end_iso": "2026-10-03T11:49:50Z",
+   "end_served_at": 1791028191.124,
+   "end_served_at_iso": "2026-10-03T11:49:51Z",
+   "effect_end": 1791028190.12,
+   "effect_end_iso": "2026-10-03T11:49:50Z"
+  }
+ ],
+ "applied": [
+  {
+   "kind": "set",
+   "flags": {
+    "intlShippingSlowdown": "10sec"
+   },
+   "applied_at": 1791027890.123,
+   "applied_at_iso": "2026-10-03T11:44:50Z",
+   "served_at": {
+    "intlShippingSlowdown": 1791027892.139
+   }
+  },
+  {
+   "kind": "set",
+   "flags": {
+    "intlShippingSlowdown": "off"
+   },
+   "applied_at": 1791028190.12,
+   "applied_at_iso": "2026-10-03T11:49:50Z",
+   "served_at": {
+    "intlShippingSlowdown": 1791028191.124
+   }
+  }
+ ],
+ "root_cause": {
+  "service": "shipping",
+  "flag": "intlShippingSlowdown",
+  "summary": "shipping POST /ship-order stalls ~10 s for international orders; checkout PlaceOrder (its caller) inherits the latency; no errors. Observed: shipping /ship-order p90 ~8-12 s, checkout PlaceOrder p90 ~14 s in the first run (checkout p90 is too noisy to assert: low rate, a 15 s top-bucket baseline appears sporadically), shipping /get-quote unaffected."
+ },
+ "affected_services": {
+  "origin": [
+   "shipping",
+   "checkout"
+  ],
+  "propagated": [
+   "frontend"
+  ],
+  "unaffected_control": [
+   "payment",
+   "cart",
+   "ad"
+  ]
+ },
+ "tolerance": {
+  "start_s": 150,
+  "end_s": 180,
+  "note": "Observable onset lags the flag change: demo exports metrics and span-metrics every 60s and queries use 2m rate windows (expect 1-3 min of lag); judge annotations against fault_window.start/end within these tolerances."
+ },
+ "settle_s": 120,
+ "expected_signals": [
+  {
+   "id": "shipping-ship-order-p90",
+   "service": "shipping",
+   "description": "shipping POST /ship-order p90 latency (ms): where the delay is injected",
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "query": "histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"shipping\",span_kind=\"SPAN_KIND_SERVER\",span_name=\"POST /ship-order\"}[2m])))",
+   "direction": "up",
+   "min_abs_delta": 2000
+  },
+  {
+   "id": "shipping-get-quote-control",
+   "service": "shipping",
+   "description": "shipping POST /get-quote p90 (ms) stays fast: only ship-order is slowed",
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "query": "histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"shipping\",span_kind=\"SPAN_KIND_SERVER\",span_name=\"POST /get-quote\"}[2m])))",
+   "direction": "flat",
+   "max_abs_delta": 50
+  },
+  {
+   "id": "checkout-errors-control",
+   "service": "checkout",
+   "description": "latency, not errors",
+   "metric": "traces_span_metrics_calls_total",
+   "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"checkout\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+   "direction": "flat",
+   "max_abs_delta": 0.05
+  }
+ ],
+ "endpoints": {
+  "victoriametrics": "http://127.0.0.1:8429",
+  "flagd_ofrep": "http://127.0.0.1:8016",
+  "frontend": "http://127.0.0.1:18080"
+ },
+ "source_labels": {
+  "service": "service_name"
+ },
+ "verification": {
+  "all_passed": true,
+  "results": [
+   {
+    "id": "shipping-ship-order-p90",
+    "service": "shipping",
+    "metric": "traces_span_metrics_duration_milliseconds_bucket",
+    "query": "histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"shipping\",span_kind=\"SPAN_KIND_SERVER\",span_name=\"POST /ship-order\"}[2m])))",
+    "direction": "up",
+    "baseline_mean": 1.8,
+    "baseline_samples": 20,
+    "fault_mean": 8000.66,
+    "fault_samples": 12,
+    "passed": true,
+    "detail": "baseline 1.8 -> fault 8001 (delta +7999, x4.44e+03)",
+    "series": [
+     [
+      1791027585.0,
+      1.8
+     ],
+     [
+      1791027645.0,
+      1.8
+     ],
+     [
+      1791027705.0,
+      1.8
+     ],
+     [
+      1791027765.0,
+      1.8
+     ],
+     [
+      1791027825.0,
+      1.8
+     ],
+     [
+      1791027885.0,
+      1.8
+     ],
+     [
+      1791027945.0,
+      1.8
+     ],
+     [
+      1791028005.0,
+      1.8
+     ],
+     [
+      1791028065.0,
+      11500.0
+     ],
+     [
+      1791028125.0,
+      12500.0
+     ],
+     [
+      1791028185.0,
+      1.98
+     ],
+     [
+      1791028245.0,
+      1.8
+     ],
+     [
+      1791028305.0,
+      1.8
+     ],
+     [
+      1791028365.0,
+      1.8
+     ]
+    ]
+   },
+   {
+    "id": "shipping-get-quote-control",
+    "service": "shipping",
+    "metric": "traces_span_metrics_duration_milliseconds_bucket",
+    "query": "histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"shipping\",span_kind=\"SPAN_KIND_SERVER\",span_name=\"POST /get-quote\"}[2m])))",
+    "direction": "flat",
+    "baseline_mean": 2.24,
+    "baseline_samples": 20,
+    "fault_mean": 2.1933333333333334,
+    "fault_samples": 12,
+    "passed": true,
+    "detail": "baseline 2.24 -> fault 2.193 (delta -0.04667), expected flat",
+    "series": [
+     [
+      1791027585.0,
+      3.0
+     ],
+     [
+      1791027645.0,
+      2.8
+     ],
+     [
+      1791027705.0,
+      1.8
+     ],
+     [
+      1791027765.0,
+      1.8
+     ],
+     [
+      1791027825.0,
+      1.8
+     ],
+     [
+      1791027885.0,
+      3.0
+     ],
+     [
+      1791027945.0,
+      2.9
+     ],
+     [
+      1791028005.0,
+      2.6
+     ],
+     [
+      1791028065.0,
+      2.6
+     ],
+     [
+      1791028125.0,
+      2.0
+     ],
+     [
+      1791028185.0,
+      1.98
+     ],
+     [
+      1791028245.0,
+      1.8
+     ],
+     [
+      1791028305.0,
+      1.95
+     ],
+     [
+      1791028365.0,
+      1.89
+     ]
+    ]
+   },
+   {
+    "id": "checkout-errors-control",
+    "service": "checkout",
+    "metric": "traces_span_metrics_calls_total",
+    "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"checkout\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+    "direction": "flat",
+    "baseline_mean": 0.009999972222685182,
+    "baseline_samples": 20,
+    "fault_mean": 0.008333310185378084,
+    "fault_samples": 12,
+    "passed": true,
+    "detail": "baseline 0.01 -> fault 0.008333 (delta -0.001667), expected flat",
+    "series": [
+     [
+      1791027585.0,
+      0.008333
+     ],
+     [
+      1791027645.0,
+      0.008333
+     ],
+     [
+      1791027705.0,
+      0.016667
+     ],
+     [
+      1791027765.0,
+      0.008333
+     ],
+     [
+      1791027825.0,
+      0.008333
+     ],
+     [
+      1791027885.0,
+      0.008333
+     ],
+     [
+      1791027945.0,
+      0.008333
+     ],
+     [
+      1791028005.0,
+      0.016667
+     ],
+     [
+      1791028065.0,
+      0.008333
+     ],
+     [
+      1791028125.0,
+      0.008333
+     ],
+     [
+      1791028185.0,
+      0.008333
+     ],
+     [
+      1791028245.0,
+      0.008333
+     ],
+     [
+      1791028305.0,
+      0.016667
+     ],
+     [
+      1791028365.0,
+      0.008333
+     ]
+    ]
+   }
+  ]
+ },
+ "_fixture": {
+  "source": "shipping-slowdown-20261003T113950Z.json",
+  "note": "series downsampled to 60 s; otherwise as written by scripts/scenario.py"
+ }
+}

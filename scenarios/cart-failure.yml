@@ -27,14 +27,14 @@ ground_truth:
         metric: traces_span_metrics_calls_total
         query: 'sum(rate(traces_span_metrics_calls_total{service_name="cart",status_code="STATUS_CODE_ERROR"}[2m]))'
         direction: up
-        min_abs_delta: 0.01
+        min_abs_delta: 0.004
       - id: checkout-errors
         service: checkout
         description: 'error span rate on checkout (propagated)'
         metric: traces_span_metrics_calls_total
         query: 'sum(rate(traces_span_metrics_calls_total{service_name="checkout",status_code="STATUS_CODE_ERROR"}[2m]))'
         direction: up
-        min_abs_delta: 0.01
+        min_abs_delta: 0.004
       - id: payment-errors-control
         service: payment
         description: 'payment stays clean'

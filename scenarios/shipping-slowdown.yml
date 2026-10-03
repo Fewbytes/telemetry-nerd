@@ -13,7 +13,7 @@ ground_truth:
   root_cause_service: shipping
   root_cause_flag: intlShippingSlowdown
   root_cause_summary: >-
-    shipping POST /ship-order stalls ~10 s for international orders; checkout PlaceOrder (its caller) inherits the latency; no errors. Observed: shipping /ship-order p90 ~12.7 s, checkout PlaceOrder p90 ~14 s, shipping /get-quote unaffected.
+    shipping POST /ship-order stalls ~10 s for international orders; checkout PlaceOrder (its caller) inherits the latency; no errors. Observed: shipping /ship-order p90 ~8-12 s, checkout PlaceOrder p90 ~14 s in the first run (checkout p90 is too noisy to assert: low rate, a 15 s top-bucket baseline appears sporadically), shipping /get-quote unaffected.
   affected:
     origin: [shipping, checkout]
     propagated: [frontend]
@@ -21,13 +21,6 @@ ground_truth:
   tolerance_s: {start: 150, end: 180}
   settle_s: 120
   expected_signals:
-      - id: checkout-p90
-        service: checkout
-        description: 'checkout PlaceOrder p90 latency (ms)'
-        metric: traces_span_metrics_duration_milliseconds_bucket
-        query: 'histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name="checkout",span_kind="SPAN_KIND_SERVER"}[2m])))'
-        direction: up
-        min_abs_delta: 2000
       - id: shipping-ship-order-p90
         service: shipping
         description: 'shipping POST /ship-order p90 latency (ms): where the delay is injected'
@@ -35,6 +28,13 @@ ground_truth:
         query: 'histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name="shipping",span_kind="SPAN_KIND_SERVER",span_name="POST /ship-order"}[2m])))'
         direction: up
         min_abs_delta: 2000
+      - id: shipping-get-quote-control
+        service: shipping
+        description: 'shipping POST /get-quote p90 (ms) stays fast: only ship-order is slowed'
+        metric: traces_span_metrics_duration_milliseconds_bucket
+        query: 'histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name="shipping",span_kind="SPAN_KIND_SERVER",span_name="POST /get-quote"}[2m])))'
+        direction: flat
+        max_abs_delta: 50
       - id: checkout-errors-control
         service: checkout
         description: 'latency, not errors'

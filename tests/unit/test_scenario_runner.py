@@ -220,3 +220,25 @@ def test_ground_truth_roundtrip(tmp_path):
 
 def test_hook_point_registered_for_queue_sim():
     assert isinstance(sc.HOOKS, dict)  # queue-sim (bead 1h9.17) registers `HOOKS[name]`
+
+
+FIXTURES = sorted((ROOT / "tests/fixtures/scenarios").glob("*.json"))
+
+
+@pytest.mark.parametrize("path", FIXTURES, ids=lambda p: p.stem)
+def test_recorded_ground_truth_fixtures_follow_the_schema(path):
+    gt = json.loads(path.read_text())
+    assert gt["version"] == sc.GROUND_TRUTH_VERSION and gt["scenario"] == path.stem
+    win = gt["fault_window"]
+    assert win["start"] < win["end"] and gt["run"]["started_at"] < win["start"]
+    assert gt["root_cause"]["service"] in gt["affected_services"]["origin"]
+    assert gt["verification"]["all_passed"] is True
+    results = {r["id"]: r for r in gt["verification"]["results"]}
+    assert {s["id"] for s in gt["expected_signals"]} == set(results)
+    for f in gt["faults"]:
+        assert win["start"] <= f["start"] and f["effect_end"] <= win["end"] and f["flag"]
+    assert gt["tolerance"]["start_s"] > 0 and gt["endpoints"]["victoriametrics"]
+
+
+def test_fixtures_cover_at_least_three_scenarios():
+    assert len(FIXTURES) >= 3

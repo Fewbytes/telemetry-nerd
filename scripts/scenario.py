@@ -560,6 +560,40 @@ def finish(sc: dict, run: dict, out_dir: Path = RUNS_DIR) -> Path:
     return path
 
 
+def reverify(path: Path) -> Path:
+    """Rewrite a run's expected_signals/verification from the current YAML, same run bounds.
+
+    For tuning thresholds or signals without repeating a 13-minute run; needs the run's data to
+    still be in VictoriaMetrics.
+    """
+    old = json.loads(path.read_text())
+    sc = load_scenario(old["scenario"])
+    bounds = {
+        "run_start": old["run"]["started_at"],
+        "fault_start": old["fault_window"]["start"],
+        "fault_end": old["fault_window"]["end"] or old["run"]["finished_at"],
+        "run_end": old["run"]["finished_at"],
+    }
+    gt_def = sc["ground_truth"]
+    settle = gt_def.get("settle_s", 120)
+    results = [verify_signal(sig, bounds, settle) for sig in gt_def["expected_signals"]]
+    old["expected_signals"] = list(gt_def["expected_signals"])
+    old["affected_services"] = {
+        k: gt_def["affected"].get(k, []) for k in ("origin", "propagated", "unaffected_control")
+    }
+    old["root_cause"] = {
+        "service": gt_def["root_cause_service"],
+        "flag": gt_def.get("root_cause_flag"),
+        "summary": gt_def.get("root_cause_summary", ""),
+    }
+    old["description"] = sc["description"]
+    old["verification"] = {"all_passed": all(r["passed"] for r in results), "results": results}
+    for r in results:
+        print(f"{'PASS' if r['passed'] else 'FAIL'} {r['id']}: {r['detail']}")
+    path.write_text(json.dumps(old, indent=2) + "\n")
+    return path
+
+
 TIME_KEYS = {
     "started_at",
     "baseline_end",
@@ -609,6 +643,11 @@ def main(argv: list[str]) -> int:
     rn.add_argument("--scale", type=float, default=1.0, help="multiply all durations (quick tries)")
     rn.add_argument("--dry-run", action="store_true")
     rn.add_argument("--force", action="store_true", help="run despite an unhealthy baseline")
+    rv = sub.add_parser(
+        "reverify",
+        help="re-judge a finished run's JSON against the current YAML (queries VM history)",
+    )
+    rv.add_argument("run_json", type=Path)
     a = ap.parse_args(argv)
     try:
         if a.cmd == "list":
@@ -618,6 +657,9 @@ def main(argv: list[str]) -> int:
                 print(
                     f"{sc['id']:28} {t['baseline_s']}s+fault+{t['cooldown_s']}s  flags={','.join(fl)}\n    {sc['description'].strip().splitlines()[0]}"
                 )
+            return 0
+        if a.cmd == "reverify":
+            print(reverify(a.run_json))
             return 0
         sc = load_scenario(a.name)
         if a.cmd == "show" or a.dry_run:

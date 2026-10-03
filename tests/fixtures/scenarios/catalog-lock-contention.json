@@ -1,0 +1,360 @@
+{
+ "version": 1,
+ "scenario": "catalog-lock-contention",
+ "description": "productCatalogLockContention=on: DB lock contention makes product-catalog GetProduct stall for seconds; the whole shop slows and throughput collapses. Brutal: allow a long cool-down.",
+ "run": {
+  "started_at": 1791025867.444,
+  "started_at_iso": "2026-10-03T11:11:07Z",
+  "baseline_end": 1791026167.444,
+  "baseline_end_iso": "2026-10-03T11:16:07Z",
+  "finished_at": 1791026707.453,
+  "finished_at_iso": "2026-10-03T11:25:07Z",
+  "completed": true,
+  "scale": 1.0
+ },
+ "fault_window": {
+  "start": 1791026167.449,
+  "start_iso": "2026-10-03T11:16:07Z",
+  "end": 1791026407.448,
+  "end_iso": "2026-10-03T11:20:07Z"
+ },
+ "faults": [
+  {
+   "flag": "productCatalogLockContention",
+   "variant": "on",
+   "start": 1791026167.449,
+   "start_iso": "2026-10-03T11:16:07Z",
+   "start_served_at": 1791026169.466,
+   "start_served_at_iso": "2026-10-03T11:16:09Z",
+   "services": [
+    "product-catalog"
+   ],
+   "end": 1791026407.448,
+   "end_iso": "2026-10-03T11:20:07Z",
+   "end_served_at": 1791026408.464,
+   "end_served_at_iso": "2026-10-03T11:20:08Z",
+   "effect_end": 1791026407.448,
+   "effect_end_iso": "2026-10-03T11:20:07Z"
+  }
+ ],
+ "applied": [
+  {
+   "kind": "set",
+   "flags": {
+    "productCatalogLockContention": "on"
+   },
+   "applied_at": 1791026167.449,
+   "applied_at_iso": "2026-10-03T11:16:07Z",
+   "served_at": {
+    "productCatalogLockContention": 1791026169.466
+   }
+  },
+  {
+   "kind": "set",
+   "flags": {
+    "productCatalogLockContention": "off"
+   },
+   "applied_at": 1791026407.448,
+   "applied_at_iso": "2026-10-03T11:20:07Z",
+   "served_at": {
+    "productCatalogLockContention": 1791026408.464
+   }
+  }
+ ],
+ "root_cause": {
+  "service": "product-catalog",
+  "flag": "productCatalogLockContention",
+  "summary": "product-catalog latency explodes (seconds); frontend, recommendation and checkout inherit it and throughput falls."
+ },
+ "affected_services": {
+  "origin": [
+   "product-catalog"
+  ],
+  "propagated": [
+   "frontend",
+   "recommendation",
+   "checkout"
+  ],
+  "unaffected_control": [
+   "payment",
+   "cart"
+  ]
+ },
+ "tolerance": {
+  "start_s": 150,
+  "end_s": 180,
+  "note": "Observable onset lags the flag change: demo exports metrics and span-metrics every 60s and queries use 2m rate windows (expect 1-3 min of lag); judge annotations against fault_window.start/end within these tolerances."
+ },
+ "settle_s": 120,
+ "expected_signals": [
+  {
+   "id": "product-catalog-p90",
+   "service": "product-catalog",
+   "description": "product-catalog p90 latency (ms)",
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "query": "histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"product-catalog\",span_kind=\"SPAN_KIND_SERVER\"}[2m])))",
+   "direction": "up",
+   "min_abs_delta": 1000
+  },
+  {
+   "id": "frontend-p90",
+   "service": "frontend",
+   "description": "frontend p90 latency (ms) (propagated)",
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "query": "histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"frontend\",span_kind=\"SPAN_KIND_SERVER\"}[2m])))",
+   "direction": "up",
+   "min_abs_delta": 1000
+  },
+  {
+   "id": "frontend-rate",
+   "service": "frontend",
+   "description": "frontend completed request rate falls",
+   "metric": "traces_span_metrics_calls_total",
+   "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"frontend\",span_kind=\"SPAN_KIND_SERVER\"}[2m]))",
+   "direction": "down",
+   "min_ratio": 1.3
+  }
+ ],
+ "endpoints": {
+  "victoriametrics": "http://127.0.0.1:8429",
+  "flagd_ofrep": "http://127.0.0.1:8016",
+  "frontend": "http://127.0.0.1:18080"
+ },
+ "source_labels": {
+  "service": "service_name"
+ },
+ "verification": {
+  "all_passed": true,
+  "results": [
+   {
+    "id": "product-catalog-p90",
+    "service": "product-catalog",
+    "metric": "traces_span_metrics_duration_milliseconds_bucket",
+    "query": "histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"product-catalog\",span_kind=\"SPAN_KIND_SERVER\"}[2m])))",
+    "direction": "up",
+    "baseline_mean": 4.403813194052324,
+    "baseline_samples": 20,
+    "fault_mean": 15000.0,
+    "fault_samples": 8,
+    "passed": true,
+    "detail": "baseline 4.404 -> fault 1.5e+04 (delta +1.5e+04, x3.41e+03)",
+    "series": [
+     [
+      1791025860.0,
+      5.017391
+     ],
+     [
+      1791025920.0,
+      5.008696
+     ],
+     [
+      1791025980.0,
+      4.063636
+     ],
+     [
+      1791026040.0,
+      3.9225
+     ],
+     [
+      1791026100.0,
+      4.058333
+     ],
+     [
+      1791026160.0,
+      4.811429
+     ],
+     [
+      1791026220.0,
+      14.645161
+     ],
+     [
+      1791026280.0,
+      15000.0
+     ],
+     [
+      1791026340.0,
+      15000.0
+     ],
+     [
+      1791026400.0,
+      15000.0
+     ],
+     [
+      1791026460.0,
+      15000.0
+     ],
+     [
+      1791026520.0,
+      5.275
+     ],
+     [
+      1791026580.0,
+      3.641176
+     ],
+     [
+      1791026640.0,
+      2.648
+     ],
+     [
+      1791026700.0,
+      2.671795
+     ]
+    ]
+   },
+   {
+    "id": "frontend-p90",
+    "service": "frontend",
+    "metric": "traces_span_metrics_duration_milliseconds_bucket",
+    "query": "histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"frontend\",span_kind=\"SPAN_KIND_SERVER\"}[2m])))",
+    "direction": "up",
+    "baseline_mean": 21.078554127740393,
+    "baseline_samples": 20,
+    "fault_mean": 15000.0,
+    "fault_samples": 8,
+    "passed": true,
+    "detail": "baseline 21.08 -> fault 1.5e+04 (delta +1.498e+04, x712)",
+    "series": [
+     [
+      1791025860.0,
+      27.724771
+     ],
+     [
+      1791025920.0,
+      25.54717
+     ],
+     [
+      1791025980.0,
+      18.0
+     ],
+     [
+      1791026040.0,
+      13.018868
+     ],
+     [
+      1791026100.0,
+      22.305085
+     ],
+     [
+      1791026160.0,
+      22.912281
+     ],
+     [
+      1791026220.0,
+      18.345679
+     ],
+     [
+      1791026280.0,
+      15000.0
+     ],
+     [
+      1791026340.0,
+      15000.0
+     ],
+     [
+      1791026400.0,
+      15000.0
+     ],
+     [
+      1791026460.0,
+      15000.0
+     ],
+     [
+      1791026520.0,
+      21.52
+     ],
+     [
+      1791026580.0,
+      8.2
+     ],
+     [
+      1791026640.0,
+      7.372414
+     ],
+     [
+      1791026700.0,
+      8.02069
+     ]
+    ]
+   },
+   {
+    "id": "frontend-rate",
+    "service": "frontend",
+    "metric": "traces_span_metrics_calls_total",
+    "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"frontend\",span_kind=\"SPAN_KIND_SERVER\"}[2m]))",
+    "direction": "down",
+    "baseline_mean": 7.883737388993981,
+    "baseline_samples": 20,
+    "fault_mean": 3.694808941116176,
+    "fault_samples": 8,
+    "passed": true,
+    "detail": "baseline 7.884 -> fault 3.695 (delta -4.189, x0.469)",
+    "series": [
+     [
+      1791025860.0,
+      7.225
+     ],
+     [
+      1791025920.0,
+      7.566604
+     ],
+     [
+      1791025980.0,
+      8.266667
+     ],
+     [
+      1791026040.0,
+      8.333333
+     ],
+     [
+      1791026100.0,
+      7.975
+     ],
+     [
+      1791026160.0,
+      7.433333
+     ],
+     [
+      1791026220.0,
+      5.674953
+     ],
+     [
+      1791026280.0,
+      4.325
+     ],
+     [
+      1791026340.0,
+      3.425029
+     ],
+     [
+      1791026400.0,
+      2.883357
+     ],
+     [
+      1791026460.0,
+      4.949959
+     ],
+     [
+      1791026520.0,
+      7.133333
+     ],
+     [
+      1791026580.0,
+      7.416728
+     ],
+     [
+      1791026640.0,
+      7.508271
+     ],
+     [
+      1791026700.0,
+      7.891601
+     ]
+    ]
+   }
+  ]
+ },
+ "_fixture": {
+  "source": "catalog-lock-contention-20261003T111107Z.json",
+  "note": "series downsampled to 60 s; otherwise as written by scripts/scenario.py"
+ }
+}

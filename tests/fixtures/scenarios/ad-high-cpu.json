@@ -1,0 +1,270 @@
+{
+ "version": 1,
+ "scenario": "ad-high-cpu",
+ "description": "adHighCpu=on burns CPU in the ad service (JVM). The burner threads survive the flag going off, so the scenario restarts the ad container to end the effect.",
+ "run": {
+  "started_at": 1791025037.316,
+  "started_at_iso": "2026-10-03T10:57:17Z",
+  "baseline_end": 1791025337.316,
+  "baseline_end_iso": "2026-10-03T11:02:17Z",
+  "finished_at": 1791025817.321,
+  "finished_at_iso": "2026-10-03T11:10:17Z",
+  "completed": true,
+  "scale": 1.0
+ },
+ "fault_window": {
+  "start": 1791025337.318,
+  "start_iso": "2026-10-03T11:02:17Z",
+  "end": 1791025638.509,
+  "end_iso": "2026-10-03T11:07:18Z"
+ },
+ "faults": [
+  {
+   "flag": "adHighCpu",
+   "variant": "on",
+   "start": 1791025337.318,
+   "start_iso": "2026-10-03T11:02:17Z",
+   "start_served_at": 1791025339.334,
+   "start_served_at_iso": "2026-10-03T11:02:19Z",
+   "services": [
+    "ad"
+   ],
+   "sticky": true,
+   "end": 1791025637.322,
+   "end_iso": "2026-10-03T11:07:17Z",
+   "end_served_at": 1791025638.331,
+   "end_served_at_iso": "2026-10-03T11:07:18Z",
+   "effect_end": 1791025638.509,
+   "effect_end_iso": "2026-10-03T11:07:18Z"
+  }
+ ],
+ "applied": [
+  {
+   "kind": "set",
+   "flags": {
+    "adHighCpu": "on"
+   },
+   "applied_at": 1791025337.318,
+   "applied_at_iso": "2026-10-03T11:02:17Z",
+   "served_at": {
+    "adHighCpu": 1791025339.334
+   }
+  },
+  {
+   "kind": "set",
+   "flags": {
+    "adHighCpu": "off"
+   },
+   "applied_at": 1791025637.322,
+   "applied_at_iso": "2026-10-03T11:07:17Z",
+   "served_at": {
+    "adHighCpu": 1791025638.331
+   }
+  },
+  {
+   "kind": "restart",
+   "containers": [
+    "tn-demo-ad-1"
+   ],
+   "applied_at": 1791025638.509,
+   "applied_at_iso": "2026-10-03T11:07:18Z"
+  }
+ ],
+ "root_cause": {
+  "service": "ad",
+  "flag": "adHighCpu",
+  "summary": "CPU burn in the ad JVM; effect persists after flag-off until the container restart (effect_end)."
+ },
+ "affected_services": {
+  "origin": [
+   "ad"
+  ],
+  "propagated": [],
+  "unaffected_control": [
+   "payment",
+   "cart",
+   "checkout"
+  ]
+ },
+ "tolerance": {
+  "start_s": 150,
+  "end_s": 180,
+  "note": "Observable onset lags the flag change: demo exports metrics and span-metrics every 60s and queries use 2m rate windows (expect 1-3 min of lag); judge annotations against fault_window.start/end within these tolerances."
+ },
+ "settle_s": 120,
+ "expected_signals": [
+  {
+   "id": "ad-cpu",
+   "service": "ad",
+   "description": "ad JVM recent CPU utilisation",
+   "metric": "jvm_cpu_recent_utilization_ratio",
+   "query": "max(jvm_cpu_recent_utilization_ratio{service_name=\"ad\"})",
+   "direction": "up",
+   "min_abs_delta": 0.3
+  },
+  {
+   "id": "ad-errors-control",
+   "service": "ad",
+   "description": "no errors on ad",
+   "metric": "traces_span_metrics_calls_total",
+   "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"ad\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+   "direction": "flat",
+   "max_abs_delta": 0.05
+  }
+ ],
+ "endpoints": {
+  "victoriametrics": "http://127.0.0.1:8429",
+  "flagd_ofrep": "http://127.0.0.1:8016",
+  "frontend": "http://127.0.0.1:18080"
+ },
+ "source_labels": {
+  "service": "service_name"
+ },
+ "verification": {
+  "all_passed": true,
+  "results": [
+   {
+    "id": "ad-cpu",
+    "service": "ad",
+    "metric": "jvm_cpu_recent_utilization_ratio",
+    "query": "max(jvm_cpu_recent_utilization_ratio{service_name=\"ad\"})",
+    "direction": "up",
+    "baseline_mean": 0.00040103814936045005,
+    "baseline_samples": 20,
+    "fault_mean": 0.6616857398121667,
+    "fault_samples": 12,
+    "passed": true,
+    "detail": "baseline 0.000401 -> fault 0.6617 (delta +0.6613, x1.65e+03)",
+    "series": [
+     [
+      1791025035.0,
+      0.000473
+     ],
+     [
+      1791025095.0,
+      0.000362
+     ],
+     [
+      1791025155.0,
+      0.000445
+     ],
+     [
+      1791025215.0,
+      0.000362
+     ],
+     [
+      1791025275.0,
+      0.000362
+     ],
+     [
+      1791025335.0,
+      0.000474
+     ],
+     [
+      1791025395.0,
+      0.270815
+     ],
+     [
+      1791025455.0,
+      0.661882
+     ],
+     [
+      1791025515.0,
+      0.659715
+     ],
+     [
+      1791025575.0,
+      0.662986
+     ],
+     [
+      1791025635.0,
+      0.662829
+     ],
+     [
+      1791025725.0,
+      0.0
+     ],
+     [
+      1791025785.0,
+      0.001086
+     ]
+    ]
+   },
+   {
+    "id": "ad-errors-control",
+    "service": "ad",
+    "metric": "traces_span_metrics_calls_total",
+    "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"ad\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+    "direction": "flat",
+    "baseline_mean": 0.0033333333335648146,
+    "baseline_samples": 20,
+    "fault_mean": 0.0,
+    "fault_samples": 12,
+    "passed": true,
+    "detail": "baseline 0.003333 -> fault 0 (delta -0.003333), expected flat",
+    "series": [
+     [
+      1791025035.0,
+      0.0
+     ],
+     [
+      1791025095.0,
+      0.0
+     ],
+     [
+      1791025155.0,
+      0.0
+     ],
+     [
+      1791025215.0,
+      0.008333
+     ],
+     [
+      1791025275.0,
+      0.008333
+     ],
+     [
+      1791025335.0,
+      0.0
+     ],
+     [
+      1791025395.0,
+      0.0
+     ],
+     [
+      1791025455.0,
+      0.0
+     ],
+     [
+      1791025515.0,
+      0.0
+     ],
+     [
+      1791025575.0,
+      0.0
+     ],
+     [
+      1791025635.0,
+      0.0
+     ],
+     [
+      1791025695.0,
+      0.0
+     ],
+     [
+      1791025755.0,
+      0.0
+     ],
+     [
+      1791025815.0,
+      0.0
+     ]
+    ]
+   }
+  ]
+ },
+ "_fixture": {
+  "source": "ad-high-cpu-20261003T105717Z.json",
+  "note": "series downsampled to 60 s; otherwise as written by scripts/scenario.py"
+ }
+}

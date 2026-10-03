@@ -1,0 +1,432 @@
+{
+ "version": 1,
+ "scenario": "homepage-flood",
+ "description": "loadGeneratorFloodHomepage=on: Locust floods GET /; a load spike (rate up several-fold) on frontend and its dependencies, no errors expected.",
+ "run": {
+  "started_at": 1791023377.069,
+  "started_at_iso": "2026-10-03T10:29:37Z",
+  "baseline_end": 1791023677.069,
+  "baseline_end_iso": "2026-10-03T10:34:37Z",
+  "finished_at": 1791024157.074,
+  "finished_at_iso": "2026-10-03T10:42:37Z",
+  "completed": true,
+  "scale": 1.0
+ },
+ "fault_window": {
+  "start": 1791023677.078,
+  "start_iso": "2026-10-03T10:34:37Z",
+  "end": 1791023977.077,
+  "end_iso": "2026-10-03T10:39:37Z"
+ },
+ "faults": [
+  {
+   "flag": "loadGeneratorFloodHomepage",
+   "variant": "on",
+   "start": 1791023677.078,
+   "start_iso": "2026-10-03T10:34:37Z",
+   "start_served_at": 1791023679.089,
+   "start_served_at_iso": "2026-10-03T10:34:39Z",
+   "services": [
+    "load-generator",
+    "frontend"
+   ],
+   "end": 1791023977.077,
+   "end_iso": "2026-10-03T10:39:37Z",
+   "end_served_at": 1791023979.088,
+   "end_served_at_iso": "2026-10-03T10:39:39Z",
+   "effect_end": 1791023977.077,
+   "effect_end_iso": "2026-10-03T10:39:37Z"
+  }
+ ],
+ "applied": [
+  {
+   "kind": "set",
+   "flags": {
+    "loadGeneratorFloodHomepage": "on"
+   },
+   "applied_at": 1791023677.078,
+   "applied_at_iso": "2026-10-03T10:34:37Z",
+   "served_at": {
+    "loadGeneratorFloodHomepage": 1791023679.089
+   }
+  },
+  {
+   "kind": "set",
+   "flags": {
+    "loadGeneratorFloodHomepage": "off"
+   },
+   "applied_at": 1791023977.077,
+   "applied_at_iso": "2026-10-03T10:39:37Z",
+   "served_at": {
+    "loadGeneratorFloodHomepage": 1791023979.088
+   }
+  }
+ ],
+ "root_cause": {
+  "service": "load-generator",
+  "flag": "loadGeneratorFloodHomepage",
+  "summary": "Traffic, not a defect: load generator floods the homepage, raising frontend request rate and load on dependencies."
+ },
+ "affected_services": {
+  "origin": [
+   "load-generator",
+   "frontend"
+  ],
+  "propagated": [
+   "product-catalog",
+   "currency",
+   "cart",
+   "ad",
+   "recommendation"
+  ],
+  "unaffected_control": [
+   "payment",
+   "checkout"
+  ]
+ },
+ "tolerance": {
+  "start_s": 150,
+  "end_s": 180,
+  "note": "Observable onset lags the flag change: demo exports metrics and span-metrics every 60s and queries use 2m rate windows (expect 1-3 min of lag); judge annotations against fault_window.start/end within these tolerances."
+ },
+ "settle_s": 120,
+ "expected_signals": [
+  {
+   "id": "frontend-rate",
+   "service": "frontend",
+   "description": "frontend server request rate",
+   "metric": "traces_span_metrics_calls_total",
+   "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"frontend\",span_kind=\"SPAN_KIND_SERVER\"}[2m]))",
+   "direction": "up",
+   "min_ratio": 1.8
+  },
+  {
+   "id": "product-catalog-rate",
+   "service": "product-catalog",
+   "description": "product-catalog request rate follows",
+   "metric": "traces_span_metrics_calls_total",
+   "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"product-catalog\",span_kind=\"SPAN_KIND_SERVER\"}[2m]))",
+   "direction": "up",
+   "min_ratio": 1.3
+  },
+  {
+   "id": "frontend-eventloop",
+   "service": "frontend",
+   "description": "frontend Node event-loop utilisation (saturation)",
+   "metric": "nodejs_eventloop_utilization_ratio",
+   "query": "avg(nodejs_eventloop_utilization_ratio{service_name=\"frontend\"})",
+   "direction": "up",
+   "min_ratio": 1.3
+  },
+  {
+   "id": "frontend-errors-control",
+   "service": "frontend",
+   "description": "no error cascade expected",
+   "metric": "traces_span_metrics_calls_total",
+   "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"frontend\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+   "direction": "flat",
+   "max_abs_delta": 0.1
+  }
+ ],
+ "endpoints": {
+  "victoriametrics": "http://127.0.0.1:8429",
+  "flagd_ofrep": "http://127.0.0.1:8016",
+  "frontend": "http://127.0.0.1:18080"
+ },
+ "source_labels": {
+  "service": "service_name"
+ },
+ "verification": {
+  "all_passed": true,
+  "results": [
+   {
+    "id": "frontend-rate",
+    "service": "frontend",
+    "metric": "traces_span_metrics_calls_total",
+    "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"frontend\",span_kind=\"SPAN_KIND_SERVER\"}[2m]))",
+    "direction": "up",
+    "baseline_mean": 2.0983382909615345,
+    "baseline_samples": 20,
+    "fault_mean": 40.187408991341265,
+    "fault_samples": 12,
+    "passed": true,
+    "detail": "baseline 2.098 -> fault 40.19 (delta +38.09, x19.2)",
+    "series": [
+     [
+      1791023370.0,
+      1.291581
+     ],
+     [
+      1791023430.0,
+      1.708291
+     ],
+     [
+      1791023490.0,
+      2.058453
+     ],
+     [
+      1791023550.0,
+      2.475062
+     ],
+     [
+      1791023610.0,
+      2.408253
+     ],
+     [
+      1791023670.0,
+      2.024983
+     ],
+     [
+      1791023730.0,
+      2.300096
+     ],
+     [
+      1791023790.0,
+      17.866816
+     ],
+     [
+      1791023850.0,
+      36.89877
+     ],
+     [
+      1791023910.0,
+      42.408333
+     ],
+     [
+      1791023970.0,
+      49.051226
+     ],
+     [
+      1791024030.0,
+      46.2
+     ],
+     [
+      1791024090.0,
+      20.908333
+     ],
+     [
+      1791024150.0,
+      3.8
+     ]
+    ]
+   },
+   {
+    "id": "product-catalog-rate",
+    "service": "product-catalog",
+    "metric": "traces_span_metrics_calls_total",
+    "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"product-catalog\",span_kind=\"SPAN_KIND_SERVER\"}[2m]))",
+    "direction": "up",
+    "baseline_mean": 1.079583747953521,
+    "baseline_samples": 20,
+    "fault_mean": 1.8701284905816278,
+    "fault_samples": 12,
+    "passed": true,
+    "detail": "baseline 1.08 -> fault 1.87 (delta +0.7905, x1.73)",
+    "series": [
+     [
+      1791023370.0,
+      0.783281
+     ],
+     [
+      1791023430.0,
+      0.949976
+     ],
+     [
+      1791023490.0,
+      1.016726
+     ],
+     [
+      1791023550.0,
+      1.158362
+     ],
+     [
+      1791023610.0,
+      1.283291
+     ],
+     [
+      1791023670.0,
+      1.058325
+     ],
+     [
+      1791023730.0,
+      1.033376
+     ],
+     [
+      1791023790.0,
+      1.416678
+     ],
+     [
+      1791023850.0,
+      1.966601
+     ],
+     [
+      1791023910.0,
+      2.033333
+     ],
+     [
+      1791023970.0,
+      1.675042
+     ],
+     [
+      1791024030.0,
+      1.575
+     ],
+     [
+      1791024090.0,
+      1.791667
+     ],
+     [
+      1791024150.0,
+      2.083333
+     ]
+    ]
+   },
+   {
+    "id": "frontend-eventloop",
+    "service": "frontend",
+    "metric": "nodejs_eventloop_utilization_ratio",
+    "query": "avg(nodejs_eventloop_utilization_ratio{service_name=\"frontend\"})",
+    "direction": "up",
+    "baseline_mean": 0.004198422683499695,
+    "baseline_samples": 20,
+    "fault_mean": 0.033799826751186667,
+    "fault_samples": 12,
+    "passed": true,
+    "detail": "baseline 0.004198 -> fault 0.0338 (delta +0.0296, x8.05)",
+    "series": [
+     [
+      1791023370.0,
+      0.006349
+     ],
+     [
+      1791023430.0,
+      0.004455
+     ],
+     [
+      1791023490.0,
+      0.004403
+     ],
+     [
+      1791023550.0,
+      0.003844
+     ],
+     [
+      1791023610.0,
+      0.003873
+     ],
+     [
+      1791023670.0,
+      0.003774
+     ],
+     [
+      1791023730.0,
+      0.015375
+     ],
+     [
+      1791023790.0,
+      0.021812
+     ],
+     [
+      1791023850.0,
+      0.028857
+     ],
+     [
+      1791023910.0,
+      0.034964
+     ],
+     [
+      1791023970.0,
+      0.042834
+     ],
+     [
+      1791024030.0,
+      0.020045
+     ],
+     [
+      1791024090.0,
+      0.004807
+     ],
+     [
+      1791024150.0,
+      0.008149
+     ]
+    ]
+   },
+   {
+    "id": "frontend-errors-control",
+    "service": "frontend",
+    "metric": "traces_span_metrics_calls_total",
+    "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"frontend\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+    "direction": "flat",
+    "baseline_mean": 0.0,
+    "baseline_samples": 20,
+    "fault_mean": 0.0,
+    "fault_samples": 12,
+    "passed": true,
+    "detail": "baseline 0 -> fault 0 (delta +0), expected flat",
+    "series": [
+     [
+      1791023370.0,
+      0.0
+     ],
+     [
+      1791023430.0,
+      0.0
+     ],
+     [
+      1791023490.0,
+      0.0
+     ],
+     [
+      1791023550.0,
+      0.0
+     ],
+     [
+      1791023610.0,
+      0.0
+     ],
+     [
+      1791023670.0,
+      0.0
+     ],
+     [
+      1791023730.0,
+      0.0
+     ],
+     [
+      1791023790.0,
+      0.0
+     ],
+     [
+      1791023850.0,
+      0.0
+     ],
+     [
+      1791023910.0,
+      0.0
+     ],
+     [
+      1791023970.0,
+      0.0
+     ],
+     [
+      1791024030.0,
+      0.0
+     ],
+     [
+      1791024090.0,
+      0.0
+     ],
+     [
+      1791024150.0,
+      0.0
+     ]
+    ]
+   }
+  ]
+ },
+ "_fixture": {
+  "source": "homepage-flood-20261003T102937Z.json",
+  "note": "series downsampled to 60 s; otherwise as written by scripts/scenario.py"
+ }
+}
