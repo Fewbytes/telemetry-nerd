@@ -75,7 +75,9 @@ def test_signal_measures_and_directions():
 def test_queue_sim_truth():
     t = truth("overload_spike")
     assert t.kind == "queue_sim" and t.entity_label == "pod"
-    assert t.origin == ("checkout-0", "checkout-1", "checkout-2") and t.control == ()
+    # a fault on every pod faults the service: claims naming "checkout" are about the origin
+    assert t.origin == ("checkout-0", "checkout-1", "checkout-2", "checkout") and t.control == ()
+    assert t.sole == "checkout"
     assert t.expected_sources == (SPECIAL,)
     # the effect lasts until the backlog drains (t=420s), not until the load stops (360s)
     assert t.fault_end_ms == t.run_start_ms + 420_000
@@ -95,6 +97,7 @@ def test_queue_sim_whole_run_fault_has_no_onset_and_names_the_instance():
     t = load_truth(gt)
     assert t.no_onset and t.expected_sources == (MEASUREMENT,)
     assert t.origin == ("checkout-2",) and t.control == ("checkout-0", "checkout-1")
+    assert "checkout" not in t.entities  # a subset fault: the service is not one entity
     assert t.root_cause_terms[0] == "checkout-2"
 
 
@@ -623,6 +626,87 @@ def test_queue_sim_live_run_scores_as_observed():
     assert f1.sources == ["measurement_system"] and not f1.incident
     assert [h.status for h in rep.hypotheses] == ["refuted"]
     assert (rep.passed, rep.applicable) == (8, 9) and rep.acceptance
+
+
+def _qs_truth():
+    return load_truth(EV / "overload_spike.live-sonnet-3.truth.json", extra_terms("overload_spike"))
+
+
+@pytest.mark.parametrize(
+    "statement,role",
+    [
+        # eval round 3, h2: the competing cause names the root-cause term only to negate it
+        (("checkout: the episode is the checkout service itself slowing down (latency shift) at "
+          "unchanged arrival rate, piling up in-flight requests"), "other"),
+        ("checkout slowed; this is not an arrival surge", "other"),
+        ("checkout: the episode is an arrival surge (request rate ~3x)", "root_cause"),
+        ("an arrival surge, not a slowdown of the service", "root_cause"),
+        ("no surge at first; then a surge in arrivals", "root_cause"),
+    ],
+)  # fmt: skip
+def test_negated_root_cause_term_does_not_name_the_root_cause(statement, role):
+    from telemetry_nerd.evals.score import score_hypothesis
+
+    assert score_hypothesis({"id": "h1", "statement": statement}, _qs_truth()).role == role
+
+
+def test_queue_sim_service_is_the_origin_and_the_sole_entity():
+    """Every pod faulted: claims about 'checkout' are about the origin, and an expression over the
+    one-service throwaway VM covers it unless a matcher picks pods or another service."""
+    t = _qs_truth()
+    assert "checkout" in t.implicated and t.sole == "checkout"
+    assert coverage("sum(rate(http_requests_total[1m]))", t)[0] == {"checkout"}
+    assert coverage('http_requests_total{service="checkout"}', t)[0] == {"checkout"}
+    assert coverage('http_requests_total{service="cart"}', t)[0] == set()
+    assert coverage('http_requests_total{pod="checkout-0"}', t)[0] == {"checkout-0"}
+    assert "checkout" in coverage("sum by (pod) (http_server_active_requests)", t)[0]
+
+
+def test_daemon_not_covered_is_overruled_only_for_the_sole_entity_it_covers():
+    s = copy.deepcopy(snap("overload_spike.live-sonnet-3"))
+    rep = score(s, _qs_truth())
+    f3 = next(f for f in rep.findings if f.id == "f3")
+    assert f3.scoped and f3.uncovered == []  # pooled over the only service: covered
+    finding(s, "f3")["scope"]["selector"] = 'http_requests_total{pod="checkout-0"}'
+    finding(s, "f3")["evidence"] = [{"kind": "statistic", "dataset": "dX", "name": "x",
+                                     "value": 1, "source": "special_cause"}]  # fmt: skip
+    s["exprs"]["dX"] = ['rate(http_requests_total{pod="checkout-0"}[1m])']
+    f3 = next(f for f in score(s, _qs_truth()).findings if f.id == "f3")
+    assert f3.uncovered == ["checkout"]  # one pod's evidence does not cover the service
+
+
+def test_level_shift_counts_as_a_change():
+    from telemetry_nerd.evals.score import asserts_change
+
+    assert asserts_change("checkout mean latency level-shifted up by 15.5 s at 14:38:45")
+    assert asserts_change("latency shifted down by 15 s at 14:40")
+
+
+def test_queue_sim_round3_scores_as_observed():
+    """Eval round 3, queue-sim (after rbz/t75/e0k/1w7/lep/zqa): Little's law consistent over the
+    window (f1), the episode annotated +20 s from fault start, an arrival-surge hypothesis h1
+    supported against a refuted slowdown h2 (t75 works). No finding names the surge: f3 says the
+    request rate rose ~3x but calls the counter 'likely completion-side' and cites a run_code
+    peak with no source of variation (source_label fails). 14 tool rounds, num_turns 32."""
+    rep = score(snap("overload_spike.live-sonnet-3"), _qs_truth())
+    st = {c.id: c.status for c in rep.checks}
+    assert {k for k, v in st.items() if v == "fail"} == {"root_cause_named", "source_label"}
+    assert {k for k, v in st.items() if v == "n/a"} == {"no_control_blamed", "decoys_not_supported"}
+    by = {f.id: f for f in rep.findings}
+    assert by["f2"].incident and by["f2"].source_ok and by["f2"].sources == ["special_cause"]
+    assert by["f3"].incident and by["f3"].sources == ["undetermined"] and not by["f3"].source_ok
+    assert [(h.id, h.role, h.status) for h in rep.hypotheses] == [
+        ("h1", "root_cause", "supported"), ("h2", "other", "refuted")]  # fmt: skip
+    assert [a.verdict for a in rep.annotations] == ["onset_ok"]
+    assert (rep.passed, rep.applicable) == (9, 11) and rep.acceptance
+
+
+def test_queue_sim_round3_stream_counts_rounds_not_turns():
+    out = live.parse_stream(
+        (EV / "overload_spike.live-sonnet-3.stream.jsonl").read_text().splitlines()
+    )
+    assert (out["tool_rounds"], out["num_turns"], out["tool_results"]) == (14, 32, 29)
+    assert live.caps({**out, "aborted": None}, 40, 5.0)["stopped_by"] == "finished"
 
 
 # --- turn and budget caps (zqa) ---------------------------------------------------------------

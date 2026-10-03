@@ -51,12 +51,12 @@ ACCEPTANCE = ("findings_scoped", "findings_evidenced", "annotation_onset", "zero
 _UP = re.compile(
     r"\b(increas\w*|rose|rise[sn]?|rising|spik\w*|jump\w*|higher|grew|grow\w*|elevated|surg\w*|"
     r"climb\w*|doubl\w*|tripl\w*|went up|up from|exceed\w*|burst\w*|failed|failing|"
-    r"started failing|returned (?:\w+ ){0,2}[45]\d\ds?|started returning)\b",
+    r"started failing|returned (?:\w+ ){0,2}[45]\d\ds?|started returning|shift\w* up)\b",
     re.IGNORECASE,
 )
 _DOWN = re.compile(
     r"\b(decreas\w*|drop\w*|fell|fall\w*|lower|declin\w*|reduc\w*|went down|down from|dipp?\w*|"
-    r"shr[iu]nk\w*|collaps\w*)\b",
+    r"shr[iu]nk\w*|collaps\w*|shift\w* down)\b",
     re.IGNORECASE,
 )
 _FLAT = re.compile(
@@ -140,10 +140,30 @@ def named(text: str, entities: tuple[str, ...] | frozenset[str]) -> set[str]:
     return {e for e in entities if mentions(text, e)}
 
 
+#: a descriptive root-cause term negated by the words just before it: "at unchanged arrival
+#: rate", "not an arrival surge", "no load spike" name the competing cause, not the root cause
+#: (eval round 3: h2 "the service slowing down at unchanged arrival rate" scored as root cause)
+_TERM_NEGATOR = re.compile(
+    r"\b(?:unchanged|constant|steady|flat|stable|same|normal|no|not|without|never|"
+    r"rather than|instead of|ruled? out)\b(?:\W+\w+){0,2}\W*$",
+    re.IGNORECASE,
+)
+
+
+def _names_phrase(text: str, term: str) -> bool:
+    """`term` (a descriptive phrase, matched as a substring) occurs at least once un-negated."""
+    low, t = text.lower(), term.lower()
+    i = low.find(t)
+    while i >= 0:
+        if not _TERM_NEGATOR.search(low[:i]):
+            return True
+        i = low.find(t, i + 1)
+    return False
+
+
 def names_term(text: str, terms: tuple[str, ...], entities: tuple[str, ...]) -> bool:
-    """A root-cause term in prose: entity names by word, other terms as substrings."""
-    low = text.lower()
-    return any(mentions(text, t) if t in entities else t.lower() in low for t in terms)
+    """A root-cause term in prose: entity names by word, other terms as un-negated substrings."""
+    return any(mentions(text, t) if t in entities else _names_phrase(text, t) for t in terms)
 
 
 def sentences(text: str) -> list[str]:
@@ -198,11 +218,20 @@ def coverage(expr: str, truth: Truth) -> tuple[set[str], bool]:
     `by (<entity label>)` keeps every entity apart (covers all). No matcher and no such grouping:
     the expression mixes every entity (covers none of them specifically)."""
     labels = {truth.entity_label, *truth.extra_labels}
-    ms = [m for m in matchers(expr) if m.label in labels]
+    found = matchers(expr)
+    ms = [m for m in found if m.label in labels]
     ents = truth.entities
+    sole: set[str] = set()
+    if truth.sole in ents:
+        if not all(m.matches(truth.sole) for m in found if m.label == truth.sole_label):
+            return set(), True  # a matcher excludes the source's only service: nothing of it
+        if not ms:
+            sole = {truth.sole}  # every series is the sole entity's unless members are picked
     if ms:
         out = set()
         for e in ents:
+            if e == truth.sole:
+                continue
             pos = [m for m in ms if m.op in ("=", "=~")]
             neg = [m for m in ms if m.op in ("!=", "!~")]
             ok_pos = not pos or any(
@@ -213,7 +242,7 @@ def coverage(expr: str, truth: Truth) -> tuple[set[str], bool]:
                 out.add(e)
         return out, True
     grouped = any(lbl.strip() in labels for g in _BY.findall(expr or "") for lbl in g.split(","))
-    return (set(ents), True) if grouped else (set(), False)
+    return (set(ents), True) if grouped else (sole, bool(sole))
 
 
 # --- results
@@ -346,7 +375,10 @@ def score_finding(
     # the daemon's own verdict on the claim's scope against its evidence (bead qxp)
     for item in (f.get("scope_check") or {}).get("not_covered", []):
         value = item.split("=", 1)[-1].strip('"')
-        uncovered |= {e for e in truth.entities if _value_names(value, e)}
+        # ground truth overrules the daemon only for the sole entity its own coverage found:
+        # pooling every series of a one-service source covers that service (eval round 3, f3)
+        known = {truth.sole} & (sel_cov | ev_cov)
+        uncovered |= {e for e in truth.entities if _value_names(value, e)} - known
     uncovered = sorted(uncovered)
     if uncovered:
         problems.append(f"claim names {', '.join(uncovered)} outside its scope and evidence")

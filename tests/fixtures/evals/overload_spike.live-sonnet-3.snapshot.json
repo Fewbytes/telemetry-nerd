@@ -1,0 +1,633 @@
+{
+ "_fixture": "Real headless run (claude sonnet, 14 tool rounds / num_turns 32, $0.40) of /telemetry-nerd:investigate on the queue-sim overload_spike scenario (600 s), eval round 3, 2026-10-03T14:43Z; events dropped.",
+ "workspace": {
+  "panels": [
+   {
+    "id": "p4",
+    "question": "Is mean concurrency L consistent with throughput x mean latency (L = lambda W)?",
+    "status": "open",
+    "spec": {
+     "layers": [
+      {
+       "mark": "littles",
+       "data": "d4",
+       "windows": [],
+       "color": "count",
+       "quantiles": [
+        0.5,
+        0.9,
+        0.99
+       ],
+       "role": "main",
+       "segment_ms": null,
+       "overlap": null,
+       "min_period_ms": null,
+       "max_period_ms": null,
+       "seasonal": null,
+       "spc": null,
+       "fleet": null,
+       "littles": {
+        "source": "default",
+        "datasets": {
+         "arrival_rate": "d1",
+         "latency_sum": "d2",
+         "latency_count": "d3",
+         "concurrency": "d4"
+        },
+        "by": [],
+        "step_ms": 15000,
+        "window_ms": 120000,
+        "k": 8,
+        "skip": 1,
+        "start_ms": 1791037860000,
+        "end_ms": 1791038580000,
+        "unit_factor": 1.0,
+        "unit": "s",
+        "unit_basis": "inferred from metric name",
+        "lookback_ms": 0,
+        "counter_form": "increase_tiles",
+        "tile_s": 15.0,
+        "scrape_ms": 15000,
+        "scrape_probe": "http_server_active_requests is scraped every 5s (median sample spacing at the range end) but source 'default' is configured with resolution 15s: the check reads one sample per 15s (hint: source_connect(name='default', url=..., resolution=\"5s\", replace=true) to use them all)",
+        "resolution_ms": 15000,
+        "arrivals": "unknown",
+        "arrival_is_rate": false,
+        "roles": {
+         "arrival_rate": "http_requests_total",
+         "latency": "http_request_duration_seconds",
+         "concurrency": "http_server_active_requests"
+        },
+        "binding": null,
+        "exprs": {
+         "arrival_rate": "sum (increase(http_requests_total[15s]))",
+         "latency_sum": "sum (increase(http_request_duration_seconds_sum[15s]))",
+         "latency_count": "sum (increase(http_request_duration_seconds_count[15s]))",
+         "concurrency": "sum (http_server_active_requests)"
+        },
+        "warmup": null,
+        "matchers": {
+         "arrival_rate": [],
+         "latency": [],
+         "concurrency": []
+        }
+       }
+      }
+     ],
+     "y": {
+      "range_mode": "data",
+      "unit": "count",
+      "unit_provenance": "knowledge pack",
+      "label": null,
+      "views": [],
+      "selected": null,
+      "context": null,
+      "asserted_bounds": null
+     },
+     "references": {},
+     "marginal": null,
+     "signal": null,
+     "overlays": {
+      "normal": true,
+      "limit": true,
+      "ghost": false
+     },
+     "auto": null,
+     "group": null
+    },
+    "dataset_ids": [
+     "d4",
+     "d1",
+     "d2",
+     "d3"
+    ],
+    "created_at_ms": 1791038625988,
+    "answered_by": null,
+    "closed": false
+   },
+   {
+    "id": "p3",
+    "question": "How does checkout mean latency evolve 14:31-14:43?",
+    "status": "open",
+    "spec": {
+     "layers": [
+      {
+       "mark": "line+envelope",
+       "data": "d7",
+       "windows": [],
+       "color": "count",
+       "quantiles": [
+        0.5,
+        0.9,
+        0.99
+       ],
+       "role": "main",
+       "segment_ms": null,
+       "overlap": null,
+       "min_period_ms": null,
+       "max_period_ms": null,
+       "seasonal": null,
+       "spc": null,
+       "fleet": null,
+       "littles": null
+      }
+     ],
+     "y": {
+      "range_mode": "data",
+      "unit": null,
+      "unit_provenance": null,
+      "label": null,
+      "views": [],
+      "selected": null,
+      "context": {
+       "natural_lo": null,
+       "natural_hi": null,
+       "bounds": null,
+       "bounds_origin": null,
+       "bounds_basis": null,
+       "bounds_confidence": null,
+       "lines": [],
+       "reframes": [],
+       "profile": null,
+       "typical": null,
+       "notes": [
+        "natural_bounds_unknown: the expression is not a single metric",
+        "profile_unavailable: the profile has no usable range"
+       ],
+       "limit": null
+      },
+      "asserted_bounds": null
+     },
+     "references": {},
+     "marginal": null,
+     "signal": null,
+     "overlays": {
+      "normal": true,
+      "limit": true,
+      "ghost": false
+     },
+     "auto": null,
+     "group": null
+    },
+    "dataset_ids": [
+     "d7"
+    ],
+    "created_at_ms": 1791038625961,
+    "answered_by": null,
+    "closed": false
+   },
+   {
+    "id": "p2",
+    "question": "How does checkout request rate evolve 14:31-14:43?",
+    "status": "open",
+    "spec": {
+     "layers": [
+      {
+       "mark": "line+envelope",
+       "data": "d6",
+       "windows": [],
+       "color": "count",
+       "quantiles": [
+        0.5,
+        0.9,
+        0.99
+       ],
+       "role": "main",
+       "segment_ms": null,
+       "overlap": null,
+       "min_period_ms": null,
+       "max_period_ms": null,
+       "seasonal": null,
+       "spc": null,
+       "fleet": null,
+       "littles": null
+      }
+     ],
+     "y": {
+      "range_mode": "data",
+      "unit": "count/s",
+      "unit_provenance": "inferred from metric name",
+      "label": null,
+      "views": [],
+      "selected": null,
+      "context": {
+       "natural_lo": null,
+       "natural_hi": null,
+       "bounds": null,
+       "bounds_origin": null,
+       "bounds_basis": null,
+       "bounds_confidence": null,
+       "lines": [],
+       "reframes": [],
+       "profile": null,
+       "typical": null,
+       "notes": [
+        "natural_bounds_unknown: the expression is not a single metric",
+        "profile_unavailable: the profile has no usable range"
+       ],
+       "limit": null
+      },
+      "asserted_bounds": null
+     },
+     "references": {},
+     "marginal": null,
+     "signal": null,
+     "overlays": {
+      "normal": true,
+      "limit": true,
+      "ghost": false
+     },
+     "auto": null,
+     "group": null
+    },
+    "dataset_ids": [
+     "d6"
+    ],
+    "created_at_ms": 1791038625933,
+    "answered_by": null,
+    "closed": false
+   },
+   {
+    "id": "p1",
+    "question": "How does in-flight concurrency evolve for checkout 14:31-14:43?",
+    "status": "open",
+    "spec": {
+     "layers": [
+      {
+       "mark": "line+envelope",
+       "data": "d5",
+       "windows": [],
+       "color": "count",
+       "quantiles": [
+        0.5,
+        0.9,
+        0.99
+       ],
+       "role": "main",
+       "segment_ms": null,
+       "overlap": null,
+       "min_period_ms": null,
+       "max_period_ms": null,
+       "seasonal": null,
+       "spc": null,
+       "fleet": null,
+       "littles": null
+      }
+     ],
+     "y": {
+      "range_mode": "data",
+      "unit": "count",
+      "unit_provenance": "knowledge pack",
+      "label": null,
+      "views": [],
+      "selected": null,
+      "context": {
+       "natural_lo": 0.0,
+       "natural_hi": null,
+       "bounds": "\u22650",
+       "bounds_origin": "pack",
+       "bounds_basis": null,
+       "bounds_confidence": null,
+       "lines": [],
+       "reframes": [],
+       "profile": null,
+       "typical": null,
+       "notes": [
+        "profile_unavailable: the profile has no usable range"
+       ],
+       "limit": null
+      },
+      "asserted_bounds": null
+     },
+     "references": {},
+     "marginal": null,
+     "signal": null,
+     "overlays": {
+      "normal": true,
+      "limit": true,
+      "ghost": false
+     },
+     "auto": null,
+     "group": null
+    },
+    "dataset_ids": [
+     "d5"
+    ],
+    "created_at_ms": 1791038625896,
+    "answered_by": null,
+    "closed": false
+   }
+  ],
+  "annotations": [
+   {
+    "kind": "region",
+    "panel": "p1",
+    "t_start_ms": 1791038295000,
+    "t_end_ms": 1791038445000,
+    "value": null,
+    "value_hi": null,
+    "label": "overload episode: L >3x base from 14:38:15 (\u00b115s), W shifts 14:38:45 up / 14:40:45 down (CI \u00b1~1m), recovered by 14:41",
+    "links": [],
+    "id": "a1",
+    "author": "claude",
+    "created_at_ms": 1791038647743,
+    "deleted": false
+   }
+  ],
+  "hypotheses": [
+   {
+    "id": "h1",
+    "statement": "checkout: the 14:38-14:41 episode is an arrival surge (request rate ~3x) that pushed the service into queueing, raising latency and in-flight concurrency",
+    "status": "supported",
+    "author": "claude",
+    "evidence_for": [
+     "f2",
+     "f3"
+    ],
+    "evidence_against": [],
+    "alternatives_considered": "h2 (service slowdown at unchanged rate) refuted: rate rose ~3x (f3). Not excluded: retry amplification; arrivals vs completions not separable with this counter.",
+    "created_at_ms": 1791038648475,
+    "updated_at_ms": 1791038672381
+   },
+   {
+    "id": "h2",
+    "statement": "checkout: the 14:38-14:41 episode is the checkout service itself slowing down (latency shift) at unchanged arrival rate, piling up in-flight requests",
+    "status": "refuted",
+    "author": "claude",
+    "evidence_for": [],
+    "evidence_against": [],
+    "alternatives_considered": null,
+    "created_at_ms": 1791038648493,
+    "updated_at_ms": 1791038664626
+   }
+  ],
+  "findings": [
+   {
+    "claim": "checkout: over 14:31-14:43 mean concurrency L (108.6, CI 86-131) agrees with \u03bb\u00b7W (109.4, CI 108-110); R=0.99 (CI 0.79-1.20); no systematic offset, no flagged windows. Measurement-system interval is \u00b120%, so the 2m windows at 14:37 (+30) and 14:39 (+23) cannot be called discrepant.",
+    "scope": {
+     "source": "default",
+     "selector": "http_server_active_requests, http_requests_total, http_request_duration_seconds",
+     "time_range": {
+      "start_ms": 1791037860000,
+      "end_ms": 1791038580000
+     },
+     "step": "15s",
+     "aggregation": "window 2m",
+     "baseline_range": null
+    },
+    "evidence": [
+     {
+      "kind": "statistic",
+      "dataset": "d4",
+      "name": "littles_law_ratio",
+      "value": 0.9929,
+      "interval": [
+       0.7886,
+       1.197
+      ],
+      "exact": false,
+      "uncertainty_unknown": false,
+      "method": "check_littles_law, 2m windows",
+      "params": {},
+      "source": "measurement_system"
+     }
+    ],
+    "caveats": [
+     "d4: 2546658abb11e6a7: 84% of expected samples in the claim window.",
+     "d4: scope undetermined: scope.selector could not be read into label matchers (several selectors); coverage was checked over every evidence series instead, so which series the claim is about is not established."
+    ],
+    "hypothesis": null,
+    "stance": null,
+    "answers_panel": null,
+    "scope_note": null,
+    "id": "f1",
+    "author": "claude",
+    "created_at_ms": 1791038653893,
+    "verdict": null,
+    "verdict_comment": null,
+    "evidence_flags": [],
+    "scope_check": {
+     "status": "undetermined",
+     "named": [
+      "service=\"checkout\""
+     ],
+     "not_covered": [],
+     "undetermined": [],
+     "message": "scope undetermined: scope.selector could not be read into label matchers (several selectors); coverage was checked over every evidence series instead, so which series the claim is about is not established"
+    },
+    "source_flags": []
+   },
+   {
+    "claim": "checkout mean latency level-shifted up by 15.5 s (99% CI 10.2-20.7) at 14:38:45 and back down by 15.3 s at 14:40:45 (special cause); baseline mean ~1.0 s, peak 24.2 s at 14:39:45.",
+    "scope": {
+     "source": "default",
+     "selector": "sum(rate(http_request_duration_seconds_sum[1m]))/sum(rate(http_request_duration_seconds_count[1m]))",
+     "time_range": {
+      "start_ms": 1791037860000,
+      "end_ms": 1791038580000
+     },
+     "step": "15s",
+     "aggregation": "sum",
+     "baseline_range": null
+    },
+    "evidence": [
+     {
+      "kind": "statistic",
+      "dataset": "d7",
+      "name": "level_shift",
+      "value": 15.47,
+      "interval": [
+       10.23,
+       20.71
+      ],
+      "exact": false,
+      "uncertainty_unknown": false,
+      "method": "CUSUM changepoint (analyze)",
+      "params": {
+       "step": "15s",
+       "n": 40,
+       "n_eff": 24.3,
+       "at": "2026-10-03T14:38:45+00:00",
+       "p": 4.95e-08
+      },
+      "source": "special_cause"
+     },
+     {
+      "kind": "annotation",
+      "annotation": "a1"
+     }
+    ],
+    "caveats": [
+     "d7: 2546658abb11e6a7: 83% of expected samples in the claim window.",
+     "d7: scope undetermined: scope.selector could not be read into label matchers (several selectors); coverage was checked over every evidence series instead, so which series the claim is about is not established."
+    ],
+    "hypothesis": "h1",
+    "stance": "for",
+    "answers_panel": null,
+    "scope_note": null,
+    "id": "f2",
+    "author": "claude",
+    "created_at_ms": 1791038655820,
+    "verdict": null,
+    "verdict_comment": null,
+    "evidence_flags": [],
+    "scope_check": {
+     "status": "undetermined",
+     "named": [
+      "service=\"checkout\""
+     ],
+     "not_covered": [],
+     "undetermined": [
+      "service=\"checkout\""
+     ],
+     "message": "scope undetermined: whether the evidence covers service=\"checkout\" is not known (its expression could not be read); scope.selector could not be read into label matchers (several selectors); coverage was checked over every evidence series instead, so which series the claim is about is not established"
+    },
+    "source_flags": []
+   },
+   {
+    "claim": "checkout request rate (likely completion-side) rose from a ~15.0/s median baseline to a peak of 44.7/s at 14:39:00 (~3x), while in-flight concurrency summed over 3 pods rose from ~14 to 910 (~65x) at the same instant and mean latency peaked later (14:39:45, 24 s). Max/median only; uncertainty unknown (code node c1).",
+    "scope": {
+     "source": "default",
+     "selector": "sum(rate(http_requests_total[1m]))",
+     "time_range": {
+      "start_ms": 1791037860000,
+      "end_ms": 1791038580000
+     },
+     "step": "15s",
+     "aggregation": "sum",
+     "baseline_range": null
+    },
+    "evidence": [
+     {
+      "kind": "statistic",
+      "dataset": "d6",
+      "name": "peak_rate_per_s",
+      "value": 44.68,
+      "interval": null,
+      "exact": false,
+      "uncertainty_unknown": true,
+      "method": "series max from c1, baseline median 15.04 over first 4 min",
+      "params": {},
+      "source": null
+     },
+     {
+      "kind": "annotation",
+      "annotation": "a1"
+     }
+    ],
+    "caveats": [
+     "d6: 2546658abb11e6a7: 83% of expected samples in the claim window.",
+     "d6: __name__=\"http_requests_total\" not checked: the evidence series carry no metric name, so the claim's metric is not confirmed."
+    ],
+    "hypothesis": "h1",
+    "stance": "for",
+    "answers_panel": null,
+    "scope_note": "The metrics are only produced by the checkout service (the sole service found under the searched labels); the series carry no service label after sum().",
+    "id": "f3",
+    "author": "claude",
+    "created_at_ms": 1791038669718,
+    "verdict": null,
+    "verdict_comment": null,
+    "evidence_flags": [
+     {
+      "evidence": 0,
+      "flag": "uncertainty_unknown",
+      "message": "statistic 'peak_rate_per_s' of d6: uncertainty unknown: the value has no interval and is not exact (unknown, not zero)"
+     }
+    ],
+    "scope_check": {
+     "status": "beyond_evidence",
+     "named": [
+      "service=\"checkout\""
+     ],
+     "not_covered": [
+      "service=\"checkout\""
+     ],
+     "undetermined": [],
+     "message": "the claim names service=\"checkout\", which its evidence does not cover (cited evidence covers: d6: all service values pooled (none one by one))"
+    },
+    "source_flags": [
+     {
+      "evidence": 0,
+      "flag": "source_undetermined",
+      "source": "undetermined",
+      "message": "not traced to an op result, and it carries no source: what its variation is attributed to (common cause, special cause, measurement system) is undetermined"
+     }
+    ]
+   }
+  ],
+  "gaps": [],
+  "groups": [],
+  "code": [
+   {
+    "id": "c1",
+    "status": "ok",
+    "exec_status": "ok",
+    "inputs": [
+     "d5",
+     "d6",
+     "d7"
+    ],
+    "outputs": [],
+    "author": "claude",
+    "created_at_ms": 1791038639290,
+    "finished_at_ms": 1791038641375,
+    "duration_s": 2.073,
+    "rerun_of": null,
+    "error": null,
+    "restarted": false
+   }
+  ],
+  "threads": [],
+  "last_seq": 29
+ },
+ "exprs": {
+  "d1": [
+   "sum (increase(http_requests_total[15s]))"
+  ],
+  "d2": [
+   "sum (increase(http_request_duration_seconds_sum[15s]))"
+  ],
+  "d3": [
+   "sum (increase(http_request_duration_seconds_count[15s]))"
+  ],
+  "d4": [
+   "sum (http_server_active_requests)"
+  ],
+  "d5": [
+   "http_server_active_requests"
+  ],
+  "d6": [
+   "sum(rate(http_requests_total[1m]))"
+  ],
+  "d7": [
+   "sum(rate(http_request_duration_seconds_sum[1m])) / sum(rate(http_request_duration_seconds_count[1m]))"
+  ],
+  "op-4782dfd47a3d": [
+   "http_server_active_requests"
+  ],
+  "op-32cd7c013056": [
+   "sum(rate(http_requests_total[3615s]))"
+  ],
+  "op-367022bb7d9d": [
+   "sum(rate(http_request_duration_seconds_sum[3615s])) / sum(rate(http_request_duration_seconds_count[3615s]))"
+  ],
+  "p4": [
+   "sum (http_server_active_requests)",
+   "sum (increase(http_requests_total[15s]))",
+   "sum (increase(http_request_duration_seconds_sum[15s]))",
+   "sum (increase(http_request_duration_seconds_count[15s]))"
+  ],
+  "p3": [
+   "sum(rate(http_request_duration_seconds_sum[1m])) / sum(rate(http_request_duration_seconds_count[1m]))"
+  ],
+  "p2": [
+   "sum(rate(http_requests_total[1m]))"
+  ],
+  "p1": [
+   "http_server_active_requests"
+  ]
+ },
+ "transcript": {
+  "result": "**Scope:** checkout, 2026-10-03 14:31\u201314:43 UTC, source `default` (VictoriaMetrics). `entities` found one service, `checkout`, under the searched labels in this window. I assumed the whole window is the target and took the first four minutes as the baseline. Workspace: http://127.0.0.1:52760\n\n**Answer:** They agree over the whole window but not inside it.\n- **Whole window:** mean concurrency L is 108.6 and \u03bb\u00b7W is 109.4, a ratio of 0.99 (95% CI 0.79\u20131.20). There is no systematic offset and no flagged window (f1).\n- **Why that is weak:** the measurement interval is \u00b120%. The 2-minute windows at 14:37 (+30) and 14:39 (+23) cannot be called discrepant. Some counter and latency-count disagreement was flagged in the 14:39\u201314:41 window.\n- **Where and when:** inside the window there is an overload episode, shaded as region a1 on p1, from about 14:38:15 to 14:40:45 and recovered by about 14:41.\n  - Summed concurrency went from about 14 to 910 (peak at 14:39:00).\n  - Request rate went from about 15/s to 44.7/s (peak at 14:39:00).\n  - Mean latency went from about 1 s to 24 s (peak at 14:39:45).\n- **Why:** concurrency rose far more than rate (about 65\u00d7 against 3\u00d7) because mean latency rose about 24\u00d7, so the three signals moved together.\n\n**Hypotheses**\n- **h1 (supported):** an arrival surge pushed checkout into queueing. This is weak support from one finding (f3), and the rate counter probably counts completions, so true arrivals are not measured. Retry amplification is not excluded.\n- **h2 (refuted):** checkout slowed at an unchanged rate. The rate rose about 3\u00d7.\n\n**Findings**\n- **f1:** Little's law consistent over the window. Scope is undetermined (several selectors). Source is measurement system.\n- **f2:** latency level shift of +15.5 s (99% CI 10.2\u201320.7) at 14:38:45 and \u221215.3 s at 14:40:45. Scope is undetermined. Source is special cause. It is recorded without a hypothesis stance.\n- **f3:** the rate and concurrency peaks. Scope is beyond_evidence, because the pooled series have no service label. Uncertainty is unknown (max and median only, from code node c1). Source is undetermined.\n\n**Unexplained or unmeasurable**\n- **Onset ordering:** the order of the three signals is not established. The latency shift CI is about \u00b11 minute, and `analyze` was insufficient for the rate and per-pod concurrency series (n_eff under 10).\n- **Surge origin:** I cannot tell whether the surge was external traffic or retries.\n- **Gauge resolution:** the in-flight gauge is scraped every 5 s but the source is configured at 15 s, so short spikes may be missed. I did not change the source configuration.\n- **Deploys:** I did not ask about deploys or config changes (non-interactive session), so none are annotated."
+ }
+}

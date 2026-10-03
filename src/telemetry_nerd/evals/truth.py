@@ -89,6 +89,11 @@ class Truth:
     no_onset: bool = False
     #: other labels that may carry the entity (job="ns/payment", service="payment")
     extra_labels: tuple[str, ...] = ()
+    #: an entity every series of the source belongs to (queue-sim: the one simulated service on
+    #: the eval's throwaway VM): any expression covers it unless a matcher excludes it
+    sole: str | None = None
+    #: the label naming the sole entity
+    sole_label: str = "service"
     raw: dict = field(default_factory=dict, compare=False, repr=False)
 
     @property
@@ -182,6 +187,11 @@ def from_queue_sim(gt: dict, tolerance_s: float | None = None) -> Truth:
     # a fault on every instance leaves no control; one on a subset names the subset
     if origin and set(origin) != set(instances):
         terms = [*origin, *terms]
+    service = gt.get("service")
+    # the service is the faulted entity when every instance is: claims about "checkout" are
+    # claims about the origin (eval round 3: they were invisible to scope and source checks)
+    if service and origin and set(origin) == set(instances):
+        origin = (*origin, service)
     return Truth(
         scenario=gt["scenario"],
         kind="queue_sim",
@@ -201,6 +211,7 @@ def from_queue_sim(gt: dict, tolerance_s: float | None = None) -> Truth:
         signals=(),
         no_onset=whole or not faults,
         extra_labels=("instance",),
+        sole=service or None,
         raw=gt,
     )
 
