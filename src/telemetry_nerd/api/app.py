@@ -440,7 +440,9 @@ def create_app(
         """A dataset over a different range for this panel, without mutating it."""
         body = await _body(request, start=str, end=str)
         try:
-            return await service.preview(request.path_params["id"], body["start"], body["end"], "user")
+            return await service.preview(
+                request.path_params["id"], body["start"], body["end"], "user"
+            )
         except SourceError as e:
             raise _BadRequest(str(e), e.hint or "") from e
 
@@ -449,7 +451,9 @@ def create_app(
         """Accept a time-range change: a new panel over the new range, leaving this one untouched."""
         body = await _body(request, start=str, end=str)
         try:
-            res = await service.rescope(request.path_params["id"], body["start"], body["end"], "user")
+            res = await service.rescope(
+                request.path_params["id"], body["start"], body["end"], "user"
+            )
         except SourceError as e:
             raise _BadRequest(str(e), e.hint or "") from e
         return {"panel": res.panel.to_dict(), "issues": [i.model_dump() for i in res.issues]}

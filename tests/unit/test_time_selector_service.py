@@ -120,7 +120,9 @@ async def test_rescope_an_spc_panel_reuses_its_baseline_when_it_still_fits(tmp_p
     meta = svc.datasets.meta(d)
     baseline_start, baseline_end = meta.start_ms, meta.start_ms + meta.step_ms * 3
     shown = svc.show(
-        d, "spc?", mark="spc",
+        d,
+        "spc?",
+        mark="spc",
         windows=[Window(start_ms=baseline_start, end_ms=baseline_end)],
     )
     pid = shown.panel.id
@@ -138,7 +140,9 @@ async def test_rescope_an_spc_panel_raises_when_the_baseline_no_longer_fits(tmp_
     meta = svc.datasets.meta(d)
     baseline_start, baseline_end = meta.start_ms, meta.start_ms + meta.step_ms * 3
     shown = svc.show(
-        d, "spc?", mark="spc",
+        d,
+        "spc?",
+        mark="spc",
         windows=[Window(start_ms=baseline_start, end_ms=baseline_end)],
     )
     pid = shown.panel.id
@@ -163,10 +167,119 @@ async def test_rescope_refuses_a_code_output_panel(tmp_path):
     svc = make_service(tmp_path)
     # a code output has no source expr to re-query (same refusal reframe() uses)
     code_ds = svc.datasets.put(
-        source="default", expr="code", rng=TimeRange(0, 1000), step_ms=1000, resolution_ms=1000,
+        source="default",
+        expr="code",
+        rng=TimeRange(0, 1000),
+        step_ms=1000,
+        resolution_ms=1000,
         result=FetchResult(BUCKET_SCHEMA.empty_table(), SERIES_SCHEMA.empty_table()),
         lineage=Lineage(producer={"kind": "code", "node": "n1", "output": "o1"}),
     )
     code_panel = svc.show(code_ds.id, "computed?")
     with pytest.raises(ValueError, match="fixed data"):
         await svc.rescope(code_panel.panel.id, "now-3h", "now", "user")
+
+
+def test_set_default_range_rejects_a_value_that_does_not_start_before_now(tmp_path):
+    svc = make_service(tmp_path)
+    for value in ("now", str(svc.clock() + 3_600_000)):
+        with pytest.raises(ValueError, match="before now"):
+            svc.set_default_range(value)
+    assert svc.get_default_range() == "now-1h"  # nothing stored
+
+
+async def _filtered_panel(svc):
+    d = (await svc.query("queue_depth", start="now-2d", end="now", step="1m"))["dataset"]
+    f = svc.filter(d, "lowpass", "1h", "trend?")["dataset"]
+    return svc.show(f, "trend?").panel
+
+
+async def test_rescope_refuses_a_filtered_panel(tmp_path):
+    svc = make_service(tmp_path)
+    p = await _filtered_panel(svc)
+    assert p.spec["signal"] is not None  # line+envelope: passes the mark gate
+    before = svc.workspace.list_panels()
+    with pytest.raises(ValueError, match="rescope_unsupported_for_derived"):
+        await svc.rescope(p.id, "now-3h", "now", "user")
+    assert svc.workspace.list_panels() == before  # no unfiltered panel slipped in
+
+
+async def test_preview_refuses_a_filtered_panel(tmp_path):
+    svc = make_service(tmp_path)
+    p = await _filtered_panel(svc)
+    with pytest.raises(ValueError, match="rescope_unsupported_for_derived"):
+        await svc.preview(p.id, "now-3h", "now")
+
+
+async def test_rescope_picks_a_step_for_the_new_range_not_the_old_one(tmp_path):
+    svc = make_service(tmp_path)
+    d = await svc.query("rate(node_cpu_seconds_total[5m])", start="now-15m", end="now")
+    old = svc.datasets.meta(d["dataset"])
+    pid = svc.show(d["dataset"], "cpu?").panel.id
+    rescoped = (await svc.rescope(pid, "now-7d", "now", "user")).panel.dataset_ids[0]
+    previewed = (await svc.preview(pid, "now-7d", "now"))["dataset"]
+    for ds in (rescoped, previewed):
+        meta = svc.datasets.meta(ds)
+        assert meta.step_ms > old.step_ms
+        assert (meta.end_ms - meta.start_ms) // meta.step_ms < 5_000  # not ~40k buckets
+
+
+async def test_rescope_a_fleet_panel_reads_the_panels_config_not_the_last_fleet_call(tmp_path):
+    svc = make_service(tmp_path, source=FakeSource(n_series=6))
+    d = (await svc.query("rate(node_cpu_seconds_total[5m])"))["dataset"]
+    svc.fleets.summary(d, by=["instance"], scale="log")
+    pid = svc.show(d, "per-core?", mark="fleet").panel.id
+    svc.fleets.summary(d)  # a later fleet() on the same dataset, with default options
+    res = await svc.rescope(pid, "now-3h", "now", "user")
+    assert res.panel.spec["layers"][0]["fleet"]["by"] == ["instance"]
+    assert res.panel.spec["layers"][0]["fleet"]["scale"] == "log"
+
+
+async def test_rescope_refuses_an_spc_panel_whose_baseline_is_a_reference(tmp_path):
+    svc = make_service(tmp_path)
+    d = (await svc.query("queue_depth", start="now-6h", end="now", step="1m"))["dataset"]
+    await svc.analyze_reference(d, "previous")
+    p = svc.show(d, "shift vs previous?", mark="spc").panel
+    assert p.spec["layers"][0]["spc"] is not None and p.spec["layers"][0]["windows"] == []
+    before = svc.workspace.list_panels()
+    with pytest.raises(ValueError, match="rescope_unsupported_for_spc_reference"):
+        await svc.rescope(p.id, "now-3h", "now", "user")
+    assert svc.workspace.list_panels() == before
+
+
+async def test_rescope_records_y_context_like_every_new_time_panel(tmp_path):
+    svc = make_service(tmp_path)
+    pid = svc.show((await svc.query("node_memory_MemAvailable_bytes"))["dataset"], "mem?").panel.id
+    res = await svc.rescope(pid, "now-3h", "now", "user")
+    assert svc.workspace.get_panel(res.panel.id).spec["y"]["context"] is not None
+
+
+async def test_rescope_carries_unit_bounds_and_quantiles(tmp_path):
+    svc = make_service(tmp_path)
+    d = (await svc.query("rate(node_cpu_seconds_total[5m])"))["dataset"]
+    pid = svc.show(
+        d, "cpu?", unit="ratio", mark="line+envelope", quantiles=[0.5, 0.99],
+        bounds_lo=0, bounds_hi=100,
+    ).panel.id  # fmt: skip
+    res = await svc.rescope(pid, "now-3h", "now", "user")
+    spec = res.panel.spec
+    assert spec["y"]["unit"] == "ratio"
+    assert spec["y"]["unit_provenance"].startswith("provided by")
+    assert spec["y"]["asserted_bounds"] == {"lo": 0, "hi": 100, "by": "claude"}
+    assert spec["layers"][0]["quantiles"] == [0.5, 0.99]
+
+
+async def test_mcp_query_without_start_uses_the_workspace_default_range(tmp_path):
+    import json
+
+    from mcp import Client
+
+    from telemetry_nerd.mcp.server import build_mcp
+
+    svc = make_service(tmp_path)
+    svc.set_default_range("now-3h")
+    async with Client(build_mcp(svc, "http://x")) as c:
+        res = await c.call_tool("query", {"expr": "rate(node_cpu_seconds_total[5m])"})
+        assert not res.is_error
+    meta = svc.datasets.meta(json.loads(res.content[0].text)["dataset"])
+    assert meta.end_ms - meta.start_ms == pytest.approx(3 * 3600_000, rel=0.05)

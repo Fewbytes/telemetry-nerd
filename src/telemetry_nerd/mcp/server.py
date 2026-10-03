@@ -263,8 +263,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     @mcp.tool()
     async def query(
         expr: str,
-        start: str = "now-1h",
-        end: str = "now",
+        start: str | None = None,
+        end: str | None = None,
         step: str = "auto",
         source: str = "default",
         allow_nonmergeable: bool = False,
@@ -273,6 +273,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
         source: a name from source_list (default "default").
         start/end: `now`, `now-<dur>` (e.g. now-6h), epoch ms, or ISO-8601 with timezone.
+        Omitted: start is the workspace's default range (the user sets it; now-1h unless set),
+        end is now.
         step: `auto` (~600 buckets) or a duration like 30s, 1m, 5m.
         Name-template families (catalog entries like airflow_ti_finish_*_removed): write the template
         where a metric name goes to select every member; the text in the slot becomes the `dimension`
