@@ -1,0 +1,383 @@
+{
+ "_fixture": "Every tool call the two live runs of 2026-10-03 (d77.3) lost to argument shape, with the error then. Calls the transcript log cut short are marked `reconstructed` (how). `now`: accepted | refused (with a message that shows a valid example) | accepted_shape (the shape reads; a guardrail refuses the meaning). Replayed by tests/unit/test_mcp_shapes.py.",
+ "calls": [
+  {
+   "id": "pf-query-question",
+   "run": "payment-failure.live-sonnet-2 (run 2026-10-03T13:17Z)",
+   "tool": "query",
+   "args": {
+    "source": "default",
+    "expr": "sum by (service_name, http_response_status_code) (rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\"}[1m]))",
+    "start": "2026-10-03T12:50:00Z",
+    "end": "2026-10-03T13:50:00Z",
+    "step": "30s",
+    "question": "Which services returned HTTP 5xx and when?"
+   },
+   "error": "1 validation error for queryArguments: question: Extra inputs are not permitted",
+   "now": "accepted"
+  },
+  {
+   "id": "pf-f1-bare-ids",
+   "run": "payment-failure.live-sonnet-2 (run 2026-10-03T13:17Z)",
+   "tool": "finding_create",
+   "args": {
+    "claim": "The only error-class responses in the data are frontend POST 422s, observed 13:24-13:28 UTC (peak ~0.23/s, about 6% of frontend 200 rate ~3.5/s), then zero from 13:29 to the end of data at 13:31. No 5xx series exists for frontend, cart or shipping. This covers only the second half of the reported window.",
+    "evidence": [
+     "d9",
+     "p1",
+     "a1",
+     "c3"
+    ],
+    "scope": {
+     "source": "default",
+     "selector": "http_server_request_duration_seconds_count{service_name=\"frontend\",http_response_status_code!=\"200\"}",
+     "range": [
+      "2026-10-03T13:10:00Z",
+      "2026-10-03T13:33:00Z"
+     ],
+     "step": "30s"
+    }
+   },
+   "error": "4 validation errors for finding_createArguments: evidence.0-3: Input should be a valid dictionary (dict_type)",
+   "now": "refused",
+   "because": "c3 is a code node"
+  },
+  {
+   "id": "pf-f2-bare-dataset",
+   "run": "payment-failure.live-sonnet-2 (run 2026-10-03T13:17Z)",
+   "tool": "finding_create",
+   "args": {
+    "claim": "The cart cartFailure feature flag evaluated to variant \"off\" (reason STATIC) throughout the available data; it was not switched on. Evidence against the cartFailure flag as the cause.",
+    "evidence": [
+     "d7"
+    ],
+    "scope": {
+     "source": "default",
+     "selector": "feature_flag_evaluation_success_total{service_name=\"cart\"}",
+     "range": [
+      "2026-10-03T12:50:00Z",
+      "2026-10-03T13:40:00Z"
+     ],
+     "step": "30s"
+    },
+    "hypothesis": "h1",
+    "stance": "against"
+   },
+   "error": "1 validation error for finding_createArguments: evidence.0: Input should be a valid dictionary (dict_type)",
+   "now": "accepted"
+  },
+  {
+   "id": "pf-gap-description-only",
+   "run": "payment-failure.live-sonnet-2 (run 2026-10-03T13:17Z)",
+   "tool": "gap_create",
+   "args": {
+    "description": "Source holds samples only from about 13:12 to 13:31 UTC; nothing before 13:12 and no checkout, payment or email service metrics. Onset (13:16 or earlier), the end of the outage, and the failing dependency cannot be determined. There is no route label on frontend metrics, so the 422 cannot be tied to the order endpoint."
+   },
+   "error": "gap_create: suggestion: Input should be a valid dictionary or instance of MetricSuggestion",
+   "now": "accepted"
+  },
+  {
+   "id": "pf-f1-multikey-dict-range",
+   "run": "payment-failure.live-sonnet-2 (run 2026-10-03T13:17Z)",
+   "tool": "finding_create",
+   "reconstructed": "log cut at 600 chars: scope end as in pf-f1-bare-ids",
+   "args": {
+    "claim": "The only error-class responses in the data are frontend POST 422s, observed 13:24-13:28 UTC (peak ~0.23/s, about 6% of frontend 200 rate ~3.5/s), then zero from 13:29 to the end of data at 13:31. No 5xx series exists for frontend, cart or shipping. This covers only the second half of the reported window.",
+    "evidence": [
+     {
+      "dataset": "d9",
+      "panel": "p1",
+      "annotation": "a1"
+     }
+    ],
+    "scope": {
+     "source": "default",
+     "selector": "http_server_request_duration_seconds_count{service_name=\"frontend\",http_response_status_code!=\"200\"}",
+     "range": [
+      "2026-10-03T13:10:00Z",
+      "2026-10-03T13:33:00Z"
+     ],
+     "step": "30s"
+    }
+   },
+   "error": "scope.start: field required",
+   "now": "accepted"
+  },
+  {
+   "id": "pf-f2-dataset-dict-range",
+   "run": "payment-failure.live-sonnet-2 (run 2026-10-03T13:17Z)",
+   "tool": "finding_create",
+   "args": {
+    "claim": "The cart cartFailure feature flag evaluated to variant \"off\" (reason STATIC) throughout the available data; it was not switched on. Evidence against the cartFailure flag as the cause.",
+    "evidence": [
+     {
+      "dataset": "d7"
+     }
+    ],
+    "scope": {
+     "source": "default",
+     "selector": "feature_flag_evaluation_success_total{service_name=\"cart\"}",
+     "range": [
+      "2026-10-03T12:50:00Z",
+      "2026-10-03T13:40:00Z"
+     ],
+     "step": "30s"
+    },
+    "hypothesis": "h1",
+    "stance": "against"
+   },
+   "error": "scope.start: field required",
+   "now": "accepted"
+  },
+  {
+   "id": "pf-f1-multikey-dict-no-aggregation",
+   "run": "payment-failure.live-sonnet-2 (run 2026-10-03T13:17Z)",
+   "tool": "finding_create",
+   "reconstructed": "log cut at 600 chars: step as in pf-f1-bare-ids",
+   "args": {
+    "claim": "The only error-class responses in the data are frontend POST 422s, observed 13:24-13:28 UTC (peak ~0.23/s, about 6% of frontend 200 rate ~3.5/s), then zero from 13:29 to the end of data at 13:31. No 5xx series exists for frontend, cart or shipping. This covers only the second half of the reported window.",
+    "evidence": [
+     {
+      "dataset": "d9",
+      "panel": "p1",
+      "annotation": "a1"
+     }
+    ],
+    "scope": {
+     "source": "default",
+     "selector": "http_server_request_duration_seconds_count{service_name=\"frontend\",http_response_status_code!=\"200\"}",
+     "start": "2026-10-03T13:10:00Z",
+     "end": "2026-10-03T13:33:00Z",
+     "step": "30s"
+    }
+   },
+   "error": "scope.aggregation: Field required; evidence.0: Unable to extract tag using discriminator 'kind'",
+   "now": "accepted"
+  },
+  {
+   "id": "pf-f2-dataset-dict-no-aggregation",
+   "run": "payment-failure.live-sonnet-2 (run 2026-10-03T13:17Z)",
+   "tool": "finding_create",
+   "args": {
+    "claim": "The cart cartFailure feature flag evaluated to variant \"off\" (reason STATIC) throughout the available data; it was not switched on. Evidence against the cartFailure flag as the cause.",
+    "evidence": [
+     {
+      "dataset": "d7"
+     }
+    ],
+    "scope": {
+     "source": "default",
+     "selector": "feature_flag_evaluation_success_total{service_name=\"cart\"}",
+     "start": "2026-10-03T12:50:00Z",
+     "end": "2026-10-03T13:40:00Z",
+     "step": "30s"
+    },
+    "hypothesis": "h1",
+    "stance": "against"
+   },
+   "error": "scope.aggregation: Field required; evidence.0: Unable to extract tag using discriminator 'kind'",
+   "now": "accepted"
+  },
+  {
+   "id": "pf-f1-kind-dataset",
+   "run": "payment-failure.live-sonnet-2 (run 2026-10-03T13:17Z)",
+   "tool": "finding_create",
+   "reconstructed": "log cut at 600 chars: scope end/step as in pf-f1-bare-ids",
+   "args": {
+    "claim": "The only error-class responses in the data are frontend POST 422s, observed 13:24-13:28 UTC (peak ~0.23/s, about 6% of frontend 200 rate ~3.5/s), then zero from 13:29 to the end of data at 13:31. No 5xx series exists for frontend, cart or shipping. This covers only the second half of the reported window.",
+    "evidence": [
+     {
+      "kind": "dataset",
+      "dataset": "d9"
+     },
+     {
+      "kind": "annotation",
+      "annotation": "a1"
+     }
+    ],
+    "scope": {
+     "source": "default",
+     "selector": "http_server_request_duration_seconds_count{service_name=\"frontend\",http_response_status_code!=\"200\"}",
+     "start": "2026-10-03T13:10:00Z",
+     "end": "2026-10-03T13:33:00Z",
+     "step": "30s"
+    }
+   },
+   "error": "evidence.0: Input tag 'dataset' found using 'kind' does not match any of the expected tags",
+   "now": "accepted"
+  },
+  {
+   "id": "pf-f2-kind-dataset",
+   "run": "payment-failure.live-sonnet-2 (run 2026-10-03T13:17Z)",
+   "tool": "finding_create",
+   "args": {
+    "claim": "The cart cartFailure feature flag evaluated to variant \"off\" (reason STATIC) throughout the available data; it was not switched on. Evidence against the cartFailure flag as the cause.",
+    "evidence": [
+     {
+      "kind": "dataset",
+      "dataset": "d7"
+     }
+    ],
+    "scope": {
+     "source": "default",
+     "selector": "feature_flag_evaluation_success_total{service_name=\"cart\"}",
+     "start": "2026-10-03T12:50:00Z",
+     "end": "2026-10-03T13:40:00Z",
+     "step": "30s",
+     "aggregation": "sum by (feature_flag_key, variant, reason) of rate[1m]"
+    },
+    "hypothesis": "h1",
+    "stance": "against"
+   },
+   "error": "evidence.0: Input tag 'dataset' found using 'kind' does not match any of the expected tags",
+   "now": "accepted"
+  },
+  {
+   "id": "pf-f1-beyond-evidence",
+   "run": "payment-failure.live-sonnet-2 (run 2026-10-03T13:17Z)",
+   "tool": "finding_create",
+   "reconstructed": "log cut at 600 chars: scope end/step as in pf-f1-bare-ids",
+   "args": {
+    "claim": "The only error-class responses in the data are frontend POST 422s, observed 13:24-13:28 UTC (peak ~0.23/s, about 6% of frontend 200 rate ~3.5/s), then zero from 13:29 to the end of data at 13:31. No 5xx series exists for frontend, cart or shipping. This covers only the second half of the reported window.",
+    "evidence": [
+     {
+      "kind": "panel",
+      "panel": "p1"
+     },
+     {
+      "kind": "annotation",
+      "annotation": "a1"
+     }
+    ],
+    "scope": {
+     "source": "default",
+     "selector": "http_server_request_duration_seconds_count{service_name=\"frontend\",http_response_status_code!=\"200\"}",
+     "start": "2026-10-03T13:10:00Z",
+     "end": "2026-10-03T13:33:00Z",
+     "step": "30s"
+    }
+   },
+   "error": "claim_beyond_evidence: the claim names service_name=\"cart\", service_name=\"shipping\" ...",
+   "now": "accepted_shape",
+   "because": "shape is fine; the claim-scope guardrail (qxp) still refuses cart/shipping"
+  },
+  {
+   "id": "os-f1-range",
+   "run": "overload_spike.live-sonnet (run 2026-10-03T13:33Z)",
+   "tool": "finding_create",
+   "reconstructed": "log cut at 450 chars: evidence and scope from the error and the accepted f1",
+   "args": {
+    "claim": "Over 13:32-13:44 UTC, checkout concurrency, rate and mean latency agree under Little's law: L=111.6 vs λW=112.1 (R=0.996, measurement interval -22%..+21%).",
+    "evidence": [
+     {
+      "kind": "statistic",
+      "dataset": "d5",
+      "name": "littles_law_ratio",
+      "value": 0.9958,
+      "interval": [
+       0.7827,
+       1.209
+      ],
+      "method": "check_littles_law R = L/(lambda W), 2m windows"
+     },
+     {
+      "kind": "annotation",
+      "annotation": "a1"
+     }
+    ],
+    "scope": {
+     "source": "default",
+     "selector": "service=checkout",
+     "step": "15s",
+     "range": [
+      "2026-10-03T13:32:00Z",
+      "2026-10-03T13:44:00Z"
+     ],
+     "aggregation": "sum over pods; 2m Little's-law windows"
+    }
+   },
+   "error": "scope.start: field required",
+   "now": "accepted"
+  },
+  {
+   "id": "os-f1-kindless-no-aggregation",
+   "run": "overload_spike.live-sonnet (run 2026-10-03T13:33Z)",
+   "tool": "finding_create",
+   "reconstructed": "log cut at 450 chars: two kind-less evidence dicts per the error",
+   "args": {
+    "claim": "Over 13:32-13:44 UTC, checkout concurrency, rate and mean latency agree under Little's law: L=111.6 vs λW=112.1 (R=0.996, measurement interval -22%..+21%).",
+    "evidence": [
+     {
+      "dataset": "d5",
+      "name": "littles_law_ratio",
+      "value": 0.9958,
+      "interval": [
+       0.7827,
+       1.209
+      ]
+     },
+     {
+      "annotation": "a1"
+     }
+    ],
+    "scope": {
+     "source": "default",
+     "selector": "service=checkout",
+     "step": "15s",
+     "start": "2026-10-03T13:32:00Z",
+     "end": "2026-10-03T13:44:00Z"
+    }
+   },
+   "error": "scope.aggregation: Field required; evidence.0/1: Unable to extract tag using discriminator 'kind'",
+   "now": "accepted",
+   "because": "method filled from the op's recorded statistic"
+  },
+  {
+   "id": "os-f1-no-method-annotation-id",
+   "run": "overload_spike.live-sonnet (run 2026-10-03T13:33Z)",
+   "tool": "finding_create",
+   "reconstructed": "log cut at 450 chars: evidence per the error",
+   "args": {
+    "claim": "Over 13:32-13:44 UTC, checkout concurrency, rate and mean latency agree under Little's law: L=111.6 vs λW=112.1 (R=0.996, measurement interval -22%..+21%).",
+    "evidence": [
+     {
+      "kind": "statistic",
+      "dataset": "d5",
+      "name": "littles_law_ratio",
+      "value": 0.9958,
+      "interval": [
+       0.7827,
+       1.209
+      ]
+     },
+     {
+      "kind": "annotation",
+      "id": "a1"
+     }
+    ],
+    "scope": {
+     "source": "default",
+     "selector": "service=checkout",
+     "step": "15s",
+     "start": "2026-10-03T13:32:00Z",
+     "end": "2026-10-03T13:44:00Z",
+     "aggregation": "sum over pods; 2m Little's-law windows"
+    }
+   },
+   "error": "evidence.0.statistic.method: Field required; evidence.1.annotation.annotation: Field required; evidence.1.annotation.id: Extra inputs are not permitted",
+   "now": "accepted",
+   "because": "method filled from the op's recorded statistic"
+  },
+  {
+   "id": "os-hypothesis-update-id",
+   "run": "overload_spike.live-sonnet (run 2026-10-03T13:33Z)",
+   "tool": "hypothesis_update",
+   "args": {
+    "id": "h1",
+    "status": "refuted"
+   },
+   "error": "hypothesis: Field required; id: Extra inputs are not permitted",
+   "now": "accepted"
+  }
+ ]
+}

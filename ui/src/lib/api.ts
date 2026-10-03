@@ -221,7 +221,7 @@ export interface Finding {
 }
 export interface Gap {
   id: string; missing_signal: string; needed_for: string;
-  suggestion: { name: string; type: "counter" | "gauge" | "histogram" | "summary"; labels: string[] };
+  suggestion: { name: string; type: "counter" | "gauge" | "histogram" | "summary"; labels: string[] } | null;
   author: string; created_at_ms: number;
 }
 export interface Message {

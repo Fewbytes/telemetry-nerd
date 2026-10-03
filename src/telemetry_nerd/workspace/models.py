@@ -294,7 +294,8 @@ class MetricSuggestion(_Strict):
 class GapIn(_Strict):
     missing_signal: str = Field(min_length=1)
     needed_for: str = Field(min_length=1)
-    suggestion: MetricSuggestion
+    #: the metric to add, when one can be named (missing history or coverage names none)
+    suggestion: MetricSuggestion | None = None
 
 
 class Gap(GapIn):

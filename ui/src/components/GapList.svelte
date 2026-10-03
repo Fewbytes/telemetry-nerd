@@ -3,8 +3,8 @@
 
   let { gaps = [] }: { gaps?: Gap[] } = $props();
 
-  const metric = (g: Gap) =>
-    `${g.suggestion.name}{${g.suggestion.labels.join(", ")}} (${g.suggestion.type})`;
+  const metric = (s: NonNullable<Gap["suggestion"]>) =>
+    `${s.name}{${s.labels.join(", ")}} (${s.type})`;
 </script>
 
 <ul class="gaps">
@@ -12,7 +12,9 @@
     <li class="gap" id="gap-{gap.id}">
       <div class="missing">{gap.missing_signal}</div>
       <div class="needed">needed for: {gap.needed_for}</div>
-      <div class="suggestion">suggested metric: <code>{metric(gap)}</code></div>
+      {#if gap.suggestion}
+        <div class="suggestion">suggested metric: <code>{metric(gap.suggestion)}</code></div>
+      {/if}
       <span class="badge author {gap.author}">{gap.author}</span>
     </li>
   {/each}

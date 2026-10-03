@@ -363,6 +363,14 @@ class DatasetStore:
                 "INSERT OR IGNORE INTO op_statistics VALUES (?, ?, ?, ?, ?)", rows
             )
 
+    def statistic_methods(self, dataset: str, name: str) -> set[str]:
+        """Methods ops recorded for a statistic `name` of `dataset` (empty: none emitted it)."""
+        rows = self._con.execute(
+            "SELECT DISTINCT method FROM op_statistics WHERE dataset=? AND name=? AND method!=''",
+            (dataset, name),
+        ).fetchall()
+        return {r[0] for r in rows}
+
     def statistic_sources(
         self, dataset: str, name: str, method: str, value: float
     ) -> set[str] | None:

@@ -2,25 +2,27 @@
 
 from __future__ import annotations
 
+import json
 import re
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from pydantic import ConfigDict, TypeAdapter, ValidationError
+from pydantic import ConfigDict, TypeAdapter, ValidationError, model_validator
 
 from telemetry_nerd.charts.spec import Window
 from telemetry_nerd.charts.yview import YView
 from telemetry_nerd.core.cause_hint import cause_hint
 from telemetry_nerd.core.code_ops import CodeDisabled
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
+from telemetry_nerd.mcp.shapes import EvidenceContext, ShapeError, finding_in
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.jsonsafe import dumps
 from telemetry_nerd.model.time import format_duration, iso, parse_duration, parse_time
 from telemetry_nerd.sources.base import SourceError
 from telemetry_nerd.sources.public import PUBLIC_SOURCES
 from telemetry_nerd.sources.spec import SourceSpec
-from telemetry_nerd.workspace.models import AnnotationIn, FindingIn, GapIn, HypothesisStatus
+from telemetry_nerd.workspace.models import AnnotationIn, GapIn, HypothesisStatus
 
 INSTRUCTIONS = """\
 Telemetry Nerd: an evidence-first telemetry workspace shared with the user's browser.
@@ -284,8 +286,12 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         step: str = "auto",
         source: str = "default",
         allow_nonmergeable: bool = False,
+        question: str | None = None,
     ) -> str:
         """Fetch a PromQL/MetricsQL expression as a dataset of min/max/avg/count buckets.
+
+        question: optional, the question this data should answer; echoed back with the
+        `show(dataset, question)` call that draws it (a panel needs its question).
 
         source: a name from source_list (default "default").
         start/end: `now`, `now-<dur>` (e.g. now-6h), epoch ms, or ISO-8601 with timezone.
@@ -312,11 +318,15 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         """
         try:
             # pi-lens-ignore: python-sql-injection
-            return _dump(
-                await service.query(
-                    expr, start, end, step, source, allow_nonmergeable=allow_nonmergeable
-                )
+            out = await service.query(
+                expr, start, end, step, source, allow_nonmergeable=allow_nonmergeable
             )
+            if question and question.strip():
+                q = question.strip()
+                out = {**out, "question": q,
+                       "next": f"show(dataset={json.dumps(out['dataset'])}, "
+                               f"question={json.dumps(q, ensure_ascii=False)})"}  # fmt: skip
+            return _dump(out)
         except SourceError as e:
             raise _source_error(e) from e
         except ValueError as e:
@@ -1598,42 +1608,72 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
     @mcp.tool()
     def hypothesis_update(
-        hypothesis: str,
         status: str,
+        hypothesis: str | None = None,
         note: str | None = None,
         alternatives_considered: str | None = None,
+        id: str | None = None,
     ) -> str:
-        """Change a hypothesis status (proposed, supported, refuted, inconclusive). Refuted ones
-        stay visible. `supported` is refused unless the statement names a concrete subject (a
-        service/resource label value or metric the workspace has queried), a finding with
-        stance=for backs it, and an alternative was considered: another hypothesis refuted or
-        inconclusive, or alternatives_considered (which alternatives, how ruled out).
+        """Change a hypothesis status (proposed, supported, refuted, inconclusive), e.g.
+        hypothesis_update(hypothesis="h1", status="refuted") (`id` works for `hypothesis`).
+        Refuted ones stay visible. `supported` is refused unless the statement names a concrete
+        subject (a service/resource label value or metric the workspace has queried), a finding
+        with stance=for backs it, and an alternative was considered: another hypothesis refuted
+        or inconclusive, or alternatives_considered (which alternatives, how ruled out).
         Returns {hypothesis, status}."""
+        if hypothesis is not None and id is not None and hypothesis != id:
+            raise ToolError(f"hypothesis={hypothesis!r} and id={id!r} disagree: give one, e.g. "
+                            'hypothesis_update(hypothesis="h1", status="refuted")')  # fmt: skip
+        hypothesis = hypothesis if hypothesis is not None else id
+        if hypothesis is None:
+            raise ToolError('hypothesis is required: e.g. hypothesis_update(hypothesis="h1", '
+                            'status="refuted")')  # fmt: skip
         try:
-            st = TypeAdapter(HypothesisStatus).validate_python(status)
+            st = TypeAdapter(HypothesisStatus).validate_python(status.strip().lower())
             h = ws.hypothesis_update(
                 hypothesis, st, "claude", note=note, alternatives_considered=alternatives_considered
             )
             return _dump({"hypothesis": h.id, "status": h.status})
-        except (ValidationError, NotFound, ValueError) as e:
+        except ValidationError as e:
+            raise ToolError(f"status must be one of proposed, supported, refuted, inconclusive; "
+                            f"got {status!r}") from e  # fmt: skip
+        except (NotFound, ValueError) as e:
             raise _fail(e) from e
+
+    def _evidence_context() -> EvidenceContext:
+        def panels_of(did: str) -> list[str]:
+            return [p.id for p in ws.workspace.list_panels() if p.dataset_ids[:1] == [did]]
+
+        return EvidenceContext(panels_of, service.datasets.statistic_methods)
 
     @mcp.tool()
     def finding_create(
         claim: str,
-        scope: dict[str, Any],
-        evidence: list[dict[str, Any]],
+        evidence: list[dict[str, Any] | str] | dict[str, Any] | str,
+        scope: dict[str, Any] | str | None = None,
         caveats: list[str] | None = None,
         hypothesis: str | None = None,
         stance: str | None = None,
         answers_panel: str | None = None,
         scope_note: str | None = None,
+        source: str | None = None,
+        selector: str | None = None,
+        start: str | int | None = None,
+        end: str | int | None = None,
+        step: str | None = None,
+        aggregation: str | None = None,
+        range: list[str | int] | None = None,
     ) -> str:
         """Record a scoped, evidenced claim. scope: {source, selector, start, end, step,
-        aggregation, baseline_start?, baseline_end?} (times: now-2h, epoch ms, ISO).
+        aggregation?, baseline_start?, baseline_end?} (times: now-2h, epoch ms, ISO; `range`:
+        [start, end] works too; the fields may also be passed flat, beside claim). aggregation
+        defaults to "as written in scope.selector".
         evidence: [{kind: panel, panel} | {kind: annotation, annotation} |
         {kind: statistic, dataset, name, value, method, interval: [lo, hi] | exact: true |
-        uncertainty_unknown: true, source?}]. Pass an op's evidence statistic as is: its
+        uncertainty_unknown: true, source?}]. Short forms: "p1", "a1", or "d3" (read as the one
+        panel drawing d3); {"panel": "p1", "annotation": "a1"} (one item per ref);
+        {kind: annotation, id: "a1"}. A dataset alone is not evidence: draw it (show) or cite a
+        statistic. Pass an op's evidence statistic as is: its
         `source` (common_cause | special_cause | measurement_system | undetermined) says what
         the variation is attributed to; never relabel it. hypothesis and stance (for|against)
         go together. Coverage of the window is checked per evidence series that
@@ -1643,33 +1683,20 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         cited evidence: refused otherwise, with the datasets that hold them; or pass scope_note
         saying why the claim reaches beyond its evidence (flagged beyond_evidence).
         Returns {finding, url, scope: {status covered|beyond_evidence|undetermined, ...},
-        uncertainty?: [{evidence, flag, message}], sources?, source_flags?}: what the server
-        derived (scope against evidence, uncertainty unknown / lower bound, variation sources:
-        taken from the op that emitted a statistic, or undetermined); report them with the
-        finding."""
+        uncertainty?: [{evidence, flag, message}], sources?, source_flags?, read_as?}: what the
+        server derived (scope against evidence, uncertainty unknown / lower bound, variation
+        sources: taken from the op that emitted a statistic, or undetermined; read_as: how a
+        short form was read); report them with the finding."""
+        args = {"claim": claim, "evidence": evidence, "scope": scope, "caveats": caveats,
+                "hypothesis": hypothesis, "stance": stance, "answers_panel": answers_panel,
+                "scope_note": scope_note, "source": source, "selector": selector,
+                "start": start, "end": end, "step": step, "aggregation": aggregation,
+                "range": range}  # fmt: skip
         try:
-            sc = dict(scope)
-            try:
-                start, end = sc.pop("start"), sc.pop("end")
-            except KeyError as k:
-                raise ValueError(f"scope.{k.args[0]}: field required") from k
-            bs, be = sc.pop("baseline_start", None), sc.pop("baseline_end", None)
-            sc["time_range"] = {"start_ms": _t(start), "end_ms": _t(end)}
-            if bs is not None or be is not None:
-                sc["baseline_range"] = {"start_ms": _t(bs), "end_ms": _t(be)}
-            data = FindingIn.model_validate(
-                {
-                    "claim": claim,
-                    "scope": sc,
-                    "evidence": evidence,
-                    "caveats": caveats or [],
-                    "hypothesis": hypothesis,
-                    "stance": stance,
-                    "answers_panel": answers_panel,
-                    "scope_note": scope_note,
-                }
-            )
+            data, read_as = finding_in(args, _evidence_context(), _t)
             f = ws.finding_create(data, "claude")
+        except ShapeError as e:
+            raise ToolError(f"invalid arguments: {e}") from e
         except (ValidationError, NotFound, ValueError) as e:
             raise _fail(e) from e
         out: dict = {"finding": f.id, "url": f"{ui_url}/#/finding/{f.id}"}
@@ -1683,6 +1710,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             out["source_flags"] = [e.model_dump() for e in f.source_flags]
         if hint := cause_hint(f, ws.objects.list_hypotheses()):
             out["hint"] = hint
+        if read_as:
+            out["read_as"] = read_as
         return _dump(out)
 
     @mcp.tool()
@@ -1696,8 +1725,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         gap_create(missing_signal="queue depth of the payments worker",
         needed_for="saturation of the payments service",
         suggestion={"name": "payments_queue_depth", "type": "gauge", "labels": ["worker"]}).
-        suggestion.type is counter|gauge|histogram|summary; labels is optional. Forgiving: a string
-        suggestion ("payments_queue_depth gauge") is parsed, `description` fills a missing
+        suggestion.type is counter|gauge|histogram|summary; labels is optional. suggestion is
+        optional too: leave it out when no metric can be named (missing history, a service
+        that emits nothing); never invent one. Forgiving: a string suggestion
+        ("payments_queue_depth gauge") is parsed, `description` fills a missing
         missing_signal/needed_for. Returns {gap}."""
         try:
             data = GapIn.model_validate(
@@ -1752,6 +1783,24 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     return mcp
 
 
+def _unknown_check(name: str, model: type) -> Any:
+    """A before-validator naming the arguments a tool does not take, and the ones it does."""
+    fields = model.model_fields  # type: ignore[attr-defined]
+    allowed = [f.alias or k for k, f in fields.items()]
+
+    def check(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            unknown = [k for k in data if k not in allowed]
+            if unknown:
+                raise ValueError(
+                    f"{name} takes no argument {', '.join(map(repr, unknown))}; its arguments "
+                    f"are {', '.join(allowed)}"
+                )
+        return data
+
+    return classmethod(check)
+
+
 def _forbid_unknown_arguments(mcp: MCPServer) -> None:
     """Reject arguments a tool does not take (e.g. source_connect(resolution_ms=...) instead of
     resolution): the SDK's argument models ignore them, so a misspelt or invented argument would
@@ -1761,7 +1810,12 @@ def _forbid_unknown_arguments(mcp: MCPServer) -> None:
         strict = type(
             base.__name__,
             (base,),
-            {"model_config": ConfigDict(**base.model_config, extra="forbid")},
+            {
+                "model_config": ConfigDict(**base.model_config, extra="forbid"),
+                "check_unknown_arguments": model_validator(mode="before")(
+                    _unknown_check(tool.name, base)
+                ),
+            },
         )
         tool.fn_metadata.arg_model = strict
         tool.parameters = {**tool.parameters, "additionalProperties": False}

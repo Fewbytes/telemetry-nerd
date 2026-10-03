@@ -153,14 +153,14 @@ async def test_finding_create_valid(tmp_path):
 
 async def test_finding_missing_scope_field_names_path(tmp_path):
     _, mcp = await _finding_setup(tmp_path)
-    scope = {k: v for k, v in SCOPE.items() if k != "aggregation"}
+    scope = {k: v for k, v in SCOPE.items() if k != "step"}
     r = await call(
         mcp,
         "finding_create",
         {"claim": "c", "scope": scope, "evidence": [{"kind": "panel", "panel": "p1"}]},
     )
     assert r.is_error
-    assert "aggregation" in text_of(r)
+    assert "scope.step: field required" in text_of(r)
 
 
 async def test_finding_statistic_without_interval_mentions_rule(tmp_path):
