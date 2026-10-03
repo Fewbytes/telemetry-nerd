@@ -26,6 +26,9 @@ UNDETERMINED = "undetermined"
 SOURCES = (COMMON, SPECIAL, MEASUREMENT, UNDETERMINED)
 Source = Literal["common_cause", "special_cause", "measurement_system", "undetermined"]
 
+#: the order citable statistics are offered in (hk2r): what an incident finding is about first
+CITE_RANK = {SPECIAL: 0, UNDETERMINED: 1, MEASUREMENT: 2, COMMON: 3}
+
 TEXT = {
     COMMON: "common cause",
     SPECIAL: "special cause",

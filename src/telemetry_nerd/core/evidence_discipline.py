@@ -26,6 +26,7 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
+from telemetry_nerd.analysis.sources import CITE_RANK, UNDETERMINED
 from telemetry_nerd.core.claim_scope import (
     Leaf,
     Matcher,
@@ -530,6 +531,19 @@ _UNVERIFIED = ("not traced to an op result: the source {s} was supplied with the
                "op statistic that labels it, or source undetermined")  # fmt: skip
 
 
+_DOWNGRADED = "cited as undetermined; the op that emitted it labelled it {ops}"
+_DISAGREE = (
+    "ops gave this statistic different sources ({ops}): source undetermined; cite the op's "
+    "statistic as is"
+)
+_DERIVED = "source {s} taken from the op result that emitted this statistic"
+
+
+def _flag(evidence: int, flag: str, source: str, message: str) -> dict:
+    """One source flag of a finding (on its `evidence` item)."""
+    return {"evidence": evidence, "flag": flag, "source": source, "message": message}
+
+
 def _ops_label(found: set[str]) -> str:
     return ", ".join(sorted(s or "none" for s in found))
 
@@ -558,16 +572,13 @@ def derive_sources(
             if found is not None and len(found) == 1 and cited == next(iter(found)):
                 continue  # as the op labelled it
             labelled = {s for s in found or () if s}
-            if cited == "undetermined":  # ops disagreeing: undetermined is their answer too
+            if cited == UNDETERMINED:  # ops disagreeing: undetermined is their answer too
                 if labelled and len(found or ()) == 1:
-                    flags.append({"evidence": i, "flag": "source_downgraded",
-                                  "source": "undetermined",
-                                  "message": f"cited as undetermined; the op that emitted it "
-                                  f"labelled it {_ops_label(labelled)}"})  # fmt: skip
+                    why = _DOWNGRADED.format(ops=_ops_label(labelled))
+                    flags.append(_flag(i, "source_downgraded", UNDETERMINED, why))
                 continue
             if not labelled:  # untraced, or an op that attributes no variation to it
-                flags.append({"evidence": i, "flag": "source_unverified", "source": cited,
-                              "message": _UNVERIFIED.format(s=cited)})  # fmt: skip
+                flags.append(_flag(i, "source_unverified", cited, _UNVERIFIED.format(s=cited)))
                 continue
             what = f"evidence[{i}] ({e.get('dataset')} {e.get('name')!r})"
             if len(found or ()) > 1:
@@ -585,25 +596,19 @@ def derive_sources(
             continue
         if found is None:
             if not e.get("exact"):  # an exact count reports no variation
-                flags.append({"evidence": i, "flag": "source_undetermined",
-                              "source": "undetermined", "message": _UNTRACED})  # fmt: skip
+                flags.append(_flag(i, "source_undetermined", UNDETERMINED, _UNTRACED))
             continue
         if len(found) > 1:
-            flags.append({"evidence": i, "flag": "source_undetermined", "source": "undetermined",
-                          "message": f"ops gave this statistic different sources "
-                          f"({_ops_label(found)}): source undetermined; cite the op's statistic "
-                          "as is"})  # fmt: skip
+            why = _DISAGREE.format(ops=_ops_label(found))
+            flags.append(_flag(i, "source_undetermined", UNDETERMINED, why))
         elif (s := next(iter(found))) != "":
             e["source"] = s
-            flags.append({"evidence": i, "flag": "source_derived", "source": s,
-                          "message": f"source {s} taken from the op result that emitted this "
-                          "statistic"})  # fmt: skip
+            flags.append(_flag(i, "source_derived", s, _DERIVED.format(s=s)))
     if refused:
         raise ValueError("source_relabelled: " + "; ".join(refused) + ".")
     data = [i for i, e in enumerate(ev) if e.get("kind") in ("panel", "statistic")]
     if data and not flags and not any(e.get("source") for e in ev):
-        flags.append({"evidence": data[0], "flag": "source_undetermined",
-                      "source": "undetermined", "message": _NONE_CITED})  # fmt: skip
+        flags.append(_flag(data[0], "source_undetermined", UNDETERMINED, _NONE_CITED))
     return ev, flags
 
 
@@ -614,8 +619,6 @@ def _short(method: object, width: int = 80) -> str:
 
 # --- citable op statistics (hk2r) -----------------------------------------------------------
 
-#: which labelled statistics to offer first: what an incident finding is about, then the rest
-_RANK = {"special_cause": 0, "undetermined": 1, "measurement_system": 2, "common_cause": 3}
 #: params worth showing beside a citable statistic (where / when / how sure)
 _CITABLE_PARAMS = ("window", "at", "p", "phase", "group")
 MAX_CITABLE = 5
@@ -631,7 +634,7 @@ def citable_statistics(
             if e.get("kind") == "statistic"}  # fmt: skip
     seen: set[tuple] = set()
     out: list[dict] = []
-    for st in sorted(labelled, key=lambda s: _RANK.get(s.get("source") or "", 9)):
+    for st in sorted(labelled, key=lambda s: CITE_RANK.get(s.get("source") or "", 9)):
         key = (st["dataset"], st["name"], st["value"])
         if key in have or key in seen:
             continue

@@ -8,7 +8,7 @@ from collections import OrderedDict
 from collections.abc import Hashable, Iterable
 from typing import Any
 
-from telemetry_nerd.analysis.sources import MEASUREMENT_CAVEATS, SOURCES
+from telemetry_nerd.analysis.sources import CITE_RANK, MEASUREMENT_CAVEATS, SOURCES
 
 
 def sig(v: float | None, digits: int = 4) -> float | None:
@@ -93,9 +93,6 @@ class Memo[V]:
             self._items.popitem(last=False)
 
 
-_CITE_RANK = {"special_cause": 0, "undetermined": 1, "measurement_system": 2, "common_cause": 3}
-
-
 def _statistic_paths(obj: Any, path: str = "") -> Iterable[tuple[str, dict]]:
     if isinstance(obj, dict):
         if obj.get("kind") == "statistic" and "dataset" in obj and "value" in obj:
@@ -116,7 +113,7 @@ def cite_line(out: dict, limit: int = 3) -> str | None:
     if not found:
         return None
     labelled = sorted(
-        (x for x in found if x[1].get("source")), key=lambda x: _CITE_RANK.get(x[1]["source"], 9)
+        (x for x in found if x[1].get("source")), key=lambda x: CITE_RANK.get(x[1]["source"], 9)
     )
     picks = labelled[:limit] or found[:1]
     where = ", ".join(
