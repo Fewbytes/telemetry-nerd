@@ -171,14 +171,17 @@ Work with the data there is (user decision 2026-10-03): claim checks run per ser
 series the claim's selector matches. In a multi-series claim, silent, low-coverage or untrusted
 members produce a warning and are labelled in the finding; the claim is blocked only when it
 cannot be supported (more than half of the members, or none, usable). A single-series claim is
-judged over the whole claim window. The mechanics are in the missing-data spec §4.4.
+judged over the whole claim window. A selector whose label matchers match no evidence series,
+or check none of them, blocks: the claimed series were not examined. The mechanics (silence
+under 5 min at a window edge is lost scrapes, counted missing; longer edge silence is
+membership, labelled) are in the missing-data spec §4.4.
 
 - Decided: brainstorm 2026-10-01/02 (missing-data spec §1); user decisions 2026-10-03 (churn is
   normal; per-series claim checks, warn and label rather than block; "work with the data you
   have, be honest about quirks/suspicions and still provide value").
 - Enforced by: `src/telemetry_nerd/model/bucket_state.py`, `src/telemetry_nerd/model/caveats.py`,
   `src/telemetry_nerd/core/summary.py` (`coverage`, `unknown_spans`, `silent_members`),
-  `src/telemetry_nerd/core/coverage_check.py`; `docs/superpowers/specs/2026-10-02-series-bundles-missing-data-design.md`;
+  `src/telemetry_nerd/core/coverage_check.py`, `src/telemetry_nerd/core/claim_scope.py`; `docs/superpowers/specs/2026-10-02-series-bundles-missing-data-design.md`;
   `docs/telemetry-graphing-guide.md` §2 rule 6 and §5a; `docs/data-source-quirks.md`.
 
 ## 12. Show the discrepancy; a verdict is context

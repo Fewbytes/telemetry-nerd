@@ -153,7 +153,7 @@ series). `warn`/`info` caveats in the window are copied into the finding's cavea
 - **One series.** The whole claim window counts: < 50% of expected samples, or any `unknown`,
   blocks; less warns. Time before its first sample and after its last is unobserved (that it
   did not exist yet, or left, is a negative claim not provable from this evidence; principle
-  9): it counts against coverage, and the caveat says "no samples before T / since T in this
+  9, `docs/principles.md`): it counts against coverage, and the caveat says "no samples before T / since T in this
   evidence" with the alternatives (may not have existed yet or was not scraped; may have left or
   may return after the window), never that it was missing, not born or ended, plus a hint to
   check a wider window (`count by (pod) (<selector>)`).
