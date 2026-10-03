@@ -43,9 +43,9 @@ law check. A service can have a RED and a Little's law binding at once.
 3. **Review the roles, never accept blind.** For each role read `detail`: `confidence`, `basis`
    (pack | naming | relation), `form`, the `expr` hint, `alternatives`, `ambiguous`. Check
    `unfilled` (a role nothing fills) and `join_on` (a label convention, not read from the source:
-   verify against real series with `query`, rates as `rate(x[$__rate_interval])`, as the bindings
-   themselves do: a fixed `[1m]` over many steps cuts the effective n of what you check). Prefer histograms for latency: a suggestion should
-   never pick a precomputed percentile while a histogram exists.
+   verify against real series with `query`, rates as `rate(x[$__rate_interval])`: see `charting`).
+   Prefer histograms for latency: a suggestion should never pick a precomputed percentile while a
+   histogram exists.
 4. **Confirm.** `binding_accept(source, id, basis=...)`: `basis` states what was checked;
    `overrides={role: metric|null}` swaps a role for a listed alternative; `key` renames the
    entity. Use `catalog_bind(source, kind, key, roles, confidence, basis, join_on)` for a binding
@@ -105,17 +105,15 @@ role `status`, `direction`, `pattern`, `onset`, and `evidence`. Report:
    bound for 3+ steps) qualifies a change; `model_check` (Little's law on the concurrency role)
    is reported, not counted in the family.
 6. **Cite the evidence** objects as they are in `finding_create` (the statistic, its interval, the
-   dataset), and carry their uncertainty flags: `input_uncertainty` / `input_uncertainty_unknown`
-   mean the interval is a lower bound; say so (the finding carries the `input_uncertainty_unknown`
-   or `uncertainty_not_propagated` flag; principle 4).
+   dataset) and carry their uncertainty flags: `input_uncertainty` / `input_uncertainty_unknown`
+   mean the interval is a lower bound (`evidence`, principle 4).
 7. **Caveats** (`overdispersed`, `heavy_tails`, `noisier_than_reference`) go into the sentence,
    not into a footnote.
 8. **The source of each change** (`roles.<role>.source`, also on the level and onset evidence and
-   in `variation`): a changed role is a **special cause** (investigate), no change is **common
-   cause** (inside the reference cycles' spread), and a change on data with measurement-system
-   issues (partial fetch, failed spans, unknown input uncertainty) is **source undetermined**:
-   say "it moved, but the data cannot tell a real change from a collection problem", and name
-   the issue. Never upgrade undetermined to special cause.
+   in `variation`; labels in `evidence`): a changed role is special cause, no change is common
+   cause, and a change on data with measurement-system issues (partial fetch, failed spans,
+   unknown input uncertainty) is undetermined: say "it moved, but the data cannot tell a real
+   change from a collection problem", and name the issue.
 
 Absence of a flag is "no change detected against this reference at this power", not "healthy".
 Choose the range before looking at the verdict: every re-run with another range, reference or
@@ -138,15 +136,13 @@ lambda x W (arrival rate times MEAN latency from histogram `_sum` / `_count`).
   this order ready-made. Then the verdict (`consistent`, `L_high`, `L_low`,
   `inconsistent_in_windows`), `classification` (systematic offset, transient windows), then
   `warnings`, every entry of `assumptions` (ok / assumed / flagged) and `hints`.
-- Name the source of each variation: **measurement system** (the measurement interval; a
-  systematic offset = instrumentation / model mismatch: unmeasured queueing, a missing instance,
-  units, subset/superset), **common cause** (small-system fluctuation +-X% per window at this
-  traffic, and the windows' own spread: do not chase windows inside it), **special cause**
-  (transient windows beyond both: a load peak leaving steady state — say "at a load peak"
-  explicitly — a draining backlog, or a change confined to those windows; and load-peak windows
-  `promoted` on independent evidence of leaving steady state: quote their `reason`). A load-peak
-  window inside the envelope without such evidence is common cause: "not a signal by itself;
-  watch if it repeats or grows".
+- Name the source of each variation (labels in `evidence`; see Sources of variation below): a
+  systematic offset is an instrumentation / model mismatch (unmeasured queueing, a missing
+  instance, units, subset/superset); transient windows beyond interval and envelope are a load
+  peak leaving steady state (say "at a load peak" explicitly), a draining backlog, or a change
+  confined to those windows; load-peak windows `promoted` on independent evidence of leaving
+  steady state: quote their `reason`. A load-peak window inside the envelope without such
+  evidence is common cause: "not a signal by itself; watch if it repeats or grows".
 - `L_high`: time in the system that the latency timer does not cover: queueing before the timer
   starts, leaked or stuck requests, latency on a subset, a gauge counting something broader.
   `L_low`: concurrency missing instances, a gauge missing bursts, latency on a superset.
@@ -168,14 +164,13 @@ Assumptions, what each violation implies, hints and worked reading: `references/
 Labels, meanings and reporting rules are canonical in the `evidence` skill (principle 8; per-op
 table in its sources-of-variation reference). Here, only the binding-specific ones:
 
-- **common cause**: the small-system envelope in Little's law; behaviour groups and the fleet's spread.
+- **common cause**: the small-system envelope in Little's law (+-X% per window at this traffic,
+  and the windows' own spread: do not chase windows inside it); behaviour groups and the fleet's spread.
 - **special cause**: transient windows beyond interval and envelope; a changed role; an unusual member.
 - **measurement system**: gaps, partial data, units, membership changes (n moving is normal
   lifecycle, not a fault, but it changes fleet aggregates, principle 11), a systematic Little's law offset.
 - **undetermined**: a silent member; an outlier episode on partial buckets; a discrepancy only
   transients carry.
-
-Report the label with the number, never instead of it; pass `source` through to `finding_create` unchanged.
 
 ## Gaps and instrumentation
 

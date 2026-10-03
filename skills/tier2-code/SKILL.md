@@ -83,9 +83,8 @@ Rules that keep results honest:
   rate, N the true count: plug in observed count / p).
 - An output tagged `no_uncertainty` (`uncertainty_status` in the result) has *unknown*
   uncertainty, not zero: derive an interval first (bootstrap, effective n, bucket bounds,
-  Wilson) and re-run. If none can be derived it can still be cited, and the finding is marked
-  "uncertainty unknown" (cite the value with `uncertainty_unknown: true`): say so when you
-  report it, and never present it as exact.
+  Wilson) and re-run. If none can be derived, cite it with `uncertainty_unknown: true` (see
+  `evidence`).
 - **Errors only grow (maximalist).** When an input already carries intervals (`lo`/`hi`, a fit's
   parameter intervals), carry them into the output's and say how with
   `uncertainty={..., "propagation": "delta method"}` (or `"interval arithmetic"`,
@@ -149,12 +148,11 @@ as a panel). Uncertainty problems come back as flags in the result
 (`uncertainty: [{evidence, flag, message}]`: `uncertainty_unknown`, `input_uncertainty_unknown`,
 `uncertainty_not_propagated`), are stored on the finding and shown to the user: quote them.
 
-**When code reports variation or a deviation, declare its source** (principle 8; spec §5.4) on the cited
-statistic, `"source": ...`, and in the claim: `common_cause` (the system's inherent spread: a
-fit's residual scatter, a prediction band, a fleet or cycle-to-cycle spread), `special_cause`
-(beyond that envelope: a shift, an outlier, a trend break), `measurement_system` (error the
-instruments add: sampling, edges, gaps, partial data, units, unknown input uncertainty) or
-`undetermined` when the data cannot separate them. Never guess: a deviation that coincides with
+**When code reports variation or a deviation, declare its source** on the cited statistic
+(`"source": ...`) and in the claim; labels and rules are in `evidence`. For code: `common_cause`
+is a fit's residual scatter, a prediction band, a fleet or cycle-to-cycle spread; `special_cause`
+is beyond that envelope (a shift, an outlier, a trend break); `measurement_system` is error the
+instruments add (sampling, edges, gaps, partial data, units). A deviation that coincides with
 gaps or partial buckets is `undetermined` unless something rules the instruments out. A level, a
 count or a fit parameter that reports no variation carries no `source`.
 
