@@ -106,6 +106,52 @@ Flags that act on services in this trimmed stack (variants in brackets). Checked
 No effect here: `kafkaQueueProblems`, `aiRunawayAgent`, `aiSlowResponse`, `emitRawPii`,
 `failedReadinessProbe`.
 
+## Scenarios (ground truth for evals)
+
+`scenarios/*.yml` schedule flagd flag changes on the running demo and record what really
+happened (spec §9; bead `telemetry-nerd-1h9.5`; consumer: the scenario eval harness, `d77.3`).
+
+```
+just scenario-list
+just scenario payment-failure            # ~13 min: 5 min baseline, 5 min fault, 3 min cool-down
+just scenario payment-failure --scale 0.4  # shorter (observable onset needs >= ~3 min of fault)
+uv run scripts/scenario.py show payment-failure   # resolved schedule, no side effects
+```
+
+A run: health check (VM up, traffic flowing, no error baseline, all flags off; `--force` to skip) ->
+baseline -> scheduled steps at wall-clock time (flag edited via the in-place writer, then polled
+over OFREP until flagd serves the variant) -> cool-down -> cleanup (every flag off, sticky
+containers restarted) -> each expected signal queried from VM (baseline window vs fault window
+after a settle period) -> `scenarios/runs/<id>-<UTC ts>.json` (gitignored). Trimmed samples live
+in `tests/fixtures/scenarios/`.
+
+Note the lag: the demo exports metrics and span-metrics every 60 s, so with 2m rate windows the
+effect appears 1-3 min after the flag change (and fades 1-3 min after it is reverted). Ground
+truth gives the exact apply times plus `tolerance`; judge annotations against those.
+
+Scenario YAML: `id`, `description`, `timing {baseline_s, cooldown_s}`, `steps` (`{at, set: {flag:
+"variant"}}`, `{at, restart: [container]}` or `{at, hook: name}`; variants must be quoted strings,
+YAML 1.1 turns bare `on`/`off` into booleans), `sticky_restart`, `faults` (per-flag metadata),
+`ground_truth` (`root_cause_service/flag/summary`, `affected {origin, propagated,
+unaffected_control}`, `tolerance_s`, `settle_s`, `expected_signals`). `scripts/scenario.py` has
+`HOOKS` for extra step types (queue-sim, bead 1h9.17, can register a hook and run alongside).
+
+### Ground-truth JSON (`version` 1)
+
+| Key | Content |
+|---|---|
+| `scenario`, `description`, `version` | scenario id; schema version |
+| `run` | `started_at`, `baseline_end`, `finished_at` (epoch s, each with a `_iso` sibling), `completed`, `scale` |
+| `fault_window` | `{start, end}`: first fault applied .. last effect end (flag off, or the container restart for sticky faults). Use this for annotation tolerance. |
+| `faults[]` | per flag: `flag`, `variant`, `start`, `end`, `effect_end`, `services`, `start_served_at` (when flagd first served it), `sticky` |
+| `applied[]` | every step as actually executed: `kind` set/restart/hook, `flags`, `applied_at`, `served_at` |
+| `root_cause` | `service`, `flag`, `summary` (what a correct finding names) |
+| `affected_services` | `origin` (directly hit), `propagated` (should show the symptom downstream), `unaffected_control` (must NOT be blamed) |
+| `tolerance` | `start_s`, `end_s`: allowed distance of an annotation from `fault_window.start/end`, plus a note on why |
+| `expected_signals[]` | `id`, `service`, `metric`, `query` (PromQL against `endpoints.victoriametrics`), `direction` up/down/flat, `min_abs_delta` / `min_ratio` / `max_abs_delta`. `flat` signals are controls. |
+| `endpoints` | VM, flagd OFREP, frontend; `source_labels.service` = `service_name` |
+| `verification` | `all_passed` and `results[]` per expected signal: baseline/fault means and sample counts, `passed`, `detail`, and the `series` (`[epoch, value]`, 15 s step) used as evidence |
+
 ## Verifying Telemetry Nerd against it
 
 After ~10 minutes of traffic (daemon started with `--source-url http://127.0.0.1:8429`):

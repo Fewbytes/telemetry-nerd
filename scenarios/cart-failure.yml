@@ -1,0 +1,51 @@
+id: cart-failure
+description: >-
+  cartFailure=100% makes cart EmptyCart fail: localised errors on cart, surfacing in checkout and frontend checkout requests.
+timing:
+  baseline_s: 300
+  cooldown_s: 180
+steps:
+  - {at: 0, set: {cartFailure: "100%"}}
+  - {at: 300, set: {cartFailure: "off"}}
+faults:
+  - {flag: cartFailure, variant: "100%", services: [cart]}
+ground_truth:
+  root_cause_service: cart
+  root_cause_flag: cartFailure
+  root_cause_summary: >-
+    cart EmptyCart (called from checkout after payment) fails; only a small fraction of requests touch it, so the error rate is low (~0.02/s) but clean (baseline 0).
+  affected:
+    origin: [cart]
+    propagated: [checkout, frontend]
+    unaffected_control: [payment, ad, product-catalog]
+  tolerance_s: {start: 150, end: 180}
+  settle_s: 120
+  expected_signals:
+      - id: cart-errors
+        service: cart
+        description: 'error span rate on cart'
+        metric: traces_span_metrics_calls_total
+        query: 'sum(rate(traces_span_metrics_calls_total{service_name="cart",status_code="STATUS_CODE_ERROR"}[2m]))'
+        direction: up
+        min_abs_delta: 0.01
+      - id: checkout-errors
+        service: checkout
+        description: 'error span rate on checkout (propagated)'
+        metric: traces_span_metrics_calls_total
+        query: 'sum(rate(traces_span_metrics_calls_total{service_name="checkout",status_code="STATUS_CODE_ERROR"}[2m]))'
+        direction: up
+        min_abs_delta: 0.01
+      - id: payment-errors-control
+        service: payment
+        description: 'payment stays clean'
+        metric: traces_span_metrics_calls_total
+        query: 'sum(rate(traces_span_metrics_calls_total{service_name="payment",status_code="STATUS_CODE_ERROR"}[2m]))'
+        direction: flat
+        max_abs_delta: 0.05
+      - id: ad-errors-control
+        service: ad
+        description: 'ad stays clean'
+        metric: traces_span_metrics_calls_total
+        query: 'sum(rate(traces_span_metrics_calls_total{service_name="ad",status_code="STATUS_CODE_ERROR"}[2m]))'
+        direction: flat
+        max_abs_delta: 0.05

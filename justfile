@@ -108,3 +108,14 @@ demo-ps:
 # List / get / set flagd flags: `just demo-flag set paymentFailure 50%`, `just demo-flag off`.
 demo-flag *args:
     uv run scripts/demo_flag.py {{args}}
+
+# --- Scenarios (docs/demo.md, bead 1h9.5): flagd fault schedules + ground-truth JSON ---
+
+# List scenario definitions (scenarios/*.yml).
+scenario-list:
+    uv run scripts/scenario.py list
+
+# Run one against the running demo in real time (~13 min); writes scenarios/runs/<name>-<ts>.json.
+# Extra args: --scale 0.3 (shorter), --dry-run, --force.
+scenario name *args:
+    uv run scripts/scenario.py run {{name}} {{args}}

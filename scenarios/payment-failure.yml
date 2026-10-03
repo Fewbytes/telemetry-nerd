@@ -1,0 +1,51 @@
+id: payment-failure
+description: >-
+  Payment Charge fails on every call (paymentFailure=100%): errors on payment cascade to checkout and to frontend POST /api/checkout.
+timing:
+  baseline_s: 300
+  cooldown_s: 180
+steps:
+  - {at: 0, set: {paymentFailure: "100%"}}
+  - {at: 300, set: {paymentFailure: "off"}}
+faults:
+  - {flag: paymentFailure, variant: "100%", services: [payment]}
+ground_truth:
+  root_cause_service: payment
+  root_cause_flag: paymentFailure
+  root_cause_summary: >-
+    payment Charge returns an error for every call; checkout PlaceOrder and frontend POST /api/checkout fail as a consequence.
+  affected:
+    origin: [payment]
+    propagated: [checkout, frontend]
+    unaffected_control: [cart, ad, product-catalog, shipping]
+  tolerance_s: {start: 150, end: 180}
+  settle_s: 120
+  expected_signals:
+      - id: payment-errors
+        service: payment
+        description: 'error span rate on payment'
+        metric: traces_span_metrics_calls_total
+        query: 'sum(rate(traces_span_metrics_calls_total{service_name="payment",status_code="STATUS_CODE_ERROR"}[2m]))'
+        direction: up
+        min_abs_delta: 0.05
+      - id: checkout-errors
+        service: checkout
+        description: 'error span rate on checkout (propagated)'
+        metric: traces_span_metrics_calls_total
+        query: 'sum(rate(traces_span_metrics_calls_total{service_name="checkout",status_code="STATUS_CODE_ERROR"}[2m]))'
+        direction: up
+        min_abs_delta: 0.05
+      - id: frontend-errors
+        service: frontend
+        description: 'error span rate on frontend (propagated)'
+        metric: traces_span_metrics_calls_total
+        query: 'sum(rate(traces_span_metrics_calls_total{service_name="frontend",status_code="STATUS_CODE_ERROR"}[2m]))'
+        direction: up
+        min_abs_delta: 0.05
+      - id: cart-errors-control
+        service: cart
+        description: 'cart stays clean'
+        metric: traces_span_metrics_calls_total
+        query: 'sum(rate(traces_span_metrics_calls_total{service_name="cart",status_code="STATUS_CODE_ERROR"}[2m]))'
+        direction: flat
+        max_abs_delta: 0.05

@@ -32,3 +32,7 @@ node_modules/
 .claude/settings.local.json
 ui/e2e-shots/
 build/
+
+
+# scenario run outputs (ground truth fixtures live in tests/fixtures/scenarios)
+scenarios/runs/

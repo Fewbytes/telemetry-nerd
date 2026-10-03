@@ -1,0 +1,44 @@
+id: catalog-lock-contention
+description: >-
+  productCatalogLockContention=on: DB lock contention makes product-catalog GetProduct stall for seconds; the whole shop slows and throughput collapses. Brutal: allow a long cool-down.
+timing:
+  baseline_s: 300
+  cooldown_s: 300
+steps:
+  - {at: 0, set: {productCatalogLockContention: "on"}}
+  - {at: 240, set: {productCatalogLockContention: "off"}}
+faults:
+  - {flag: productCatalogLockContention, variant: "on", services: [product-catalog]}
+ground_truth:
+  root_cause_service: product-catalog
+  root_cause_flag: productCatalogLockContention
+  root_cause_summary: >-
+    product-catalog latency explodes (seconds); frontend, recommendation and checkout inherit it and throughput falls.
+  affected:
+    origin: [product-catalog]
+    propagated: [frontend, recommendation, checkout]
+    unaffected_control: [payment, cart]
+  tolerance_s: {start: 150, end: 180}
+  settle_s: 120
+  expected_signals:
+      - id: product-catalog-p90
+        service: product-catalog
+        description: 'product-catalog p90 latency (ms)'
+        metric: traces_span_metrics_duration_milliseconds_bucket
+        query: 'histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name="product-catalog",span_kind="SPAN_KIND_SERVER"}[2m])))'
+        direction: up
+        min_abs_delta: 1000
+      - id: frontend-p90
+        service: frontend
+        description: 'frontend p90 latency (ms) (propagated)'
+        metric: traces_span_metrics_duration_milliseconds_bucket
+        query: 'histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name="frontend",span_kind="SPAN_KIND_SERVER"}[2m])))'
+        direction: up
+        min_abs_delta: 1000
+      - id: frontend-rate
+        service: frontend
+        description: 'frontend completed request rate falls'
+        metric: traces_span_metrics_calls_total
+        query: 'sum(rate(traces_span_metrics_calls_total{service_name="frontend",span_kind="SPAN_KIND_SERVER"}[2m]))'
+        direction: down
+        min_ratio: 1.3

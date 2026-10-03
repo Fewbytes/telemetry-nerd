@@ -1,0 +1,39 @@
+id: ad-high-cpu
+description: >-
+  adHighCpu=on burns CPU in the ad service (JVM). The burner threads survive the flag going off, so the scenario restarts the ad container to end the effect.
+timing:
+  baseline_s: 300
+  cooldown_s: 180
+steps:
+  - {at: 0, set: {adHighCpu: "on"}}
+  - {at: 300, set: {adHighCpu: "off"}}
+  - {at: 300, restart: [tn-demo-ad-1]}
+sticky_restart: [tn-demo-ad-1]
+faults:
+  - {flag: adHighCpu, variant: "on", services: [ad], sticky: true}
+ground_truth:
+  root_cause_service: ad
+  root_cause_flag: adHighCpu
+  root_cause_summary: >-
+    CPU burn in the ad JVM; effect persists after flag-off until the container restart (effect_end).
+  affected:
+    origin: [ad]
+    propagated: []
+    unaffected_control: [payment, cart, checkout]
+  tolerance_s: {start: 150, end: 180}
+  settle_s: 120
+  expected_signals:
+      - id: ad-cpu
+        service: ad
+        description: 'ad JVM recent CPU utilisation'
+        metric: jvm_cpu_recent_utilization_ratio
+        query: 'max(jvm_cpu_recent_utilization_ratio{service_name="ad"})'
+        direction: up
+        min_abs_delta: 0.3
+      - id: ad-errors-control
+        service: ad
+        description: 'no errors on ad'
+        metric: traces_span_metrics_calls_total
+        query: 'sum(rate(traces_span_metrics_calls_total{service_name="ad",status_code="STATUS_CODE_ERROR"}[2m]))'
+        direction: flat
+        max_abs_delta: 0.05
