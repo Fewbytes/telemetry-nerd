@@ -112,7 +112,7 @@ reach into the missing ranks is unbounded (m >= the quantile's rank: e.g. 2 of 7
 q25 unbounded below and q75 unbounded above). The min / max envelope is unbounded on the missing
 side ("unknown beyond", never a fake limit). Payload `band_bounds.{q}_lo/_hi` (None = unbounded
 where the quantile is drawn), sparse: only the `steps` with members missing, with `missing` per
-step; absent when nobody is. Members the source marked stale (churn `marked_stale`) are gone, not
+step; absent when nobody is. Members the source marked stale (churn `marked_stale`) are not
 missing, from their stale point on: a positive observation (principle 9) that they have no value
 to bound. Trailing silence without a marker still counts as missing (alive, silent).
 

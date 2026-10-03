@@ -273,7 +273,7 @@ def test_stopped_members_are_silent_unless_marked_stale(tmp_path):
     assert stop["state"] == "silent" and "cannot tell" in out["churn"]["note"]
 
 
-def test_a_staleness_marker_tells_an_ended_member_from_a_silent_one(tmp_path, monkeypatch):
+def test_a_staleness_marker_tells_a_marked_stale_member_from_a_silent_one(tmp_path, monkeypatch):
     """No adapter sets STALE_MARKER yet (range queries do not carry markers); when one does,
     the flag on a stopped member's buckets makes it `marked_stale`, not `silent`."""
     import dataclasses

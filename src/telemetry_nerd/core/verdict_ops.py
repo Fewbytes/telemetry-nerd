@@ -133,6 +133,11 @@ class VerdictOps:
             out.setdefault(labels.get(row["series_id"], "{}"), {})[row["ts_ms"] + shift] = v
         return out
 
+    def _member_keys(self, ds: str) -> set[str]:
+        """The members a dataset has a series for, whether or not any step has a value."""
+        _, r = self.svc.datasets.get(ds)
+        return {_labels_key(row["labels"]) for row in r.series.to_pylist()}
+
     @staticmethod
     def _arr(points: dict[int, float], grid: np.ndarray) -> np.ndarray:
         return np.array([points.get(int(t), np.nan) for t in grid])
@@ -147,7 +152,7 @@ class VerdictOps:
         return out
 
     def _ratio_counts(
-        self, ds: str | None, grid: np.ndarray, shift: int, step_s: float, notes: list[str]
+        self, ds: str | None, grid: np.ndarray, shift: int, step_s: float, stats: dict
     ) -> tuple[np.ndarray, np.ndarray]:
         """errors and requests per step (rate x step, summed over members) behind a ratio.
 
@@ -160,41 +165,51 @@ class VerdictOps:
         num, den = self.svc.datasets.meta(ds).parents[:2]
         dv = self._values(den, shift)
         nv = self._values(num, shift) if num is not None else {}
+        nkeys = self._member_keys(num) if num is not None else set()
         a = np.full(grid.size, np.nan)
         n = np.full(grid.size, np.nan)
-        zero_members: list[str] = []
-        gaps = 0
+        side = "now" if shift == 0 else "ref"
         for mem, dpts in dv.items():
             d = self._arr(dpts, grid)
-            if nv and mem not in nv:
-                zero_members.append(mem)  # no error series for this member: 0, disclosed
+            if not nkeys:
+                e = np.zeros(grid.size)  # no error series at all: 0 errors, disclosed
+            elif mem not in nkeys:
+                stats["zero_" + side].add(mem)  # this member has none: 0, disclosed
                 e = np.zeros(grid.size)
-            elif nv:
-                e = self._arr(nv[mem], grid)
             else:
-                e = np.zeros(grid.size)
+                e = self._arr(nv.get(mem, {}), grid)
             ok = ~np.isnan(d)
-            gap = ok & np.isnan(e)  # requests but no error value: lost data, out of both sides
-            gaps += int(gap.sum())
+            stats["gaps_" + side] += int((ok & np.isnan(e)).sum())  # lost data, out of both sides
             ok &= ~np.isnan(e)
             a = np.where(ok, np.where(np.isnan(a), 0.0, a) + e, a)
             n = np.where(ok, np.where(np.isnan(n), 0.0, n) + d, n)
         a, n = a * step_s, n * step_s
-        if not nv:
-            if _ABSENT_ERRORS_NOTE not in notes:
-                notes.append(_ABSENT_ERRORS_NOTE)
-        elif shift == 0:
-            if zero_members:
-                shown = ", ".join(zero_members[:3]) + (
-                    f" (+{len(zero_members) - 3})" if len(zero_members) > 3 else ""
-                )
-                notes.append(f"members without an error series counted as 0 errors: {shown}")
-            if gaps:
-                notes.append(
-                    f"error series has no value at {gaps} steps: excluded, not counted as 0"
-                )
+        if not nkeys:
+            stats["all_absent"] = True
         a = np.clip(a, 0, None)
         return np.minimum(a, n), n
+
+    @staticmethod
+    def _ratio_stats() -> dict:
+        return {"zero_now": set(), "zero_ref": set(), "gaps_now": 0, "gaps_ref": 0}
+
+    @staticmethod
+    def _ratio_notes(stats: dict, notes: list[str]) -> None:
+        if stats.get("all_absent"):
+            notes.append(_ABSENT_ERRORS_NOTE)
+        for side, label in (("now", ""), ("ref", "reference windows: ")):
+            zero = sorted(stats["zero_" + side])
+            parts = []
+            if zero:
+                shown = ", ".join(zero[:3]) + (f" (+{len(zero) - 3})" if len(zero) > 3 else "")
+                parts.append(f"members without an error series counted as 0 errors: {shown}")
+            if stats["gaps_" + side]:
+                parts.append(
+                    f"error series has no value at {stats['gaps_' + side]} member-steps: "
+                    "excluded, not counted as 0"
+                )
+            if parts:
+                notes.append(label + "; ".join(parts))
 
     def _hist(self, ds: str, j: int, shift: int) -> tuple[Hist, pl.DataFrame, pl.DataFrame]:
         meta, dist = self.svc.datasets.get_distribution(ds)
@@ -436,10 +451,11 @@ class VerdictOps:
             st.inputs = [*meta.parents]
             for d, _ in ok_refs:
                 st.inputs += self.svc.datasets.meta(d).parents
-            return RoleInput(
-                "share", self._ratio_counts(st.now, grid, 0, step_s, st.notes),
-                [self._ratio_counts(d, grid, s, step_s, st.notes) for d, s in ok_refs], lookback_ms=look,
-            )  # fmt: skip
+            stats = self._ratio_stats()
+            now_c = self._ratio_counts(st.now, grid, 0, step_s, stats)
+            ref_c = [self._ratio_counts(d, grid, s, step_s, stats) for d, s in ok_refs]
+            self._ratio_notes(stats, st.notes)
+            return RoleInput("share", now_c, ref_c, lookback_ms=look)
         st.inputs = [st.now, *(d for d, _ in ok_refs)]
         if p.form == "distribution":
             h0, r0, c0 = self._hist(st.now, 0, 0)

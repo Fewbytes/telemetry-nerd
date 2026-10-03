@@ -361,7 +361,7 @@ Flags on top of the states: `reset` (↺ on the plot), `interval_change` (axis t
   (OOM-killed, saturated, partitioned), so a band over the survivors looks healthy *because*
   the sick ones dropped out.
   - A member that goes silent while still alive is listed and drawn **beside** the value
-    outliers, labelled source undetermined (gone or sick: the data cannot tell; principle 8).
+    outliers, labelled source undetermined (source undetermined: the data cannot tell; principle 8).
     Report it as "no samples since T", never as "left" (principle 9).
   - The group cloud normalizes intensity by **alive** members, so silent members visibly
     thin it.

@@ -479,7 +479,7 @@ async def test_littles_check_without_concurrency_says_it_cannot_be_done(tmp_path
 
 
 # --- verdict ratio counts: absent error series is 0 (disclosed); unknown steps stay unknown ------
-def _ratio(num_rows, den_rows, grid):
+def _ratio(num_rows, den_rows, grid, shift=0):
     from types import SimpleNamespace
 
     import numpy as np
@@ -490,8 +490,10 @@ def _ratio(num_rows, den_rows, grid):
     data = {"num": _result(num_rows) if num_rows is not None else None, "den": _result(den_rows)}
     datasets = SimpleNamespace(meta=lambda ds: parents, get=lambda ds: (None, data[ds]))
     ops = VerdictOps(SimpleNamespace(datasets=datasets))  # type: ignore[arg-type]
+    stats = ops._ratio_stats()
+    a, n = ops._ratio_counts("r", np.array(grid), shift, 60.0, stats)
     notes: list[str] = []
-    a, n = ops._ratio_counts("r", np.array(grid), 0, 60.0, notes)
+    ops._ratio_notes(stats, notes)
     return a, n, notes
 
 
@@ -510,7 +512,7 @@ def test_verdict_error_step_without_a_value_stays_unknown_not_zero():
     a, n, notes = _ratio(num, den, [60_000, 120_000])
     assert a[0] == pytest.approx(30.0) and math.isnan(a[1])
     assert math.isnan(n[1])  # excluded from both sides
-    assert any("no value at 1 steps: excluded" in x for x in notes)
+    assert any("no value at 1 member-steps: excluded" in x for x in notes)
 
 
 def test_error_ratio_step_gap_in_an_existing_error_series_is_excluded_and_disclosed():
@@ -519,7 +521,7 @@ def test_error_ratio_step_gap_in_an_existing_error_series_is_excluded_and_disclo
     den = _result([(a, 60_000, 10.0), (a, 120_000, 10.0)])
     out, notes = error_ratio(num, den, 60_000)
     assert 120_000 not in {r["ts_ms"] for r in out.buckets.to_pylist()}  # excluded, not 0
-    assert any("no value at 1 steps: excluded" in x for x in notes)
+    assert any("no value at 1 member-steps: excluded" in x for x in notes)
 
 
 def test_verdict_members_without_an_error_series_are_named_and_gaps_excluded():
@@ -530,4 +532,50 @@ def test_verdict_members_without_an_error_series_are_named_and_gaps_excluded():
     assert a[0] == pytest.approx(30.0) and n[0] == pytest.approx(900.0)
     assert n[1] == pytest.approx(300.0) and a[1] == 0.0  # a's gap step is out of both sides
     assert any("without an error series counted as 0 errors" in x and "service" in x for x in notes)
-    assert any("no value at 1 steps: excluded" in x for x in notes)
+    assert any("no value at 1 member-steps: excluded" in x for x in notes)
+
+
+def test_verdict_all_nan_error_series_is_a_gap_not_an_absent_series():
+    import numpy as np
+
+    a_ = {"service": "a"}
+    num = [(a_, 60_000, float("nan")), (a_, 120_000, float("nan"))]
+    den = [(a_, 60_000, 10.0), (a_, 120_000, 10.0)]
+    a, n, notes = _ratio(num, den, [60_000, 120_000])
+    assert np.isnan(a).all() and np.isnan(n).all()
+    assert not any("counted as 0" in x and "series" in x and "excluded" not in x for x in notes)
+    assert any("no value at 2 member-steps: excluded" in x for x in notes)
+
+
+def test_verdict_all_nan_error_series_in_a_fleet_is_not_named_absent():
+    a_, b_ = {"service": "a"}, {"service": "b"}
+    num = [(a_, 60_000, 0.5), (b_, 60_000, float("nan"))]
+    den = [(a_, 60_000, 10.0), (b_, 60_000, 5.0)]
+    _, n, notes = _ratio(num, den, [60_000])
+    assert n[0] == pytest.approx(600.0)  # b is out of both sides
+    assert not any("without an error series" in x for x in notes)
+    assert any("1 member-steps: excluded" in x for x in notes)
+
+
+def test_verdict_reference_window_gaps_and_absent_members_are_disclosed_in_one_note():
+    from types import SimpleNamespace
+
+    import numpy as np
+
+    from telemetry_nerd.core.verdict_ops import VerdictOps
+
+    a_, b_ = {"service": "a"}, {"service": "b"}
+    num = _result([(a_, 0, 0.5), (a_, 60_000, float("nan"))])
+    den = _result([(a_, 0, 10.0), (a_, 60_000, 10.0), (b_, 0, 5.0)])
+    data = {"num": num, "den": den}
+    datasets = SimpleNamespace(
+        meta=lambda ds: SimpleNamespace(parents=["num", "den"]), get=lambda ds: (None, data[ds])
+    )
+    ops = VerdictOps(SimpleNamespace(datasets=datasets))  # type: ignore[arg-type]
+    stats = ops._ratio_stats()
+    ops._ratio_counts("r", np.array([60_000, 120_000]), 60_000, 60.0, stats)  # a reference window
+    notes: list[str] = []
+    ops._ratio_notes(stats, notes)
+    [note] = notes
+    assert note.startswith("reference windows: members without an error series counted as 0")
+    assert "1 member-steps: excluded" in note
