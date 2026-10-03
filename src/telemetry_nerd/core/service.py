@@ -319,6 +319,7 @@ class TelemetryService:
     workspaces: WorkspaceOps = field(init=False)
 
     def __post_init__(self) -> None:
+        self.ws.current = self._current_workspace
         self.workspaces = WorkspaceOps(
             self.registry, self.active, self.log, self.sources, self.source_connect,
             self._open_threads,
@@ -350,6 +351,10 @@ class TelemetryService:
             build_runs(self.datasets, self.ws, self.runs_root), self.clock,
             scope=self.active, workspace_ids=self.registry.ids, using=self.active.using,
         )  # fmt: skip
+
+    def _current_workspace(self) -> dict:
+        info = self.registry.get(self.active.active)
+        return {"id": info.id, "title": info.title, "question": info.question}
 
     def _open_threads(self) -> list[dict]:
         return [

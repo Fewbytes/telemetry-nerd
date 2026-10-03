@@ -45,3 +45,9 @@ async def test_analyze_docstring_names_the_absent_as_zero_caveat(tmp_path):
     async with Client(build_mcp(make_service(tmp_path), "http://x")) as c:
         tools = {t.name: t for t in (await c.list_tools()).tools}
     assert "absent_as_zero" in (tools["analyze"].description or "")
+
+
+def test_instructions_say_new_question_is_new_workspace():
+    text = " ".join(INSTRUCTIONS.split())
+    assert "workspace_create(title, question)" in text and "workspace_switch" in text
+    assert "never changes the workspace except these" in text

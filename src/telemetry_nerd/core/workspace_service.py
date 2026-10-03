@@ -208,6 +208,8 @@ class WorkspaceService:
     families: FamilyStore
     clock: Callable[[], int] = now_ms
     packs: PackIndex = field(default_factory=builtin_packs)
+    #: the active workspace's {id, title, question}; wired by TelemetryService (None: no registry)
+    current: Callable[[], dict] | None = None
 
     # annotations --------------------------------------------------------
     @atomic
@@ -2111,6 +2113,7 @@ class WorkspaceService:
             for c in reversed(self.objects.list_code())
         ]
         out: dict = {
+            **({"workspace": self.current()} if self.current else {}),
             "panels": panels,
             "hypotheses": hyps,
             "findings": finds,
@@ -2134,8 +2137,12 @@ class WorkspaceService:
         return out
 
     def activity(self, since: int | None = None, limit: int = 50) -> dict:
-        start = self.log.last_seq - limit if since is None else since
-        events = self.log.since(max(0, start), limit=limit)
+        if since is None:
+            events = self.log.tail(limit)
+            start = events[0].seq - 1 if events else self.log.last_seq
+        else:
+            start = since
+            events = self.log.since(max(0, start), limit=limit)
         rows = [
             {
                 "seq": e.seq,

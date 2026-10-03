@@ -175,12 +175,30 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   negatives) and files contradictions with declared types or bounds as system findings; a short
   window only suggests, so say so when you cite it.
 - `workspace_activity` lists what the user did since a sequence number.
+- A new, unrelated question is a new workspace: `workspace_create(title, question)`;
+  `workspace_list` / `workspace_switch` go back to an earlier one. Ids are global, so `p3`
+  always means the same panel. A tool call never changes the workspace except these.
 - Tier-2 `run_code` is for the long tail only: tier-1 tools first. Declare `inputs` (dataset
   handles) up front, print only small aggregates, declare uncertainty or `exact` on every output
   (a no_uncertainty output is citable only flagged 'uncertainty unknown'), `show` results. Read a failed run in full with
   `code_get`. Load the `tier2-code` skill before writing code: when to use it, the `tn` API, how
   to declare intervals, worked examples.
 """
+
+
+WORKSPACE_LIST_BYTES = 1900
+
+
+def _workspace_row(w: dict) -> dict:
+    """A workspace_list row: capped text, non-zero counts only."""
+    row: dict = {"id": w["id"], "title": w["title"][:60]}
+    if w.get("question"):
+        row["question"] = w["question"][:80]
+    if w.get("archived"):
+        row["archived"] = True
+    row["last_activity"] = w["last_activity_ms"]
+    row.update({k: n for k, n in w.get("counts", {}).items() if n})
+    return row
 
 
 def _dump(obj: dict) -> str:
@@ -1990,6 +2008,62 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     def workspace_activity(since: int | None = None) -> str:
         """What happened since sequence number `since` (default: the most recent events)."""
         return _dump(ws.activity(since))
+
+    @mcp.tool()
+    async def workspace_create(title: str, question: str | None = None) -> str:
+        """Start a new workspace for a new, unrelated question; it becomes the active one.
+
+        Returns the new workspace, the previous id and its url. Later calls act on it."""
+        try:
+            out = await service.workspaces.create(title, question, "claude")
+        except (ValueError, NotFound) as e:
+            raise _fail(e) from e
+        return _dump({**out, "url": ui_url})
+
+    @mcp.tool()
+    def workspace_list(include_archived: bool = False) -> str:
+        """Workspaces, newest activity first (20 max, `more` counts the rest), with counts."""
+        out = service.workspaces.list(include_archived, 20)
+        rows = [_workspace_row(w) for w in out["workspaces"]]
+        more = out["more"]
+        head = {"active": out["active"], "url": ui_url}
+        while (
+            rows and len(_dump({**head, "workspaces": rows, "more": more})) > WORKSPACE_LIST_BYTES
+        ):
+            rows.pop()  # principle 6: the result stays small; `more` counts what was cut
+            more += 1
+        return _dump({**head, "workspaces": rows, "more": more})
+
+    @mcp.tool()
+    async def workspace_switch(id: str) -> str:
+        """Make workspace `id` the active one (calls after this one act on it).
+
+        Returns counts, open threads and source status; call workspace_get for the brief."""
+        try:
+            out = await service.workspaces.switch(id, "claude")
+        except (ValueError, NotFound) as e:
+            raise _fail(e) from e
+        out = {**out, "url": ui_url, "hint": "workspace_get for the brief"}
+        threads = [{**t, "last": t["last"][:60]} for t in out["open_threads"]]
+        while len(_dump({**out, "open_threads": threads})) > WORKSPACE_LIST_BYTES and threads:
+            threads.pop()  # the brief has the rest
+        return _dump({**out, "open_threads": threads})
+
+    @mcp.tool()
+    def workspace_update(
+        id: str,
+        title: str | None = None,
+        question: str | None = None,
+        archived: bool | None = None,
+    ) -> str:
+        """Rename workspace `id`, change its question, or (un)archive it (not the active one)."""
+        try:
+            info = service.workspaces.update(
+                id, title=title, question=question, archived=archived, actor="claude"
+            )
+        except (ValueError, NotFound) as e:
+            raise _fail(e) from e
+        return _dump({"workspace": info.to_dict(), "url": ui_url})
 
     _forbid_unknown_arguments(mcp)
     return mcp
