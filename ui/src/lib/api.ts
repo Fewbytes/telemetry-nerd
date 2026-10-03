@@ -387,8 +387,8 @@ export const rescopePanel = (id: string, start: string, end: string) =>
   postJSON<{ panel: Panel }>(`/api/panels/${id}/rescope`, { start, end });
 export const fetchDefaultRange = () =>
   fetch("/api/workspace/default-range").then((r) => json<{ default_range: string }>(r));
-export const setDefaultRange = (default_range: string) =>
-  postJSON<{ default_range: string }>("/api/workspace/default-range", { default_range });
+export const setDefaultRange = (value: string) =>
+  postJSON<{ default_range: string }>("/api/workspace/default-range", { default_range: value });
 
 /** Switch reference layers; turning the ghost on makes the daemon fetch last week. */
 export const setOverlays = (id: string, body: Partial<OverlayFlags>) =>
