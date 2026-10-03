@@ -71,3 +71,45 @@ async def test_preview_logs_no_ambient_or_intentional_event(tmp_path):
     await svc.preview(shown.panel.id, "now-3h", "now")
     new_events = svc.log.since(before_seq)
     assert all(e.klass == "internal" for e in new_events)
+
+
+async def test_rescope_makes_a_new_panel_and_leaves_the_old_one_untouched(tmp_path):
+    svc = make_service(tmp_path)
+    shown = svc.show((await svc.query("rate(node_cpu_seconds_total[5m])"))["dataset"], "cpu?")
+    pid = shown.panel.id
+    before = svc.workspace.get_panel(pid)
+    res = await svc.rescope(pid, "now-3h", "now", "user")
+    assert res.panel.id != pid
+    assert svc.workspace.get_panel(pid) == before
+    meta = svc.datasets.meta(res.panel.dataset_ids[0])
+    assert meta.end_ms - meta.start_ms == pytest.approx(3 * 3600_000, rel=0.05)
+    assert res.panel.spec["auto"]["transform"] == "rescope"
+    assert res.panel.spec["auto"]["source_dataset"] == before.dataset_ids[0]
+    assert "rescoped from" in res.panel.spec["auto"]["reason"]
+
+
+async def test_rescope_logs_a_panel_rescoped_event(tmp_path):
+    svc = make_service(tmp_path)
+    shown = svc.show((await svc.query("rate(node_cpu_seconds_total[5m])"))["dataset"], "cpu?")
+    pid = shown.panel.id
+    before_seq = svc.log.last_seq
+    res = await svc.rescope(pid, "now-3h", "now", "user")
+    [e] = [e for e in svc.log.since(before_seq) if e.type == "panel.rescoped"]
+    assert e.object_id == res.panel.id and e.payload["from"] == pid
+
+
+async def test_rescope_refuses_a_code_output_panel(tmp_path):
+    from telemetry_nerd.datasets.store import Lineage
+    from telemetry_nerd.model.series import BUCKET_SCHEMA, SERIES_SCHEMA, FetchResult
+    from telemetry_nerd.model.time import TimeRange
+
+    svc = make_service(tmp_path)
+    # a code output has no source expr to re-query (same refusal reframe() uses)
+    code_ds = svc.datasets.put(
+        source="default", expr="code", rng=TimeRange(0, 1000), step_ms=1000, resolution_ms=1000,
+        result=FetchResult(BUCKET_SCHEMA.empty_table(), SERIES_SCHEMA.empty_table()),
+        lineage=Lineage(producer={"kind": "code", "node": "n1", "output": "o1"}),
+    )
+    code_panel = svc.show(code_ds.id, "computed?")
+    with pytest.raises(ValueError, match="fixed data"):
+        await svc.rescope(code_panel.panel.id, "now-3h", "now", "user")

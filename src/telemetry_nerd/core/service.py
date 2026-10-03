@@ -966,6 +966,37 @@ class TelemetryService:
             source=meta.source, actor=actor,
         )
 
+    async def rescope(
+        self, panel_id: str, start: str, end: str, actor: Actor = "user"
+    ) -> ShowResult:
+        """Accept a time-range change (bead aqk): a NEW panel over the new range, marked as
+        rescoped from this one, which is left exactly as it was. Never applied silently."""
+        p = self.workspace.get_panel(panel_id)
+        spec = ChartSpec.model_validate(p.spec)
+        mark = spec.layers[0].mark if spec.layers else "auto"
+        if mark not in ("line+envelope", "fleet", "spc"):
+            raise ValueError(
+                f"rescope_unsupported_for_mark: {panel_id} is a {mark} panel; rescope only "
+                "supports line+envelope, fleet and spc panels for now (hint: create a new "
+                "panel over the new range instead)"
+            )
+        meta = self.datasets.meta(p.dataset_ids[0])
+        refuse_requery(meta, "a time-range rescope")
+        ds = (
+            await self.query(
+                meta.expr, start=start, end=end, step=format_duration(meta.step_ms),
+                source=meta.source, actor=actor,
+            )
+        )["dataset"]
+        form = AutoForm(
+            transform="rescope", source_dataset=p.dataset_ids[0],
+            reason=f"rescoped from {panel_id}",
+        )
+        kwargs: dict = {}
+        res = self.show(ds, p.question, actor, auto=form, raw_ok=True, **kwargs)
+        self.log.append(actor, "panel.rescoped", res.panel.id, {"from": panel_id})
+        return res
+
     async def reframe(self, panel_id: str, index: int, actor: Actor = "user") -> ShowResult:
         """Accept a proposed reframing (bead 2as.15): a NEW panel over the same window and step,
         marked as reframed from this one, which is left exactly as it was. Never applied silently."""

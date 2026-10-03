@@ -209,7 +209,7 @@ class AutoForm(BaseModel):
     """The panel shows a different form of the signal than the dataset it was asked to show,
     chosen from what the catalog knows (bead 2as.14). The original dataset is untouched."""
 
-    transform: Literal["rate", "reframe"]
+    transform: Literal["rate", "reframe", "rescope"]
     source_dataset: str  # what was asked for
     reason: str
 
