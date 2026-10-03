@@ -1,6 +1,7 @@
 ---
 description: Learn what a source's metrics mean (units, types, roles, bounds) and record it in the catalog
 argument-hint: "[source] [family-prefix]"
+allowed-tools: mcp__plugin_telemetry-nerd_telemetry-nerd__source_list, mcp__plugin_telemetry-nerd_telemetry-nerd__source_learn, mcp__plugin_telemetry-nerd_telemetry-nerd__catalog_search, mcp__plugin_telemetry-nerd_telemetry-nerd__catalog_get, mcp__plugin_telemetry-nerd_telemetry-nerd__catalog_write, mcp__plugin_telemetry-nerd_telemetry-nerd__catalog_relate, mcp__plugin_telemetry-nerd_telemetry-nerd__catalog_context
 ---
 
 Learn metrics for `$ARGUMENTS` (first word: source, default `default`; second word: optional

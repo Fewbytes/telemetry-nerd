@@ -45,7 +45,7 @@ summed across series or over time, and its role (utilization, latency, errors an
 
 Those facts come from the source's own metadata, naming conventions, curated knowledge packs
 for common exporters (node_exporter, Kubernetes), measured sample behaviour, and Claude reading
-the metrics with you (`/learn`). Each fact records where it came from and how confident it is.
+the metrics with you (`/tn:learn`). Each fact records where it came from and how confident it is.
 You can confirm or correct any of them from the metric card under a graph, and your word always
 wins over every automatic source.
 
@@ -173,6 +173,8 @@ result.
    `auth_file` or `auth_env`.
 5. Verify: `curl -s http://127.0.0.1:7070/api/health` returns `{"ok":true,...}`, the `source_list` tool shows
    the source as `live`, and <http://127.0.0.1:7070> loads in a browser.
+
+Commands: `/tn:start` (connect, learn, open), `/tn:connect`, `/tn:investigate <question>`, `/tn:open`, `/tn:learn`.
 
 Full details, the container path and network-security notes: [docs/install.md](docs/install.md).
 How the graphs are designed and why: [docs/telemetry-graphing-guide.md](docs/telemetry-graphing-guide.md).

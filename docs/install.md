@@ -135,6 +135,19 @@ launcher, `scripts/tn-launch`, which picks the first install it finds:
 So for a marketplace install, `uv tool install` first, then `/plugin marketplace add
 Fewbytes/telemetry-nerd` and `/plugin install telemetry-nerd@telemetry-nerd`.
 
+### Commands
+
+| Command | What it does |
+|---|---|
+| `/tn:start [url\|name]` | One entry point: ensures the daemon, connects your data (Prometheus-compatible URL or a public registry name), learns it, prints the workspace URL and what was learned (metrics, packs, binding suggestions). A Grafana URL is not yet resolved to a datasource (bead `3fs.2`); give a datasource proxy URL or a Prometheus URL. |
+| `/tn:connect [url\|name]` | Connect a source and report its status. |
+| `/tn:investigate <question>` | Scope the question, record a hypothesis, follow the `triage` skill; claims need evidence. |
+| `/tn:open` | Print (and try to open) the workspace UI URL. |
+| `/tn:learn [source] [prefix]` | Learn what the source's metrics mean and record it in the catalog. |
+
+Claude Code namespaces plugin commands by the plugin name, so they may be listed as
+`/telemetry-nerd:start` etc.; the bare form works when unambiguous.
+
 ### Plugin against a container daemon
 
 The bridge is a small stdio process that still needs the `telemetry-nerd` CLI (install 2 above);
