@@ -283,6 +283,14 @@ async def test_scan_learns_the_characteristic_range_of_a_gauge_not_a_counter(svc
     assert c.confidence == 0.5 and "not a bound" in c.citation and v["window"] == "30m"
     assert v["min"] <= v["lo"] <= v["median"] <= v["hi"] <= v["max"]
     assert v["lo_ci95"][0] <= v["lo"] <= v["lo_ci95"][1] and "lower bound" in v["interval"]
+    # 7vr: the metric card lists it, with its origin and confidence like any learned fact
+    from telemetry_nerd.core.card_payload import field_rows
+
+    rows_ = {r["field"]: r for r in field_rows(entry(svc, "loki_files_total"))}
+    assert (
+        rows_["typical_range"]["origin"] == "stats" and rows_["typical_range"]["confidence"] == 0.5
+    )
+    assert "typical_range" not in {r["field"] for r in field_rows(entry(svc, "plain_counter"))}
     assert v["series"] == 2 and v["n"] >= 30
     assert rows["loki_files_total"]["range"]["p99"] == v["hi"]
     # it feeds the y context of a plain-selector panel, labelled as observed

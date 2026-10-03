@@ -189,7 +189,12 @@ class BindingOps:
     def _info(self, source: str, metric: str, native: frozenset[str]) -> MetricInfo:
         """Type and histogram kind of a role's metric. A classic histogram's base name is not a
         series, so a source's catalog often holds only its `_bucket`/`_count`/`_sum` members:
-        a bound `X_bucket` stands for the histogram X."""
+        a bound `X_bucket` stands for the histogram X.
+
+        Kept on purpose (7vr): catalogs and accepted bindings persisted before 6gp name `X_bucket`
+        and there is no catalog version stamp, migration or relearn-on-start, so dropping this would
+        silently turn those users' histogram roles into plain `_bucket` counters. Remove only once a
+        catalog schema version exists and older catalogs are normalised on load."""
         ws = self.svc.ws
         bounded = bool(ws.catalog_bounded_by(source, metric))
         has = ws.catalog.has_metric

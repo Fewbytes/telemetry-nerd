@@ -33,9 +33,18 @@ export function cardSummary(card: MetricCard): string {
   return bits.join(" · ");
 }
 
+/** A catalog typical_range {lo, hi, n, window, q?}: descriptive, so its quantiles and sample count travel with it. */
+const fmtRange = (r: Record<string, unknown>): string => {
+  const q = Array.isArray(r.q) ? ` (p${Number(r.q[0]) * 100}–p${Number(r.q[1]) * 100}, n=${r.n}, ${r.window})` : ` (n=${r.n}, ${r.window})`;
+  return `${r.lo} – ${r.hi}${q}`;
+};
+
 export const fmtValue = (v: unknown): string => {
   if (v === null || v === undefined) return "—";
-  if (!Array.isArray(v)) return String(v);
+  if (!Array.isArray(v)) {
+    if (typeof v === "object" && "lo" in v && "hi" in v) return fmtRange(v as Record<string, unknown>);
+    return String(v);
+  }
   // thresholds are objects: {label, value, tone}
   return v.map((x) => (x && typeof x === "object" && "value" in x ? `${(x as { label?: string }).label ?? "threshold"} = ${(x as { value: number }).value}` : String(x))).join(", ");
 };

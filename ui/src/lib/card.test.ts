@@ -51,6 +51,7 @@ describe("labels and formats", () => {
   it("formats values and durations", () => {
     expect(fmtValue(["a", "b"])).toBe("a, b");
     expect(fmtValue(null)).toBe("—");
+    expect(fmtValue({ lo: 0.5, hi: 12, n: 900, window: "7d", q: [0.01, 0.99] })).toBe("0.5 – 12 (p1–p99, n=900, 7d)");
     expect(fmtDuration(86_400_000 * 30)).toBe("30d");
     expect(fmtDuration(15_000)).toBe("15s");
     expect(fmtDuration(90_000)).toBe("90s");
