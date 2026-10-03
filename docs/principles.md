@@ -104,7 +104,8 @@ Claude, the UI and tier-2 code all mutate the same object model through the same
 Datasets and nodes are immutable; deletes are soft, so evidence links never break.
 
 - Decided: 2026-09-30.
-- Enforced by: `src/telemetry_nerd/core/workspace_service.py`, `src/telemetry_nerd/workspace/`;
+- Enforced by: `src/telemetry_nerd/core/workspace_service.py`, `src/telemetry_nerd/workspace/`,
+  `src/telemetry_nerd/workspace/scope.py`, `src/telemetry_nerd/workspace/registry.py`;
   MVP spec §2.3, §3.3 (invariants).
 
 ## 8. Every variation is labelled with its source

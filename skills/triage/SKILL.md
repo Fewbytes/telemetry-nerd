@@ -18,7 +18,8 @@ means), `tier2-code` (custom statistics). Load them when a step needs them.
   change at the window edge has no onset). Note the reference: previous windows by default,
   the same hour of past days when the service has a daily rhythm.
 - Decide the question before looking: every re-run with another range or reference is another
-  look (principle 14). Orient with `workspace_get`, `source_list`; `source_learn` once per source.
+  look (principle 14). Orient with `workspace_get` (it names the active workspace; another investigation is
+  `workspace_create`, an old one `workspace_list` / `workspace_switch`), `source_list`; `source_learn` once per source.
 - Steps 2-5 may run in the order the symptom suggests; the worked example judges the golden
   signals first, then scopes the blast radius against the seasonal baseline.
 

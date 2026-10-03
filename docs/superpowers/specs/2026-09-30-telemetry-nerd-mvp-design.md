@@ -70,7 +70,11 @@ IPython kernel subprocesses for tier-2 code.
   process opens it (DuckDB is single-writer). Workers and tier-2 kernels receive Arrow over
   IPC/HTTP and write results back through the server. ASOF JOIN is used for aligning
   series with mismatched timestamps.
-- **SQLite** (`/data/workspace.db`): workspace objects, append-only event log, catalog.
+- **SQLite** (`/data/workspace.db`): workspace objects, append-only event log, catalog. One file
+  holds every investigation: panels, objects and events carry a `workspace` column, a global
+  `workspaces` table lists them, and object ids and event seqs are global. The active workspace
+  is the one with the greatest `opened_at_ms`; each MCP call and HTTP request is pinned to it at
+  entry (`workspace/scope.py`). Workspaces are archived, never deleted.
 - `/data` is a mounted volume in both local and remote deployments.
 
 ### 2.2 Series cache
@@ -140,7 +144,7 @@ A step smaller than the native resolution raises a `fake_resolution` caveat.
 
 | Object | Prefix | Key fields |
 |---|---|---|
-| Workspace | `w` | title, mode, focus range, default step, sources |
+| Workspace | `w` | title, question, mode, focus range, default step, sources, archived |
 | Signal | `s` | expression, semantics ref |
 | Dataset | `d` | see §3.2 |
 | Node | `n` | kind (`query`/`op`/`code`), inputs, params or code, outputs, status, broker call log |
@@ -613,7 +617,7 @@ link; never raw series).
 | Data | `query`, `op`, `ops_list`, `fit`, `run_code`, `dataset_peek` (bounded rows) |
 | Views | `show`, `panel_create` (question required), `panel_update`, `annotate` |
 | Reasoning | `hypothesis_create`, `hypothesis_update`, `finding_create` (scope + evidence required), `gap_create` |
-| Collaboration | `workspace_get`, `workspace_activity`, `reply` (answer in a UI thread) |
+| Collaboration | `workspace_get`, `workspace_activity`, `reply` (answer in a UI thread), `workspace_create` (creates and switches), `workspace_list`, `workspace_switch`, `workspace_update` (title, question, archived) |
 
 Transports: stdio (local) and streamable HTTP (remote).
 
@@ -624,6 +628,9 @@ Transports: stdio (local) and streamable HTTP (remote).
 | **Intentional** | ask about selection (brush + question), comment/note, finding verdict, hypothesis status change, user annotation, "ask Claude" link, catalog correction | immediately via channel |
 | **Ambient** | deterministic follow-ups taken, panels closed, focus range changes, axis-mode changes | batched; attached to the next intentional event, or via `workspace_activity` |
 | **Never** | hover, pan/zoom, crosshair | UI-local only |
+
+The `workspace` tag carries the real workspace id; a line about another workspace is prefixed
+`[wN] `.
 
 Channel message shape:
 

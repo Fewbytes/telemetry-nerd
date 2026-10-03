@@ -1,7 +1,7 @@
 ---
 description: Get going - make sure the daemon runs, connect your data, learn it, open the workspace
 argument-hint: "[prometheus-url | registry-name | grafana-url]"
-allowed-tools: Bash(sh ${CLAUDE_PLUGIN_ROOT}/scripts/tn-launch *), mcp__plugin_telemetry-nerd_telemetry-nerd__source_list, mcp__plugin_telemetry-nerd_telemetry-nerd__source_connect, mcp__plugin_telemetry-nerd_telemetry-nerd__source_status, mcp__plugin_telemetry-nerd_telemetry-nerd__source_learn, mcp__plugin_telemetry-nerd_telemetry-nerd__public_sources, mcp__plugin_telemetry-nerd_telemetry-nerd__binding_suggest
+allowed-tools: Bash(sh ${CLAUDE_PLUGIN_ROOT}/scripts/tn-launch *), mcp__plugin_telemetry-nerd_telemetry-nerd__source_list, mcp__plugin_telemetry-nerd_telemetry-nerd__workspace_list, mcp__plugin_telemetry-nerd_telemetry-nerd__source_connect, mcp__plugin_telemetry-nerd_telemetry-nerd__source_status, mcp__plugin_telemetry-nerd_telemetry-nerd__source_learn, mcp__plugin_telemetry-nerd_telemetry-nerd__public_sources, mcp__plugin_telemetry-nerd_telemetry-nerd__binding_suggest
 ---
 
 Start a Telemetry Nerd session. Data location given: `$ARGUMENTS` (may be empty).
@@ -35,4 +35,4 @@ Start a Telemetry Nerd session. Data location given: `$ARGUMENTS` (may be empty)
    binding suggestions were found (RED / USE / Little's law) and the top ones; caveats
    (`metadata_coverage`, `cardinality_unavailable`, `metrics_truncated`) in one line.
    Suggest next steps: `/telemetry-nerd:investigate <question>` (e.g. "why did checkout latency spike at
-   14:00?"), `/telemetry-nerd:learn` to deepen what the catalog knows, `/telemetry-nerd:open` for the workspace.
+   14:00?"), `/telemetry-nerd:learn` to deepen what the catalog knows, `/telemetry-nerd:open` for the workspace; `workspace_list` to resume an old investigation.
