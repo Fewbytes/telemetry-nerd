@@ -18,4 +18,5 @@ with `stance` for or against, then `hypothesis_update`.
 | A deploy or config change at the onset | no event inside the onset interval | an `annotate` event from the user's deploy log; compare it with the onset interval | the annotation, with the onset statistic |
 
 Notes: "not refuted" is not "supported", timing is not cause, and an `undetermined` result is
-neither for nor against. Status rules and wording: the `evidence` skill.
+neither for nor against. Ruling out is a negative claim: it holds for the window and members
+examined, not beyond ("no deploy event in 09:50-10:05Z", not "no deploy"). Status rules and wording: the `evidence` skill.

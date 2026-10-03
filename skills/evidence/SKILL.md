@@ -43,6 +43,15 @@ baseline_end?}`. `step` is the dataset's resolved step from its summary (`1m`), 
 Missing data narrows scope: `coverage`, `unknown_spans` and `silent_members` say where nothing was
 measured. Say "no change detected in the 92% of the window that was measured", not "no change".
 
+**Positive vs negative claims.** What was observed can be claimed outright ("s3 had no samples
+10:20-10:45Z"). What is absent or complete ("nothing missing", "all members reported", "s3 left",
+"it did not recur") holds only for the finite set examined: this window, these members. Time
+series are never finite, so scope every negative claim to the interval and members analyzed, and
+never extend it to the series, the service or the future. A series silent until the window end
+is "no samples since 10:45Z", not "left"; a gap with samples on both sides is an observed
+disconnect. When the negative question matters, name the wider check that would test it (for
+example: is the set of `pod` values per bucket the same over the previous day).
+
 ## Uncertainty policy
 
 1. **Every statistic states its uncertainty**: an interval, `exact`, or

@@ -48,6 +48,18 @@ conclusions.
    segments, units, missing members, partial or untrusted data). When the data cannot tell
    them apart the label is **source undetermined** — never a guess. Labels add context; they
    never hide or replace the measured numbers (§5.4).
+9. **Positive claims vs negative claims** (user decision 2026-10-03). A positive claim says
+   something *was observed* ("pod x had no samples 10:20–10:45", "p99 exceeded 2 s in 14 of 60
+   buckets"); one observation proves it. A negative or universal claim says something is
+   *absent* or *complete* ("nothing is missing", "every member reported", "pod x left", "it never
+   recurred"); it holds only over a finite set we have fully examined. Telemetry is never such a
+   set: a time series keeps growing, members join and leave, sources drop and backfill. So
+   negative claims are made only about the scoped past interval and the members actually
+   analyzed ("no gap in the 6 h examined, for the 20 pods returned"), never about the series,
+   the service or the future. Trailing silence is "no samples since T", not "left" or "ended" —
+   a wider window may show it return; a gap bounded by samples is a positively observed
+   disconnect. Where a negative question matters, say what wider check would test it (e.g. is
+   set(pod) per bucket consistent over a longer window) instead of asserting it.
 
 ### 1.3 Personas
 
