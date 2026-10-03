@@ -37,6 +37,7 @@ AMBIENT_TYPES = frozenset(
     {
         "panel.created",
         "panel.closed",
+        "panel.rescoped",
         "focus.changed",
         "panel.y_view_selected",
         "panel.marginal_set",

@@ -35,3 +35,20 @@ def test_set_default_range_rejects_an_unparseable_value(tmp_path):
 def test_get_default_range_is_now_1h_before_anything_is_set(tmp_path):
     svc = make_service(tmp_path)
     assert svc.get_default_range() == "now-1h"
+
+
+from telemetry_nerd.channel.format import describe_event
+from telemetry_nerd.core.events import Event, classify
+
+
+def test_panel_rescoped_is_ambient_for_a_user_actor():
+    assert classify("user", "panel.rescoped", {"from": "p1"}) == "ambient"
+
+
+def test_panel_rescoped_is_internal_for_a_claude_actor():
+    assert classify("claude", "panel.rescoped", {"from": "p1"}) == "internal"
+
+
+def test_describe_event_renders_panel_rescoped():
+    e = Event(1, 0, "user", "panel.rescoped", "p2", "ambient", {"from": "p1"})
+    assert describe_event(e) == "user rescoped p1 to p2"
