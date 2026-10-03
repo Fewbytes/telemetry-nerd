@@ -1,6 +1,10 @@
-import { fetchWorkspace, subscribe, type Presence, type Snapshot, type WorkspaceEvent } from "./api";
+import {
+  fetchWorkspace, fetchWorkspaces, subscribe,
+  type Presence, type Snapshot, type WorkspaceEvent, type WorkspaceInfo,
+} from "./api";
 import type { DaemonState } from "./connection";
 import { applyHighlightEvent, expire, nextExpiry, type Highlights } from "./highlights";
+import { workspaceChanged } from "./workspaces";
 
 const RELOAD_TYPES = new Set([
   "panel.created", "panel.answered", "finding.created", "finding.verdict",
@@ -25,18 +29,32 @@ export function createWorkspace() {
   let highlights = $state.raw<Highlights>(new Map());
   let catalogSeq = $state(0); // bumps when anything the metric card shows may have changed
   let expiryTimer: ReturnType<typeof setTimeout> | undefined;
+  let workspaces = $state.raw<WorkspaceInfo[]>([]);
   let lastSeq = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let failures = 0;
+
+  const refreshList = () =>
+    fetchWorkspaces().then((l) => { workspaces = l.workspaces; }).catch(() => { /* the list is a convenience; the next switch refetches */ });
+
+  // a switch invalidates everything the board shows: highlights belong to the old workspace
+  const onSwitched = (reload: boolean) => {
+    highlights = new Map();
+    armExpiry();
+    refreshList();
+    if (reload) load();
+  };
 
   const load = (): Promise<void> =>
     fetchWorkspace()
       .then((s) => {
         // concurrent loads can return out of order; never apply a stale snapshot
         if (s.last_seq >= lastSeq) {
+          const switched = workspaceChanged(snapshot, s);
           snapshot = s;
           error = null;
+          if (switched) onSwitched(false);
         }
         lastSeq = Math.max(lastSeq, s.last_seq);
         failures = 0;
@@ -74,12 +92,16 @@ export function createWorkspace() {
     get catalogSeq() { return catalogSeq; },
     /** active highlights (Claude's and the user's), expired ones already dropped */
     get highlights() { return highlights; },
+    /** non-archived workspaces, as last fetched */
+    get workspaces() { return workspaces; },
+    refreshWorkspaces: refreshList,
     reload: load,
     start(): () => void {
       let stopUnsub = () => {};
       let stopped = false;
       load().then(() => {
         if (stopped) return;
+        refreshList();
         let dropped = false;
         stopUnsub = subscribe((e) => {
           lastSeq = Math.max(lastSeq, e.seq);
@@ -92,6 +114,7 @@ export function createWorkspace() {
           if (needsReload(e)) schedule();
         }, () => lastSeq, {
           onPresence: (p) => (presence = p),
+          onWorkspace: () => onSwitched(true),
           onOpen: () => {
             daemon = "connected";
             // resync after an outage: the daemon may have restarted with other state

@@ -5,7 +5,7 @@ import { createWorkspace, needsReload } from "./workspace.svelte";
 vi.mock("./api", async (orig) => ({ ...(await orig<typeof import("./api")>()), fetchWorkspace: vi.fn() }));
 
 const ev = (type: string, klass: WorkspaceEvent["klass"]): WorkspaceEvent => ({
-  seq: 1, ts_ms: 0, actor: "claude", type, object_id: null, klass, payload: {},
+  seq: 1, ts_ms: 0, actor: "claude", type, object_id: null, klass, payload: {}, workspace: "w1",
 });
 
 describe("needsReload", () => {

@@ -166,6 +166,12 @@ export interface WorkspaceEvent {
   seq: number; ts_ms: number; actor: "claude" | "user" | "system" | "code"; type: string;
   object_id: string | null; klass: "intentional" | "ambient" | "internal";
   payload: Record<string, unknown>;
+  workspace: string;
+}
+export interface WorkspaceCounts { panels: number; hypotheses: number; findings: number; open_threads: number }
+export interface WorkspaceInfo {
+  id: string; title: string; question: string | null; archived: boolean;
+  created_at_ms: number; last_activity_ms: number; counts: WorkspaceCounts;
 }
 
 export interface TimeSpan { start_ms: number; end_ms: number }
@@ -288,6 +294,7 @@ export interface Snapshot {
   findings: Finding[]; gaps: Gap[]; threads: Thread[]; last_seq: number;
   code?: CodeBrief[];
   groups?: PanelGroup[];
+  workspace: WorkspaceInfo;
 }
 /** One role of a panel group: its panel, or the gap where its signal is missing (bead czt.3). */
 export interface GroupRole {
@@ -350,6 +357,16 @@ export const postJSON = <T>(path: string, body: unknown = {}) =>
   }).then((r) => json<T>(r));
 
 export const fetchWorkspace = () => fetch("/api/workspace").then((r) => json<Snapshot>(r));
+export interface WorkspaceList { active: string; workspaces: WorkspaceInfo[]; more: number }
+export const fetchWorkspaces = (archived = false) =>
+  fetch(`/api/workspaces${archived ? "?archived=1" : ""}`).then((r) => json<WorkspaceList>(r));
+export const createWorkspace = (title: string, question?: string) =>
+  postJSON<{ workspace: WorkspaceInfo }>("/api/workspaces", question ? { title, question } : { title });
+export const openWorkspace = (id: string) =>
+  postJSON<{ workspace: WorkspaceInfo }>(`/api/workspaces/${encodeURIComponent(id)}/open`);
+export const updateWorkspace = (id: string, patch: { title?: string; question?: string; archived?: boolean }) =>
+  postJSON<WorkspaceInfo>(`/api/workspaces/${encodeURIComponent(id)}/update`, patch);
+
 export const closePanel = (id: string) => postJSON<unknown>(`/api/panels/${id}/close`);
 export const closeGroup = (id: string) => postJSON<PanelGroup>(`/api/groups/${id}/close`);
 /** The same group over a selected window: a new group, this one stays. */
@@ -369,7 +386,7 @@ export const reportRender = (r: { panel_id: string; render_ms: number; points: n
 /** Control frame on every workspace switch or update: no seq, never logged. */
 export interface WorkspaceFrame {
   kind: "workspace";
-  active: { id: string; title: string; question: string | null; archived: boolean; created_at_ms: number };
+  active: Pick<WorkspaceInfo, "id" | "title" | "question" | "archived" | "created_at_ms">;
 }
 
 export interface SocketHandlers {

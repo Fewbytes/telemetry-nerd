@@ -5,7 +5,7 @@ import { applyHighlightEvent, expire, nextExpiry, type Highlights } from "./high
 const ev = (
   type: string, object_id: string | null, actor: WorkspaceEvent["actor"] = "claude",
   payload: Record<string, unknown> = {},
-): WorkspaceEvent => ({ seq: 1, ts_ms: 0, actor, type, object_id, klass: "internal", payload });
+): WorkspaceEvent => ({ seq: 1, ts_ms: 0, actor, type, object_id, klass: "internal", payload, workspace: "w1" });
 const hl = (id: string, note: string | null, ttl: number | null, actor: WorkspaceEvent["actor"] = "claude") =>
   ev("object.highlighted", id, actor, { note, ttl_ms: ttl });
 const empty: Highlights = new Map();
