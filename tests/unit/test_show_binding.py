@@ -518,10 +518,39 @@ def test_verdict_error_step_without_a_value_stays_unknown_not_zero():
 
 def test_error_ratio_step_gap_in_an_existing_error_series_is_excluded_and_disclosed():
     a = {"service": "a"}
-    num = _result([(a, 60_000, 0.5)])
-    den = _result([(a, 60_000, 10.0), (a, 120_000, 10.0)])
+    num = _result([(a, 60_000, 0.5), (a, 180_000, 0.5)])
+    den = _result([(a, 60_000, 10.0), (a, 120_000, 10.0), (a, 180_000, 10.0)])
     out, notes = error_ratio(num, den, 60_000)
     assert 120_000 not in {r["ts_ms"] for r in out.buckets.to_pylist()}  # excluded, not 0
+    assert any("no value at 1 member-steps: excluded" in x for x in notes)
+    assert not any("born inside the window" in x for x in notes)
+
+
+def test_error_ratio_reads_an_error_series_born_in_the_window_as_0_before_it():
+    """lep: the error series appears on the first error (13:24 in the payment run); the steps
+    before it and after its last point read as 0 where requests report, as analyze reads them
+    (born_counters); an explicit unknown value inside its lifetime stays a gap."""
+    a = {"service": "a"}
+    num = _result([(a, 180_000, 0.5), (a, 240_000, float("nan")), (a, 300_000, 0.5)])
+    den = _result([(a, t, 10.0) for t in (60_000, 120_000, 180_000, 240_000, 300_000, 360_000)]
+                  + [(a, 420_000, float("nan"))])  # fmt: skip
+    out, notes = error_ratio(num, den, 60_000)
+    share = {r["ts_ms"]: r["avg"] for r in out.buckets.to_pylist()}
+    assert share == {60_000: 0.0, 120_000: 0.0, 180_000: 0.05, 300_000: 0.05, 360_000: 0.0}
+    assert any("born inside the window: 3 member-steps" in x for x in notes)
+    assert any("no value at 1 member-steps: excluded" in x for x in notes)
+
+
+def test_verdict_reads_an_error_series_born_in_the_window_as_0_before_it():
+    a_ = {"service": "a"}
+    num = [(a_, 180_000, 0.5), (a_, 240_000, float("nan"))]
+    den = [(a_, t, 10.0) for t in (60_000, 120_000, 180_000, 240_000, 300_000)]
+    a, n, notes = _ratio(num, den, [60_000, 120_000, 180_000, 240_000, 300_000, 360_000])
+    assert list(a[:3]) == [0.0, 0.0, pytest.approx(30.0)]
+    assert math.isnan(a[3]) and math.isnan(n[3])  # unknown inside the lifetime: a gap
+    assert a[4] == 0.0 and n[4] == pytest.approx(600.0)  # after its last row: 0
+    assert math.isnan(a[5]) and math.isnan(n[5])  # no requests: nothing to judge
+    assert any("born inside the window: 3 member-steps" in x for x in notes)
     assert any("no value at 1 member-steps: excluded" in x for x in notes)
 
 

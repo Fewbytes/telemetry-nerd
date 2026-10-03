@@ -187,6 +187,7 @@ class ScenarioSource(FakeSource):
         saturation=None,
         members=2,
         errorless=(),
+        born=None,
     ):
         ms = tuple(DiscoveredMetric(n, t, None, None) for n, t in METRICS)
         hist = {n: "classic" for n, t in METRICS if t == "histogram"}
@@ -199,6 +200,8 @@ class ScenarioSource(FakeSource):
         # members that never had an error: no error series (born on the first error, like
         # span-metrics STATUS_CODE_ERROR or a {code="500"} child)
         self.errorless = errorless
+        # member -> minute: its error series is born at that minute of now's window (lep)
+        self.born = born or {}
         self.exprs: list[str] = []
 
     def _rng(self, t: int, m: int, salt: int, hourly=False):
@@ -246,7 +249,12 @@ class ScenarioSource(FakeSource):
         ms = [m for m in range(self.members) if not ("5.." in expr and m in self.errorless)]
         labels = [{label: f"s{k}"} for k in ms]
         sids = [series_id(self.name, lb) for lb in labels]
-        rows = [(t, sids[i], self._value(expr, t, m)) for i, m in enumerate(ms) for t in tss]
+        rows = [
+            (t, sids[i], self._value(expr, t, m))
+            for i, m in enumerate(ms)
+            for t in tss
+            if not ("5.." in expr and m in self.born and t <= _at(self.born[m]))
+        ]
         buckets = pa.table(
             {"ts_ms": [r[0] for r in rows], "series_id": [r[1] for r in rows],
              "avg": [r[2] for r in rows], "min": [r[2] for r in rows], "max": [r[2] for r in rows],
@@ -390,6 +398,24 @@ async def test_absent_error_series_read_as_zero_is_a_stated_measurement_assumpti
     assert item["source"] == "measurement_system" and "live sibling" in item["finding"]
     assert any("without an error series counted as 0 errors" in n for n in e["notes"])
     assert "absent_as_zero" not in out["roles"]["rate"].get("caveats", [])
+
+
+async def test_error_series_born_inside_now_counts_0_before_its_first_point(tmp_path):
+    """lep: the error series of s0 is born at minute 20 of now's window. Its 20 earlier steps
+    count 0 errors where requests report (as analyze reads them), not gaps lost from both sides:
+    the same burst is judged as with the series present throughout, disclosed as absent_as_zero."""
+    (tmp_path / "born").mkdir()
+    (tmp_path / "full").mkdir()
+    born = await _svc(tmp_path / "born", seed=3, error_burst=(40, 47), born={0: 20})
+    full = await _svc(tmp_path / "full", seed=3, error_burst=(40, 47))
+    kw = {"source": "default", "suggestion": "RED:otel_http", "reference": "previous", **RANGE}
+    b = (await born.binding_verdict(**kw))["roles"]["errors"]
+    f = (await full.binding_verdict(**kw))["roles"]["errors"]
+    assert b["status"] == f["status"] == "changed" and b["source"] == "special_cause"
+    assert "absent_as_zero" in b["caveats"]
+    assert any("born inside the window: " in n for n in b["notes"])
+    # the steps before birth are counted (as 0), not excluded from both sides
+    assert not any("excluded, not counted as 0" in n for n in b.get("notes", []))
 
 
 async def test_error_series_present_everywhere_carries_no_absent_as_zero(tmp_path):

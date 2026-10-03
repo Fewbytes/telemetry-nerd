@@ -176,8 +176,10 @@ class VerdictOps:
     ) -> tuple[np.ndarray, np.ndarray]:
         """errors and requests per step (rate x step, summed over members) behind a ratio.
 
-        Only an error series that is entirely absent reads as 0 errors (counters usually appear
-        after the first error), and `notes` says so (principles 4, 11). A step the error series
+        An error series that is entirely absent reads as 0 errors (counters usually appear
+        after the first error), and so do the steps before an error series' first point and
+        after its last where the requests report (born on its first event, `_born_filled`);
+        `notes` says so (principles 4, 11). A step the error series
         does not cover (unknown, untrusted, NaN) stays NaN: judged on neither side, never 0."""
         if ds is None:
             nan = np.full(grid.size, np.nan)
@@ -198,6 +200,7 @@ class VerdictOps:
         dv = self._values(den, shift, keys)
         nv = self._values(num, shift, keys) if num is not None else {}
         nkeys = self._member_keys(num, keys) if num is not None else set()
+        rows = self._rows(num, shift, keys) if num is not None else {}
         a = np.full(grid.size, np.nan)
         n = np.full(grid.size, np.nan)
         for mem, dpts in dv.items():
@@ -208,7 +211,7 @@ class VerdictOps:
                 stats["zero_" + side].add(mem)  # this member has none: 0, disclosed
                 e = np.zeros(grid.size)
             else:
-                e = self._arr(nv.get(mem, {}), grid)
+                e = self._born_filled(nv.get(mem, {}), rows.get(mem, []), grid, d, stats, side)
             ok = ~np.isnan(d)
             stats["gaps_" + side] += int((ok & np.isnan(e)).sum())  # lost data, out of both sides
             ok &= ~np.isnan(e)
@@ -220,9 +223,53 @@ class VerdictOps:
         a = np.clip(a, 0, None)
         return np.minimum(a, n), n
 
+    def _rows(
+        self, ds: str, shift: int, keys: frozenset[str] | None = None
+    ) -> dict[str, list[int]]:
+        """Per member: the steps (on now's grid) its series has a row at, value or not: the
+        series' observed lifetime (an unknown value inside it is a gap, not absence)."""
+        _, r = self.svc.datasets.get(ds)
+        labels = {
+            row["series_id"]: self._member(json.loads(row["labels"]), keys)
+            for row in r.series.to_pylist()
+        }
+        out: dict[str, list[int]] = {}
+        for sid, t in zip(
+            r.buckets.column("series_id").to_pylist(), r.buckets.column("ts_ms").to_pylist(),
+            strict=True,
+        ):  # fmt: skip
+            out.setdefault(labels.get(sid, "{}"), []).append(t + shift)
+        return out
+
+    def _born_filled(
+        self,
+        pts: dict[int, float],
+        rows: list[int],
+        grid: np.ndarray,
+        den: np.ndarray,
+        stats: dict,
+        side: str,
+    ) -> np.ndarray:
+        """A member's error series on the grid, read as born on its first event
+        (`born_counters.fill_absent`, as analyze reads it): steps before its first row and after
+        its last read as 0 where the requests (its live sibling) report; steps inside its
+        lifetime without a value stay gaps."""
+        e = self._arr(pts, grid)
+        if not rows:
+            return e
+        ts = np.unique(np.array(rows, dtype=np.int64))
+        alive = grid[~np.isnan(den)].astype(np.int64)
+        f = born_counters.fill_absent(ts, np.zeros(ts.size), alive)
+        if not (f.lead or f.trail):
+            return e
+        born = {*f.ts[: f.lead].tolist(), *f.ts[f.ts.size - f.trail :].tolist()}
+        stats["born_" + side] += len(born)
+        return np.where(np.isin(grid.astype(np.int64), list(born)), 0.0, e)
+
     @staticmethod
     def _ratio_stats() -> dict:
-        return {"zero_now": set(), "zero_ref": set(), "gaps_now": 0, "gaps_ref": 0}
+        return {"zero_now": set(), "zero_ref": set(), "gaps_now": 0, "gaps_ref": 0,
+                "born_now": 0, "born_ref": 0}  # fmt: skip
 
     @staticmethod
     def _read_absent_as_zero(stats: dict) -> bool:
@@ -230,6 +277,7 @@ class VerdictOps:
         return bool(
             stats.get("all_absent_now") or stats.get("all_absent_ref")
             or stats["zero_now"] or stats["zero_ref"]
+            or stats.get("born_now") or stats.get("born_ref")
         )  # fmt: skip
 
     @staticmethod
@@ -246,6 +294,12 @@ class VerdictOps:
             if zero:
                 shown = ", ".join(zero[:3]) + (f" (+{len(zero) - 3})" if len(zero) > 3 else "")
                 parts.append(f"members without an error series counted as 0 errors: {shown}")
+            if born := stats.get("born_" + side):
+                parts.append(
+                    f"error series born inside the window: {born} member-steps before its first "
+                    "point or after its last counted as 0 errors where requests report "
+                    "(born on the first error, as analyze reads it)"
+                )
             if stats["gaps_" + side]:
                 parts.append(
                     f"error series has no value at {stats['gaps_' + side]} member-steps: "

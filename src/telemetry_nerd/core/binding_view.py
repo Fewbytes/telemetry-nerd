@@ -26,8 +26,10 @@ import re
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
+import numpy as np
 import pyarrow as pa
 
+from telemetry_nerd.analysis import born_counters
 from telemetry_nerd.analysis.fraction import wilson
 from telemetry_nerd.catalog.relations import BINDING_ROLES
 from telemetry_nerd.model.series import BUCKET_SCHEMA, FetchResult
@@ -309,14 +311,42 @@ def _assumed(role: str) -> str:
     }.get(role, "value")
 
 
+def _born_fill(
+    num_vals: dict[tuple[str, int], float],
+    num_rows: dict[str, list[int]],
+    den: FetchResult,
+    den_labels: dict[str, str],
+) -> int:
+    """Read each member's error series as born on its first event (`born_counters.fill_absent`,
+    as analyze reads it): zeros into `num_vals` at the steps before its first row and after its
+    last where its requests (the live sibling) report. Steps inside its lifetime without a value
+    stay gaps. Returns the member-steps filled."""
+    alive: dict[str, list[int]] = {}
+    for row in den.buckets.to_pylist():
+        if row["avg"] is not None and math.isfinite(row["avg"]):
+            alive.setdefault(den_labels[row["series_id"]], []).append(row["ts_ms"])
+    filled = 0
+    for lab, ts in num_rows.items():
+        if lab not in alive:
+            continue
+        t = np.unique(np.array(ts, dtype=np.int64))
+        f = born_counters.fill_absent(t, np.zeros(t.size), np.unique(alive[lab]))
+        for x in [*f.ts[: f.lead].tolist(), *f.ts[f.ts.size - f.trail :].tolist()]:
+            num_vals[(lab, int(x))] = 0.0
+        filled += f.lead + f.trail
+    return filled
+
+
 def error_ratio(num: FetchResult, den: FetchResult, step_ms: int) -> tuple[FetchResult, list[str]]:
     """errors / requests per member and step with a Wilson interval (lo/hi columns).
 
     Counts are the mean per-second rate times the step (`n = rate x step`), so the interval is the
     sampling uncertainty of a share of that many requests. A step with no requests has no share
-    (left out, never 0). A member whose error series is absent entirely reads as 0 errors (disclosed; error counters
-    usually appear only after the first error). A step with no error value inside an existing
-    series is lost data: excluded from numerator and denominator, disclosed."""
+    (left out, never 0). A member whose error series is absent entirely reads as 0 errors
+    (disclosed; error counters usually appear only after the first error), and so do the steps
+    before its error series' first point and after its last (`_born_fill`). A step with no error
+    value between observed points is lost data: excluded from numerator and denominator,
+    disclosed."""
     step_s = step_ms / 1000
 
     def by_labels(r: FetchResult) -> tuple[dict[str, str], dict[str, str]]:
@@ -326,9 +356,13 @@ def error_ratio(num: FetchResult, den: FetchResult, step_ms: int) -> tuple[Fetch
     num_labels, num_ids = by_labels(num)
     den_labels, _ = by_labels(den)
     num_vals: dict[tuple[str, int], float] = {}
+    num_rows: dict[str, list[int]] = {}
     for row in num.buckets.to_pylist():
+        lab = num_labels[row["series_id"]]
+        num_rows.setdefault(lab, []).append(row["ts_ms"])
         if row["avg"] is not None and math.isfinite(row["avg"]):
-            num_vals[(num_labels[row["series_id"]], row["ts_ms"])] = row["avg"]
+            num_vals[(lab, row["ts_ms"])] = row["avg"]
+    born = _born_fill(num_vals, num_rows, den, den_labels)
     cols: dict[str, list] = {c: [] for c in ("ts_ms", "series_id", "avg", "min", "max", "count")}
     cols["lo"], cols["hi"] = [], []
     absent: set[str] = set()
@@ -372,6 +406,12 @@ def error_ratio(num: FetchResult, den: FetchResult, step_ms: int) -> tuple[Fetch
             + (f" (+{len(absent) - 3})" if len(absent) > 3 else "")
             + "; measurement-system assumption: error counters are born on their first "
             "error, born_counters)"
+        )
+    if born:
+        notes.append(
+            f"error series born inside the window: {born} member-steps before its first point "
+            "or after its last counted as 0 errors where requests report (measurement-system "
+            "assumption: born on the first error, as analyze reads it, born_counters)"
         )
     if gap_steps:
         notes.append(
