@@ -405,7 +405,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         Result leads with `summary` (text: discrepancy, verdict, warnings), `discrepancy` (L − λW
         and L/(λW) − 1, whole range and per window, with the MEASUREMENT interval: gauge sampling
         floored by a Poisson-occupancy process, steady-state edge straddle, counter scrape timing,
-        rate lookback bound — the counts' Poisson noise is not in it), `verdict`,
+        rate lookback bound when counters are read with rate() (on VictoriaMetrics they are read as
+        increase() tiles ending at the gauge's scrapes: no lookback) — the counts' Poisson noise is not
+        in it; windows are anchored at `start`), `verdict`,
         `classification` and `warnings`. Sources: measurement system (the interval; a systematic
         offset over most windows), common cause (`common_cause`: at N requests/window L and λW
         fluctuate ±X%; the windows' own spread; a load-peak window inside it is "not a signal by

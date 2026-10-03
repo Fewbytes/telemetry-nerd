@@ -159,9 +159,9 @@ async def test_littles_consistent_example(tmp_path):
     t = o["total"]
     assert round(t["ratio"], 2) == 0.99 and t["ci95"][0] < 1 < t["ci95"][1]
     d = o["discrepancy"]
-    assert round(d["difference"], 2) == -0.13
+    assert round(d["difference"], 2) == -0.16
     assert [round(100 * x) for x in d["relative_ci95"]] == [-6, 5]
-    assert [round(x, 2) for x in d["per_window"]["ratio_range"]] == [0.84, 1.15]
+    assert [round(x, 2) for x in d["per_window"]["ratio_range"]] == [0.84, 1.16]
     assert (round(t["L"], 1), round(t["lambda_W"], 1), round(t["W_s"], 1)) == (22.9, 23.0, 2.4)
     assert o["classification"]["systematic"] is None and not o["classification"]["transient"]
     cc = t["common_cause"]
@@ -185,11 +185,11 @@ async def test_littles_hidden_queueing_example(tmp_path):
     assert round(o["discrepancy"]["difference"], 1) == 13.3
     assert round(o["discrepancy"]["lambda_W"], 2) == 9.54
     sysd = o["classification"]["systematic"]
-    assert round(sysd["ratio"], 2) == 2.10 and [round(x, 2) for x in sysd["ci95"]] == [1.87, 2.34]
-    assert sysd["windows"] == [9, 12] and sysd["source"] == "measurement_system"
+    assert round(sysd["ratio"], 2) == 2.03 and [round(x, 2) for x in sysd["ci95"]] == [1.76, 2.3]
+    assert sysd["windows"] == [10, 12] and sysd["source"] == "measurement_system"
     tr = o["classification"]["transient"]
-    assert len(tr) == 3 and {(x["source"], x["phase"]) for x in tr} == {("special_cause", "other")}
-    assert round(100 * t["common_cause"]["spread_rel"]) == 31
+    assert len(tr) == 2 and {(x["source"], x["phase"]) for x in tr} == {("special_cause", "other")}
+    assert round(100 * t["common_cause"]["spread_rel"]) == 43
     names = [e["name"] for e in t["evidence"]]
     assert "littles_law_discrepancy" in names and "littles_law_systematic_offset" in names
     assert (round(t["L"], 1), round(t["lambda_per_s"], 2), round(t["W_s"], 1)) == (22.9, 9.55, 1.0)
@@ -215,7 +215,7 @@ async def test_littles_spike_promotion_example(tmp_path):
     (e,) = [e for e in p["evidence"] if e["significant"]]
     assert e["kind"] == "backlog_growth"
     assert (e["value"], e["gauge"], e["flow"]) == (376, 376, 377)
-    assert 155 <= e["z"] < 156 and round(e["k"], 1) == 26.8
+    assert 155 <= e["z"] < 156 and round(e["k"], 1) == 37.9
     assert "backlog grew +376 requests" in p["reason"] and "155× the steady-state" in p["reason"]
     names = [x["name"] for x in o["total"]["evidence"]]
     assert "littles_law_backlog_growth" in names

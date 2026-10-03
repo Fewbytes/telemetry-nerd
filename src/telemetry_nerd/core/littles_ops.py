@@ -25,6 +25,7 @@ from telemetry_nerd.analysis.littles import (
     Substeps,
     check,
     combine,
+    window_of,
 )
 from telemetry_nerd.analysis.sources import COMMON, MEASUREMENT, SPECIAL, UNDETERMINED
 from telemetry_nerd.catalog.models import native_family
@@ -121,10 +122,15 @@ def _nice_window(span_ms: int, floor_ms: int) -> int:
 
 
 def _windows(
-    start: str, end: str, window: str, res: int, now: int
+    start: str, end: str, window: str, res: int, now: int, scrape_note: str | None = None
 ) -> tuple[TimeRange, int, int, int]:
-    """The range aligned to whole windows, the window, the sub-step (a multiple of the
-    resolution, ~SUBSTEPS_PER_WINDOW per window) and sub-steps per window."""
+    """The range on the sub-step grid, the window, the sub-step (a multiple of the
+    resolution, ~SUBSTEPS_PER_WINDOW per window) and sub-steps per window.
+
+    Windows are anchored at the requested start (rounded up to the sub-step), not at wall-clock
+    multiples of the window: the range is never widened, so data before `start` (a warm-up, an
+    incident the caller excluded) or after `end` is not judged, and the window grid follows the
+    data. A trailing part of at least half a window is judged as a short window."""
     rng = TimeRange(parse_time(start, now), parse_time(end, now))
     span = rng.end_ms - rng.start_ms
     if span <= 0:
@@ -135,11 +141,12 @@ def _windows(
         raise ValueError(
             f"window {format_duration(win)} holds fewer than {MIN_SUBSTEPS_PER_WINDOW} scrapes "
             f"({format_duration(res)} each) (hint: window >= {format_duration(floor)})"
+            + (f"; {scrape_note}" if scrape_note else "")
         )
     step = max(res, (win // SUBSTEPS_PER_WINDOW) // res * res)
     k = win // step
     win = k * step
-    rng = rng.align(win)
+    rng = TimeRange(-(-rng.start_ms // step) * step, rng.end_ms // step * step)
     if (rng.end_ms - rng.start_ms) // step > MAX_SUBSTEPS:
         raise ValueError(
             "range / sub-step is too many points (hint: a shorter range or longer window)"
@@ -153,28 +160,37 @@ def _windows(
 
 
 def _exprs(
-    by: list[str], lat: dict, arr_name: str, arr_sel: str, arr_form: str, concurrency: str
-) -> dict[str, str]:
+    by: list[str], lat: dict, arr_name: str, arr_sel: str, arr_form: str, concurrency: str,
+    tile: str | None = None,
+) -> dict[str, str]:  # fmt: skip
     """The four queries, summed by `by`. A native histogram has no _sum/_count series: its sum
     and count are histogram_sum/histogram_count of its rate. `arr_form`: gauge (already a
-    rate) | native | classic (a histogram: its _count) | counter."""
+    rate) | native | classic (a histogram: its _count) | counter.
+
+    `tile` (VictoriaMetrics: the source resolution, e.g. "5s"): counters as increase(x[tile]),
+    evaluated every tile inside each sub-step (the subquery step is the resolution). VM's
+    increase() counts from the last sample before its window to the last one in it, without
+    extrapolation, so consecutive tiles partition the counter exactly and each tile ends at the
+    same scrape the gauge is read at: no lookback offset by construction. The caller divides by
+    the tile to get per-second rates. Without it (Prometheus): rate(x[$__rate_interval]), whose
+    window reaches back further than the gauge reading (a bias term)."""
     agg = f"sum by ({', '.join(by)})" if by else "sum"
-    ri = "[$__rate_interval]"
+    fn, ri = ("increase", f"[{tile}]") if tile else ("rate", "[$__rate_interval]")
     base, lsel = lat["base"], lat["selector"]
     if lat["native"]:
-        sum_q = f"{agg} (histogram_sum(rate({base}{lsel}{ri})))"
-        cnt_q = f"{agg} (histogram_count(rate({base}{lsel}{ri})))"
+        sum_q = f"{agg} (histogram_sum({fn}({base}{lsel}{ri})))"
+        cnt_q = f"{agg} (histogram_count({fn}({base}{lsel}{ri})))"
     else:
-        sum_q = f"{agg} (rate({base}_sum{lsel}{ri}))"
-        cnt_q = f"{agg} (rate({base}_count{lsel}{ri}))"
+        sum_q = f"{agg} ({fn}({base}_sum{lsel}{ri}))"
+        cnt_q = f"{agg} ({fn}({base}_count{lsel}{ri}))"
     if arr_form == "gauge":
         arr_q = f"{agg} ({arr_name}{arr_sel})"
     elif arr_form == "native":
-        arr_q = f"{agg} (histogram_count(rate({arr_name}{arr_sel}{ri})))"
+        arr_q = f"{agg} (histogram_count({fn}({arr_name}{arr_sel}{ri})))"
     elif arr_form == "classic":
-        arr_q = f"{agg} (rate({arr_name}_count{arr_sel}{ri}))"
+        arr_q = f"{agg} ({fn}({arr_name}_count{arr_sel}{ri}))"
     else:
-        arr_q = f"{agg} (rate({arr_name}{arr_sel}{ri}))"
+        arr_q = f"{agg} ({fn}({arr_name}{arr_sel}{ri}))"
     return {
         "arrival_rate": arr_q,
         "latency_sum": sum_q,
@@ -199,6 +215,8 @@ class LittlesOps:
         binding: Callable[[str, str], Any],
         clock: Callable[[], int],
         family: Callable[[str, str], list[str] | None] = lambda s, m: None,
+        flavor: Callable[[str], str | None] = lambda s: None,
+        scrape: Callable[[str, str, int], Awaitable[int | None]] | None = None,
     ) -> None:
         self._datasets = datasets
         self._query = query
@@ -209,6 +227,8 @@ class LittlesOps:
         self._binding = binding
         self._clock = clock
         self._family = family  # histogram family members of a catalogued base name, or None
+        self._flavor = flavor  # the source's query language: victoriametrics | prometheus
+        self._scrape = scrape  # a series' sample spacing (ms) around a time, or None
         self._last: dict[str, dict] = {}
         self._memo: Memo[dict] = Memo()
 
@@ -303,6 +323,38 @@ class LittlesOps:
             )
         return 1.0, "s", None  # assumed: flagged
 
+    async def _probe_scrape(
+        self, source: str, selector: str, res: int, start: str, end: str
+    ) -> tuple[int, str | None]:
+        """The gauge's scrape interval (median sample spacing at the range end) against the
+        source's configured resolution: the sub-step grid, the gauge's sample count and the
+        counters' tiles follow the configured one, so a mismatch is stated (and a refused window
+        says which to reconnect with). Returns (the spacing used for the error terms: the larger,
+        a note or None)."""
+        if self._scrape is None:
+            return res, None
+        try:
+            at = parse_time(end, self._clock())
+            got = await self._scrape(source, selector, at)
+        except Exception:  # noqa: BLE001 - a probe failure must not stop the check
+            return res, None
+        if not got or abs(got - res) <= res // 5:
+            return res, None
+        note = (
+            f"{selector.split('{')[0]} is scraped every {format_duration(got)} (median sample "
+            f"spacing at the range end) but source {source!r} is configured with resolution "
+            f"{format_duration(res)}"
+        )
+        if got < res:
+            note += (
+                f": the check reads one sample per {format_duration(res)} (hint: "
+                f'source_connect(name={source!r}, url=..., resolution="{format_duration(got)}", '
+                "replace=true) to use them all)"
+            )
+        else:
+            note += ": samples are re-read between scrapes; the error terms use the scrape spacing"
+        return max(got, res), note
+
     # fetch + run ------------------------------------------------------------------------
     async def check(
         self,
@@ -341,7 +393,10 @@ class LittlesOps:
             )
         factor, unit, unit_basis = self._unit(source, lat["base"], latency_unit)
         res = self._resolution(source)
-        rng, win, step, k = _windows(start, end, window, res, self._clock())
+        scrape_ms, scrape_note = await self._probe_scrape(
+            source, f"{conc_name}{conc_sel}", res, start, end
+        )
+        rng, win, step, k = _windows(start, end, window, res, self._clock(), scrape_note)
         skip = 1 + (-(-parse_duration(warmup) // step) if warmup else 0)
         arr_is_rate = arr_type == "gauge"
         # a histogram named as the arrival signal: its count (classic _count, native
@@ -356,7 +411,11 @@ class LittlesOps:
             arr_form = "classic"
         else:
             arr_form = "counter"
-        exprs = _exprs(by, lat, arr_name, arr_sel, arr_form, f"{conc_name}{conc_sel}")
+        tiled = self._flavor(source) == "victoriametrics"
+        exprs = _exprs(
+            by, lat, arr_name, arr_sel, arr_form, f"{conc_name}{conc_sel}",
+            format_duration(res) if tiled else None,
+        )  # fmt: skip
         ds = {}
         for role, expr in exprs.items():
             out = await self._query(
@@ -371,7 +430,15 @@ class LittlesOps:
             "source": source, "datasets": ds, "by": by, "step_ms": step, "window_ms": win,
             "k": int(k), "skip": int(skip), "start_ms": rng.start_ms, "end_ms": rng.end_ms,
             "unit_factor": factor, "unit": unit, "unit_basis": unit_basis,
-            "lookback_ms": max(0, (rate_interval_ms(step, res) - step) // 2),
+            # how much further back the counters' window reaches than the gauge reading it is
+            # compared with: 0 with increase() tiles (VM); rate(x[ri]) at t covers (t - ri, t]
+            # (VM also takes the sample before it), the gauge is read at the last scrape <= t,
+            # on average half a scrape back: (ri - scrape) / 2 (measured on VM v1.137: ri / 2
+            # behind the bucket's middle at sub-steps of 5s-60s)
+            "lookback_ms": 0 if tiled else max(0, (rate_interval_ms(step, res) - res) // 2),
+            "counter_form": "increase_tiles" if tiled else "rate_interval",
+            "tile_s": res / 1000 if tiled else None,
+            "scrape_ms": scrape_ms, "scrape_probe": scrape_note,
             "resolution_ms": res, "arrivals": arrivals, "arrival_is_rate": arr_is_rate,
             "roles": roles, "binding": bound, "exprs": exprs, "warmup": warmup,
             "matchers": {
@@ -432,13 +499,18 @@ class LittlesOps:
         keys = sorted(set().union(*(set(v) for v in per_role.values())))
         nan = np.full(grid.size, np.nan)
 
+        # increase() tiles: per-tile counts -> per second
+        per_s = 1 / cfg["tile_s"] if cfg.get("tile_s") else 1.0
+        arr_s = 1.0 if cfg["arrival_is_rate"] else per_s
+
         def sub(k: tuple) -> Substeps:
             get = lambda role: per_role[role].get(k, (nan, np.zeros(grid.size)))
             conc, conc_n = get("concurrency")
             return Substeps(
-                grid, get("arrival_rate")[0], get("latency_sum")[0] * cfg["unit_factor"],
-                get("latency_count")[0], conc, conc_n, step, cfg["lookback_ms"],
-                cfg["resolution_ms"],
+                grid, get("arrival_rate")[0] * arr_s,
+                get("latency_sum")[0] * cfg["unit_factor"] * per_s,
+                get("latency_count")[0] * per_s, conc, conc_n, step, cfg["lookback_ms"],
+                cfg.get("scrape_ms", cfg["resolution_ms"]),
             )  # fmt: skip
 
         matched, unmatched = [], []
@@ -540,17 +612,28 @@ class LittlesOps:
                 f"latency in {cfg['unit']} ({cfg['unit_basis'] or 'no unit known: ASSUMED seconds'})"
                 ", converted to seconds; lambda per second"
                 + (" (the arrival signal is a gauge, used as a rate)" if cfg["arrival_is_rate"] else
-                   " from rate() of the counter")
+                   " from the counter's increase")
                 + "; L in requests"
             ),
         })  # fmt: skip
+        tiles = cfg.get("counter_form") == "increase_tiles"
         out.append({
             "name": "window_alignment", "status": "ok",
             "detail": (
-                f"all four signals on one {format_duration(cfg['step_ms'])} grid; sub-steps missing "
-                "any signal are dropped from all; rate() looks back "
-                f"{format_duration(cfg['lookback_ms']) if cfg['lookback_ms'] else '0s'} further than "
-                "the gauge average: a bias bound in the interval"
+                f"all four signals on one {format_duration(cfg['step_ms'])} grid, windows anchored "
+                "at the requested start (the range is not widened); sub-steps missing any signal "
+                "are dropped from all; "
+                + (
+                    f"counters as increase() over {format_duration(cfg['resolution_ms'])} tiles "
+                    "that partition them exactly and end at the scrape the gauge is read at: no "
+                    "lookback" if tiles else
+                    "rate() looks back "
+                    f"{format_duration(cfg['lookback_ms']) if cfg['lookback_ms'] else '0s'} further "
+                    "than the gauge reading: a bias bound in the interval"
+                )
+                + "; the gauge's end-of-interval reading is corrected (trapezoid); a load episode "
+                "that starts and ends inside one window balances over it (Little's law holds over "
+                "that window): use windows shorter than the episodes to see them"
             ),
         })  # fmt: skip
         out.append({
@@ -561,13 +644,15 @@ class LittlesOps:
             ),
         })  # fmt: skip
         fl = [w for w in allw if w.sd_source == "floor"]
+        probe = cfg.get("scrape_probe")
         out.append({
-            "name": "gauge_sampling", "status": "flagged" if fl else "ok",
+            "name": "gauge_sampling", "status": "flagged" if fl or probe else "ok",
             "detail": (
                 f"L is the gauge's average over scrapes every {format_duration(cfg['resolution_ms'])}"
                 "; short spikes between scrapes are invisible, so the interval is never narrower "
                 "than a Poisson-occupancy process would need"
                 + (f" (that floor set the width in {len(fl)} window(s))" if fl else "")
+                + (f"; {probe}" if probe else "")
             ),
         })  # fmt: skip
         sh = flagged("window_short_vs_latency")
@@ -675,13 +760,14 @@ class LittlesOps:
                     "systematic": _systematic_wire(g),
                     "transient": [
                         {"index": t["index"], "phase": t["phase"], "source": t["source"],
-                         "promoted": t["promoted"]}
+                         "promoted": t["promoted"], **_panel_span(t)}
                         for t in g.transient
                     ],
                     "promoted": [
                         {"index": p["index"], "from": p["from"], "deviation": p["deviation"],
                          "reason": p["reason"],
-                         "evidence": sorted({e["kind"] for e in p["evidence"] if e["significant"]})}
+                         "evidence": sorted({e["kind"] for e in p["evidence"] if e["significant"]}),
+                         **_panel_span(p)}
                         for p in g.promoted
                     ],
                     "common_cause": _common_wire(g),
@@ -695,14 +781,18 @@ class LittlesOps:
 
 
 METHOD = (
-    "R = L / (lambda W): L the gauge's time average, lambda from rate() of the counter, W = "
-    "rate(_sum) / rate(_count) (a mean, never a percentile); the discrepancy L - lambda W and "
+    "R = L / (lambda W): L the gauge's time average (its end-of-interval readings corrected to "
+    "the trapezoid), lambda the counter's rate, W = Δ_sum / Δ_count (a mean, never a percentile); "
+    "on VictoriaMetrics the counters are read as increase() over scrape-interval tiles that "
+    "partition them exactly and end at the gauge's scrapes (no lookback), elsewhere as "
+    "rate(x[$__rate_interval]); windows are anchored at the requested start. The discrepancy "
+    "L - lambda W and "
     "R - 1 are always reported. Measurement interval (what the instruments add for this window; "
     "source: measurement system): gauge sampling (successive differences of the scrapes, floored "
     "by a Poisson-occupancy process sampled the same way), the steady-state straddle of requests "
     "in flight at the window edges, counter scrape timing (increments between an edge and the "
     "nearest scrape; lambda and W linearly), in quadrature on log R, plus a bias bound for the "
-    "rate window's lookback; t with n-1 df. The counts' Poisson noise is not in it: over a window "
+    "rate window's lookback (rate() only); t with n-1 df. The counts' Poisson noise is not in it: over a window "
     "L and lambda W describe the same requests; it is the common-cause scale (a small system's "
     "per-window fluctuation), reported apart. Systematic offset (measurement system: "
     "instrumentation / model mismatch): the level of the windows that are not transient, equal "
@@ -903,9 +993,29 @@ def _common_wire(g: GroupResult) -> dict:
     }
 
 
+def _panel_span(t: dict) -> dict:
+    """A shifted-grid entry has no main-grid window: the panel gets its own span."""
+    if not t.get("grid"):
+        return {}
+    w = t["block"]
+    return {"grid": "offset", "start_ms": w.start_ms, "end_ms": w.end_ms}
+
+
+def _ref(g: GroupResult, t: dict) -> float:
+    """The reference a transient / promoted window was judged against (its own grid's)."""
+    if t.get("grid"):
+        return t["reference"]
+    return g.references.get(t["index"], g.reference)
+
+
+def _grid(t: dict) -> dict:
+    """Entries found on the grid shifted by half a window say so (their own span)."""
+    return {"grid": "offset"} if t.get("grid") else {}
+
+
 def _transient_wire(g: GroupResult, t: dict) -> dict:
-    w = g.windows[t["index"]]
-    ref = g.references.get(t["index"], g.reference)
+    w = window_of(g, t)
+    ref = _ref(g, t)
     return {
         "window": _span(w), "direction": t["direction"], "ratio": sig(w.ratio),
         "ci95": sig_pair(w.ci95) if w.ci95 else None, "relative": sig((w.ratio or 0) - 1),
@@ -916,6 +1026,7 @@ def _transient_wire(g: GroupResult, t: dict) -> dict:
         "load": {k: (sig(v) if isinstance(v, float) else v) for k, v in t["load"].items()},
         "cause": t["cause"], "promoted": t["promoted"],
         **({"promotion": _promotion_wire(t["promotion"])} if t["promoted"] else {}),
+        **_grid(t),
     }  # fmt: skip
 
 
@@ -941,11 +1052,12 @@ def _promotion_wire(p: dict) -> dict:
 
 
 def _promoted_wire(g: GroupResult, p: dict) -> dict:
-    w = g.windows[p["index"]]
+    w = window_of(g, p)
     return {
+        **_grid(p),
         "window": _span(w), "ratio": sig(w.ratio), "ci95": sig_pair(w.ci95) if w.ci95 else None,
         "relative": sig((w.ratio or 0) - 1), "difference": sig(w.diff),
-        "reference": sig(g.references.get(p["index"], g.reference)),
+        "reference": sig(_ref(g, p)),
         "source": SPECIAL, "from": p["from"], "deviation": p["deviation"],
         "reason": p["reason"], "evidence": [_evidence_wire(e) for e in p["evidence"]],
         "load": {k: (sig(v) if isinstance(v, float) else v) for k, v in p["load"].items()},

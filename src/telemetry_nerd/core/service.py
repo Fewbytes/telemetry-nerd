@@ -277,7 +277,8 @@ class TelemetryService:
             self.datasets, self.query, lambda s: self._source(s).resolution_ms,
             self.ws.catalog_facts, self.ws.catalog.has_metric,
             lambda s: bool(self.ws.catalog.names(s, None, 1)), self._littles_binding, self.clock,
-            self._histogram_family,
+            self._histogram_family, lambda s: getattr(self._source(s), "flavor", None),
+            lambda s, sel, at: self._source(s).scrape_interval(sel, at),
         )  # fmt: skip
         self.code = CodeOps(
             self.datasets, self.ws, self.log, self.kernels,

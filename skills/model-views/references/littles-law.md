@@ -19,7 +19,7 @@ never a reason to leave the discrepancy out. `summary` is a ready sentence in th
 
 | source | what it is | in the output | what to do |
 |---|---|---|---|
-| measurement system | the measurement interval: gauge sampling, the steady-state edge straddle, counter scrape timing, the rate() lookback; and a **systematic offset** (persistent L != lambda W across most windows) | `ci95`, `discrepancy.*_ci95`; `classification.systematic` (`source: measurement_system`) | an offset is instrumentation / model mismatch, not the process: unmeasured queueing, latency on a subset or superset, a missing instance, units |
+| measurement system | the measurement interval: gauge sampling, the steady-state edge straddle, counter scrape timing, the rate() lookback (not on VictoriaMetrics: counters are read as increase() tiles ending at the gauge's scrapes); and a **systematic offset** (persistent L != lambda W across most windows) | `ci95`, `discrepancy.*_ci95`; `classification.systematic` (`source: measurement_system`) | an offset is instrumentation / model mismatch, not the process: unmeasured queueing, latency on a subset or superset, a missing instance, units |
 | common cause | the system's inherent variability: at N requests per window L and lambda W legitimately fluctuate +-X% (small systems do not average out), and the windows' own spread | `common_cause` (`rel95`, `spread_rel`, `warning`); windows with `source: common_cause` | do not chase single windows inside the envelope; quote the warning when present |
 | special cause | **transient** windows beyond the measurement interval around the reference AND beyond the common-cause envelope; and load-peak windows **promoted** on independent evidence of leaving steady state | `classification.transient` with `source: special_cause`, `phase`, `at_peak`, `load`; `classification.promoted` (`from`, `deviation`, `reason`, `evidence`) | investigate: a load peak (leaving steady state, toward overload), a backlog draining, or a change confined to those windows |
 
@@ -104,7 +104,7 @@ the gap; never compute L from lambda x W.
 | `arrivals_vs_completions` | which event the counter counts (`arrivals=auto\|arrivals\|completions`) | a flow-balance check compares the counter's rate with the histogram count's: `flow_imbalance` means latency on a subset or superset, or backlog growth/drops. `assumed` for a plain counter: most middleware counts at completion |
 | `label_sets` | the three signals describe the same entities | differing matchers (`selectors_differ`) or groups missing from a role: the ratio compares different populations |
 | `units` | W in seconds, rates per second | ms vs s mismatch gives R near 1000 or 0.001: pass `latency_unit` (`s\|ms\|us\|ns`) |
-| `window_alignment` | one sub-step grid for all four signals | a bias term; samples missing in any signal are dropped from all |
+| `window_alignment` | one sub-step grid for all four signals, windows anchored at the requested `start` (never widened), and a second grid shifted by half a window | samples missing in any signal are dropped from all; entries with `grid: offset` were found on the shifted grid (their own `window`): a load episode inside one main-grid window balances over it, so say which grid saw it |
 | `warmup` | start-up excluded only if `warmup` is given | pass `warmup="10m"` after a restart or deploy |
 | `gauge_sampling` | scrapes see the in-flight count often enough | bursts shorter than the scrape are invisible: L biased low; interval widened but not removed |
 | steady state at the edges | requests straddling window edges cancel out | the measurement interval carries the steady-state straddle only; a backlog building or draining inside a window shows as a transient (`phase: peak` / `drain`) |
@@ -134,10 +134,10 @@ say that the check cannot be run and record a gap.
 
 Discrepancy first, then verdict with its source, then warnings: "Over the hour L - lambda W =
 +13.3 requests (L 22.9 vs lambda x W 9.54; L / (lambda W) 2.40, +140%, measurement interval +127%
-to +152%). Verdict `L_high`: a systematic offset of 2.10 (1.87-2.34) in 9 of 12 five-minute
+to +152%). Verdict `L_high`: a systematic offset of 2.03 (1.76-2.30) in 10 of 12 five-minute
 windows — measurement system: the instruments do not describe the same requests. If the excess is
-queueing before the timer, about 1.4 s per request is not covered by the latency timer. Three
-windows differ from that level beyond the measurement interval and the windows' own +-31% spread
+queueing before the timer, about 1.4 s per request is not covered by the latency timer. Two
+windows differ from that level beyond the measurement interval and the windows' own +-43% spread
 (special cause, not at a load peak: queue excursions the timer misses, or a change in those
 windows). Common cause: at about 2860 requests per window L and lambda W fluctuate +-8%. Assumed:
 the counter counts arrivals. Next: bind by instance; check whether the timer starts after the

@@ -58,7 +58,7 @@ class FakeSource:
     async def discover(self) -> Discovery:
         return self.discovery or Discovery((), (), {}, None, 1.0, (), False)
 
-    async def scrape_interval(self, selector: str) -> int | None:
+    async def scrape_interval(self, selector: str, at_ms: int | None = None) -> int | None:
         return self.resolution_ms
 
     async def fetch(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:

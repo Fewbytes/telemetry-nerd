@@ -29,10 +29,12 @@ export interface LittlesSystematic {
   direction: "L_high" | "L_low"; ratio: number | null; ci95: Pair | null;
   windows: [number, number]; drifting: boolean;
 }
-export interface LittlesTransient { index: number; phase: "peak" | "drain" | "other"; source: DeviationSource; promoted?: boolean }
+/** Found on the grid shifted by half a window: no main-grid window (index null), its own span. */
+export interface OffsetSpan { grid?: "offset"; start_ms?: number; end_ms?: number }
+export interface LittlesTransient extends OffsetSpan { index: number | null; phase: "peak" | "drain" | "other"; source: DeviationSource; promoted?: boolean }
 /** A load-peak window promoted to special cause: what it was, and why (with the numbers). */
-export interface LittlesPromoted {
-  index: number; from: DeviationSource; deviation: "within_envelope" | "within_measurement";
+export interface LittlesPromoted extends OffsetSpan {
+  index: number | null; from: DeviationSource; deviation: "within_envelope" | "within_measurement";
   reason: string; evidence: ("backlog_growth" | "latency_rise" | "peak_growth")[];
 }
 export interface LittlesCommonCause {
@@ -144,15 +146,21 @@ export function ratioRange(data: uPlot.AlignedData): [number, number] {
 /** Transient windows (beyond the measurement interval around the reference), in seconds, with their source. */
 export function transientSpans(s: LittlesSeries): { x0: number; x1: number; source: DeviationSource; phase: string }[] {
   return (s.transient ?? []).flatMap((t) => {
-    const w = s.windows[t.index];
+    const w = spanOf(s, t);
     return w ? [{ x0: w.start_ms / 1000, x1: w.end_ms / 1000, source: t.source, phase: t.phase }] : [];
   });
+}
+
+/** A transient / promoted window's span: a main-grid window, or its own (shifted grid). */
+function spanOf(s: LittlesSeries, t: OffsetSpan & { index: number | null }): { start_ms: number; end_ms: number } | null {
+  if (t.start_ms != null && t.end_ms != null) return { start_ms: t.start_ms, end_ms: t.end_ms };
+  return t.index != null ? (s.windows[t.index] ?? null) : null;
 }
 
 /** Promoted load-peak windows (special cause on evidence of leaving steady state), in seconds. */
 export function promotedSpans(s: LittlesSeries): { x0: number; x1: number; from: DeviationSource; reason: string }[] {
   return (s.promoted ?? []).flatMap((p) => {
-    const w = s.windows[p.index];
+    const w = spanOf(s, p);
     return w ? [{ x0: w.start_ms / 1000, x1: w.end_ms / 1000, from: p.from, reason: p.reason }] : [];
   });
 }

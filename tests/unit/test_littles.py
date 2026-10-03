@@ -125,8 +125,12 @@ def test_a_load_spike_out_of_steady_state_is_transient_at_its_windows(seed):
     it (L_low). Transient exactly there, no systematic offset."""
     r = check(substeps(simulate(600 + seed, rates=SPIKE, counter="completions")), k=20)
     assert r.verdict == "inconsistent_in_windows" and r.systematic is None
-    by = {t["index"]: t for t in r.transient}
+    by = {t["index"]: t for t in r.transient if "grid" not in t}
     assert set(by) == {5, 6}
+    # the shifted grid adds only windows inside the episode (25-30 min and its drain)
+    for t in r.transient:
+        if t.get("grid") == "offset":
+            assert 1350_000 <= t["block"].start_ms <= 1950_000, t
     assert by[5]["direction"] == "L_high" and by[5]["phase"] == "peak" and by[5]["at_peak"]
     assert by[6]["direction"] == "L_low" and by[6]["phase"] == "drain"
     assert by[5]["load"]["backlog_change"] > 50 and by[6]["load"]["backlog_change"] < -50
@@ -145,16 +149,33 @@ def test_a_change_confined_to_some_windows_off_peak_is_special_cause():
     sub = substeps(m)
     conc = sub.conc.copy()
     conc[60:80] *= 1.6  # window 3 only: the gauge briefly counts more (a deploy, say)
-    r = check(
-        Substeps(
-            sub.ts_ms, sub.arrivals, sub.lat_sum, sub.lat_count, conc, sub.conc_n, sub.step_ms
-        ),
-        k=20,
+    shifted = Substeps(
+        sub.ts_ms, sub.arrivals, sub.lat_sum, sub.lat_count, conc, sub.conc_n, sub.step_ms
     )
+    # the main grid alone (the change fills its window 3 exactly)
+    r = check(shifted, k=20, offset=False)
     assert r.verdict == "inconsistent_in_windows"
     (t,) = r.transient
     assert t["index"] == 3 and t["phase"] == "other" and t["source"] == SPECIAL
     assert r.windows[3].source == SPECIAL
+
+
+def test_a_change_straddling_two_windows_is_found_on_the_shifted_grid():
+    """xa4: a change filling the second half of one window and the first half of the next is
+    diluted in both; the grid shifted by half a window holds it whole (Bonferroni over both)."""
+    m = simulate(11, rates=[(0.0, 6.0)], c=10)
+    sub = substeps(m)
+    conc = sub.conc.copy()
+    conc[70:90] *= 1.8  # windows 3 and 4 half each; the shifted grid's window 3 whole
+    s2 = Substeps(sub.ts_ms, sub.arrivals, sub.lat_sum, sub.lat_count, conc, sub.conc_n,
+                  sub.step_ms)  # fmt: skip
+    assert check(s2, k=20, offset=False).verdict == "consistent"
+    r = check(s2, k=20)
+    assert r.verdict == "inconsistent_in_windows"
+    (t,) = r.transient
+    assert t["grid"] == "offset" and t["index"] is None and t["source"] == SPECIAL
+    assert (t["block"].start_ms, t["block"].end_ms) == (sub.ts_ms[69], sub.ts_ms[89])
+    assert r.offset is not None and r.offset.windows[3].source == SPECIAL
 
 
 def test_queueing_measured_by_the_timer_is_consistent():
@@ -285,7 +306,7 @@ def test_spike_with_a_completions_counter_is_special_cause_at_the_peak(seed):
         assert e["flow"] is None and e["significant"]
 
 
-@pytest.mark.parametrize("seed", [10, 28])
+@pytest.mark.parametrize("seed", [10, 29])  # seeds with such a peak (11/50 of seeds 0-49)
 def test_a_load_peak_inside_the_envelope_without_evidence_stays_common_cause(seed):
     """rho 0.95 with queueing the timer misses: heavy-tailed excursions put some windows at a
     'peak' (W well above the median) with a deviation inside the envelope; no backlog growth or
@@ -311,7 +332,8 @@ def test_no_promotion_in_steady_state_heavy_load_steps_or_low_traffic():
     for kw in cases:
         r = check(substeps(simulate(**kw)), k=20, arrivals="arrivals")
         promoted += bool(r.promoted)
-        assert r.promotion["alpha"] == 0.05 and r.promotion["tests"] == 12
+        # 12 windows on each of the two grids (main and shifted by half a window)
+        assert r.promotion["alpha"] == 0.05 and r.promotion["tests"] == 24
     assert promoted <= 1
 
 
@@ -325,17 +347,20 @@ def test_overload_with_w_rising_across_consecutive_windows_is_promoted(seed):
         if e["kind"] == "latency_rise" and e["significant"]
     ]  # fmt: skip
     assert lr
-    for p, e in lr:
-        assert 4 <= p["index"] <= 6
+    for p, e in lr:  # on either grid (the shifted one: half a window later)
+        start = p["block"].start_ms if p.get("grid") else r.windows[p["index"]].start_ms
+        assert 1_200_000 <= start <= 1_950_000
         a, b, c = e["W"]
         assert a < b < c and all(z >= k for z, k in zip(e["z"], e["k"], strict=True))
         assert "rose across consecutive windows" in p["reason"]
 
 
-@pytest.mark.parametrize("seed", [4, 5, 7])
+@pytest.mark.parametrize("seed", [7, 22, 44])
 def test_deviation_growing_across_repeated_peaks_is_promoted(seed):
     """Six load peaks, rho 0.6 -> 0.9, queueing the timer misses: each peak's deviation is
-    inside its interval or envelope, but it grows peak after peak (Kendall's S, exact p)."""
+    inside its interval or envelope, but it grows peak after peak (Kendall's S, exact p). Low
+    power by design (6 points, distribution-free): 8/50 of seeds 900-949 promote (10/50 before
+    the gauge's end-of-interval reading was corrected, part of which was that bias)."""
     m = simulate(
         900 + seed, rates=_repeated([2.4, 2.64, 2.88, 3.12, 3.36, 3.6]), duration_s=7200.0,
         timer="service_start", counter="completions",
@@ -348,3 +373,20 @@ def test_deviation_growing_across_repeated_peaks_is_promoted(seed):
         (e,) = [e for e in p["evidence"] if e["kind"] == "peak_growth"]
         assert e["significant"] and e["deviation"] > e["deviation_first"]
         assert "repeated load peaks" in p["reason"] and "Kendall" in p["reason"]
+
+
+def test_gauge_end_of_interval_reading_is_corrected_to_the_trapezoid():
+    """The counters cover (s_j-1, s_j], the gauge is read at s_j: summing the readings integrates
+    N half a scrape late. For a linear path the trapezoid-corrected L is the exact time average
+    over the window (the correction has a known sign: corrected, not added to the interval)."""
+    n, step = 60, 15_000
+    ts = np.arange(1, n + 1, dtype=np.int64) * step
+    N = 0.02 * ts / 1000  # a backlog building linearly: 0.3 per scrape
+    one = np.ones(n)
+    sub = Substeps(ts, 5 * one, 5 * one, 5 * one, N, one, step)
+    idx = np.arange(20, 40)
+    b = judge(sub, idx)
+    exact = (N[19] + N[39]) / 2  # the time average of a linear N over (s_19, s_39]
+    assert math.isclose(b.L, exact, rel_tol=1e-12)
+    assert math.isclose(b.L_correction, -(N[39] - N[19]) * 15 / 2 / (20 * 15))
+    assert b.bias == {"alignment": 0.0}

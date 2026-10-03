@@ -155,23 +155,28 @@ def test_load_spike_is_called_out_as_transient_at_a_peak(tmp_path):
     svc = make_service(tmp_path, source=SimSource(sims, START))
     out = _run(svc)
     tr = out["classification"]["transient"]
-    peak = [t for t in tr if t["at_peak"]]
-    assert [t["window"][0] for t in peak] == [iso(START + 1_500_000)]  # the 5 min at rho 1.25
-    # 83w: inside the common-cause envelope, but the backlog grew by hundreds: promoted to
+    # 83w: the peak window's deviation (L ÷ λW 1.26) is inside its measurement interval (the
+    # gauge's end-of-interval reading corrected), but the backlog grew by hundreds: promoted to
     # special cause, and the output says why, with the numbers
-    (t,) = peak
-    assert t["source"] == "special_cause" and t["promoted"]
-    assert t["promotion"]["from"] == "common_cause"
-    assert "backlog grew +" in t["promotion"]["reason"]
-    assert t["cause"].startswith("at a load peak, leaving steady state")
-    assert any("leaving steady state (special cause, promoted from common cause)" in w
+    (p,) = out["classification"]["promoted"]
+    assert p["window"][0] == iso(START + 1_500_000)  # the 5 min at rho 1.25
+    assert p["source"] == "special_cause" and p["from"] == "measurement_system"
+    assert p["deviation"] == "within_measurement" and "backlog grew +" in p["reason"]
+    assert any("leaving steady state (special cause, promoted from measurement system)" in w
                for w in out["warnings"])  # fmt: skip
     assert not any("not a signal by itself" in w for w in out["warnings"])
-    assert "AT A LOAD PEAK" in out["summary"] and "promoted to special cause" in out["summary"]
+    assert "promoted to special cause" in out["summary"]
     assert any("toward overload" in h for h in out["hints"])
     (stat,) = [e for e in out["total"]["evidence"] if e["name"] == "littles_law_backlog_growth"]
     assert stat["source"] == "special_cause" and stat["interval"][0] <= stat["value"]
-    assert stat["params"]["window"] == t["window"] and stat["params"]["z"] >= stat["params"]["k"]
+    assert stat["params"]["window"] == p["window"] and stat["params"]["z"] >= stat["params"]["k"]
+    # the backlog draining after it: a transient labelled drain (inside the envelope here); the
+    # grid shifted by half a window sees the drain too (its own span, `grid: offset`)
+    main = [(t["window"][0], t["phase"]) for t in tr if "grid" not in t]
+    assert main == [(iso(START + 1_800_000), "drain")]
+    for t in tr:
+        if t.get("grid"):
+            assert t["phase"] == "drain" and t["window"][0] == iso(START + 1_950_000)
     # the special-cause transient carries its label onto its evidence and the variation list
     ev = [e for e in out["total"]["evidence"] if e["name"] == "littles_law_transient"]
     assert {e["source"] for e in ev} == {t["source"] for t in tr}
@@ -388,3 +393,53 @@ def test_spike_with_an_arrivals_counter_is_promoted_at_the_peak(tmp_path):
         "reason": p["reason"], "evidence": ["backlog_growth"],
     }]  # fmt: skip
     assert s0["windows"][5]["source"] == "special_cause"
+
+
+def test_victoriametrics_counters_are_increase_tiles_without_lookback(tmp_path):
+    """9fd/xa4: on VictoriaMetrics the counters are increase() over scrape-interval tiles (they
+    partition the counter and end at the gauge's scrapes), so no lookback bias widens the
+    interval; the same data read through rate() gives the same ratio with a bias bound."""
+    sims = {"i0": simulate(602, rates=[(0.0, 2.0), (1500.0, 5.0), (1800.0, 2.0)], c=4)}
+    vm = SimSource(sims, START, flavor="victoriametrics")
+    (tmp_path / "vm").mkdir()
+    (tmp_path / "prom").mkdir()
+    out_vm = _run(make_service(tmp_path / "vm", source=vm))
+    out_rate = _run(make_service(tmp_path / "prom", source=SimSource(sims, START)))
+    assert any("increase(http_requests_total[15s])" in e for e in vm.exprs)
+    assert any("increase(http_request_duration_seconds_sum[15s])" in e for e in vm.exprs)
+    assert not any("rate(" in e for e in vm.exprs)
+    assert out_vm["total"]["bias"]["alignment"] == 0
+    assert out_rate["total"]["bias"]["alignment"] > 0
+    assert out_vm["total"]["ratio"] == out_rate["total"]["ratio"]
+    w_vm, w_rate = out_vm["total"]["windows"], out_rate["total"]["windows"]
+    assert [w[2] for w in w_vm] == [w[2] for w in w_rate]  # same ratios
+    assert all(v[4] - v[3] <= r[4] - r[3] for v, r in zip(w_vm, w_rate, strict=True))
+    (wa,) = [a for a in out_vm["assumptions"] if a["name"] == "window_alignment"]
+    assert "increase() over 15s tiles" in wa["detail"] and "no lookback" in wa["detail"]
+
+
+def test_windows_are_anchored_at_the_requested_start_not_widened(tmp_path):
+    """The range is never widened to wall-clock multiples of the window: data before `start`
+    (a warm-up the caller excluded) is not judged; windows follow the data."""
+    svc = _service(tmp_path)
+    start = START + 100_000  # not a multiple of the window (nor of the 15 s sub-step)
+    out = asyncio.run(svc.check_littles_law(start=str(start), end="now", window="5m", **ROLES))
+    first = START + 105_000  # rounded up to the sub-step, never down
+    assert out["range"][0] == iso(first)
+    assert out["total"]["windows"][0][0] == iso(first)
+    assert out["total"]["windows"][1][0] == iso(first + 300_000)
+
+
+def test_scrape_interval_differing_from_the_source_resolution_is_stated(tmp_path):
+    """The gauge's scrape interval is probed at the range end: scraped every 5s on a source
+    configured at 15s, a 1m window is refused with the reconnect hint, and a check that runs
+    states the mismatch."""
+    sims = {"i0": simulate(20, rates=[(0.0, 6.0)], c=10)}
+    src = SimSource(sims, START, scrape_ms=5_000)
+    svc = make_service(tmp_path, source=src)
+    with pytest.raises(ValueError, match=r'scraped every 5s .*resolution="5s"'):
+        asyncio.run(svc.check_littles_law(start="now-1h", end="now", window="1m", **ROLES))
+    out = _run(svc)
+    (g,) = [a for a in out["assumptions"] if a["name"] == "gauge_sampling"]
+    assert g["status"] == "flagged" and "scraped every 5s" in g["detail"]
+    assert src.probes and src.probes[-1][0] == CONCURRENCY and src.probes[-1][1] == NOW

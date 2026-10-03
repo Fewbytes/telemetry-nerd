@@ -114,3 +114,13 @@ test("promoted load-peak windows: marked, the hover says why; a common-cause pea
   expect(littlesLegend(p, 300_000)).toContain("1 load-peak window promoted to special cause on evidence of leaving steady state");
   expect(littlesLegend(s, 300_000)).not.toContain("promoted");
 });
+
+test("windows found on the grid shifted by half a window are marked with their own span", () => {
+  const p: LittlesSeries = {
+    ...sysSeries,
+    transient: [{ index: null, grid: "offset", start_ms: 450_000, end_ms: 750_000, phase: "drain", source: "special_cause" }],
+    promoted: [{ index: null, grid: "offset", start_ms: 150_000, end_ms: 450_000, from: "common_cause", deviation: "within_envelope", reason: "r", evidence: ["backlog_growth"] }],
+  };
+  expect(transientSpans(p)).toEqual([{ x0: 450, x1: 750, source: "special_cause", phase: "drain" }]);
+  expect(promotedSpans(p)).toEqual([{ x0: 150, x1: 450, from: "common_cause", reason: "r" }]);
+});

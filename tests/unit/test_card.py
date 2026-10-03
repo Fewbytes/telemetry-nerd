@@ -25,7 +25,7 @@ class Src(FakeSource):
         self.scrape_result: int | None = 15_000
         self.scrape_error: str | None = None
 
-    async def scrape_interval(self, selector):
+    async def scrape_interval(self, selector, at_ms=None):
         self.scrape_calls += 1
         if self.scrape_error:
             raise SourceError(self.scrape_error)

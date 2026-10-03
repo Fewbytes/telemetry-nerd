@@ -698,13 +698,15 @@ class PromQLSource:
         except (SourceError, KeyError, TypeError, ValueError):
             return None
 
-    async def scrape_interval(self, selector: str) -> int | None:
-        """Median sample spacing of one series over the last 10m (ms); None if < 3 samples.
+    async def scrape_interval(self, selector: str, at_ms: int | None = None) -> int | None:
+        """Median sample spacing of one series over the 10m up to `at_ms` (default now) (ms);
+        None if < 3 samples.
 
         Per metric, not per source: native resolution differs per job (15/20/30/60s)."""
-        body = await self._get_json(
-            "/api/v1/query", {"query": f"{selector.strip()}[10m]", "limit": "1"}
-        )
+        params = {"query": f"{selector.strip()}[10m]", "limit": "1"}
+        if at_ms is not None:
+            params["time"] = f"{at_ms / 1000:.3f}"
+        body = await self._get_json("/api/v1/query", params)
         result = (body.get("data") or {}).get("result")
         if not isinstance(result, list) or not result:
             return None

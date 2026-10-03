@@ -103,6 +103,7 @@ class Block:
     reason: str | None = None
     source: str | None = None  # deviation from the reference: MEASUREMENT | COMMON | SPECIAL
     promotion: dict | None = None  # why a load-peak window was promoted to special cause
+    L_correction: float = 0.0  # added to the gauge average: its end-of-interval reading (trapezoid)
 
 
 @dataclass
@@ -121,6 +122,7 @@ class GroupResult:
     phases: dict[int, dict] = field(default_factory=dict)  # load context of every judged window
     promoted: list[dict] = field(default_factory=list)  # load-peak windows promoted to special
     promotion: dict = field(default_factory=dict)  # the promotion tests' levels and thresholds
+    offset: GroupResult | None = None  # the same check on the grid shifted by half a window
 
 
 def _sampling_factor(dt_s: float, w_s: float) -> float:
@@ -155,6 +157,20 @@ def _drift(pos: np.ndarray, ts: np.ndarray, y: np.ndarray, span_ms: int) -> dict
         "significant": tr.significant,
         "material": tr.significant and lo > STEADY_CHANGE,
     }
+
+
+def _endpoint_shift(sub: Substeps, ok: np.ndarray) -> float:
+    """Sum over the contiguous runs of `ok` of N at the run's last sub-step minus N just before
+    it (the sub-step before the run when observed, else its first)."""
+    if ok.size == 0:
+        return 0.0
+    cuts = np.flatnonzero(np.diff(sub.ts_ms[ok]) > sub.step_ms * 1.5) + 1
+    total = 0.0
+    for run in np.split(ok, cuts):
+        before = int(run[0]) - 1
+        g0 = sub.conc[before] if before >= 0 and np.isfinite(sub.conc[before]) else sub.conc[run[0]]
+        total += float(sub.conc[run[-1]] - g0)
+    return total
 
 
 def _segments(sub: Substeps, ok: np.ndarray) -> int:
@@ -196,6 +212,14 @@ def judge(
         if L > 0:
             blk.flags.append("in_flight_without_traffic")
         return blk
+    # the gauge is read at the END of each scrape interval the counters cover ((s_j-1, s_j]):
+    # the readings' sum integrates N half a scrape late, off by (N at the end - N before) x
+    # scrape / 2 per contiguous segment (exact for a linear path): corrected (trapezoid), not
+    # bounded: its sign is known
+    gap_s = (sub.scrape_ms or sub.step_ms) / 1000
+    shift = _endpoint_shift(sub, ok) * gap_s / 2 / T
+    L = max(L - shift, 0.0)
+    blk.L, blk.L_correction = L, -shift
     W = S / C
     lw = lam * W
     R = L / lw
@@ -229,7 +253,6 @@ def judge(
     # the neighbouring window (rate() extrapolates over them): at most one scrape interval per
     # edge, Poisson in that fragment, for the arrival counter and the latency count/sum (CV 1);
     # correlation unknown, so lambda's and W's add linearly.
-    gap_s = (sub.scrape_ms or sub.step_ms) / 1000
     r_lam = math.sqrt(2 * segs * lam * gap_s) / max(lam * T, 1e-12)
     r_w = math.sqrt(2 * segs * C * gap_s) / max(C * T, 1e-12)
     sd_count = R * (r_lam + r_w)
@@ -238,11 +261,11 @@ def judge(
     blk.sd_terms = {
         "gauge_sampling": sd_L / lw, "edge_straddle": sd_edge, "scrape_timing": sd_count,
     }  # fmt: skip
-    # 4. rate() lookback (a bias bound: added to the half-width, never in quadrature): each
-    # sub-step's rate() looks back delta further than the gauge average, so the window's counts
-    # are those of a window shifted by delta: off by delta x (rate at the start - rate at the
-    # end), each end's rate from the sub-steps one rate interval covers, plus that estimate's
-    # own counting noise
+    # 4. rate() lookback (a bias bound: added to the half-width, never in quadrature): with
+    # rate(x[ri]) (Prometheus; not with VM's increase() tiles, lookback 0) each sub-step's counters
+    # reach back delta further than the gauge reading, so the window's counts are those of a
+    # window shifted by delta: off by delta x (rate at the start - rate at the end), each end's
+    # rate from the sub-steps one rate interval covers, plus that estimate's own counting noise
     delta_s = sub.lookback_ms / 1000
     j = max(1, min(n // 2, round((2 * delta_s + step_s) / step_s)))
 
@@ -258,9 +281,10 @@ def judge(
         if delta_s > 0 else 0.0
     )  # fmt: skip
     blk.bias = {"alignment": align}
+    bias = align
     qt = q95 if q_test is None else t_quantile(q_test, df)
-    blk.ci95 = (max(0.0, R - q95 * sd - align), R + q95 * sd + align)
-    blk.ci_test = (max(0.0, R - qt * sd - align), R + qt * sd + align)
+    blk.ci95 = (max(0.0, R - q95 * sd - bias), R + q95 * sd + bias)
+    blk.ci_test = (max(0.0, R - qt * sd - bias), R + qt * sd + bias)
     if blk.ci_test[0] > 1:
         blk.verdict = "L_high"
     elif blk.ci_test[1] < 1:
@@ -327,6 +351,7 @@ def check(
     tests: int | None = None,
     alpha: float = ALPHA,
     arrivals: str = "unknown",
+    offset: bool = True,
 ) -> GroupResult:
     """Windows of k sub-steps and the pooled span after `skip` sub-steps of warm-up.
 
@@ -335,9 +360,29 @@ def check(
     the window tests (against 1 and against the systematic level). Promotion of load-peak
     windows has its own family-wise budget, PROMOTE_ALPHA (see _promote). `arrivals`: what the
     counter counts (arrivals | completions | unknown): with arrivals, arrivals - completions is a
-    second reading of the backlog."""
+    second reading of the backlog.
+
+    `offset` (xa4): a load episode (backlog building and draining) that starts and ends inside
+    one window balances over it — Little's law holds over that window — so where it falls on
+    the grid decides whether it is seen. The windows are therefore judged on a second grid
+    shifted by half a window as well (the window tests and promotions Bonferroni over both
+    grids: 2 x `tests`); special-cause windows of the shifted grid that no special-cause window
+    of the main grid covers are added (`grid: offset`, with their own span and reference). An
+    episode shorter than half a window can still fall inside a window of both grids."""
+    m = tests or max(1, len(window_indexes(sub, k, skip)))
+    shifted = offset and k >= 2 and sub.ts_ms.size - skip - k // 2 >= k
+    m_all = 2 * m if shifted else m
+    out = _check_grid(sub, k, skip, m_all, alpha, arrivals)
+    if not shifted or out.verdict in ("no_traffic", "insufficient"):
+        return out
+    _merge_offset(out, _check_grid(sub, k, skip + k // 2, m_all, alpha, arrivals))
+    return out
+
+
+def _check_grid(
+    sub: Substeps, k: int, skip: int, m: int, alpha: float, arrivals: str
+) -> GroupResult:
     wins = window_indexes(sub, k, skip)
-    m = tests or max(1, len(wins))
     q_win = 1 - alpha / (4 * m)
     windows = [judge(sub, w, q_win, alpha) for w in wins]
     allidx = np.arange(skip, sub.ts_ms.size)
@@ -364,11 +409,57 @@ def check(
     return out
 
 
+def _merge_offset(out: GroupResult, off: GroupResult) -> None:
+    """Special-cause windows of the half-window-shifted grid that no special-cause window of the
+    main grid overlaps: added to the transient / promoted lists with their own block (span,
+    ratio, interval) and reference, marked `grid: offset`; they make the verdict
+    inconsistent_in_windows when the main grid alone is consistent (promotions do not: the
+    verdict is about L = lambda W)."""
+    special = [
+        (w.start_ms, w.end_ms) for w in out.windows if w.source == SPECIAL and w.ratio is not None
+    ]
+    covered = lambda w: any(a < w.end_ms and w.start_ms < b for a, b in special)
+    added = False
+    for t in off.transient:
+        w = off.windows[t["index"]]
+        if t["source"] != SPECIAL or covered(w):
+            continue
+        ref = off.references.get(t["index"], off.reference)
+        out.transient.append({**t, "index": None, "grid": "offset", "block": w, "reference": ref})
+        added = added or not t["promoted"]
+    for p in off.promoted:
+        w = off.windows[p["index"]]
+        if covered(w):
+            continue
+        ref = off.references.get(p["index"], off.reference)
+        out.promoted.append({**p, "index": None, "grid": "offset", "block": w, "reference": ref})
+    out.transient.sort(key=lambda t: _span_of(out, t)[0])
+    out.promoted.sort(key=lambda p: _span_of(out, p)[0])
+    out.offset = off
+    if added and out.verdict == "consistent":
+        out.verdict = "inconsistent_in_windows"
+
+
+def _span_of(g: GroupResult, t: dict) -> tuple[int, int]:
+    w = t.get("block") or g.windows[t["index"]]
+    return w.start_ms, w.end_ms
+
+
+def window_of(g: GroupResult, t: dict) -> Block:
+    """The block of a transient / promoted entry: its own (shifted grid) or the main grid's."""
+    return t.get("block") or g.windows[t["index"]]
+
+
+def _bias(w: Block) -> float:
+    """A block's bias bounds (rate lookback, gauge endpoint), added to its half-width."""
+    return float(sum(w.bias.values()))
+
+
 def _off(w: Block, ref: float, ref_sd: float, ref_bias: float, q: float) -> bool:
     """Does window w differ from the reference level beyond the measurement interval?"""
     assert w.ratio is not None and w.sd is not None
     half = t_quantile(q, max(w.n - 1, 1)) * math.hypot(w.sd, ref_sd)
-    return abs(w.ratio - ref) > half + w.bias.get("alignment", 0.0) + ref_bias
+    return abs(w.ratio - ref) > half + _bias(w) + ref_bias
 
 
 def _level(
@@ -388,7 +479,7 @@ def _level(
     se_meas = math.sqrt(sum(float(w.sd) ** 2 for w in b)) / n  # type: ignore[arg-type]
     se_spread = float(r.std(ddof=1)) / math.sqrt(n)
     se = max(se_meas, se_spread)
-    align = float(np.mean([w.bias.get("alignment", 0.0) for w in b]))
+    align = float(np.mean([_bias(w) for w in b]))
     # df: the windows' when their spread sets the error, else the sub-steps' behind the
     # measurement sds
     df = n - 1 if se_spread > se_meas else sum(w.n for w in b) - n
@@ -450,7 +541,7 @@ def _classify(
             lvl.verdict = majority  # persistent: most windows off 1 on one side
         sysb = lvl if lvl is not None and lvl.verdict in ("L_high", "L_low") else None
         if sysb is not None and sysb.ratio is not None and sysb.sd is not None:
-            nsd, nb = sysb.sd, sysb.bias.get("alignment", 0.0)
+            nsd, nb = sysb.sd, _bias(sysb)
             if drift and len(basis) >= 3:
                 x = np.array(basis, float)
                 slope, icpt = np.polyfit(x, [ratio[i] for i in basis], 1)

@@ -81,8 +81,8 @@ When the timer starts at arrival (it covers the queue), the check agrees:
 {"tool": "check_littles_law", "args": {"arrival_rate": "http_requests_total", "latency": "http_request_duration_seconds", "concurrency": "http_server_active_requests", "start": "now-1h", "end": "now", "window": "5m"}}
 ```
 
-Read the discrepancy first: L - lambda x W = -0.13 requests (L 22.9 vs lambda x W 23.0; R 0.99,
-measurement interval -6% to +5%); per window R 0.84-1.15. Verdict `consistent`: no systematic
+Read the discrepancy first: L - lambda x W = -0.16 requests (L 22.9 vs lambda x W 23.0; R 0.99,
+measurement interval -6% to +5%); per window R 0.84-1.16. Verdict `consistent`: no systematic
 offset, no transient window; W is 2.4 s (service plus queueing). Common cause: at about 2860
 requests per window L and lambda W fluctuate +-8% (no warning: below 10%). Assumptions:
 `arrivals_vs_completions` and `warmup` are `assumed`, the rest `ok`; repeat the assumed ones in the
@@ -98,10 +98,11 @@ W, so W is 1.0 s while requests actually spend 2.4 s in the system:
 
 Read the discrepancy first: L - lambda x W = +13.3 requests (L 22.9 vs lambda x W 9.54; R 2.40,
 measurement interval 2.27-2.52). Verdict `L_high`: `classification.systematic` is an offset of
-2.10 (1.87-2.34) in 9 of 12 windows, source measurement system (instrumentation / model mismatch,
+2.03 (1.76-2.30) in 10 of 12 windows, source measurement system (instrumentation / model mismatch,
 not the process); the hints name queueing before the timer starts, latency on a subset and a
-broader gauge. Three windows are `transient` against that level (special cause, `phase: other`,
-not at a load peak): at rho 0.95 the hidden queue has excursions the timer never sees. State the
+broader gauge. Two windows are `transient` against that level (special cause, `phase: other`,
+not at a load peak, beyond the windows' own +-43% spread): at rho 0.95 the hidden queue has
+excursions the timer never sees. State the
 implied unmeasured time as a conditional estimate: if the excess is queueing before the timer,
 L / lambda - W = 22.9 / 9.55 - 1.0 = 1.4 s per request; the check alone cannot rule out the other
 causes. Cite the `littles_law_discrepancy` and `littles_law_systematic_offset` statistics.
@@ -140,7 +141,7 @@ arrivals in lambda, fewer completed latencies in W), so L is about lambda x W th
 is `transient`. But `classification.promoted` lists the 25-30 min window: at a load peak,
 promoted from measurement system to special cause, `deviation: within_measurement`, because the
 backlog grew by +376 requests (gauge +376, arrivals - completions +377): 155 times the
-steady-state scale (threshold 26.8, Cantelli's bound). Say both: Little's law holds within the
+steady-state scale (threshold 37.9, Cantelli's bound). Say both: Little's law holds within the
 measurement, and the service left steady state toward overload at that peak (special cause;
 check saturation). Quote the `reason` and cite the `littles_law_backlog_growth` statistic
 (+376 requests with its interval). Without that evidence a load-peak window inside the envelope

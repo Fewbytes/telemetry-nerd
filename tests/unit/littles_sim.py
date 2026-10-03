@@ -84,7 +84,8 @@ class SimSource:
 
     def __init__(self, sims: dict[str, dict], start_ms: int, scrape_s: float = 15.0,
                  hide: set[tuple[str, str]] = frozenset(), latency_scale: float = 1.0,
-                 latency_name: str = LATENCY) -> None:  # fmt: skip
+                 latency_name: str = LATENCY, flavor: str | None = None,
+                 scrape_ms: int | None = None) -> None:  # fmt: skip
         self.name = "default"
         self.identity = "sim"
         self.resolution_ms = int(scrape_s * 1000)
@@ -92,12 +93,17 @@ class SimSource:
         self.hide, self.latency_scale, self.latency_name = hide, latency_scale, latency_name
         self.exprs: list[str] = []
         self.discovery = None
+        if flavor:  # VictoriaMetrics: counters are queried as increase() per scrape tile
+            self.flavor = flavor
+        self.scrape_ms = scrape_ms if scrape_ms is not None else self.resolution_ms
+        self.probes: list[tuple[str, int | None]] = []
 
     async def probe(self) -> dict:
         return {"reachable": True}
 
-    async def scrape_interval(self, selector: str) -> int | None:
-        return self.resolution_ms
+    async def scrape_interval(self, selector: str, at_ms: int | None = None) -> int | None:
+        self.probes.append((selector, at_ms))
+        return self.scrape_ms
 
     def _role(self, expr: str) -> str:
         if f"{self.latency_name}_sum" in expr:
@@ -128,7 +134,8 @@ class SimSource:
             if (role if role in ("gauge", "counter") else "latency", inst) in self.hide:
                 continue
             x = m[role]
-            v = x if role == "gauge" else np.diff(np.r_[0.0, x]) / self.scrape_s
+            div = 1.0 if "increase(" in expr else self.scrape_s  # increase(): per tile
+            v = x if role == "gauge" else np.diff(np.r_[0.0, x]) / div
             if role == "sum":
                 v = v * self.latency_scale
             per[inst] = v
