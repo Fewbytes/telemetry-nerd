@@ -165,3 +165,27 @@ def fill_born(
         if f.lead or f.trail:
             filled[sid] = f
     return out, filled
+
+
+def sibling_counts(
+    series: Series, siblings: Series | None = None
+) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+    """Per series of `series`, its live siblings' counts summed per step (ts, y): the other
+    series of the same dataset with the same identity plus `siblings` (the fetched complement,
+    sid -> labels, ts, y). The traffic a born series' events are a thinning of: a dispersion
+    source for the departure test's cautious model (analysis.diagnostics.Departure)."""
+    pool: dict[tuple, list[tuple[str, np.ndarray, np.ndarray]]] = {}
+    for sid, (labels, ts, y) in series.items():
+        pool.setdefault(sibling_key(labels), []).append((sid, ts, y))
+    for sid, (labels, ts, y) in (siblings or {}).items():
+        pool.setdefault(sibling_key(labels), []).append(("\0" + sid, ts, y))
+    out: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    for sid, (labels, _, _) in series.items():
+        parts = [(t, v) for s, t, v in pool.get(sibling_key(labels), []) if s != sid and t.size]
+        if not parts:
+            continue
+        ts_all = np.concatenate([t for t, _ in parts])
+        y_all = np.concatenate([np.asarray(v, float) for _, v in parts])
+        uniq, inv = np.unique(ts_all, return_inverse=True)
+        out[sid] = (uniq, np.bincount(inv, weights=y_all, minlength=uniq.size))
+    return out

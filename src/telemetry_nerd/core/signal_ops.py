@@ -50,6 +50,9 @@ class Prepared:
     born: BornCounter | None = None
     #: per series, the steps read as 0 events from a live sibling (born_counters)
     absent_zero: dict[str, Filled] | None = None
+    #: per series, its live siblings' counts summed per step (ts, y), raw (not cut to
+    #: min_points): the traffic a born series' events are a thinning of
+    sibling_counts: dict[str, tuple[np.ndarray, np.ndarray]] | None = None
 
 
 def human_period(seconds: float) -> str:
@@ -156,6 +159,7 @@ class SignalOps:
         raw = _grouped(table, labels)
         born = self.born(dataset_id)
         filled: dict[str, Filled] = {}
+        sib_counts: dict[str, tuple[np.ndarray, np.ndarray]] | None = None
         if born is not None:
             siblings = None
             if sibling is not None:
@@ -168,11 +172,11 @@ class SignalOps:
                 )  # never fill outside the dataset's range
                 if step != meta.step_ms:
                     stable = lod(stable, meta.step_ms, rng, cap)[0]
-                siblings = {
-                    sid: (lab, ts)
-                    for sid, (lab, ts, _) in _grouped(stable, _labels(sres.series)).items()
-                }
-            raw, filled = born_counters.fill_born(raw, siblings)
+                siblings = _grouped(stable, _labels(sres.series))
+            sib_counts = born_counters.sibling_counts(raw, siblings)
+            raw, filled = born_counters.fill_born(
+                raw, {sid: (lab, ts) for sid, (lab, ts, _) in (siblings or {}).items()}
+            )
             if filled:
                 caveats.append(born_counters.CAVEAT)
         series: dict[str, tuple[dict, np.ndarray, np.ndarray]] = {}
@@ -220,6 +224,7 @@ class SignalOps:
         return Prepared(
             meta, step, caveats, series, skipped, born,
             {sid: f for sid, f in filled.items() if sid in series},
+            {sid: c for sid, c in (sib_counts or {}).items() if sid in series},
         )  # fmt: skip
 
     # spectrum -----------------------------------------------------------

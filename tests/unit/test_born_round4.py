@@ -13,7 +13,14 @@ series have no live sibling in the complement.
 
 Round 4: every series came back insufficient_data "skipped: too_few_points" although the
 absent_as_zero fill ran: the fill gave the path's series 22 points (16:27-16:48), and analyze
-required spectrum's 32."""
+required spectrum's 32.
+
+0vg7: the departure from the 13-step zero baseline is reported under two models. Poisson
+(independent errors): p = (9/22)^61 ~ 2e-24. Clustered errors (the cautious model the label
+rests on): the judged steps' own dispersion D ~ 13 (the live siblings' traffic is steadier,
+D < 1, and only ever raises D) leaves ~4.7 independent clusters, p = (9/22)^4.7 ~ 0.015 >= 0.01:
+undetermined. 13 quiet minutes cannot tell one burst of clustered errors from a change; a longer
+zero baseline can (tests/unit/test_diagnostics.py)."""
 
 from __future__ import annotations
 
@@ -101,10 +108,14 @@ def test_round4_born_error_series_are_analyzed(tmp_path):
     by = {s["labels"]["span_name"] + "@" + s["labels"]["service_name"]: s for s in out["series"]}
     for lb in PATH:
         s = by[lb["span_name"] + "@" + lb["service_name"]]
-        assert s["verdict"] != "insufficient_data", s
+        assert not s["reasons"][0].startswith("skipped"), s  # judged, not skipped
         assert s["absent_as_zero"]["before_first_point"] == (BORN - LIVE) // M
-        stats = [v for v in s["variation"] if v["source"] == "special_cause"]
-        assert stats, s
+        dep = s["stability"]["departure"]
+        assert dep["models"]["clustered"]["dispersion_sibling"] is not None  # sibling read
+        # undecided under the cautious model: neither labelled a shift nor called stable
+        assert s["verdict"] == "insufficient_data" and "level_shifted" not in s["also"], s
+        und = [v for v in s["variation"] if v["source"] == "undetermined"]
+        assert und and "under a Poisson model" in und[0]["finding"], s
     for lb in LONERS:  # no sibling: never read as 0, still too few points
         s = by[lb["span_name"] + "@" + lb["service_name"]]
         assert s["verdict"] == "insufficient_data"
@@ -118,29 +129,36 @@ def test_round4_departure_is_citable_evidence(tmp_path):
     assert dep["at"] == "2026-10-03T16:41:00+00:00" and dep["events"] == sum(BURST)
     assert (dep["n_baseline"], dep["n_judged"]) == ((BORN - LIVE) // M, (NOW - BORN) // M + 1)
     ev = dep["evidence"]
-    assert ev["name"] == "departure_from_zero" and ev["source"] == "special_cause"
-    assert s["verdict"] == "level_shifted" and dep["p"] < 1e-20
+    assert ev["name"] == "departure_from_zero" and ev["source"] == "undetermined"
+    # both models, each named; the label rests on the clustered one
+    assert dep["p"] < 1e-20 and 0.01 < dep["p_clustered"] < 0.02
+    assert ev["params"]["p_poisson"] < 1e-20 and ev["params"]["dispersion_source"] == "judged"
+    assert dep["label_rests_on"] == "clustered" and "Poisson" in ev["method"]
+    assert dep["summary"].startswith("under a Poisson model (independent events) p=2.1e-24;")
+    assert "allowing clustered events" in dep["summary"]
     # the op recorded it: cited back without its source, the source is derived (tcfz path too)
     bare = {k: v for k, v in ev.items() if k != "source"} | {"method": "analyze"}
     assert svc.datasets.statistic_sources(
         bare["dataset"], bare["name"], bare["method"], bare["value"]
-    ) == {"special_cause"}
+    ) == {"undetermined"}
 
 
 def test_round4_payment_rescored_with_the_departure_cited():
     """Counterfactual offline re-score: the recorded f1 cites panels only (round 4 had no
-    analyze statistic: 11/12, source_label fail, kept as is in test_evals). With the departure
-    statistic analyze now returns for d2 cited (source special_cause), source_label passes."""
+    analyze statistic: 11/12, source_label fail, kept as is in test_evals). Citing the
+    departure statistic analyze now returns for d2 does not change that: under the cautious
+    model it is undetermined (0vg7), so source_label still fails, honestly (the truth expects
+    special cause; 13 zero minutes cannot show it under clustered errors)."""
     ev_dir = Path(__file__).parents[1] / "fixtures/evals"
     snap = json.loads((ev_dir / "payment-failure.live-sonnet-4.snapshot.json").read_text())
     f1 = next(f for f in snap["workspace"]["findings"] if f["id"] == "f1")
     f1["evidence"].append({
         "kind": "statistic", "dataset": "d2", "name": "departure_from_zero", "value": 6.778,
         "interval": [4.751, 9.35], "exact": False, "method": "analyze", "params": {},
-        "source": "special_cause",
+        "source": "undetermined",
     })  # fmt: skip
     f1["source_flags"] = []
     rep = score(snap, load_truth(ev_dir / "payment-failure.live-sonnet-4.truth.json"))
     st = {c.id: c.status for c in rep.checks}
-    assert st["source_label"] == "pass" and not [k for k, v in st.items() if v == "fail"]
-    assert (rep.passed, rep.applicable) == (12, 12)
+    assert [k for k, v in st.items() if v == "fail"] == ["source_label"]
+    assert (rep.passed, rep.applicable) == (11, 12)

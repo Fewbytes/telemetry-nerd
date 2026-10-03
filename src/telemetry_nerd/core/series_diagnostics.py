@@ -309,7 +309,7 @@ class SeriesDiagnostics:
                 profile = (seasonal_shape(seas, at - prep.step_ms // 2), shapes.cycle_s(seas))
             d = diagnose(
                 ts, y, prep.step_ms, mask, sp, lambda v: f"{v:.3g}", iso, reference, profile,
-                events_scale=scale,
+                events_scale=scale, sibling=(prep.sibling_counts or {}).get(sid),
             )  # fmt: skip
             out[sid] = d
             if d.chart is not None and "profile" in d.chart.seasonal and shapes and seas:
@@ -458,14 +458,34 @@ class SeriesDiagnostics:
             shifts.append(item)
         stability = {"trend": trend, "shifts": shifts, "sigma_within": sig(d.sigma_within)}
         if (dep := d.departure) is not None:
-            src = SPECIAL if dep.significant else COMMON
+            src = dep.status
+            models = {
+                "poisson": {"p": sig(dep.p, 2), "assumes": "independent events"},
+                "clustered": {
+                    "p": sig(dep.p_clustered, 2),
+                    "dispersion": sig(dep.dispersion, 3),
+                    "dispersion_source": dep.dispersion_source,
+                    "dispersion_judged": sig(dep.dispersion_judged, 3),
+                    "dispersion_sibling": (
+                        sig(dep.dispersion_sibling, 3) if dep.dispersion_sibling else None
+                    ),
+                    "clusters": sig(dep.clusters, 3),
+                    "assumes": "events in independent clusters with the stated dispersion, "
+                    "clusters shorter than the judged window",
+                },
+            }
             stability["departure"] = {
                 "at": iso(dep.ts_ms), "events": dep.events, "mean": sig(dep.mean),
                 "interval": sig_pair(dep.interval), "p": sig(dep.p, 2),
+                "p_clustered": sig(dep.p_clustered, 2), "models": models,
+                "label_rests_on": "clustered",
+                "summary": dep.describe(lambda v: f"{v:.3g}"),
                 "n_baseline": dep.n_baseline, "n_judged": dep.n_judged, "source": src,
                 "evidence": ev(
                     "departure_from_zero", dep.mean, dep.interval, DEPARTURE_METHOD,
-                    source=src, at=iso(dep.ts_ms), p=dep.p, events=dep.events,
+                    source=src, at=iso(dep.ts_ms), p=dep.p, p_poisson=dep.p,
+                    p_clustered=dep.p_clustered, dispersion=sig(dep.dispersion, 3),
+                    dispersion_source=dep.dispersion_source, events=dep.events,
                     n_baseline=dep.n_baseline, n_judged=dep.n_judged,
                 ),
             }  # fmt: skip

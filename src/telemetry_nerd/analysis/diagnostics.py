@@ -205,11 +205,25 @@ class Departure:
     """Events after a baseline that saw none (an event-count series, e.g. an error counter
     born on its first event and read as 0 before it): the SPC chart has no common-cause
     envelope to judge against, and a burst shorter than two changepoint segments escapes the
-    changepoint tests. Exact conditional test of one Poisson rate across baseline and judged
-    steps: given the A events seen, P(none in the n_b baseline steps) = (n_j / (n_b + n_j))^A.
-    Dispersion and autocorrelation come from the baseline, as in the binding verdicts; an
-    all-zero baseline has none to estimate, so the counts are taken as Poisson (clustered
-    events, e.g. retries of one request, make p optimistic: the method says so)."""
+    changepoint tests. Two models, both reported (principle 16: results are model outputs):
+
+    - Poisson (independent events): given the A events seen, P(none in the n_b baseline steps)
+      = (n_j / n)^A, n = n_b + n_j. Exact under its assumption, optimistic when events cluster
+      (retries of one request, one fault failing many calls, bursty traffic).
+    - clustered (the cautious model): events arrive in independent clusters; the long-run
+      variance-to-mean ratio D of the counts (quasi-Poisson phi x integrated autocorrelation
+      time) is the clusters' size factor, so ~A / D independent clusters (at least one) carry
+      the test: p = (n_j / n)^(A / D). An all-zero baseline has no dispersion to estimate, so D
+      is the largest of 1 (Poisson), the judged steps' own D (the only error counts there are;
+      they include the departure's own rise and fall, so this over-states clustering under no
+      change: a conservative bound) and the live sibling's D (the traffic the events are a
+      thinning of: thinning passes on at most its burstiness). The sibling alone is no bound:
+      errors can cluster beyond their traffic (retries), so it only raises D.
+
+    The label holds only under the cautious model: special cause when its p < ALPHA,
+    undetermined when only the Poisson p is (shown as context), else common cause. Its
+    assumption: clusters shorter than the judged window (an error episode as long as the
+    window cannot be told from a change by this series alone; a longer zero baseline can)."""
 
     index: int  # first judged sample with events (descriptive: the test has no split search)
     ts_ms: int
@@ -218,19 +232,60 @@ class Departure:
     events: int  # judged events, whole (floor: conservative)
     mean: float  # judged mean, the series' units
     interval: tuple[float, float]  # exact Poisson (Garwood) 1 - ALPHA, the series' units
-    p: float
+    p: float  # Poisson model (independent events)
+    p_clustered: float  # cautious model (clustered events, dispersion D)
+    dispersion: float  # D used: max(1, judged, sibling)
+    dispersion_source: str  # poisson_floor | judged | sibling
+    dispersion_judged: float
+    dispersion_sibling: float | None
+    clusters: float  # effective independent clusters, A / D (>= 1)
+
+    @property
+    def status(self) -> str:
+        if self.p_clustered < SPC_ALPHA:
+            return SPECIAL
+        return UNDETERMINED if self.p < SPC_ALPHA else COMMON
 
     @property
     def significant(self) -> bool:
-        return self.p < SPC_ALPHA
+        """Significant under the cautious model (what a label may rest on)."""
+        return self.status == SPECIAL
+
+    def describe(self, fmt=lambda v: f"{v:.3g}") -> str:
+        """The two model results, each with its model named (never as a fact)."""
+        src = {
+            "poisson_floor": "no source shows more than Poisson",
+            "judged": "the judged steps' own counts, departure included: a conservative bound",
+            "sibling": "the live sibling's traffic",
+        }[self.dispersion_source]
+        return (
+            f"under a Poisson model (independent events) p={self.p:.2g}; allowing clustered "
+            f"events (dispersion D={fmt(self.dispersion)} from {src}; ~{self.clusters:.3g} "
+            f"independent clusters) p={self.p_clustered:.2g}"
+        )
 
 
 DEPARTURE_METHOD = (
-    "events after an all-zero baseline: exact conditional test of one Poisson rate across "
-    "baseline and judged steps, p = (n_judged / n)^events; dispersion and autocorrelation from "
-    "the baseline (none to estimate in an all-zero one: Poisson; clustered events make p "
-    "optimistic); judged mean with its exact Poisson (Garwood) 99% interval"
+    "events after an all-zero baseline, two models: (a) Poisson (independent events), exact "
+    "conditional test of one rate across baseline and judged steps, p = (n_judged / n)^events; "
+    "(b) clustered events (cautious): p = (n_judged / n)^(events / D), D the long-run "
+    "variance-to-mean ratio (quasi-Poisson phi x autocorrelation time) = max(1, the judged "
+    "steps' own D (includes the departure: conservative), the live sibling's D (traffic)), "
+    "events / D >= 1 cluster; assumes clusters shorter than the judged window. The source "
+    "label rests on (b): special cause when p_clustered < 0.01, undetermined when only (a) is; "
+    "judged mean with its exact Poisson (Garwood) 99% interval"
 )
+
+
+def dispersion(pos: np.ndarray, events: np.ndarray) -> float | None:
+    """Long-run variance-to-mean ratio of event counts per step: quasi-Poisson phi (sample
+    variance / mean) x the integrated autocorrelation time, so a sum over k steps has variance
+    ~ D x its mean. None with fewer than 2 points or no events."""
+    x = np.asarray(events, float)
+    m = float(x.mean()) if x.size else 0.0
+    if x.size < 2 or m <= 0:
+        return None
+    return float(x.var(ddof=1)) / m * tau_int(np.asarray(pos), x)
 
 
 def departure_from_zero(
@@ -239,12 +294,16 @@ def departure_from_zero(
     baseline: np.ndarray,
     events_scale: float,
     reference: np.ndarray | None = None,
+    sibling: tuple[np.ndarray, np.ndarray] | None = None,
+    step_ms: int | None = None,
 ) -> Departure | None:
     """`events_scale`: events per step = value x events_scale. `baseline`: bool per sample;
-    `reference`: values of a separately fetched baseline (then every sample is judged). None
-    unless the baseline holds >= MIN_SEGMENT points, all exactly 0, and the judged steps an
-    event."""
+    `reference`: values of a separately fetched baseline (then every sample is judged).
+    `sibling` (ts_ms, y): the live sibling's counts (same instrument, another outcome; the
+    series' units). None unless the baseline holds >= MIN_SEGMENT points, all exactly 0, and the
+    judged steps an event."""
     y = np.asarray(y, float)
+    ts_ms = np.asarray(ts_ms, np.int64)
     if reference is not None:
         base, judged, idx = np.asarray(reference, float), y, np.arange(y.size)
     else:
@@ -255,13 +314,29 @@ def departure_from_zero(
     if events < 1:
         return None
     nb, nj = int(base.size), int(judged.size)
-    p = math.exp(events * math.log(nj / (nb + nj)))
+    step = step_ms or (int(np.min(np.diff(ts_ms))) if ts_ms.size > 1 else 1)
+    jts = ts_ms[idx]
+    # one judged step: its events may all be one cluster
+    d_judged = dispersion(positions(jts, step), judged * events_scale) if nj > 1 else None
+    d_judged = float(events) if d_judged is None else d_judged
+    d_sib = None
+    if sibling is not None and np.asarray(sibling[0]).size > 1:
+        sts = np.asarray(sibling[0], np.int64)
+        d_sib = dispersion(positions(sts, step), np.asarray(sibling[1], float) * events_scale)
+    cands = {"poisson_floor": 1.0, "judged": d_judged, **({"sibling": d_sib} if d_sib else {})}
+    src = max(cands, key=cands.__getitem__)
+    d = cands[src]
+    clusters = max(1.0, events / d)
+    log_f = math.log(nj / (nb + nj))
+    p = math.exp(events * log_f)
+    p_c = math.exp(clusters * log_f)
     lo, hi = poisson_interval(events, SPC_ALPHA)
     unit = nj * events_scale
     first = int(idx[int(np.flatnonzero(judged > 0)[0])])
     return Departure(
-        first, int(ts_ms[first]), nb, nj, events, float(judged.mean()), (lo / unit, hi / unit), p
-    )
+        first, int(ts_ms[first]), nb, nj, events, float(judged.mean()), (lo / unit, hi / unit), p,
+        p_c, d, src, d_judged, d_sib, clusters,
+    )  # fmt: skip
 
 
 def diagnose(
@@ -275,6 +350,7 @@ def diagnose(
     reference: tuple[np.ndarray, np.ndarray] | None = None,
     profile: tuple[np.ndarray, float] | None = None,
     events_scale: float | None = None,
+    sibling: tuple[np.ndarray, np.ndarray] | None = None,
 ) -> Diagnosis:
     """`baseline`: bool per sample (SPC limits come only from these). `sp`: the series'
     spectrum, or None when the range is too short to resolve any period.
@@ -285,7 +361,8 @@ def diagnose(
     seasonal shape per sample of [reference..., series...], estimated without the series.
     `events_scale`: the series counts events (value x events_scale = events per step, e.g.
     increase() of a counter); then a baseline that saw none is tested for a departure from
-    zero (`Departure`).
+    zero (`Departure`); `sibling` (ts_ms, y): the live sibling's counts, a dispersion source
+    for its cautious model.
 
     Periods and structure confound each other (a step has 1/f^2 power; a slow cycle looks like
     a shift), so: structure on the raw series -> periods confirmed against red noise on what
@@ -333,12 +410,20 @@ def diagnose(
     var: list[dict] = []
     dep = (
         departure_from_zero(
-            ts_ms, y, baseline, events_scale, None if reference is None else reference[1]
+            ts_ms,
+            y,
+            baseline,
+            events_scale,
+            None if reference is None else reference[1],
+            sibling,
+            step_ms,
         )
         if events_scale
         else None
     )
     departed = dep is not None and dep.significant
+    # a departure only the Poisson model sees: not labelled, but not stable or noise either
+    undecided = dep is not None and dep.status == UNDETERMINED
     if ne < MIN_N_EFF:
         reasons.append(
             f"n_eff {ne:.1f} < {MIN_N_EFF}: {n} points but autocorrelation time {tau:.1f} steps"
@@ -379,13 +464,20 @@ def diagnose(
         what = (
             f"{dep.events} events in {dep.n_judged} judged steps after {dep.n_baseline} baseline "
             f"steps with none (first at {fmt_ts(dep.ts_ms)}; mean {fmt(dep.mean)} "
-            f"[{fmt(dep.interval[0])}, {fmt(dep.interval[1])}] per step, Poisson p={dep.p:.1g})"
+            f"[{fmt(dep.interval[0])}, {fmt(dep.interval[1])}] per step); {dep.describe(fmt)}"
         )
         if departed:
             if "level_shifted" not in labels:
                 labels.append("level_shifted")
-            reasons.append(f"departure from a zero baseline: {what}")
+            reasons.append(f"departure from a zero baseline under both models: {what}")
             var.append(item(SPECIAL, reasons[-1]))
+        elif undecided:
+            reasons.append(
+                f"departure from a zero baseline under the Poisson model only: {what}; one "
+                "burst of clustered events cannot be told from a change at this baseline length "
+                "(a longer zero baseline, e.g. a range starting earlier, would decide it)"
+            )
+            var.append(item(UNDETERMINED, reasons[-1]))
         else:
             reasons.append(f"events after a zero baseline, within what one rate explains: {what}")
             var.append(item(COMMON, reasons[-1]))
@@ -400,6 +492,7 @@ def diagnose(
     # a (even minor) shift or trend explains an out-of-control chart: that is not noise
     structured = (
         departed
+        or undecided
         or bool({"level_shifted", "drifting"} & set(labels))
         or ((model == "step" and bool(shifts)) or (model == "trend" and tr.significant))
     )
@@ -425,6 +518,8 @@ def diagnose(
         labels.append("noisy")
         reasons += [r for _, r in noisy]
         var += [item(src, r) for src, r in noisy]
+    if not labels and undecided:
+        labels.append("insufficient_data")  # the cautious model cannot decide: not "stable"
     if not labels:
         labels.append("stable")
         reasons.append(

@@ -15,6 +15,7 @@ from telemetry_nerd.analysis.born_counters import (
     born_counter,
     fill_absent,
     fill_born,
+    sibling_counts,
     sibling_key,
 )
 from telemetry_nerd.model.series import BUCKET_SCHEMA, SERIES_SCHEMA, FetchResult, labels_json
@@ -97,6 +98,22 @@ def test_no_sibling_no_fill():
         {"o": ({"status_code": "UNSET", "svc": "b"}, np.arange(10))},
     )
     assert not filled
+
+
+def test_sibling_counts_sum_every_live_sibling_per_step():
+    """The traffic a born series is a thinning of (0vg7): every other outcome of the same
+    identity, in the dataset and fetched, summed per step; another identity never counts."""
+    ts = np.arange(4)
+    series = {
+        "e": ({"status_code": "ERROR", "svc": "a"}, ts[2:], np.ones(2)),
+        "u": ({"status_code": "UNSET", "svc": "a"}, ts, np.full(4, 3.0)),
+        "x": ({"status_code": "UNSET", "svc": "b"}, ts, np.full(4, 50.0)),
+    }
+    fetched = {"o": ({"status_code": "OK", "svc": "a"}, ts[1:], np.full(3, 2.0))}
+    got = sibling_counts(series, fetched)
+    assert list(got["e"][0]) == [0, 1, 2, 3] and list(got["e"][1]) == [3.0, 5.0, 5.0, 5.0]
+    assert list(got["u"][0]) == [1, 2, 3] and list(got["u"][1]) == [2.0, 3.0, 3.0]  # e + o
+    assert "x" not in got  # no sibling of its own identity
 
 
 # end to end: analyze ---------------------------------------------------------------------------
