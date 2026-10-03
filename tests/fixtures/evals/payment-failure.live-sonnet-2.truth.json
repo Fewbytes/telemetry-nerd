@@ -1,0 +1,316 @@
+{
+ "version": 1,
+ "scenario": "payment-failure",
+ "description": "Payment Charge fails on every call (paymentFailure=100%): errors on payment cascade to checkout and to frontend POST /api/checkout.",
+ "run": {
+  "started_at": 1791033436.55,
+  "started_at_iso": "2026-10-03T13:17:16Z",
+  "baseline_end": 1791033736.55,
+  "baseline_end_iso": "2026-10-03T13:22:16Z",
+  "finished_at": 1791034216.557,
+  "finished_at_iso": "2026-10-03T13:30:16Z",
+  "completed": true,
+  "scale": 1.0
+ },
+ "fault_window": {
+  "start": 1791033736.557,
+  "start_iso": "2026-10-03T13:22:16Z",
+  "end": 1791034036.554,
+  "end_iso": "2026-10-03T13:27:16Z"
+ },
+ "faults": [
+  {
+   "flag": "paymentFailure",
+   "variant": "100%",
+   "start": 1791033736.557,
+   "start_iso": "2026-10-03T13:22:16Z",
+   "start_served_at": 1791033737.573,
+   "start_served_at_iso": "2026-10-03T13:22:17Z",
+   "services": [
+    "payment"
+   ],
+   "end": 1791034036.554,
+   "end_iso": "2026-10-03T13:27:16Z",
+   "end_served_at": 1791034037.568,
+   "end_served_at_iso": "2026-10-03T13:27:17Z",
+   "effect_end": 1791034036.554,
+   "effect_end_iso": "2026-10-03T13:27:16Z"
+  }
+ ],
+ "applied": [
+  {
+   "kind": "set",
+   "flags": {
+    "paymentFailure": "100%"
+   },
+   "applied_at": 1791033736.557,
+   "applied_at_iso": "2026-10-03T13:22:16Z",
+   "served_at": {
+    "paymentFailure": 1791033737.573
+   }
+  },
+  {
+   "kind": "set",
+   "flags": {
+    "paymentFailure": "off"
+   },
+   "applied_at": 1791034036.554,
+   "applied_at_iso": "2026-10-03T13:27:16Z",
+   "served_at": {
+    "paymentFailure": 1791034037.568
+   }
+  }
+ ],
+ "root_cause": {
+  "service": "payment",
+  "flag": "paymentFailure",
+  "summary": "payment Charge returns an error for every call; checkout PlaceOrder and frontend POST /api/checkout fail as a consequence."
+ },
+ "affected_services": {
+  "origin": [
+   "payment"
+  ],
+  "propagated": [
+   "checkout",
+   "frontend"
+  ],
+  "unaffected_control": [
+   "cart",
+   "ad",
+   "product-catalog",
+   "shipping"
+  ]
+ },
+ "tolerance": {
+  "start_s": 150,
+  "end_s": 180,
+  "note": "Observable onset lags the flag change: demo exports metrics and span-metrics every 60s and queries use 2m rate windows (expect 1-3 min of lag); judge annotations against fault_window.start/end within these tolerances."
+ },
+ "settle_s": 120,
+ "expected_signals": [
+  {
+   "id": "payment-errors",
+   "service": "payment",
+   "description": "error span rate on payment",
+   "metric": "traces_span_metrics_calls_total",
+   "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"payment\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+   "direction": "up",
+   "min_abs_delta": 0.05
+  },
+  {
+   "id": "checkout-errors",
+   "service": "checkout",
+   "description": "error span rate on checkout (propagated)",
+   "metric": "traces_span_metrics_calls_total",
+   "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"checkout\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+   "direction": "up",
+   "min_abs_delta": 0.05
+  },
+  {
+   "id": "frontend-errors",
+   "service": "frontend",
+   "description": "error span rate on frontend (propagated)",
+   "metric": "traces_span_metrics_calls_total",
+   "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"frontend\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+   "direction": "up",
+   "min_abs_delta": 0.05
+  },
+  {
+   "id": "cart-errors-control",
+   "service": "cart",
+   "description": "cart stays clean",
+   "metric": "traces_span_metrics_calls_total",
+   "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"cart\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+   "direction": "flat",
+   "max_abs_delta": 0.05
+  }
+ ],
+ "endpoints": {
+  "victoriametrics": "http://127.0.0.1:8429",
+  "flagd_ofrep": "http://127.0.0.1:8016",
+  "frontend": "http://127.0.0.1:18080"
+ },
+ "source_labels": {
+  "service": "service_name"
+ },
+ "verification": {
+  "all_passed": true,
+  "results": [
+   {
+    "id": "payment-errors",
+    "service": "payment",
+    "metric": "traces_span_metrics_calls_total",
+    "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"payment\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+    "direction": "up",
+    "baseline_mean": 0.002499916669444352,
+    "baseline_samples": 20,
+    "fault_mean": 0.43611458343480175,
+    "fault_samples": 12,
+    "passed": true,
+    "detail": "baseline 0.0025 -> fault 0.4361 (delta +0.4336, x174)",
+    "series": [
+     [
+      1791033435.0,
+      0.0
+     ],
+     [
+      1791033495.0,
+      0.0
+     ],
+     [
+      1791033555.0,
+      0.0
+     ],
+     [
+      1791033615.0,
+      0.0
+     ],
+     [
+      1791033675.0,
+      0.0
+     ],
+     [
+      1791033735.0,
+      0.016666
+     ],
+     [
+      1791033795.0,
+      0.008333
+     ],
+     [
+      1791033855.0,
+      0.566686
+     ],
+     [
+      1791033915.0,
+      0.466674
+     ],
+     [
+      1791033975.0,
+      0.45
+     ],
+     [
+      1791034035.0,
+      0.333331
+     ],
+     [
+      1791034095.0,
+      0.216667
+     ],
+     [
+      1791034155.0,
+      0.150001
+     ],
+     [
+      1791034215.0,
+      0.0
+     ]
+    ]
+   },
+   {
+    "id": "checkout-errors",
+    "service": "checkout",
+    "metric": "traces_span_metrics_calls_total",
+    "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"checkout\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+    "direction": "up",
+    "baseline_mean": 0.0,
+    "baseline_samples": 0,
+    "fault_mean": 0.43333706028916147,
+    "fault_samples": 12,
+    "passed": true,
+    "detail": "baseline 0 -> fault 0.4333 (delta +0.4333, xinf)",
+    "series": [
+     [
+      1791033825.0,
+      0.566686
+     ],
+     [
+      1791033885.0,
+      0.500008
+     ],
+     [
+      1791033945.0,
+      0.433333
+     ],
+     [
+      1791034005.0,
+      0.299998
+     ],
+     [
+      1791034065.0,
+      0.233333
+     ],
+     [
+      1791034125.0,
+      0.150001
+     ],
+     [
+      1791034185.0,
+      0.0
+     ]
+    ]
+   },
+   {
+    "id": "frontend-errors",
+    "service": "frontend",
+    "metric": "traces_span_metrics_calls_total",
+    "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"frontend\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+    "direction": "up",
+    "baseline_mean": 0.0,
+    "baseline_samples": 0,
+    "fault_mean": 0.43472565982398,
+    "fault_samples": 12,
+    "passed": true,
+    "detail": "baseline 0 -> fault 0.4347 (delta +0.4347, xinf)",
+    "series": [
+     [
+      1791033825.0,
+      0.566686
+     ],
+     [
+      1791033885.0,
+      0.466674
+     ],
+     [
+      1791033945.0,
+      0.433333
+     ],
+     [
+      1791034005.0,
+      0.349997
+     ],
+     [
+      1791034065.0,
+      0.233333
+     ],
+     [
+      1791034125.0,
+      0.133334
+     ],
+     [
+      1791034185.0,
+      0.0
+     ]
+    ]
+   },
+   {
+    "id": "cart-errors-control",
+    "service": "cart",
+    "metric": "traces_span_metrics_calls_total",
+    "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"cart\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+    "direction": "flat",
+    "baseline_mean": 0.0,
+    "baseline_samples": 0,
+    "fault_mean": 0.0,
+    "fault_samples": 0,
+    "passed": true,
+    "detail": "baseline 0 -> fault 0 (delta +0), expected flat",
+    "series": []
+   }
+  ]
+ },
+ "_fixture": {
+  "source": "scenarios/runs/payment-failure-20261003T131716Z.json",
+  "note": "series downsampled to 60 s"
+ }
+}

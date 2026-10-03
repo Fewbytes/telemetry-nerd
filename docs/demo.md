@@ -197,7 +197,9 @@ or an existing panel), uncertainty flags repeated, root cause named by an in-win
 controls never blamed, directions consistent with the expected signals, incident findings
 labelled with the expected source of variation (special cause for a demo fault), **annotation
 onset** within `fault_window.start` ± `tolerance.start_s` and none off target, **zero unscoped
-claims** (findings and causal sentences of the final answer that cite no f/h/p/a id), a root-cause
+claims** (findings, and sentences of the final answer that state a cause, or that a named service
+is absent, citing no f/h/p/a/g id; the analyst's own limits such as "cannot confirm ... because"
+are not causes), a root-cause
 hypothesis supported, hypotheses blaming a control refuted or inconclusive. Bold = d77
 acceptance; the exit status is 0 only when they pass. Text rules are word heuristics; each flag
 lists the sentence it fired on.

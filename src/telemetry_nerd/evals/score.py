@@ -51,7 +51,7 @@ ACCEPTANCE = ("findings_scoped", "findings_evidenced", "annotation_onset", "zero
 _UP = re.compile(
     r"\b(increas\w*|rose|rise[sn]?|rising|spik\w*|jump\w*|higher|grew|grow\w*|elevated|surg\w*|"
     r"climb\w*|doubl\w*|tripl\w*|went up|up from|exceed\w*|burst\w*|failed|failing|"
-    r"started failing)\b",
+    r"started failing|returned (?:\w+ ){0,2}[45]\d\ds?|started returning)\b",
     re.IGNORECASE,
 )
 _DOWN = re.compile(
@@ -72,7 +72,22 @@ _CAUSAL = re.compile(
 )
 _HEDGE = re.compile(
     r"\b(hypothes\w*|might|may|possibl\w*|perhaps|unclear|unexplained|unknown|not yet|"
-    r"cannot tell|could not|couldn't|would need|untested|to test|candidate)\b",
+    r"would need|untested|to test|candidate)\b",
+    re.IGNORECASE,
+)
+#: the analyst saying what it cannot know: "I cannot confirm X because ..." explains a limit of
+#: the evidence, not a cause in the system
+_EPISTEMIC = re.compile(
+    r"\b(?:cannot|can't|can ?not|unable to|could not|did not|didn't) "
+    r"(?:\w+ ){0,2}?(?:confirm|determine|establish|verify|tell|attribute|link|tie)\w*\b",
+    re.IGNORECASE,
+)
+#: a claim that an entity does not exist in the data ("there is no payment service"): a
+#: claim about the source like any other, it needs a cited object (a query, a gap)
+_ABSENCE = re.compile(
+    r"\b(?:there (?:is|are|was|were) no|no (?:\w+ ){0,3}services?\b|"
+    r"(?:does|do|did)(?: not|n't) (?:exist|emit|report|appear)|not present|absent|"
+    r"(?:is|are) missing)",
     re.IGNORECASE,
 )
 _NEGATED_CAUSE = re.compile(r"\b(not|no|never|ruled? out|rather than|instead of)\b", re.IGNORECASE)
@@ -96,6 +111,9 @@ _MEASURES = (
     ),
 )
 _SENTENCES = re.compile(r"(?<=[.;!?])\s+|\n+")
+#: clauses of a sentence: "X returned 422s from 13:24 to 13:28, then zero" asserts a change in
+#: its first clause even though the second says what it returned to
+_CLAUSES = re.compile(r",\s*(?:then|and then|after which|before|until)\b|;|\(")
 _MATCHER = re.compile(r'([A-Za-z_][A-Za-z0-9_]*)\s*(=~|!~|!=|=)\s*"((?:[^"\\]|\\.)*)"')
 _BY = re.compile(r"\b(?:by)\s*\(([^)]*)\)", re.IGNORECASE)
 _MAX_RANGE_MS = 7 * 24 * 3600 * 1000
@@ -361,7 +379,9 @@ def score_finding(
     for s in sentences(claim):
         here = named(s, truth.entities)
         ctrl = here & set(truth.control)
-        calm = _NEGATED_CAUSE.search(s) or _HEDGE.search(s) or _FLAT.search(s)
+        calm = (
+            _NEGATED_CAUSE.search(s) or _HEDGE.search(s) or _EPISTEMIC.search(s) or _FLAT.search(s)
+        )
         if ctrl and _CAUSAL.search(s) and not calm:
             blames += [f"{c}: {s}" for c in sorted(ctrl)]
         m = measure_in(s)
@@ -387,9 +407,10 @@ def score_finding(
     # an incident finding: some sentence names an implicated entity (or the root cause) and
     # asserts a change (judged per sentence: long claims also say what did not change)
     incident = f.get("stance") != "against" and any(
-        (named(s, truth.implicated) or names_term(s, truth.root_cause_terms, truth.entities))
-        and asserts_change(s)
+        (named(c, truth.implicated) or names_term(c, truth.root_cause_terms, truth.entities))
+        and asserts_change(c)
         for s in sentences(claim)
+        for c in [s, *_CLAUSES.split(s)]
     )
     sources = list(
         dict.fromkeys(e["source"] for e in ev if e.get("kind") == "statistic" and e.get("source"))
@@ -476,16 +497,19 @@ def score_hypothesis(h: dict, truth: Truth, others: list[dict] | None = None) ->
     )
 
 
-def transcript_unscoped(text: str, truth: Truth) -> list[str]:
-    """Sentences of the final answer that assert a cause about a named entity without citing a
-    workspace object (f3, h1, p2, a1, g1) and without hedging."""
+def transcript_unscoped(text: str, truth: Truth) -> list[tuple[str, str]]:
+    """Sentences of the final answer, with why, that make a claim about a named entity without
+    citing a workspace object (f3, h1, p2, a1, g1) and without hedging: a cause (not the
+    analyst's own limits: "cannot confirm X because ..."), or that the entity is absent from the
+    data."""
     out = []
     for s in sentences(text):
-        if not named(s, truth.entities) or not _CAUSAL.search(s):
+        if not named(s, truth.entities) or _CITES.search(s) or _HEDGE.search(s):
             continue
-        if _CITES.search(s) or _HEDGE.search(s):
-            continue
-        out.append(s)
+        if _CAUSAL.search(s) and not _EPISTEMIC.search(s):
+            out.append((s, "causal claim citing no object"))
+        elif _ABSENCE.search(s):
+            out.append((s, "absence claim citing no object"))
     return out
 
 
@@ -512,8 +536,7 @@ def score(snapshot: dict, truth: Truth) -> Report:
         {"where": f.id, "claim": f.claim, "why": f"names {', '.join(f.uncovered)} outside scope"}
         for f in fs
         if f.uncovered
-    ] + [{"where": "transcript", "claim": s, "why": "causal claim citing no object"}
-         for s in t_unscoped]  # fmt: skip
+    ] + [{"where": "transcript", "claim": s, "why": why} for s, why in t_unscoped]
 
     has = bool(fs)
     checks = [

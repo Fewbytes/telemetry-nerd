@@ -1,0 +1,412 @@
+{
+ "_fixture": "Real headless run (claude sonnet, 46 turns, $0.51) of /telemetry-nerd:investigate on the live demo payment-failure scenario, 2026-10-03T13:17Z, after the eval-finding fixes (981, pxu, sat, qxp, icm); events dropped.",
+ "workspace": {
+  "panels": [
+   {
+    "id": "p2",
+    "question": "Was the cartFailure flag ever switched on in cart?",
+    "status": "open",
+    "spec": {
+     "layers": [
+      {
+       "mark": "line+envelope",
+       "data": "d7",
+       "windows": [],
+       "color": "count",
+       "quantiles": [
+        0.5,
+        0.9,
+        0.99
+       ],
+       "role": "main",
+       "segment_ms": null,
+       "overlap": null,
+       "min_period_ms": null,
+       "max_period_ms": null,
+       "seasonal": null,
+       "spc": null,
+       "fleet": null,
+       "littles": null
+      }
+     ],
+     "y": {
+      "range_mode": "reference",
+      "unit": "count/s",
+      "unit_provenance": "inferred from metric name",
+      "label": null,
+      "views": [],
+      "selected": null,
+      "context": {
+       "natural_lo": null,
+       "natural_hi": null,
+       "bounds": null,
+       "bounds_origin": null,
+       "bounds_basis": null,
+       "bounds_confidence": null,
+       "lines": [],
+       "reframes": [],
+       "profile": {
+        "lo": 0.0052873563218390806,
+        "hi": 0.2657125324378199,
+        "label": "normal range (30d)"
+       },
+       "typical": null,
+       "notes": [
+        "natural_bounds_unknown: the expression is not a single metric"
+       ],
+       "limit": null
+      },
+      "asserted_bounds": null
+     },
+     "references": {},
+     "marginal": null,
+     "signal": null,
+     "overlays": {
+      "normal": true,
+      "limit": true,
+      "ghost": false
+     },
+     "auto": null,
+     "group": null
+    },
+    "dataset_ids": [
+     "d7"
+    ],
+    "created_at_ms": 1791034316183,
+    "answered_by": null,
+    "closed": false
+   },
+   {
+    "id": "p1",
+    "question": "When did frontend POST requests start returning 422, and when did they stop?",
+    "status": "open",
+    "spec": {
+     "layers": [
+      {
+       "mark": "line+envelope",
+       "data": "d9",
+       "windows": [],
+       "color": "count",
+       "quantiles": [
+        0.5,
+        0.9,
+        0.99
+       ],
+       "role": "main",
+       "segment_ms": null,
+       "overlap": null,
+       "min_period_ms": null,
+       "max_period_ms": null,
+       "seasonal": null,
+       "spc": null,
+       "fleet": null,
+       "littles": null
+      }
+     ],
+     "y": {
+      "range_mode": "reference",
+      "unit": "count/s",
+      "unit_provenance": "inferred from metric name",
+      "label": null,
+      "views": [],
+      "selected": null,
+      "context": {
+       "natural_lo": null,
+       "natural_hi": null,
+       "bounds": null,
+       "bounds_origin": null,
+       "bounds_basis": null,
+       "bounds_confidence": null,
+       "lines": [],
+       "reframes": [],
+       "profile": {
+        "lo": 0.0002499942709646237,
+        "hi": 0.47867033384660207,
+        "label": "normal range (30d)"
+       },
+       "typical": null,
+       "notes": [
+        "natural_bounds_unknown: the expression is not a single metric"
+       ],
+       "limit": null
+      },
+      "asserted_bounds": null
+     },
+     "references": {},
+     "marginal": null,
+     "signal": null,
+     "overlays": {
+      "normal": true,
+      "limit": true,
+      "ghost": false
+     },
+     "auto": null,
+     "group": null
+    },
+    "dataset_ids": [
+     "d9"
+    ],
+    "created_at_ms": 1791034292176,
+    "answered_by": null,
+    "closed": false
+   }
+  ],
+  "annotations": [
+   {
+    "kind": "region",
+    "panel": "p1",
+    "t_start_ms": 1791033840000,
+    "t_end_ms": 1791034140000,
+    "value": null,
+    "value_hi": null,
+    "label": "frontend POST 422s observed 13:24-13:28 (last non-zero 13:28, zero from 13:29; 1m rate, 30s step); series first appears 13:24",
+    "links": [],
+    "id": "a1",
+    "author": "claude",
+    "created_at_ms": 1791034294318,
+    "deleted": false
+   }
+  ],
+  "hypotheses": [
+   {
+    "id": "h1",
+    "statement": "Order placement failed 13:16-13:31 UTC because the cart service's cartFailure feature flag (feature_flag_evaluation_requests_total{service_name=\"cart\",feature_flag_key=\"cartFailure\"}) was switched on, making cart calls fail and frontend checkout requests return 422.",
+    "status": "refuted",
+    "author": "claude",
+    "evidence_for": [],
+    "evidence_against": [
+     "f2"
+    ],
+    "alternatives_considered": null,
+    "created_at_ms": 1791034270454,
+    "updated_at_ms": 1791034323594
+   }
+  ],
+  "findings": [
+   {
+    "claim": "Frontend returned POST 422s from 13:24 to 13:28 UTC (peak ~0.23/s, about 6% of frontend 200 rate ~3.5/s), then zero from 13:29 to the end of data at 13:31; no 5xx series exists for frontend. This covers only the second half of the reported window.",
+    "scope": {
+     "source": "default",
+     "selector": "http_server_request_duration_seconds_count{service_name=\"frontend\",http_response_status_code!=\"200\"}",
+     "time_range": {
+      "start_ms": 1791033000000,
+      "end_ms": 1791034380000
+     },
+     "step": "30s",
+     "aggregation": "sum by (http_route, http_request_method, http_response_status_code) of rate[1m]",
+     "baseline_range": null
+    },
+    "evidence": [
+     {
+      "kind": "panel",
+      "panel": "p1"
+     },
+     {
+      "kind": "annotation",
+      "annotation": "a1"
+     }
+    ],
+    "caveats": [
+     "d9: 2 of 2 series have fewer samples than expected in the claim window: {http_request_method=\"GET\", http_response_status_code=\"308\"}, {http_request_method=\"POST\", http_response_status_code=\"422\"}.",
+     "d9: Each series is judged over its own span in the window. {http_request_method=\"POST\", http_response_status_code=\"422\"}: no samples before 2026-10-03T13:24:00+00:00 in this evidence (it may not have existed yet, or was not scraped). Membership changes within the window: check whether set(http_response_status_code) per bucket is consistent over a wider window (e.g. count by (http_response_status_code) (http_server_request_duration_seconds_count{service_name=\"frontend\",http_response_status_code!=\"200\"}) over a longer range).",
+     "d9: __name__=\"http_server_request_duration_seconds_count\" not checked: the evidence series carry no metric name, so the claim's metric is not confirmed."
+    ],
+    "hypothesis": null,
+    "stance": null,
+    "answers_panel": null,
+    "scope_note": null,
+    "id": "f1",
+    "author": "claude",
+    "created_at_ms": 1791034320919,
+    "verdict": null,
+    "verdict_comment": null,
+    "evidence_flags": [],
+    "scope_check": {
+     "status": "covered",
+     "named": [
+      "service_name=\"frontend\""
+     ],
+     "not_covered": [],
+     "undetermined": [],
+     "message": ""
+    },
+    "source_flags": [
+     {
+      "evidence": 0,
+      "flag": "source_undetermined",
+      "source": "undetermined",
+      "message": "no cited statistic says what the variation is attributed to: if this finding reports a change or deviation, its source is undetermined (cite an op's evidence statistic, e.g. from analyze, compare_seasonal, fleet or binding_verdict)"
+     }
+    ]
+   },
+   {
+    "claim": "The cart cartFailure feature flag evaluated to variant \"off\" (reason STATIC) throughout the available data; it was not switched on. Evidence against the cartFailure flag as the cause.",
+    "scope": {
+     "source": "default",
+     "selector": "feature_flag_evaluation_success_total{service_name=\"cart\"}",
+     "time_range": {
+      "start_ms": 1791031800000,
+      "end_ms": 1791034800000
+     },
+     "step": "30s",
+     "aggregation": "sum by (feature_flag_key, variant, reason) of rate[1m]",
+     "baseline_range": null
+    },
+    "evidence": [
+     {
+      "kind": "panel",
+      "panel": "p2"
+     }
+    ],
+    "caveats": [
+     "d7: Each series is judged over its own span in the window. {feature_flag_key=\"failedReadinessProbe\"}: no samples before 2026-10-03T13:12:00+00:00 in this evidence (it may not have existed yet, or was not scraped). {feature_flag_key=\"failedReadinessProbe\"}: no samples since 2026-10-03T13:31:00+00:00 in this evidence (it may have left, or may return after the window). {feature_flag_key=\"cartFailure\"}: no samples before 2026-10-03T13:12:00+00:00 in this evidence (it may not have existed yet, or was not scraped). {feature_flag_key=\"cartFailure\"}: no samples since 2026-10-03T13:31:00+00:00 in this evidence (it may have left, or may return after the window). Membership changes within the window: check whether set(feature_flag_key) per bucket is consistent over a wider window (e.g. count by (feature_flag_key) (feature_flag_evaluation_success_total{service_name=\"cart\"}) over a longer range).",
+     "d7: __name__=\"feature_flag_evaluation_success_total\" not checked: the evidence series carry no metric name, so the claim's metric is not confirmed."
+    ],
+    "hypothesis": "h1",
+    "stance": "against",
+    "answers_panel": null,
+    "scope_note": null,
+    "id": "f2",
+    "author": "claude",
+    "created_at_ms": 1791034322166,
+    "verdict": null,
+    "verdict_comment": null,
+    "evidence_flags": [],
+    "scope_check": {
+     "status": "covered",
+     "named": [
+      "service_name=\"cart\""
+     ],
+     "not_covered": [],
+     "undetermined": [],
+     "message": ""
+    },
+    "source_flags": [
+     {
+      "evidence": 0,
+      "flag": "source_undetermined",
+      "source": "undetermined",
+      "message": "no cited statistic says what the variation is attributed to: if this finding reports a change or deviation, its source is undetermined (cite an op's evidence statistic, e.g. from analyze, compare_seasonal, fleet or binding_verdict)"
+     }
+    ]
+   }
+  ],
+  "gaps": [
+   {
+    "missing_signal": "Samples before 13:12 UTC, checkout/payment service metrics, and an http route label on frontend metrics",
+    "needed_for": "Determining onset (13:16 or earlier), end, and failing dependency of order placement; tying the 422s to the order endpoint",
+    "suggestion": {
+     "name": "http_server_request_duration_seconds_count",
+     "type": "counter",
+     "labels": [
+      "http_route"
+     ]
+    },
+    "id": "g1",
+    "author": "claude",
+    "created_at_ms": 1791034305647
+   }
+  ],
+  "groups": [],
+  "code": [
+   {
+    "id": "c1",
+    "status": "ok",
+    "exec_status": "ok",
+    "inputs": [
+     "d8"
+    ],
+    "outputs": [],
+    "author": "claude",
+    "created_at_ms": 1791034279118,
+    "finished_at_ms": 1791034279726,
+    "duration_s": 0.6,
+    "rerun_of": null,
+    "error": null,
+    "restarted": false
+   },
+   {
+    "id": "c2",
+    "status": "ok",
+    "exec_status": "ok",
+    "inputs": [
+     "d8",
+     "d5"
+    ],
+    "outputs": [],
+    "author": "claude",
+    "created_at_ms": 1791034283501,
+    "finished_at_ms": 1791034283524,
+    "duration_s": 0.012,
+    "rerun_of": null,
+    "error": null,
+    "restarted": false
+   },
+   {
+    "id": "c3",
+    "status": "ok",
+    "exec_status": "ok",
+    "inputs": [
+     "d8"
+    ],
+    "outputs": [],
+    "author": "claude",
+    "created_at_ms": 1791034286660,
+    "finished_at_ms": 1791034286674,
+    "duration_s": 0.009,
+    "rerun_of": null,
+    "error": null,
+    "restarted": false
+   }
+  ],
+  "threads": [],
+  "last_seq": 30
+ },
+ "exprs": {
+  "d1": [
+   "sum by (service_name, http_response_status_code) (rate(http_server_request_duration_seconds_count{http_response_status_code=~\"5..\"}[1m]))"
+  ],
+  "d2": [
+   "sum by (service_name) (rate(rpc_server_duration_milliseconds_count[1m]))"
+  ],
+  "d3": [
+   "sum by (service_name) (rate(http_server_request_duration_seconds_count[1m]))"
+  ],
+  "d4": [
+   "sum by (service_name, rpc_grpc_status_code, http_response_status_code, error_type) (rate(http_server_request_duration_seconds_count[1m]))"
+  ],
+  "d5": [
+   "sum by (service_name, rpc_grpc_status_code) (rate(rpc_client_duration_milliseconds_count[1m]))"
+  ],
+  "op-086a8c73da86": [
+   "sum by (service_name, rpc_grpc_status_code, http_response_status_code, error_type) (rate(http_server_request_duration_seconds_count[3615s]))"
+  ],
+  "d6": [
+   "sum by (service_name, feature_flag_key) (rate(feature_flag_evaluation_requests_total[1m]))"
+  ],
+  "d7": [
+   "sum by (feature_flag_key, feature_flag_result_variant, feature_flag_result_reason) (rate(feature_flag_evaluation_success_total{service_name=\"cart\"}[1m]))"
+  ],
+  "d8": [
+   "sum by (service_name, http_response_status_code) (rate(http_server_request_duration_seconds_count{service_name=\"frontend\"}[1m]))"
+  ],
+  "d9": [
+   "sum by (http_route, http_request_method, http_response_status_code) (rate(http_server_request_duration_seconds_count{service_name=\"frontend\",http_response_status_code!=\"200\"}[1m]))"
+  ],
+  "op-9e063dbfe7ce": [
+   "sum by (http_route, http_request_method, http_response_status_code) (rate(http_server_request_duration_seconds_count{service_name=\"frontend\",http_response_status_code!=\"200\"}[3615s]))"
+  ],
+  "op-fdb3e6e5bac0": [
+   "sum by (feature_flag_key, feature_flag_result_variant, feature_flag_result_reason) (rate(feature_flag_evaluation_success_total{service_name=\"cart\"}[3615s]))"
+  ],
+  "p2": [
+   "sum by (feature_flag_key, feature_flag_result_variant, feature_flag_result_reason) (rate(feature_flag_evaluation_success_total{service_name=\"cart\"}[1m]))"
+  ],
+  "p1": [
+   "sum by (http_route, http_request_method, http_response_status_code) (rate(http_server_request_duration_seconds_count{service_name=\"frontend\",http_response_status_code!=\"200\"}[1m]))"
+  ]
+ },
+ "transcript": {
+  "result": "**Scope.** Order placement failing 13:16\u201313:31 UTC on source `default` (VictoriaMetrics). The data I can see is thin. Samples only run from about 13:12 to 13:31 UTC. Only frontend, cart, shipping and ad emit metrics. There is no checkout or payment service, and no 5xx series anywhere.\n\n**Hypotheses**\n- **h1 (refuted):** the cart `cartFailure` flag was switched on. f2 shows it evaluated to `off` (STATIC) throughout.\n- **No hypothesis is supported.** I could not name a cause from the data.\n\n**Findings**\n- **f1:** Frontend POST requests returned 422 from 13:24 to 13:28. The rate peaked at about 0.23/s, roughly 6% of the frontend 200 rate of about 3.5/s. It fell to zero from 13:29 through the end of data at 13:31.\n  - Scope is covered (frontend only).\n  - The variation source is undetermined, because no `analyze` or `compare_seasonal` statistic is cited.\n  - The 13:24 start is where the series first appears, not a proven onset. The series is a counter that first appears when it first has an event.\n  - The 422 series is annotated on p1 (a1).\n- **f2:** the `cartFailure` flag stayed `off` (p2). Scope is covered (cart). The variation source is undetermined, as for f1.\n- **Shipping and cart:** I did not record a finding for them. In the 13:00\u201313:35 query, both showed only 200s.\n\n**What happened.** The only failure signal is the frontend POST 422s from 13:24 to 13:28. They are non-5xx rejections, so they look like request validation failures rather than a crashed service. I cannot confirm they are order placement, because frontend metrics carry no route label.\n\n**Timeline.** The reported window opens at 13:16 and closes at 13:31. The 422s start at 13:24 and end by 13:29. The start of the reported failure and the 13:29\u201313:31 tail are unexplained. The ad service shows an occasional `rpc_grpc_status_code=4` client call, about 0.0017/s on average. I have not linked it to the orders.\n\n**Unknowns.** These are recorded as gap g1:\n- Samples before 13:12.\n- Metrics from checkout, payment and email.\n- A route label on frontend metrics.\n\nI asked no one about deploys or config changes, since the run was unattended, so none are annotated.\n\n**Next step:** point the investigation at a source that holds the checkout or payment services and covers at least 13:00\u201313:40 UTC.\n\nWorkspace: http://127.0.0.1:60486 (open p1 first)."
+ }
+}

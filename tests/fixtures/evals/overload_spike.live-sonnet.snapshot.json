@@ -1,0 +1,400 @@
+{
+ "_fixture": "Real headless run (claude sonnet, 37 turns, $0.44) of /telemetry-nerd:investigate on the queue-sim overload_spike scenario (600 s), 2026-10-03T13:33Z; events dropped.",
+ "workspace": {
+  "panels": [
+   {
+    "id": "p3",
+    "question": "How does checkout request rate move over the same window?",
+    "status": "open",
+    "spec": {
+     "layers": [
+      {
+       "mark": "line+envelope",
+       "data": "d7",
+       "windows": [],
+       "color": "count",
+       "quantiles": [
+        0.5,
+        0.9,
+        0.99
+       ],
+       "role": "main",
+       "segment_ms": null,
+       "overlap": null,
+       "min_period_ms": null,
+       "max_period_ms": null,
+       "seasonal": null,
+       "spc": null,
+       "fleet": null,
+       "littles": null
+      }
+     ],
+     "y": {
+      "range_mode": "data",
+      "unit": "count/s",
+      "unit_provenance": "inferred from metric name",
+      "label": null,
+      "views": [],
+      "selected": null,
+      "context": {
+       "natural_lo": null,
+       "natural_hi": null,
+       "bounds": null,
+       "bounds_origin": null,
+       "bounds_basis": null,
+       "bounds_confidence": null,
+       "lines": [],
+       "reframes": [],
+       "profile": null,
+       "typical": null,
+       "notes": [
+        "natural_bounds_unknown: the expression is not a single metric",
+        "profile_unavailable: the profile has no usable range"
+       ],
+       "limit": null
+      },
+      "asserted_bounds": null
+     },
+     "references": {},
+     "marginal": null,
+     "signal": null,
+     "overlays": {
+      "normal": true,
+      "limit": true,
+      "ghost": false
+     },
+     "auto": null,
+     "group": null
+    },
+    "dataset_ids": [
+     "d7"
+    ],
+    "created_at_ms": 1791035113615,
+    "answered_by": null,
+    "closed": false
+   },
+   {
+    "id": "p2",
+    "question": "When does checkout mean latency rise?",
+    "status": "open",
+    "spec": {
+     "layers": [
+      {
+       "mark": "line+envelope",
+       "data": "d8",
+       "windows": [],
+       "color": "count",
+       "quantiles": [
+        0.5,
+        0.9,
+        0.99
+       ],
+       "role": "main",
+       "segment_ms": null,
+       "overlap": null,
+       "min_period_ms": null,
+       "max_period_ms": null,
+       "seasonal": null,
+       "spc": null,
+       "fleet": null,
+       "littles": null
+      }
+     ],
+     "y": {
+      "range_mode": "data",
+      "unit": null,
+      "unit_provenance": null,
+      "label": null,
+      "views": [],
+      "selected": null,
+      "context": {
+       "natural_lo": null,
+       "natural_hi": null,
+       "bounds": null,
+       "bounds_origin": null,
+       "bounds_basis": null,
+       "bounds_confidence": null,
+       "lines": [],
+       "reframes": [],
+       "profile": null,
+       "typical": null,
+       "notes": [
+        "natural_bounds_unknown: the expression is not a single metric",
+        "profile_unavailable: the profile has no usable range"
+       ],
+       "limit": null
+      },
+      "asserted_bounds": null
+     },
+     "references": {},
+     "marginal": null,
+     "signal": null,
+     "overlays": {
+      "normal": true,
+      "limit": true,
+      "ghost": false
+     },
+     "auto": null,
+     "group": null
+    },
+    "dataset_ids": [
+     "d8"
+    ],
+    "created_at_ms": 1791035113539,
+    "answered_by": null,
+    "closed": false
+   },
+   {
+    "id": "p1",
+    "question": "When does checkout in-flight concurrency peak between 13:32 and 13:44?",
+    "status": "open",
+    "spec": {
+     "layers": [
+      {
+       "mark": "line+envelope",
+       "data": "d6",
+       "windows": [],
+       "color": "count",
+       "quantiles": [
+        0.5,
+        0.9,
+        0.99
+       ],
+       "role": "main",
+       "segment_ms": null,
+       "overlap": null,
+       "min_period_ms": null,
+       "max_period_ms": null,
+       "seasonal": null,
+       "spc": null,
+       "fleet": null,
+       "littles": null
+      }
+     ],
+     "y": {
+      "range_mode": "data",
+      "unit": "count",
+      "unit_provenance": "knowledge pack",
+      "label": null,
+      "views": [],
+      "selected": null,
+      "context": {
+       "natural_lo": null,
+       "natural_hi": null,
+       "bounds": null,
+       "bounds_origin": null,
+       "bounds_basis": null,
+       "bounds_confidence": null,
+       "lines": [],
+       "reframes": [],
+       "profile": null,
+       "typical": null,
+       "notes": [
+        "natural_bounds_unknown: the expression is not a single metric",
+        "profile_unavailable: the profile has no usable range"
+       ],
+       "limit": null
+      },
+      "asserted_bounds": null
+     },
+     "references": {},
+     "marginal": null,
+     "signal": null,
+     "overlays": {
+      "normal": true,
+      "limit": true,
+      "ghost": false
+     },
+     "auto": null,
+     "group": null
+    },
+    "dataset_ids": [
+     "d6"
+    ],
+    "created_at_ms": 1791035113104,
+    "answered_by": null,
+    "closed": false
+   }
+  ],
+  "annotations": [
+   {
+    "kind": "region",
+    "panel": "p1",
+    "t_start_ms": 1791034680000,
+    "t_end_ms": 1791034920000,
+    "value": null,
+    "value_hi": null,
+    "label": "concurrency spike (peak 960 vs baseline mean ~15), latency up to 24 s mean; bounds only to 2-4 min resolution (queried 13:38-13:42); end not pinned",
+    "links": [],
+    "id": "a1",
+    "author": "claude",
+    "created_at_ms": 1791035126323,
+    "deleted": false
+   }
+  ],
+  "hypotheses": [
+   {
+    "id": "h1",
+    "statement": "For checkout (http_server_active_requests, http_requests_total, http_request_duration_seconds), 2026-10-03 13:32-13:44 UTC, in-flight concurrency exceeds rate x mean latency (Little's law L_high) in some windows, i.e. time spent in the system that the latency histogram does not cover.",
+    "status": "refuted",
+    "author": "claude",
+    "evidence_for": [],
+    "evidence_against": [
+     "f1"
+    ],
+    "alternatives_considered": null,
+    "created_at_ms": 1791035080914,
+    "updated_at_ms": 1791035160000
+   }
+  ],
+  "findings": [
+   {
+    "claim": "Over 13:32-13:44 UTC, checkout concurrency, rate and mean latency agree under Little's law: L=111.6 vs \u03bbW=112.1 (R=0.996, measurement interval -22%..+21%); per 2m window R 0.94-1.16, no transient windows, no systematic offset. All three rise together in a 13:38-13:42 episode (concurrency peak 960 vs ~15 mean before; mean latency up to 24 s; rate peak 45.7/s vs ~18 mean). Caveats: in 13:40-13:42 the request counter and latency count disagree beyond backlog change; source scraped at 5s but read at 15s; 13:32-13:34 window insufficient.",
+    "scope": {
+     "source": "default",
+     "selector": "service=checkout",
+     "time_range": {
+      "start_ms": 1791034320000,
+      "end_ms": 1791035040000
+     },
+     "step": "15s",
+     "aggregation": "sum over pods; 2m Little's-law windows",
+     "baseline_range": null
+    },
+    "evidence": [
+     {
+      "kind": "statistic",
+      "dataset": "d5",
+      "name": "littles_law_ratio",
+      "value": 0.9958,
+      "interval": [
+       0.7827,
+       1.209
+      ],
+      "exact": false,
+      "uncertainty_unknown": false,
+      "method": "check_littles_law R = L/(lambda W), 2m windows",
+      "params": {},
+      "source": "measurement_system"
+     },
+     {
+      "kind": "annotation",
+      "annotation": "a1"
+     }
+    ],
+    "caveats": [
+     "d5: 2546658abb11e6a7: 83% of expected samples in the claim window.",
+     "d5: scope undetermined: scope.selector could not be read into label matchers (several selectors); coverage was checked over every evidence series instead, so which series the claim is about is not established."
+    ],
+    "hypothesis": "h1",
+    "stance": "against",
+    "answers_panel": null,
+    "scope_note": "check_littles_law pooled all service values without a selector; the source's checkout series (d1, d6, d10) are the only ones in the queried concurrency, but pooling was not verified one by one.",
+    "id": "f1",
+    "author": "claude",
+    "created_at_ms": 1791035154832,
+    "verdict": null,
+    "verdict_comment": null,
+    "evidence_flags": [],
+    "scope_check": {
+     "status": "beyond_evidence",
+     "named": [
+      "service=\"checkout\""
+     ],
+     "not_covered": [
+      "service=\"checkout\""
+     ],
+     "undetermined": [],
+     "message": "the claim names service=\"checkout\", which its evidence does not cover (cited evidence covers: d5: all service values pooled (none one by one))"
+    },
+    "source_flags": []
+   }
+  ],
+  "gaps": [],
+  "groups": [],
+  "code": [
+   {
+    "id": "c1",
+    "status": "failed",
+    "exec_status": "error",
+    "inputs": [
+     "d6",
+     "d7",
+     "d8"
+    ],
+    "outputs": [],
+    "author": "claude",
+    "created_at_ms": 1791035104605,
+    "finished_at_ms": 1791035105129,
+    "duration_s": 0.508,
+    "rerun_of": null,
+    "error": "NameError: name 'tn' is not defined",
+    "restarted": false
+   }
+  ],
+  "threads": [],
+  "last_seq": 30
+ },
+ "exprs": {
+  "d1": [
+   "http_server_active_requests"
+  ],
+  "d2": [
+   "sum (increase(http_requests_total[15s]))"
+  ],
+  "d3": [
+   "sum (increase(http_request_duration_seconds_sum[15s]))"
+  ],
+  "d4": [
+   "sum (increase(http_request_duration_seconds_count[15s]))"
+  ],
+  "d5": [
+   "sum (http_server_active_requests)"
+  ],
+  "d6": [
+   "sum(http_server_active_requests{service=\"checkout\"})"
+  ],
+  "d7": [
+   "sum(rate(http_requests_total{service=\"checkout\"}[1m]))"
+  ],
+  "d8": [
+   "sum(rate(http_request_duration_seconds_sum{service=\"checkout\"}[1m])) / sum(rate(http_request_duration_seconds_count{service=\"checkout\"}[1m]))"
+  ],
+  "d9": [
+   "sum(rate(http_request_duration_seconds_count{service=\"checkout\"}[1m]))"
+  ],
+  "op-6c5daf9cca50": [
+   "sum(http_server_active_requests{service=\"checkout\"})"
+  ],
+  "op-cddd39e8c0f1": [
+   "sum(rate(http_request_duration_seconds_sum{service=\"checkout\"}[3615s])) / sum(rate(http_request_duration_seconds_count{service=\"checkout\"}[3615s]))"
+  ],
+  "op-761206ff63f8": [
+   "sum(rate(http_requests_total{service=\"checkout\"}[3615s]))"
+  ],
+  "d10": [
+   "sum(http_server_active_requests{service=\"checkout\"})"
+  ],
+  "d11": [
+   "sum(http_server_active_requests{service=\"checkout\"})"
+  ],
+  "d12": [
+   "sum(rate(http_request_duration_seconds_sum{service=\"checkout\"}[1m])) / sum(rate(http_request_duration_seconds_count{service=\"checkout\"}[1m]))"
+  ],
+  "d13": [
+   "sum(rate(http_requests_total{service=\"checkout\"}[1m]))"
+  ],
+  "p3": [
+   "sum(rate(http_requests_total{service=\"checkout\"}[1m]))"
+  ],
+  "p2": [
+   "sum(rate(http_request_duration_seconds_sum{service=\"checkout\"}[1m])) / sum(rate(http_request_duration_seconds_count{service=\"checkout\"}[1m]))"
+  ],
+  "p1": [
+   "sum(http_server_active_requests{service=\"checkout\"})"
+  ]
+ },
+ "transcript": {
+  "result": "**Scope:** checkout, 2026-10-03 13:32\u201313:44 UTC, source `default`, 15 s resolution. I assumed the service label is `service=\"checkout\"`, and I had no baseline window or deploy events from you.\n\n**Answer:** Yes, the three signals agree.\n- **Whole range:** mean in-flight requests L is 111.6. Request rate times mean latency (\u03bbW) is 112.1. The ratio is 0.996, with a measurement interval of \u221222% to +21%. Per 2-minute window the ratio runs 0.94\u20131.16. There is no systematic offset and no transient window.\n- **What did happen:** checkout had a load episode. It sits somewhere in 13:38\u201313:42; I only bracketed it to that range, and its end is not pinned.\n  - **Concurrency:** it peaked at 960, against a mean of about 15 in 13:32\u201313:38.\n  - **Mean latency:** it reached 24 s.\n  - **Request rate:** it peaked at 45.7/s, against a mean of about 18/s over the whole range.\n  - **Why it agrees:** concurrency, rate and latency rose together, and Little's law holds through it. The mean latency of 6.2 s is high because the episode lifts the average.\n\n**Hypothesis**\n- h1 said concurrency would exceed rate \u00d7 latency, meaning time in the system that the latency timer misses. It is **refuted**.\n- The single finding, f1, is stance=against h1. Its scope status is `beyond_evidence`. `check_littles_law` pooled all service values without a selector, so it doesn't prove those series are checkout alone. I covered that with a `scope_note`. Its source flag is `measurement_system`.\n- I marked the episode as annotation a1 on panel p1, with the bounds in the label. Panels p2 and p3 show latency and rate.\n\n**Unexplained or unmeasurable**\n- **Cause of the spike:** I don't know it. The data has no deploy or config events, and I can't say whether the load came from callers or from slowness.\n- **Exact onset and end:** I couldn't read the data points because `run_code` failed (`tn` is undefined). The `analyze` runs gave no changepoint (insufficient data, n_eff under 10).\n- **13:40\u201313:42:** the request counter and the latency count disagree by more than the backlog change in that window. That suggests the latency histogram covers a subset of the counted requests, or some requests were dropped.\n- **Sampling:** the in-flight gauge is scraped every 5 s but read at 15 s, so short spikes may be missed.\n- **13:32\u201313:34:** that window had too little data to judge.\n- **Per-pod behaviour:** I didn't compare pods; the first query shows checkout-0, -1 and -2 peaking at 347, 331 and 282.\n\nWorkspace: http://127.0.0.1:63002"
+ }
+}

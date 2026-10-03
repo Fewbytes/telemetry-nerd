@@ -387,6 +387,21 @@ def test_off_target_annotation_fails_even_with_a_good_onset():
         ("Payment might be the root cause; untested.", False),
         ("Errors rose at 10:08Z.", False),  # no entity
         ("Payment errors rose at 10:08Z.", False),  # no causal wording
+        # the analyst's own limit, not a cause (live run 2026-10-03T13:17Z)
+        (
+            (
+                "I cannot confirm they are order placement, because frontend metrics carry no "
+                "route label."
+            ),
+            False,
+        ),
+        ("I could not link the frontend 422s to checkout because no route label exists.", False),
+        ("Frontend failed because checkout could not reach payment.", True),
+        # an entity said to be absent from the data, citing nothing (same run: false)
+        ("There is no checkout or payment service, and no 5xx series anywhere.", True),
+        ("Only frontend, cart, shipping and ad emit metrics; payment does not emit any.", True),
+        ("No checkout or payment series in d3 (g1).", False),  # cites what it looked at
+        ("Payment metrics may be absent from this source.", False),  # hedged
     ],
 )
 def test_transcript_unscoped(text, flagged):
@@ -538,3 +553,71 @@ def test_supported_hypothesis_needs_an_alternative():
         s["workspace"]["hypotheses"][0]["alternatives_considered"] = "checkout ruled out by f2"
 
     assert status(mutate(noted), "supported_hypotheses_disciplined") == "pass"
+
+
+@pytest.mark.parametrize(
+    "claim,incident",
+    [
+        # live run 2026-10-03T13:17Z: the change is in the first clause, the recovery after it
+        (
+            (
+                "Frontend returned POST 422s from 13:24 to 13:28 UTC (peak ~0.23/s), then zero "
+                "from 13:29 to the end of data."
+            ),
+            True,
+        ),
+        ("Checkout started returning 500s at 10:08Z.", True),
+        ("Frontend returned 200s throughout; no errors.", False),
+        ("Frontend errors stayed at zero, then remained flat.", False),
+    ],
+)
+def test_incident_is_judged_per_clause(claim, incident):
+    def m(s):
+        f = finding(s, "f1")
+        f["claim"] = claim
+        f.pop("hypothesis", None)
+        f["stance"] = None
+
+    rep = mutate(m)
+    assert next(f for f in rep.findings if f.id == "f1").incident is incident
+
+
+def test_rerun_after_eval_fixes_scores_as_observed():
+    """Second live run (d77.3, after 981/pxu/sat/qxp/icm): annotated, scoped and evidenced, but
+    Claude never looked at span metrics (the only metrics payment emits), refuted a cart decoy,
+    and told the user there is no checkout or payment service: the scorer catches that absence
+    claim; the 'cannot confirm ... because' sentence is the analyst's own limit, not a cause."""
+    t = load_truth(EV / "payment-failure.live-sonnet-2.truth.json")
+    rep = score(snap("payment-failure.live-sonnet-2"), t)
+    st = {c.id: c.status for c in rep.checks}
+    assert {k for k, v in st.items() if v == "pass"} == {
+        "findings_present", "findings_scoped", "findings_evidenced", "uncertainty_honest",
+        "no_control_blamed", "directions_consistent", "annotation_onset", "decoys_not_supported",
+    }  # fmt: skip
+    assert {k for k, v in st.items() if v == "fail"} == {
+        "root_cause_named", "source_label", "zero_unscoped_claims",
+        "root_cause_hypothesis_supported",
+    }  # fmt: skip
+    assert st["supported_hypotheses_disciplined"] == "n/a"  # nothing was supported
+    [u] = rep.unscoped_claims
+    assert u["why"] == "absence claim citing no object" and "no checkout or payment" in u["claim"]
+    f1 = next(f for f in rep.findings if f.id == "f1")
+    assert f1.incident and f1.sources == ["undetermined"] and not f1.source_ok
+    assert [a.verdict for a in rep.annotations] == ["onset_ok"]
+    assert (rep.passed, rep.applicable) == (8, 12) and not rep.acceptance
+
+
+def test_queue_sim_live_run_scores_as_observed():
+    """Live queue-sim run (d77.3): Little's law checked and the episode annotated within
+    tolerance; acceptance passes. No hypothesis about the spike's cause was opened (h1 framed
+    the question, 'L exceeds λW', and was refuted), so root_cause_hypothesis_supported fails."""
+    t = load_truth(EV / "overload_spike.live-sonnet.truth.json", extra_terms("overload_spike"))
+    rep = score(snap("overload_spike.live-sonnet"), t)
+    st = {c.id: c.status for c in rep.checks}
+    assert [k for k, v in st.items() if v == "fail"] == ["root_cause_hypothesis_supported"]
+    assert st["annotation_onset"] == st["zero_unscoped_claims"] == "pass"
+    assert st["findings_scoped"] == st["findings_evidenced"] == "pass"
+    f1 = rep.findings[0]
+    assert f1.sources == ["measurement_system"] and not f1.incident
+    assert [h.status for h in rep.hypotheses] == ["refuted"]
+    assert (rep.passed, rep.applicable) == (8, 9) and rep.acceptance
