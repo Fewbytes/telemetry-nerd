@@ -163,6 +163,7 @@ CREATE TABLE IF NOT EXISTS sources (
     spec TEXT NOT NULL,
     created_at_ms INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS workspace_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
 _PANEL_COLUMNS = {

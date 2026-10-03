@@ -49,6 +49,19 @@ class WorkspaceStore:
         ).fetchone()
         return f"{prefix}{n}"
 
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
+        row = self._db.execute(
+            "SELECT value FROM workspace_settings WHERE key = ?", (key,)
+        ).fetchone()
+        return row[0] if row is not None else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        self._db.execute(
+            "INSERT INTO workspace_settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
+
     def create_panel(self, question: str, spec: dict, dataset_ids: list[str]) -> Panel:
         if not question or not question.strip():
             raise ValueError("every panel must answer an explicit question")
