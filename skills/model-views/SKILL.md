@@ -135,7 +135,10 @@ lambda x W (arrival rate times MEAN latency from histogram `_sum` / `_count`).
   units, subset/superset), **common cause** (small-system fluctuation +-X% per window at this
   traffic, and the windows' own spread: do not chase windows inside it), **special cause**
   (transient windows beyond both: a load peak leaving steady state — say "at a load peak"
-  explicitly — a draining backlog, or a change confined to those windows).
+  explicitly — a draining backlog, or a change confined to those windows; and load-peak windows
+  `promoted` on independent evidence of leaving steady state: quote their `reason`). A load-peak
+  window inside the envelope without such evidence is common cause: "not a signal by itself;
+  watch if it repeats or grows".
 - `L_high`: time in the system that the latency timer does not cover: queueing before the timer
   starts, leaked or stuck requests, latency on a subset, a gauge counting something broader.
   `L_low`: concurrency missing instances, a gauge missing bursts, latency on a superset.

@@ -50,7 +50,41 @@ Every reported variation is labelled with its source:
   not to be chased.
 - **special cause** (assignable): **transient** windows beyond the measurement interval around
   the reference AND beyond the common-cause envelope — load peaks, leaving steady state, a change
-  confined to those windows. Investigate.
+  confined to those windows; and load-peak windows **promoted** on independent evidence of
+  leaving steady state (next section). Investigate.
+
+## Load peaks: common cause unless there is evidence (83w, q2m; user decision 2026-10-03, option C)
+A window at a load peak whose L vs λW deviation is inside the common-cause envelope stays
+**common cause** by default, worded "at a load peak; inside expected fluctuation — not a signal
+by itself; watch if it repeats or grows" (before 83w its label said common cause while the
+warning said "possible transition out of steady state"). It is **promoted to special cause**
+when independent evidence says the system is leaving steady state — also when its deviation is
+inside the measurement interval (an arrivals counter partly compensates: q2m). None of the
+evidence uses the deviation's noise envelope:
+
+| evidence | statistic | null (steady state) and test |
+|---|---|---|
+| (a) growing backlog | N(end) − N(start) over the window: the gauge (reading before the window to its last); when λ counts arrivals also arrivals − r̂·completions (flow balance, r̂ the windows' median counter / count ratio), and the smaller of the two (growth one instrument alone sees is `flow_imbalance`, a measurement question) | mean 0, variance ≤ 2·var(N) (non-negative autocorrelation); var(N) from the gauge in the windows outside the peak's episode (consecutive peak / drain windows) and its neighbours, floored at their mean (Poisson occupancy). Cantelli's one-sided bound P(X ≥ kσ) ≤ 1/(1+k²): distribution-free, so heavy-tailed queue excursions (ρ ≈ 0.95) are covered |
+| (b) W rising across consecutive windows | W(i−2) → W(i−1) → W(i) ("into") or W(i−1) → W(i) → W(i+1) ("through"): both rises | each rise beyond a t threshold on the two windows' standard errors of W around their own within-window trend (residual sd / √n_eff, n_eff from the residuals' integrated autocorrelation time; never below W/√completions), Welch–Satterthwaite df. A step to a higher steady load raises W once and holds: one rise is not enough |
+| (c) peak-to-peak growth | the largest \|R/reference − 1\| of each load episode, in time order (3+ episodes) | Kendall's S, exact one-sided p (Mahonian distribution) under exchangeability; ties count against the trend |
+
+**Multiplicity**: promotions have their own 5% family-wise budget per check (apart from the
+verdict's α), a third per evidence type: (a) Bonferroni over all (group, window) tests; (b) the
+same ×2 (two triples), both rises required (the intersection's level is at most either's); (c)
+once per group (Bonferroni over groups). The windows tested are those at a load peak; at least 4
+windows outside the episode are needed for (a) and (b).
+
+**Output**: the promoted window's `source` becomes `special_cause`; `classification.promoted`
+lists each one with `from` (common cause / measurement system), `deviation`
+(`within_envelope` / `within_measurement`), `reason` (which evidence, with its numbers) and every
+evidence item (value, interval, z and threshold, Cantelli bound or exact p); a promoted transient
+carries `promoted` and `promotion`; `classification.promotion` states the levels. The verdict
+stays about L = λW (an arrivals-counter spike can be `consistent` with a promoted window). The
+reason is in `warnings`, `summary`, `variation` and the panel hover; the significant evidence is
+cited as `littles_law_backlog_growth` (requests), `littles_law_latency_rise` (s) and
+`littles_law_peak_growth` (relative) statistics with intervals (the readings' own error: counter
+scrape timing and the instruments' spread; the windows' standard errors; the windows'
+measurement sds), source special cause.
 
 ## Estimator and measurement interval (per window, per group, and pooled)
 R = L̂ / (λ̂·Ŵ) with L̂, λ̂, S̄, C̄ the sub-step means and Ŵ = S̄/C̄.
@@ -103,8 +137,9 @@ differences smaller than that are not distinguishable from small-system behaviou
   run of transients.
 - **Transient windows** carry their load context: λ, W and L against the median window, the
   backlog change (gauge at the window's end − start), λ rising; `phase` = `peak` (λ ≥ 1.1× the
-  median and in the top quartile, W ≥ 1.5× the median, or a backlog building: possible transition
-  out of steady state, toward overload — called out in `warnings` and the summary), `drain` (a
+  median and in the top quartile, W ≥ 1.5× the median, or a backlog building; special cause —
+  beyond the envelope or promoted — is called out as a possible transition toward overload in
+  `warnings` and the summary, common cause as "not a signal by itself"), `drain` (a
   backlog draining after a peak) or `other` (a change confined to those windows: a deploy, an
   instance joining/leaving, queueing the timer misses, instrumentation).
 - **Overall verdict**: `L_high` / `L_low` when there is a systematic offset; else
@@ -149,12 +184,15 @@ dataset with the other datasets in params: `littles_law_ratio`, `littles_law_dis
 R − 1 with the measurement interval; the absolute difference and the common-cause scale in
 params), `mean_concurrency_L`, `lambda_times_W`, `littles_law_systematic_offset` (when present)
 and one `littles_law_transient` per transient window (its R − 1, interval, reference, source,
-phase). All marked with the inputs' uncertainty status (mark_statistics, spec §5.3).
+phase), and the promotion evidence (`littles_law_backlog_growth`, `littles_law_latency_rise`,
+`littles_law_peak_growth`) of each promoted window. All marked with the inputs' uncertainty status
+(mark_statistics, spec §5.3).
 `show(<concurrency dataset>, question, mark="littles")` draws per group, first, the discrepancy
 strip (L ÷ λW per window, log scale; dark band = measurement interval; light band = common-cause
 envelope around the reference; dashed reference when a systematic offset exists, labelled
 "systematic offset … (measurement system)"; special-cause transients shaded, common-cause ones
-hatched), then L and λ·W as window steps with their bands; the common-cause warning under it.
+hatched; promoted load-peak windows shaded with a bar along the top, the hover giving the
+reason), then L and λ·W as window steps with their bands; the common-cause warning under it.
 
 Validation (seeded discrete-event M/M/c, tests/unit/littles_sim.py; FAR = verdict not consistent):
 
@@ -171,8 +209,22 @@ Validation (seeded discrete-event M/M/c, tests/unit/littles_sim.py; FAR = verdic
 | hidden queueing at constant ρ 0.95 (50) | L_high | systematic L_high 50/50 |
 | missing instance, 1 of 3 gauges (50) | L_low | systematic L_low 50/50, no transients |
 
-With an arrivals counter the same spike is mostly invisible (1/75): arrivals ≠ completions while
-the backlog builds and the instruments partly compensate; the flow-balance assumption and the
-transient load context are where it shows. Real rate() lookback (not in the simulation) adds a
-large bias bound in a window where the latency sum's rate changes fast, so a spike can be within
-the interval there.
+After 60j, with an arrivals counter the same spike was mostly invisible (1/75): arrivals ≠
+completions while the backlog builds and the instruments partly compensate. Real rate() lookback
+(not in the simulation) adds a large bias bound in a window where the latency sum's rate changes
+fast, so a spike can be within the interval there — the promotion evidence does not depend on it.
+
+Load-peak promotion (83w, q2m; seeded littles_sim runs, seeds 1000+; "special" = the window's
+source is special cause, beyond the envelope or promoted):
+
+| scenario (seeds) | before 83w | after |
+|---|---|---|
+| consistent λ=2 c=4 (150) / ρ 0.95 λ=9.5 c=10 (150) / ρ 0.95, completions counter (75): runs with any promotion | — | 0 / 0 / 0 |
+| queueing the timer misses at ρ 0.95 (50): heavy-tailed excursions, some at a "peak" | 37 runs with special-cause windows | unchanged; 0 promotions (common-cause peaks stay common cause) |
+| load steps ρ 0.5→0.925→0.5 (75) | 2 runs with a special window | 2; 0 promotions (a first, baseline-scaled W test promoted 39/75: replaced by the consecutive-rise test) |
+| low traffic λ=0.3 / λ=0.05 (150 each) | 0 | 0 promotions |
+| ρ 1.25 spike 5 min, completions counter (75): peak window special | 49/75 (the rest common cause) | 75/75 (26 promoted on backlog growth) |
+| ρ 1.25 spike 5 min, arrivals counter (75): peak window special | 1/75 | 75/75 (74 promoted on backlog growth, gauge and flow balance agreeing); the same with the counter's semantics unknown (gauge alone) |
+| overload ρ 1.05 for 15 min, arrivals counter (75): any of its windows special | 0/75 | 71/75 (backlog growth in 68, W rising across consecutive windows in 46) |
+| six peaks ρ 0.8→1.05 every 20 min, queueing the timer misses (50): last three peaks all special | 42/50 | 44/50 (15 runs promote on peak-to-peak growth) |
+| six peaks ρ 0.6→0.9, same (50): last three peaks all special | 0/50 | 12/50 (13 runs promote on peak-to-peak growth: a distribution-free trend over 6 points at 1.7% has little power) |

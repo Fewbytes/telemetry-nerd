@@ -520,7 +520,7 @@ changed by a label; a verdict stays context.
 | `compare_seasonal` | the cycle-to-cycle spread (normal band) and a usual window | an unusual level, extremes, too many points outside the band; atypical reference cycles (a special cause in the history) | cycles excluded as missing; data caveats | cycles the user excluded (reason not stated) |
 | `fleet` | the fleet's per-step spread; behaviour groups (systemic structure: strata of the fleet) | outlying members (persistent, shifted, drifting, transient) | unknown spans, members missing / skipped, ended members | a member that went silent (ended or sick); an outlier episode on partial buckets |
 | `binding_verdict` | a role with no change against its reference cycles | a role that changed (level / episode) and its onset | data caveats per role | a change on data with measurement-system caveats |
-| `check_littles_law` | the small-system envelope; windows inside it | transient windows beyond measurement interval and envelope | the measurement interval; a systematic offset | — |
+| `check_littles_law` | the small-system envelope; windows inside it (a load-peak window inside it: "not a signal by itself") | transient windows beyond measurement interval and envelope; load-peak windows promoted on independent evidence of leaving steady state (backlog growth, W rising across consecutive windows, peak-to-peak growth; own 5% FWER; 83w) | the measurement interval; a systematic offset | — |
 
 ## 6. Charts and UI
 

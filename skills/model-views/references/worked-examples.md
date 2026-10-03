@@ -122,3 +122,26 @@ A percentile is refused, with a hint to record a histogram:
 
 Read: the error says the check needs the MEAN latency (`_sum` / `_count`). Do not work around it
 with a percentile; say the check cannot run and record the missing histogram with `gap_create`.
+
+## C. Little's law: a load spike measured with an arrivals counter
+
+Fixture: one instance, 4 workers, exponential service of mean 1 s, 2 requests/s (rho 0.5) except
+minutes 25-30 at 5 requests/s (rho 1.25): a queue builds, then drains. The request counter
+increments on arrival; the latency timer starts at arrival.
+
+<!-- call: scenario=littles-spike -->
+```json
+{"tool": "check_littles_law", "args": {"arrival_rate": "http_requests_total", "latency": "http_request_duration_seconds", "concurrency": "http_server_active_requests", "start": "now-1h", "end": "now", "window": "5m"}}
+```
+
+Read the discrepancy first: L - lambda x W = -0.10 requests (R 0.997, measurement interval -3% to
++3%). Verdict `consistent`: in the peak window the arrivals counter partly compensates (more
+arrivals in lambda, fewer completed latencies in W), so L is about lambda x W there and no window
+is `transient`. But `classification.promoted` lists the 25-30 min window: at a load peak,
+promoted from measurement system to special cause, `deviation: within_measurement`, because the
+backlog grew by +376 requests (gauge +376, arrivals - completions +377): 155 times the
+steady-state scale (threshold 26.8, Cantelli's bound). Say both: Little's law holds within the
+measurement, and the service left steady state toward overload at that peak (special cause;
+check saturation). Quote the `reason` and cite the `littles_law_backlog_growth` statistic
+(+376 requests with its interval). Without that evidence a load-peak window inside the envelope
+would be common cause: "not a signal by itself; watch if it repeats or grows".

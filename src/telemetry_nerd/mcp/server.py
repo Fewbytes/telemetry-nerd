@@ -408,8 +408,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         rate lookback bound — the counts' Poisson noise is not in it), `verdict`,
         `classification` and `warnings`. Sources: measurement system (the interval; a systematic
         offset over most windows), common cause (`common_cause`: at N requests/window L and λW
-        fluctuate ±X%; the windows' own spread), special cause (transient windows beyond both,
-        with `phase` peak|drain|other and load context). Verdict: consistent | L_high / L_low (a
+        fluctuate ±X%; the windows' own spread; a load-peak window inside it is "not a signal by
+        itself"), special cause (transient windows beyond both, with `phase` peak|drain|other and
+        load context; and load-peak windows in `classification.promoted`, promoted on evidence
+        of leaving steady state — backlog growth, W rising across consecutive windows, growth
+        across repeated peaks; own 5% FWER — with `reason` and numbers). Verdict: consistent | L_high / L_low (a
         systematic offset: time outside the latency timer, stuck/leaked requests, latency on a
         subset / concurrency missing instances, gauge missing bursts, latency on a superset) |
         inconsistent_in_windows (transients only); ≤5% false alarms overall. No concurrency

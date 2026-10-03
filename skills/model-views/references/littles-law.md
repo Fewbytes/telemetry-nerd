@@ -21,7 +21,7 @@ never a reason to leave the discrepancy out. `summary` is a ready sentence in th
 |---|---|---|---|
 | measurement system | the measurement interval: gauge sampling, the steady-state edge straddle, counter scrape timing, the rate() lookback; and a **systematic offset** (persistent L != lambda W across most windows) | `ci95`, `discrepancy.*_ci95`; `classification.systematic` (`source: measurement_system`) | an offset is instrumentation / model mismatch, not the process: unmeasured queueing, latency on a subset or superset, a missing instance, units |
 | common cause | the system's inherent variability: at N requests per window L and lambda W legitimately fluctuate +-X% (small systems do not average out), and the windows' own spread | `common_cause` (`rel95`, `spread_rel`, `warning`); windows with `source: common_cause` | do not chase single windows inside the envelope; quote the warning when present |
-| special cause | **transient** windows beyond the measurement interval around the reference AND beyond the common-cause envelope | `classification.transient` with `source: special_cause`, `phase`, `at_peak`, `load` | investigate: a load peak (leaving steady state, toward overload), a backlog draining, or a change confined to those windows |
+| special cause | **transient** windows beyond the measurement interval around the reference AND beyond the common-cause envelope; and load-peak windows **promoted** on independent evidence of leaving steady state | `classification.transient` with `source: special_cause`, `phase`, `at_peak`, `load`; `classification.promoted` (`from`, `deviation`, `reason`, `evidence`) | investigate: a load peak (leaving steady state, toward overload), a backlog draining, or a change confined to those windows |
 
 The measurement interval does not contain the counts' Poisson noise: over a window L and lambda W
 count the same requests, so that noise is not an error of the comparison. It is the common-cause
@@ -31,6 +31,28 @@ distinguishable from small-system behaviour"). Use it to qualify window differen
 hide them. Verdicts are Bonferroni-controlled to at most 5% false alarms over all windows and
 groups.
 
+## Load peaks: common cause unless there is evidence
+
+A window at a load peak whose deviation is inside the common-cause envelope is **common cause**
+by default: say "at a load peak; inside expected fluctuation — not a signal by itself; watch if
+it repeats or grows". Do not call it a transition out of steady state on its own. It is
+**promoted to special cause** (`classification.promoted`; on a transient, `promoted: true` and
+`promotion`) only on independent evidence of leaving steady state — also when its deviation is
+inside the measurement interval (an arrivals counter partly compensates, so L ≈ λW even while a
+queue builds):
+
+| evidence (`kind`) | what it says | test |
+|---|---|---|
+| `backlog_growth` | the backlog grew over the window: the gauge's N(end) − N(start), and arrivals − completions when the counter counts arrivals (the smaller of the two) | beyond Cantelli's distribution-free bound on √2·σ_N, σ_N from the gauge outside the peak's episode |
+| `latency_rise` | W rose across two consecutive windows into or through the peak (a step to a higher steady load rises once, then holds) | each rise beyond a t threshold on the windows' own standard errors (n_eff df) |
+| `peak_growth` | the deviation grows from load peak to load peak (3+ episodes) | Kendall's S, exact one-sided p |
+
+Promotions have their own 5% family-wise budget (a third per evidence type, Bonferroni over
+windows and groups). Quote `reason` — which evidence, with its numbers — and cite the
+`littles_law_backlog_growth` / `littles_law_latency_rise` / `littles_law_peak_growth` statistics
+(value with interval, source special cause). The verdict stays about L = λW: a spike measured
+with an arrivals counter can be `consistent` and still have a promoted window — report both.
+
 ## Verdicts and what they imply
 
 | verdict | meaning | usual causes (the hints list them) |
@@ -38,7 +60,7 @@ groups.
 | `consistent` | no systematic offset, no transient window | none needed; still report the discrepancy and read the assumptions |
 | `L_high` | a systematic offset: more in flight than lambda x W explains in most windows | queueing before the latency timer starts (accept queue, pool wait, middleware), requests stuck or leaked (`growing`; the offset is then `drifting`), latency measured on a subset (one route, successes only), a gauge counting broader things (connections) |
 | `L_low` | a systematic offset the other way | gauge missing instances, gauge missing short bursts (scrape too coarse), latency on a superset (client or upstream time, retries), arrival counter counting more than the gauge tracks |
-| `inconsistent_in_windows` | no systematic offset, but transient windows | read `classification.transient`: `phase: peak` (`at_peak`: possible transition out of steady state, toward overload — say so explicitly; correlate with lambda rising, W rising, backlog building), `drain` (recovery after a peak), `other` (a deploy, an instance joining or leaving, a routing or instrumentation change, queueing the timer misses) |
+| `inconsistent_in_windows` | no systematic offset, but transient windows | read `classification.transient`: `phase: peak` with `source: special_cause` (beyond the envelope or `promoted`: possible transition out of steady state, toward overload — say so explicitly, with the promotion `reason` when there is one), `phase: peak` with `source: common_cause` (not a signal by itself; watch if it repeats or grows), `drain` (recovery after a peak), `other` (a deploy, an instance joining or leaving, a routing or instrumentation change, queueing the timer misses) |
 | `insufficient` / `no_traffic` | cannot be judged | too few samples; widen the range or window |
 
 With a systematic offset, transient windows are relative to it (the `reference`), not to 1. A
@@ -67,7 +89,8 @@ the gap; never compute L from lambda x W.
   per-window rows (`windows`, columns in `window_columns`, each with its `source`), drawn by
   `show(..., mark="littles")`: the discrepancy strip on top (dark band measurement interval,
   light band common-cause envelope, dashed systematic level; special-cause transients shaded,
-  common-cause ones hatched), L and lambda x W under it.
+  common-cause ones hatched, promoted load-peak windows shaded with a bar on top and the reason
+  in the hover), L and lambda x W under it.
 - Series: re-run with `by=["instance"]` (or the join label). `groups` give a verdict per member;
   `unmatched` lists groups missing from a signal (`missing_in: concurrency` is a missing
   instance in the gauge and explains `L_low` for the total).
@@ -119,5 +142,11 @@ windows differ from that level beyond the measurement interval and the windows' 
 windows). Common cause: at about 2860 requests per window L and lambda W fluctuate +-8%. Assumed:
 the counter counts arrivals. Next: bind by instance; check whether the timer starts after the
 accept queue." Cite `evidence` (`littles_law_discrepancy`, `littles_law_ratio`,
-`littles_law_systematic_offset`, each `littles_law_transient`) in `finding_create`, with any
-`input_uncertainty` flag.
+`littles_law_systematic_offset`, each `littles_law_transient`, and the promotion statistics) in
+`finding_create`, with any `input_uncertainty` flag.
+
+A promoted load peak: "Over the hour L − λW = −0.10 requests (L ÷ λW 0.997, measurement interval
+−3% to +3%); verdict `consistent`. But the 25–30 min window is special cause, promoted from
+measurement system: at a load peak the backlog grew +376 requests (gauge +376, arrivals −
+completions +377), 155× the steady-state scale (threshold 27, Cantelli): leaving steady state
+toward overload. Check saturation (USE) in that window." 

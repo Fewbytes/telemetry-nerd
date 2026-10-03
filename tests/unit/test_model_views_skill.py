@@ -16,6 +16,7 @@ import pytest
 from mcp import Client
 
 from telemetry_nerd.mcp.server import INSTRUCTIONS, build_mcp
+from telemetry_nerd.model.time import iso
 from tests.unit.fakes import NOW, make_service
 from tests.unit.littles_sim import SimSource, simulate
 from tests.unit.test_verdicts import ScenarioSource
@@ -49,6 +50,9 @@ async def make(tmp_path, scenario: str):
         svc = make_service(tmp_path, ScenarioSource(seed=3, latency_shift=20, error_burst=(40, 47)))
         await svc.learn("default")
         return svc
+    if scenario == "littles-spike":  # rho 1.25 for minutes 25-30, an arrivals counter
+        sims = {"i0": simulate(602, rates=[(0.0, 2.0), (1500.0, 5.0), (1800.0, 2.0)], c=4)}
+        return make_service(tmp_path, source=SimSource(sims, START))
     timer = "arrival" if scenario == "littles-ok" else "service_start"
     sims = {"i0": simulate(5, rates=[(0.0, 9.5)], c=10, timer=timer)}
     return make_service(tmp_path, source=SimSource(sims, START))
@@ -79,7 +83,7 @@ pytestmark = pytest.mark.slow
 
 
 def test_every_scenario_has_calls():
-    assert set(CALLS) == {"red", "littles-ok", "littles-queue"}
+    assert set(CALLS) == {"red", "littles-ok", "littles-queue", "littles-spike"}
     assert [c["tool"] for c in CALLS["red"]] == [
         "binding_suggest", "binding_accept", "show_binding", "binding_verdict",
     ]  # fmt: skip
@@ -195,6 +199,26 @@ async def test_littles_hidden_queueing_example(tmp_path):
     assert o["datasets"]["concurrency"] == "d4"
     assert t["evidence"][0]["name"] == "littles_law_ratio"
     assert "MEAN latency" in t3  # the percentile refusal
+
+
+async def test_littles_spike_promotion_example(tmp_path):
+    out = await run(tmp_path, "littles-spike")
+    assert [err for _, err, _ in out] == [False]
+    o = results(out)[0][1]
+    assert o["verdict"] == "consistent" and not o["classification"]["transient"]
+    d = o["discrepancy"]
+    assert round(d["difference"], 2) == -0.10 and round(d["ratio"], 3) == 0.997
+    assert [round(100 * x) for x in d["relative_ci95"]] == [-3, 3]
+    (p,) = o["classification"]["promoted"]
+    assert p["window"][0] == iso(START + 1_500_000) and p["source"] == "special_cause"
+    assert p["from"] == "measurement_system" and p["deviation"] == "within_measurement"
+    (e,) = [e for e in p["evidence"] if e["significant"]]
+    assert e["kind"] == "backlog_growth"
+    assert (e["value"], e["gauge"], e["flow"]) == (376, 376, 377)
+    assert 155 <= e["z"] < 156 and round(e["k"], 1) == 26.8
+    assert "backlog grew +376 requests" in p["reason"] and "155× the steady-state" in p["reason"]
+    names = [x["name"] for x in o["total"]["evidence"]]
+    assert "littles_law_backlog_growth" in names
 
 
 # --- the prose names real tools and arguments ----------------------------------------------------
