@@ -1,5 +1,7 @@
 import pytest
 
+from telemetry_nerd.channel.format import describe_event
+from telemetry_nerd.core.events import Event, classify
 from tests.unit.fakes import make_service
 
 
@@ -35,10 +37,6 @@ def test_set_default_range_rejects_an_unparseable_value(tmp_path):
 def test_get_default_range_is_now_1h_before_anything_is_set(tmp_path):
     svc = make_service(tmp_path)
     assert svc.get_default_range() == "now-1h"
-
-
-from telemetry_nerd.channel.format import describe_event
-from telemetry_nerd.core.events import Event, classify
 
 
 def test_panel_rescoped_is_ambient_for_a_user_actor():
