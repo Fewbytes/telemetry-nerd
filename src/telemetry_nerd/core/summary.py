@@ -209,21 +209,21 @@ def summarize(
     expected = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
     if meta.representation == "quantile":
         return _summarize_quantile(meta, result, base, caveats, expected, top, coverage)
-    # Non-finite values (null, or NaN from a careless source) and expression cells that observed
-    # samples but have no value carry a count but no value.
-    # They must not bias the mean: weight only buckets that have an avg.
-    df = pl.from_arrow(result.buckets).with_columns(pl.col("avg", "min", "max").fill_nan(None))
+    # NaN / Inf (a positive observation: the source reported a non-finite value) and null (no
+    # value for a bucket that has samples: absence, cause unknown) both carry a count but no
+    # usable value; they must not bias the mean: weight only buckets that have an avg.
+    raw = pl.from_arrow(result.buckets)
+    df = raw.with_columns(pl.col("avg", "min", "max").fill_nan(None))
     # a null count is unknown (a code output that did not give it), never zero: such a bucket has
     # data when it has a value, and a series with unknown counts has the plain mean of its buckets
     known = pl.col("count").is_not_null()
-    # (a code output's min/max are optional: missing there means not given, not non-finite)
-    no_value = (
-        pl.col("avg").is_null()
-        if meta.code_node
-        else pl.any_horizontal(pl.col("avg", "min", "max").is_null())
-    )
-    if df.filter((pl.col("count") > 0) & no_value).height:
+    # (a code output's min/max are optional: missing there means not given, not missing data)
+    cols = ("avg",) if meta.code_node else ("avg", "min", "max")
+    sampled = raw.filter(pl.col("count") > 0)
+    if sampled.filter(pl.any_horizontal(pl.col(*cols).is_nan())).height:
         caveats.append("non_finite")
+    if sampled.filter(pl.any_horizontal(pl.col(*cols).is_null())).height:
+        caveats.append("no_value")
     total = pl.col("count").filter(pl.col("avg").is_not_null()).sum()
     weighted = (
         pl.when(total > 0).then((pl.col("avg") * pl.col("count")).sum() / total).otherwise(None)

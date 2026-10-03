@@ -356,7 +356,7 @@ class FleetOps:
             churn["counts"] = {"appeared": len(appeared), "stopped_reporting": len(stopped)}
         if any(s["state"] == "silent" for s in stopped):
             churn["note"] = (
-                "a silent member has no samples since last_seen; this says nothing about a staleness "
+                "a silent member has no values since last_seen; this says nothing about a staleness "
                 "marker (our range queries cannot show markers, so absence of one here is not "
                 "evidence that none was written), so the data cannot tell why; it "
                 "may have been replaced, or may return; check them"

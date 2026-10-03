@@ -277,12 +277,13 @@ async def test_complete_fetch_is_not_partial():
 
 @respx.mock
 @pytest.mark.parametrize("bad", ["NaN", "+Inf", "-Inf"])
-async def test_non_finite_values_become_null_but_count_is_kept(bad):
+async def test_non_finite_values_become_nan_but_count_is_kept(bad):
     values = {"min": bad, "max": bad, "avg": bad}
     respx.get(**ROUTE).mock(side_effect=_vm_responder([1700000100], [1700000100], values))
     res = await PromQLSource("vm", BASE).fetch("up", RNG, 60_000)
     row = res.buckets.to_pylist()[0]
-    assert (row["avg"], row["min"], row["max"], row["count"]) == (None, None, None, 4)
+    # NaN (a positive observation), distinct from null (no value)
+    assert all(math.isnan(row[f]) for f in ("avg", "min", "max")) and row["count"] == 4
     assert res.partial == 0
 
 
@@ -599,18 +600,16 @@ async def test_expression_fetch_keeps_samples_without_a_value_and_drops_filled_b
     respx.get(**ROUTE).mock(side_effect=responder)
     src = PromQLSource("p", BASE, flavor="prometheus")
     res = await src.fetch("rate(x[5m])", RNG, 60_000)
-    sa, sb = series_id("p", {"i": "a"}), series_id("p", {"i": "b"})
+    sa = series_id("p", {"i": "a"})
     got = {(r["series_id"], r["ts_ms"]): (r["count"], r["avg"]) for r in res.buckets.to_pylist()}
     # a@100: value and samples. a@160: lookback-filled value, no samples: dropped.
-    # a@40 / b@100: samples arrived but the expression has no value (rate needs two): kept with
-    # their count and a null value, not read as empty (1h9.16)
-    assert got == {
-        (sa, 1_700_000_040_000): (4, None),
-        (sa, 1_700_000_100_000): (3, 1.0),
-        (sb, 1_700_000_100_000): (1, None),
-    }
-    assert {r["series_id"] for r in res.series.to_pylist()} == {sa, sb}
+    # a@40: samples arrived but the expression has no value: kept with its count and a null
+    # value, not read as empty (1h9.16). b has samples and no value anywhere (or labels that
+    # match no value series): no all-null series is invented; disclosed once.
+    assert got == {(sa, 1_700_000_040_000): (4, None), (sa, 1_700_000_100_000): (3, 1.0)}
+    assert [r["series_id"] for r in res.series.to_pylist()] == [sa]
     assert res.partial == 0
+    assert len(res.notes) == 1 and "1 series had samples but no value" in res.notes[0]
 
 
 _TWO_NAMES = [

@@ -336,7 +336,8 @@ def compute_profile(
     df = df.filter(pl.col("ts_ms").is_between(start_ms, end_ms))
     in_data = df.filter(pl.col("count") > 0)
     valid = in_data.filter(pl.col("avg").is_not_null() & pl.col("avg").is_not_nan())
-    non_finite = in_data.height - valid.height
+    non_finite = in_data.filter(pl.col("avg").is_nan()).height
+    no_value = in_data.filter(pl.col("avg").is_null()).height
     if extremes:
         valid = valid.with_columns(
             pl.col("min").fill_nan(None).fill_null(pl.col("avg")).alias("min"),
@@ -358,6 +359,8 @@ def compute_profile(
         caveats.append("quantile_series")
     if non_finite:
         caveats.append("non_finite")
+    if no_value:
+        caveats.append("no_value")
 
     per: list[SeriesProfile] = []
     groups = {k[0]: g for k, g in valid.group_by("series_id", maintain_order=True)}

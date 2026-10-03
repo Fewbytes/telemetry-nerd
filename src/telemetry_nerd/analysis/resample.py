@@ -16,8 +16,15 @@ def rebucket(buckets: pa.Table, new_step_ms: int) -> pa.Table:
     """Merge buckets into coarser ones ending at multiples of new_step_ms."""
     if buckets.num_rows == 0:
         return buckets
-    df = pl.from_arrow(buckets)
+    raw = pl.from_arrow(buckets)
+    # NaN (non-finite, a positive observation) never poisons a merged value; a merged bucket
+    # with no finite value stays NaN where any member was NaN, null (no value) otherwise
+    df = raw.with_columns(pl.col("avg", "min", "max").fill_nan(None))
+    nan_cell = pl.any_horizontal(pl.col("avg", "min", "max").is_nan()).alias("_nan")
+    df = df.with_columns(raw.select(nan_cell))
     k = new_step_ms
+    nan_in = pl.col("_nan").any()
+    nan = pl.lit(math.nan)
     total = pl.col("count").sum()
     weight = pl.col("count").filter(pl.col("avg").is_not_null()).sum()  # null avg carries no mean
     # a null count is unknown (code outputs), never zero: where any is unknown the merged bucket
@@ -31,11 +38,15 @@ def rebucket(buckets: pa.Table, new_step_ms: int) -> pa.Table:
             .then(pl.col("avg").mean())
             .when(weight > 0)
             .then((pl.col("avg") * pl.col("count")).sum() / weight)
+            .when(nan_in)
+            .then(nan)
             .otherwise(None)
             .alias("avg"),
             *(  # a bucket with a value but no min/max (not given by code): the envelope is unknown
                 pl.when((pl.col(c).is_null() & pl.col("avg").is_not_null()).any())
                 .then(None)
+                .when(pl.col(c).is_null().all() & nan_in)
+                .then(nan)
                 .otherwise(getattr(pl.col(c), c)())
                 .alias(c)
                 for c in ("min", "max")

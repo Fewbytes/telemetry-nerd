@@ -29,7 +29,9 @@ const CAVEATS: Record<string, Describe> = {
   fake_resolution: () => "The step is finer than the source's scrape interval; the extra resolution is not real.",
   partial: () => "Some incomplete source cells were dropped.",
   empty: () => "The query returned no data.",
-  non_finite: () => "Some buckets had samples but no finite value (NaN, infinite, or the expression gave none, e.g. rate needs two samples); they are not drawn (their counts are kept).",
+  non_finite: () => "Some values were NaN or infinite and are not drawn (their counts are kept).",
+  no_value: () =>
+    "Some buckets had samples but the query gave no value for them; they are not drawn (their counts are kept). The cause is unknown.",
   estimated_counts: () =>
     "Counts are increase() estimates: Prometheus extrapolates within each step, so they are not whole numbers.",
   non_monotonic: () =>

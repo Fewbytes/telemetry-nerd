@@ -337,10 +337,13 @@ that just restarted, a burst), so it is deliberately not guessed at: documented 
 for the reader: start the window a little before the period of interest.
 
 **Samples without a value (`1h9.16`).** A bucket where the derived count observed samples but the
-expression has no value (rate/increase with one sample in the window, value filtered) is kept with
-its count and null values, like a non-finite cell: bucket_state (samples mode) reads the samples
-that arrived (OK/PARTIAL), never EMPTY, and summaries raise `non_finite` (the value is missing, the
-samples are not). Values without a count (lookback fill) are still dropped.
+expression has no value (cause unknown: e.g. a window too short for the function) is kept with its
+count and null values; null means no value, whereas a non-finite cell is NaN (a positive
+observation, caveat `non_finite`). bucket_state (samples mode) reads the samples that arrived
+(OK/PARTIAL), never EMPTY, and summaries raise `no_value` (absence; the cause is never asserted).
+Values without a count (lookback fill) are still dropped. A series with no value anywhere is left
+out and disclosed once as a source note: it cannot be told from a count-query series whose labels
+match no expression series.
 
 **Expression path observed counts (decision, `1h9.11`).** A non-selector expression's values come
 from a subquery `(expr)[step:res]`; its `count_over_time` counts instant evaluations, which lookback

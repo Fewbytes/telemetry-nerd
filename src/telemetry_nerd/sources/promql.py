@@ -280,10 +280,10 @@ class PromQLSource:
                         ts, value = float(sample[0]), float(sample[1])
                     except (IndexError, TypeError, ValueError) as e:
                         raise _malformed(f"malformed sample {sample!r} in query result") from e
-                    # NaN / +-Inf cannot be represented in JSON (or averaged): store null
-                    # and keep the bucket's count; summaries flag it as `non_finite`.
+                    # NaN / +-Inf cannot be averaged: store NaN (a positive observation, not
+                    # null = no value) and keep the bucket's count; summaries flag `non_finite`.
                     cells.setdefault((sid, round(ts * 1000)), {})[field] = (
-                        value if math.isfinite(value) else None
+                        value if math.isfinite(value) else math.nan
                     )
         if len(labels_by_sid) > self.limits.max_series:
             raise LimitExceeded(
@@ -295,17 +295,14 @@ class PromQLSource:
                 f"query returned {len(cells)} buckets (limit {self.limits.max_points})",
                 hint="use a coarser step, a shorter range, or narrow the selector",
             )
-        # A bucket needs all of avg/min/max/count from the source; a half-returned cell
-        # would otherwise become a bucket with data but no mean. Drop it, count it.
-        complete = {k: c for k, c in cells.items() if all(f in c for f in _FIELDS)}
-        complete = {k: c for k, c in complete.items() if c["count"] is not None}
+        notes_extra: tuple[str, ...] = ()
         if derived:
             # Values and count come from different queries here. Values without a count are
             # filled (lookback / range carried past the last sample): no sample arrived in the
             # bucket, so it is empty and dropped. A count without values is samples the
-            # expression gives no value for (rate needs two): kept with null values, like a
-            # non-finite cell, so bucket_state reads the samples that arrived (not EMPTY) and
-            # summaries flag the missing values (1h9.16).
+            # expression has no value for (cause unknown): kept with null values (null = no
+            # value, NaN = non-finite), so bucket_state reads the samples that arrived (not
+            # EMPTY) and summaries flag `no_value` (1h9.16).
             def no_value(c: dict) -> bool:
                 return not (c.keys() & _VALUES)
 
@@ -315,8 +312,23 @@ class PromQLSource:
                 if c.get("count") is not None and (no_value(c) or all(f in c for f in _FIELDS))
             }
             partial = sum(1 for c in cells.values() if 0 < len(c.keys() & _VALUES) < 3)
+            # a series with no value anywhere is either the expression's own all-no-value
+            # series or a count-query series whose labels match no expression series: telling
+            # them apart is impossible, so none is invented; disclosed once
+            valued = {sid for (sid, _), c in complete.items() if c["avg"] is not None}
+            dropped = {sid for sid, _ in complete} - valued
+            if dropped:
+                complete = {k: c for k, c in complete.items() if k[0] in valued}
+                notes_extra = (
+                    f"{len(dropped)} series had samples but no value anywhere in the window "
+                    + "(or labels that match no value series) and are left out",
+                )
             labels_by_sid = {sid: labels_by_sid[sid] for sid, _ in complete}
         else:
+            # A bucket needs all of avg/min/max/count from the source; a half-returned cell
+            # would otherwise become a bucket with data but no mean. Drop it, count it.
+            complete = {k: c for k, c in cells.items() if all(f in c for f in _FIELDS)}
+            complete = {k: c for k, c in complete.items() if c["count"] is not None}
             partial = len(cells) - len(complete)
         cells = complete
         keys = sorted(cells)
@@ -339,7 +351,9 @@ class PromQLSource:
             schema=SERIES_SCHEMA,
         )
         failed, notes = _completeness(rng, *results)
-        return FetchResult(buckets, series, partial=partial, failed=failed, notes=notes)
+        return FetchResult(
+            buckets, series, partial=partial, failed=failed, notes=(*notes, *notes_extra)
+        )
 
     async def _get_json(
         self, path: str, params: Mapping[str, str | list[str]], timeout_s: float | None = None

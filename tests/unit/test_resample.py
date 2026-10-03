@@ -98,3 +98,48 @@ def test_rebucket_invariants(data, factor):
         after_rows = [r for r in out.to_pylist() if r["count"]]
         after = sum(r["avg"] * r["count"] for r in after_rows) / total
         assert math.isclose(before, after, rel_tol=1e-9, abs_tol=1e-6)
+
+
+def test_rebucket_mixes_count_only_and_valued_buckets_without_bias():
+    """1h9.16: a count-only (null value) bucket carries no mean; NaN never poisons a merge."""
+    import math
+
+    import pyarrow as pa
+
+    from telemetry_nerd.analysis.resample import rebucket
+    from telemetry_nerd.model.series import BUCKET_SCHEMA
+
+    def tbl(rows):
+        cols = list(zip(*rows, strict=True))
+        return pa.table(
+            dict(
+                zip(
+                    ["ts_ms", "series_id", "avg", "min", "max", "count"],
+                    map(list, cols),
+                    strict=True,
+                )
+            ),
+            schema=BUCKET_SCHEMA,
+        )
+
+    nan = math.nan
+    out = rebucket(
+        tbl(
+            [
+                (1000, "a", 2.0, 1.0, 3.0, 2),
+                (2000, "a", None, None, None, 5),
+                (3000, "b", None, None, None, 5),
+                (4000, "b", None, None, None, 5),
+                (5000, "c", nan, nan, nan, 5),
+                (6000, "c", 4.0, 4.0, 4.0, 1),
+                (7000, "d", nan, nan, nan, 5),
+                (8000, "d", nan, nan, nan, 5),
+            ]
+        ),
+        10_000,
+    ).to_pylist()
+    by = {r["series_id"]: r for r in out}
+    assert (by["a"]["avg"], by["a"]["min"], by["a"]["max"], by["a"]["count"]) == (2.0, 1.0, 3.0, 7)
+    assert (by["b"]["avg"], by["b"]["count"]) == (None, 10)
+    assert (by["c"]["avg"], by["c"]["max"]) == (4.0, 4.0)
+    assert math.isnan(by["d"]["avg"]) and by["d"]["count"] == 10

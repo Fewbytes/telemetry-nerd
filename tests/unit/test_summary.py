@@ -354,3 +354,21 @@ def test_a_series_unknown_everywhere_has_no_coverage_figure():
     rows = [(t, "a", 1.0, 1.0, 1.0, 1) for t in range(0, 4000, 1000)]
     out = run(replace(meta(end=3000), failed_spans=[[0, 3000, "boom"]]), result(rows, {"a": "a"}))
     assert out["series"][0]["coverage"]["pct"] is None
+
+
+def test_samples_without_a_value_flag_no_value_not_non_finite():
+    """1h9.16: a series of count-only buckets has no mean/min/max (never 0), flags `no_value`
+    (absence, cause unknown), and is no gap: its samples arrived."""
+    rows = [(t * 1000, "a", None, None, None, 4) for t in range(3)]
+    out = run(meta(end=2000), result(rows, {"a": "a"}))
+    assert "no_value" in out["caveats"] and "non_finite" not in out["caveats"]
+    s = out["series"][0]
+    assert (s["mean"], s["min"], s["max"]) == (None, None, None)
+    assert s["gaps"] == 0
+    assert json.dumps(out, allow_nan=False)
+
+
+def test_nan_buckets_flag_non_finite_not_no_value():
+    nan = float("nan")
+    out = run(meta(end=0), result([(0, "a", nan, nan, nan, 4)], {"a": "a"}))
+    assert "non_finite" in out["caveats"] and "no_value" not in out["caveats"]
