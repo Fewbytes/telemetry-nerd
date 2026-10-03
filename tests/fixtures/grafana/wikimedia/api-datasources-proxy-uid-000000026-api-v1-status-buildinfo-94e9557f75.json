@@ -1,0 +1,12 @@
+{
+ "request": {
+  "method": "GET",
+  "path": "/api/datasources/proxy/uid/000000026/api/v1/status/buildinfo",
+  "params": []
+ },
+ "response": {
+  "status": 200,
+  "content_type": "application/json",
+  "body": "{\"status\":\"success\",\"data\":{\"version\":\"0.38.0\",\"revision\":\"non-git\",\"branch\":\"non-git\",\"buildUser\":\"pbuilder@build2001\",\"buildDate\":\"20250414-09:27:40\",\"goVersion\":\"go1.24.2\"}}"
+ }
+}
