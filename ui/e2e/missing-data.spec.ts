@@ -31,13 +31,15 @@ test("a series with a hole shows a coverage rug and a located caveat", async ({ 
   if (!plot || !tb) throw new Error("tip or plot not laid out");
   expect(tb.x).toBeGreaterThanOrEqual(plot.x - 1);
   expect(tb.x + tb.width).toBeLessThanOrEqual(plot.x + plot.width + 1);
-  // pointer at the right and bottom edges of the rug: the tip stays inside the plot area
+  // pointer on the rug's last cell (the canvas spans the axis gutters too; cells span only the
+  // uPlot plotting area): the tip stays inside the plot area
   const rug = await el.locator("[data-rug]").boundingBox();
-  if (!rug) throw new Error("rug not laid out");
-  await page.mouse.move(rug.x + rug.width - 2, rug.y + 4);
+  const over = await el.locator(".u-over").first().boundingBox();
+  if (!rug || !over) throw new Error("rug or plotting area not laid out");
+  await page.mouse.move(over.x + over.width - 2, rug.y + 4);
+  await expect(tip).toBeVisible();
   const edge = await tip.boundingBox();
-  expect(edge).not.toBeNull();
-  if (!edge) return;
+  if (!edge) throw new Error("tip not laid out");
   expect(edge.x + edge.width).toBeLessThanOrEqual(plot.x + plot.width + 1);
   expect(edge.y + edge.height).toBeLessThanOrEqual(plot.y + plot.height + 1);
 });
