@@ -95,6 +95,8 @@ from telemetry_nerd.core.evidence_discipline import (
     Fetched,
     Listing,
     check_claim,
+    citable_hint,
+    citable_statistics,
     derive_sources,
     evidence_cover,
     expr_metrics,
@@ -343,6 +345,33 @@ class WorkspaceService:
                 case StatisticRef(dataset=did):
                     out.append(did)
         return list(dict.fromkeys(out))
+
+    def citable_statistics(self, f: Finding) -> tuple[list[dict], str | None]:
+        """(labelled op statistics of the datasets f's panels and annotations draw, a hint to
+        cite them) (hk2r): a panel carries no variation source, the ops' statistics do."""
+        dids: list[str] = []
+        for ref in f.evidence:
+            pid = None
+            if isinstance(ref, PanelRef):
+                pid = ref.panel
+            elif isinstance(ref, AnnotationRef):
+                try:
+                    pid = self.objects.get_annotation(ref.annotation).panel
+                except NotFound:
+                    pid = None
+            if pid is None:
+                continue
+            try:
+                dids += self.workspace.get_panel(pid).dataset_ids
+            except NotFound:
+                continue
+        dids = list(dict.fromkeys(dids))
+        stats = citable_statistics(
+            self.datasets.labelled_statistics(dids), [e.model_dump() for e in f.evidence]
+        )
+        if not stats:
+            return [], None
+        return stats, citable_hint(stats, "undetermined" in f.sources)
 
     def _statistic_sources(self, st: dict) -> set[str] | None:
         return self.datasets.statistic_sources(

@@ -15,9 +15,11 @@ from telemetry_nerd.charts.spec import Window
 from telemetry_nerd.charts.yview import YView
 from telemetry_nerd.core.cause_hint import cause_hint
 from telemetry_nerd.core.code_ops import CodeDisabled
+from telemetry_nerd.core.evidence_discipline import citable_statistics
 from telemetry_nerd.core.littles_compact import compact as littles_compact
 from telemetry_nerd.core.littles_compact import statistics as littles_statistics
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
+from telemetry_nerd.core.wire import with_cite
 from telemetry_nerd.mcp.shapes import EvidenceContext, ShapeError, finding_in, hypothesis_scope
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.jsonsafe import dumps
@@ -459,9 +461,13 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                         f"baseline={baseline!r} is fetched separately: drop baseline_start/end"
                     )
                 return _dump(
-                    await service.analyze_reference(dataset, baseline, baseline_cycles, tz)
+                    with_cite(
+                        await service.analyze_reference(dataset, baseline, baseline_cycles, tz)
+                    )
                 )
-            return _dump(await service.analyze_profiled(dataset, baseline_start, baseline_end))
+            return _dump(
+                with_cite(await service.analyze_profiled(dataset, baseline_start, baseline_end))
+            )
         except SourceError as e:
             raise _source_error(e) from e
         except (NotFound, ValueError) as e:
@@ -506,7 +512,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         special cause back then, user-excluded = undetermined."""
         try:
             return _dump(
-                await service.compare_seasonal(dataset, cycles, tz, exclude, threshold=threshold)
+                with_cite(
+                    await service.compare_seasonal(
+                        dataset, cycles, tz, exclude, threshold=threshold
+                    )
+                )
             )
         except SourceError as e:
             raise _source_error(e) from e
@@ -578,10 +588,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                 warmup=warmup, latency_unit=latency_unit, arrivals=arrivals,
             )  # fmt: skip
             if detail:
-                return _dump(out)
+                return _dump(with_cite(out))
             res = littles_compact(out, group)
             service.datasets.record_statistics(littles_statistics(res))
-            return _dump(res)
+            return _dump(with_cite(res))
         except SourceError as e:
             raise _source_error(e) from e
         except (NotFound, ValueError) as e:
@@ -637,7 +647,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         partial buckets); churn, missing / unknown members = measurement system (a silent
         member: undetermined). Draw with show(dataset, question, mark="fleet")."""
         try:
-            return _dump(service.fleet(dataset, by, scale, normalise, band_window))
+            return _dump(with_cite(service.fleet(dataset, by, scale, normalise, band_window)))
         except (NotFound, ValueError) as e:
             raise ToolError(str(e)) from e
 
@@ -1371,7 +1381,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise _source_error(e) from e
         except (NotFound, ValueError) as e:
             raise _fail(e) from e
-        return _dump(out)
+        return _dump(with_cite(out))
 
     @mcp.tool()
     def catalog_relations(
@@ -1818,7 +1828,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         def panels_of(did: str) -> list[str]:
             return [p.id for p in ws.workspace.list_panels() if p.dataset_ids[:1] == [did]]
 
-        return EvidenceContext(panels_of, service.datasets.statistic_methods)
+        def statistics_of(did: str) -> list[dict]:
+            return citable_statistics(service.datasets.labelled_statistics([did]), [], 3)
+
+        return EvidenceContext(panels_of, service.datasets.statistic_methods, statistics_of)
 
     @mcp.tool()
     def finding_create(
@@ -1861,10 +1874,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         cited evidence: refused otherwise, with the datasets that hold them; or pass scope_note
         saying why the claim reaches beyond its evidence (flagged beyond_evidence).
         Returns {finding, url, scope: {status covered|beyond_evidence|undetermined, ...},
-        uncertainty?: [{evidence, flag, message}], sources?, source_flags?, read_as?}: what the
-        server derived (scope against evidence, uncertainty unknown / lower bound, variation
-        sources: taken from the op that emitted a statistic, or undetermined; read_as: how a
-        short form was read); report them with the finding."""
+        uncertainty?: [{evidence, flag, message}], sources?, source_flags?, citable_statistics?,
+        cite?, read_as?}: what the server derived (scope against evidence, uncertainty unknown /
+        lower bound, variation sources: taken from the op that emitted a statistic, or
+        undetermined; citable_statistics: labelled op statistics of the cited panels' datasets,
+        to cite as is; read_as: how a short form was read); report them with the finding."""
         args = {"claim": claim, "evidence": evidence, "scope": scope, "caveats": caveats,
                 "hypothesis": hypothesis, "stance": stance, "hypotheses": hypotheses,
                 "answers_panel": answers_panel,
@@ -1889,6 +1903,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             out["sources"] = f.sources  # spec §5.4: variation sources of the cited statistics
         if f.source_flags:
             out["source_flags"] = [e.model_dump() for e in f.source_flags]
+        citable, cite = ws.citable_statistics(f)
+        if citable:  # hk2r: the ops' labelled statistics behind the cited panels
+            out["citable_statistics"] = citable
+            out["cite"] = cite
         if hint := cause_hint(f, ws.objects.list_hypotheses()):
             out["hint"] = hint
         if read_as:

@@ -46,7 +46,9 @@ def _size(obj) -> int:
 
 
 def _unflagged_size(out: dict) -> int:
-    return _size({k: v for k, v in out.items() if k != "flagged_groups"})
+    # the closing `cite` line (hk2r) is one line, bounded on its own
+    assert len(out.get("cite", "")) < 400
+    return _size({k: v for k, v in out.items() if k not in ("flagged_groups", "cite")})
 
 
 def test_fifty_groups_fit_and_the_flagged_one_is_never_cut(tmp_path):

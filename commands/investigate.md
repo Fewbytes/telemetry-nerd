@@ -48,13 +48,17 @@ instructions apply throughout.
    out). A `hint` in finding_create's result means a special-cause finding's subject has no open
    hypothesis yet.
 6. **Never claim without evidence.** (A signal you wish existed: `gap_create`.) A claim becomes `finding_create` with scope (source,
-   selector, range, step) and evidence (cite the annotation id for an onset or window), and attaches to a hypothesis with its stance. Refuting
+   selector, range, step) and evidence (for a change or deviation, the op's `evidence` statistic as
+   returned, which carries its variation source; the panel and the annotation id for an onset or
+   window beside it), and attaches to a hypothesis with its stance. Refuting
    evidence is recorded too. Name only the entities (services, pods, jobs) your cited evidence
    covers: a claim naming one outside it is refused with the datasets that hold it, so cite
    those; only when the claim must reach beyond its evidence pass `scope_note` saying why (the
    finding is flagged beyond_evidence). The result's `scope` (covered, beyond_evidence,
    undetermined) and `source_flags` (variation source derived from an op, or undetermined) are
-   part of the finding: report them. If the data cannot answer (gaps, settling data, too few
+   part of the finding: report them. `citable_statistics` in the result are the ops' labelled
+   statistics behind the panels you cited: cite the matching one in a finding rather than leave
+   the source undetermined. If the data cannot answer (gaps, settling data, too few
    samples), say so as the finding.
 7. **Report** in a few lines: scope, hypotheses with status, findings with ids (f1, p3 ...) with
    their scope status and source flags, and what remains unexplained or unmeasurable. Share the workspace URL.

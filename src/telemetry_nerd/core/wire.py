@@ -6,6 +6,7 @@ from __future__ import annotations
 import math
 from collections import OrderedDict
 from collections.abc import Hashable, Iterable
+from typing import Any
 
 from telemetry_nerd.analysis.sources import MEASUREMENT_CAVEATS, SOURCES
 
@@ -90,3 +91,48 @@ class Memo[V]:
         self._items[key] = value
         if len(self._items) > self._size:
             self._items.popitem(last=False)
+
+
+_CITE_RANK = {"special_cause": 0, "undetermined": 1, "measurement_system": 2, "common_cause": 3}
+
+
+def _statistic_paths(obj: Any, path: str = "") -> Iterable[tuple[str, dict]]:
+    if isinstance(obj, dict):
+        if obj.get("kind") == "statistic" and "dataset" in obj and "value" in obj:
+            yield path, obj
+            return
+        for k, v in obj.items():
+            yield from _statistic_paths(v, f"{path}.{k}" if path else str(k))
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            yield from _statistic_paths(v, f"{path}[{i}]")
+
+
+def cite_line(out: dict, limit: int = 3) -> str | None:
+    """A one-line pointer to an op result's citable `evidence` statistics (hk2r): where they
+    are, labelled ones first (special cause first), and that they go to finding_create as is.
+    None when the result carries no statistic."""
+    found = list(_statistic_paths(out))
+    if not found:
+        return None
+    labelled = sorted(
+        (x for x in found if x[1].get("source")), key=lambda x: _CITE_RANK.get(x[1]["source"], 9)
+    )
+    picks = labelled[:limit] or found[:1]
+    where = ", ".join(
+        f"{p} ({st['name']}" + (f", {st['source']})" if st.get("source") else ")")
+        for p, st in picks
+    )
+    more = len(labelled or found) - len(picks)
+    return (
+        f"cite: evidence {where}"
+        + (f" (+{more} more)" if more > 0 else "")
+        + ": pass as is to finding_create(evidence=[...]); its source is kept, a panel has none"
+    )
+
+
+def with_cite(out: Any) -> Any:
+    """`out` with its `cite` line last (a dict result carrying evidence statistics)."""
+    if isinstance(out, dict) and (line := cite_line(out)):
+        out = {k: v for k, v in out.items() if k != "cite"} | {"cite": line}
+    return out

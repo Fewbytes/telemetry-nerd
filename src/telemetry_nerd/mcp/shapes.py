@@ -78,10 +78,12 @@ class ShapeError(ValueError):
 @dataclass
 class EvidenceContext:
     """What the workspace knows, for reading ids: the panels drawing a dataset (as their main
-    dataset), and the methods ops recorded for a (dataset, statistic name)."""
+    dataset), the methods ops recorded for a (dataset, statistic name), and the labelled
+    statistics ops returned for a dataset (citable as is, special cause first)."""
 
     panels_of: Callable[[str], list[str]] = lambda _d: []
     methods_of: Callable[[str, str], set[str]] = lambda _d, _n: set()
+    statistics_of: Callable[[str], list[dict]] = lambda _d: []
 
 
 @dataclass
@@ -109,10 +111,20 @@ def _from_dataset(did: str, ctx: EvidenceContext, where: str, notes: list[str]) 
             f"{where}: dataset {did} is drawn by several panels ({', '.join(panels)}); cite the "
             f"one the claim rests on, e.g. {_ex('panel', panel=panels[0])}"
         )
+    # hk2r: the op statistic first (it carries the variation source), the panel second
+    if stats := ctx.statistics_of(did):
+        names = ", ".join(f"{st['name']} ({st['source']})" for st in stats[:3])
+        raise ShapeError(
+            f"{where}: dataset {did} is not evidence by itself. Ops returned labelled "
+            f"statistics for it ({names}): cite one as returned, its source kept, e.g. "
+            f"{example(stats[0])}; or draw it and cite the panel "
+            f'(show(dataset="{did}", question=...) then {_ex("panel")}), which carries no source'
+        )
     raise ShapeError(
-        f"{where}: dataset {did} is not evidence by itself and no panel draws it. Draw it and "
-        f'cite the panel (show(dataset="{did}", question=...) then {_ex("panel")}), or cite a '
-        f"statistic an op returned for it, as returned: {_ex('statistic', dataset=did)}"
+        f"{where}: dataset {did} is not evidence by itself and no panel draws it. Cite a "
+        f"statistic an op returned for it, as returned (it carries the variation source): "
+        f"{_ex('statistic', dataset=did)}; or draw it and cite the panel "
+        f'(show(dataset="{did}", question=...) then {_ex("panel")}), which carries no source'
     )
 
 

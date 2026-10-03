@@ -40,6 +40,12 @@ _SCHEMA = [
     """CREATE TABLE IF NOT EXISTS op_statistics (
         dataset VARCHAR, name VARCHAR, method VARCHAR, value DOUBLE, source VARCHAR,
         PRIMARY KEY (dataset, name, method, value, source))""",
+    # how the op stated the statistic, so a finding resting on its panel can be shown it as a
+    # copyable citation (hk2r): interval bounds (NULL = unknown), exact, and its params as JSON
+    "ALTER TABLE op_statistics ADD COLUMN IF NOT EXISTS lo DOUBLE",
+    "ALTER TABLE op_statistics ADD COLUMN IF NOT EXISTS hi DOUBLE",
+    "ALTER TABLE op_statistics ADD COLUMN IF NOT EXISTS exact BOOLEAN",
+    "ALTER TABLE op_statistics ADD COLUMN IF NOT EXISTS params VARCHAR",
 ]
 
 

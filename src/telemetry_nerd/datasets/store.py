@@ -350,18 +350,50 @@ class DatasetStore:
         return out
 
     def record_statistics(self, stats: list[dict]) -> None:
-        """Remember evidence statistics an op emitted, with their variation `source`."""
+        """Remember evidence statistics an op emitted, with their variation `source` and how
+        they were stated (interval, exact, params)."""
         rows = [
             (st["dataset"], st["name"], st.get("method") or "", float(st["value"]),
-             st.get("source") or "")
+             st.get("source") or "", *_bounds(st.get("interval")), bool(st.get("exact")),
+             _params_json(st.get("params")))
             for st in stats
             if isinstance(st.get("dataset"), str) and isinstance(st.get("name"), str)
             and isinstance(st.get("value"), int | float) and not isinstance(st["value"], bool)
         ]  # fmt: skip
         if rows:
             self._con.executemany(
-                "INSERT OR IGNORE INTO op_statistics VALUES (?, ?, ?, ?, ?)", rows
+                "INSERT OR IGNORE INTO op_statistics (dataset, name, method, value, source, lo, "
+                "hi, exact, params) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
             )
+
+    def labelled_statistics(self, datasets: list[str]) -> list[dict]:
+        """Evidence statistics ops emitted for `datasets` with a variation source, as citable
+        statistics (the op's wording; params as recorded), in the order they were recorded."""
+        if not datasets:
+            return []
+        marks = ", ".join("?" for _ in datasets)
+        rows = self._con.execute(
+            f"SELECT dataset, name, method, value, source, lo, hi, exact, params "
+            f"FROM op_statistics WHERE dataset IN ({marks}) AND source != ''",
+            list(datasets),
+        ).fetchall()
+        out = []
+        for did, name, method, value, source, lo, hi, exact, params in rows:
+            st: dict = {"kind": "statistic", "dataset": did, "name": name, "value": value}
+            if exact:
+                st["exact"] = True
+            elif lo is not None and hi is not None:
+                st["interval"] = [lo, hi]
+            else:
+                st["uncertainty_unknown"] = True
+            st |= {"method": method or "op result", "source": source}
+            try:
+                st["params"] = json.loads(params) if params else {}
+            except (TypeError, json.JSONDecodeError):
+                st["params"] = {}
+            out.append(st)
+        return out
 
     def statistic_methods(self, dataset: str, name: str) -> set[str]:
         """Methods ops recorded for a statistic `name` of `dataset` (empty: none emitted it)."""
@@ -392,6 +424,25 @@ class DatasetStore:
         want = _norm_method(method)
         same = [r for r in rows if want and _norm_method(r[0]) == want]
         return {r[2] for r in same or rows}
+
+
+def _bounds(interval) -> tuple[float | None, float | None]:
+    if (
+        isinstance(interval, list | tuple)
+        and len(interval) == 2
+        and all(isinstance(v, int | float) and not isinstance(v, bool) for v in interval)
+    ):
+        return float(interval[0]), float(interval[1])
+    return None, None
+
+
+def _params_json(params) -> str | None:
+    if not isinstance(params, dict):
+        return None
+    try:
+        return json.dumps(params, separators=(",", ":"), default=str)
+    except (TypeError, ValueError):
+        return None
 
 
 def _norm_method(method: str | None) -> str:

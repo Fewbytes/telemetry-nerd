@@ -113,7 +113,10 @@ result's source_flags); a source that contradicts the op's label is refused
 and a label on a statistic no op labelled is flagged source_unverified (counts as undetermined); one no op emitted, or a finding whose evidence attributes no variation
 (a panel only), is flagged source_undetermined and lists `undetermined` in `sources`: for an
 incident claim, cite the op statistic (`analyze`, `compare_seasonal`, `fleet`,
-`binding_verdict`) that labels it.
+`binding_verdict`, `check_littles_law`) that labels it, not only its panel: a panel carries no
+source. Op results end with a `cite` line saying where their evidence statistics are, and
+finding_create returns `citable_statistics` (the labelled statistics behind cited panels,
+special cause first) to cite as given.
 Separate measurement-system findings from process findings: "the gauge misses instance i3" is
 its own finding, not a caveat on a latency claim. A `common_cause` result supports "nothing
 beyond normal variation was detected", which can rule a hypothesis out.

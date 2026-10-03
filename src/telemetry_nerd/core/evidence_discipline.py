@@ -610,3 +610,47 @@ def derive_sources(
 def _short(method: object, width: int = 80) -> str:
     text = " ".join(str(method or "").split())
     return text if len(text) <= width else text[: width - 1].rsplit(" ", 1)[0] + "…"
+
+
+# --- citable op statistics (hk2r) -----------------------------------------------------------
+
+#: which labelled statistics to offer first: what an incident finding is about, then the rest
+_RANK = {"special_cause": 0, "undetermined": 1, "measurement_system": 2, "common_cause": 3}
+#: params worth showing beside a citable statistic (where / when / how sure)
+_CITABLE_PARAMS = ("window", "at", "p", "phase", "group")
+MAX_CITABLE = 5
+
+
+def citable_statistics(
+    labelled: Sequence[dict], cited: Sequence[dict], limit: int = MAX_CITABLE
+) -> list[dict]:
+    """Labelled op statistics (`DatasetStore.labelled_statistics`) a finding could cite in place
+    of the panels it rests on: not already cited, special cause first, at most `limit`, compact
+    and still citable as is (the method shortened, params cut to where / when / p)."""
+    have = {(e.get("dataset"), e.get("name"), e.get("value")) for e in cited
+            if e.get("kind") == "statistic"}  # fmt: skip
+    seen: set[tuple] = set()
+    out: list[dict] = []
+    for st in sorted(labelled, key=lambda s: _RANK.get(s.get("source") or "", 9)):
+        key = (st["dataset"], st["name"], st["value"])
+        if key in have or key in seen:
+            continue
+        seen.add(key)
+        params = {k: v for k, v in (st.get("params") or {}).items() if k in _CITABLE_PARAMS}
+        out.append({**{k: v for k, v in st.items() if k != "params"},
+                    "method": _short(st.get("method"), 100),
+                    **({"params": params} if params else {})})  # fmt: skip
+        if len(out) >= limit:
+            break
+    return out
+
+
+def citable_hint(stats: Sequence[dict], undetermined: bool) -> str:
+    """One line telling the caller to cite the op statistics instead of (or beside) panels."""
+    dids = ", ".join(dict.fromkeys(s["dataset"] for s in stats))
+    lead = ("this finding's source is undetermined: a panel or annotation carries no variation "
+            "source" if undetermined else "the cited panels carry no variation source")  # fmt: skip
+    return (f"{lead}, but ops labelled statistics of {dids} (citable_statistics, special cause "
+            "first). For a change or deviation, cite the matching one in evidence as given "
+            "(kind statistic, its source kept): record a new finding with it, or keep this one "
+            "and say its source is undetermined.")  # fmt: skip
