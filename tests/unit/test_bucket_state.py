@@ -58,6 +58,13 @@ def test_two_of_four_samples_is_partial():
     assert states(out)[1] == State.PARTIAL
 
 
+def test_samples_without_a_value_are_not_empty():
+    """A bucket whose samples arrived but whose expression gave no value (null avg, count > 0)
+    reads by its samples, not as an empty hole (1h9.16)."""
+    out = run([(t * STEP, "a", None if t == 3 else 1.0, 4) for t in range(1, 6)])
+    assert states(out) == [State.OK] * 5
+
+
 def test_hole_is_empty_and_leading_absence_is_absent():
     rows = [(t * STEP, "a", 1.0, 4) for t in (3, 5)]  # born at 3, hole at 4
     assert states(run(rows)) == [State.ABSENT, State.ABSENT, State.OK, State.EMPTY, State.OK]

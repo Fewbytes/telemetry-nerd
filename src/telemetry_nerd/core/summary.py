@@ -209,7 +209,8 @@ def summarize(
     expected = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
     if meta.representation == "quantile":
         return _summarize_quantile(meta, result, base, caveats, expected, top, coverage)
-    # Non-finite values (null, or NaN from a careless source) carry a count but no value.
+    # Non-finite values (null, or NaN from a careless source) and expression cells that observed
+    # samples but have no value carry a count but no value.
     # They must not bias the mean: weight only buckets that have an avg.
     df = pl.from_arrow(result.buckets).with_columns(pl.col("avg", "min", "max").fill_nan(None))
     # a null count is unknown (a code output that did not give it), never zero: such a bucket has

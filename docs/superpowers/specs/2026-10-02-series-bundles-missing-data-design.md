@@ -336,6 +336,12 @@ magnitude test against the series' typical increase would also flag healthy seri
 that just restarted, a burst), so it is deliberately not guessed at: documented only. Mitigation
 for the reader: start the window a little before the period of interest.
 
+**Samples without a value (`1h9.16`).** A bucket where the derived count observed samples but the
+expression has no value (rate/increase with one sample in the window, value filtered) is kept with
+its count and null values, like a non-finite cell: bucket_state (samples mode) reads the samples
+that arrived (OK/PARTIAL), never EMPTY, and summaries raise `non_finite` (the value is missing, the
+samples are not). Values without a count (lookback fill) are still dropped.
+
 **Expression path observed counts (decision, `1h9.11`).** A non-selector expression's values come
 from a subquery `(expr)[step:res]`; its `count_over_time` counts instant evaluations, which lookback
 fills (`subquery_fills_gaps`, verified on Prometheus and VictoriaMetrics), so it is never used as

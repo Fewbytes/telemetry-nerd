@@ -570,7 +570,7 @@ async def test_mixed_le_layouts_in_a_group_are_refused_with_a_hint():
 
 
 @respx.mock
-async def test_expression_fetch_counts_observed_samples_and_drops_filled_buckets():
+async def test_expression_fetch_keeps_samples_without_a_value_and_drops_filled_buckets():
     # values from the subquery at 100/160 (160 lookback-filled); samples observed at 40/100;
     # series b has samples but no value anywhere (rate needs two samples)
     def responder(request):
@@ -599,10 +599,17 @@ async def test_expression_fetch_counts_observed_samples_and_drops_filled_buckets
     respx.get(**ROUTE).mock(side_effect=responder)
     src = PromQLSource("p", BASE, flavor="prometheus")
     res = await src.fetch("rate(x[5m])", RNG, 60_000)
-    assert [(r["ts_ms"], r["count"]) for r in res.buckets.to_pylist()] == [(1_700_000_100_000, 3)]
-    assert res.series.to_pylist() == [
-        {"series_id": series_id("p", {"i": "a"}), "labels": '{"i":"a"}'}
-    ]
+    sa, sb = series_id("p", {"i": "a"}), series_id("p", {"i": "b"})
+    got = {(r["series_id"], r["ts_ms"]): (r["count"], r["avg"]) for r in res.buckets.to_pylist()}
+    # a@100: value and samples. a@160: lookback-filled value, no samples: dropped.
+    # a@40 / b@100: samples arrived but the expression has no value (rate needs two): kept with
+    # their count and a null value, not read as empty (1h9.16)
+    assert got == {
+        (sa, 1_700_000_040_000): (4, None),
+        (sa, 1_700_000_100_000): (3, 1.0),
+        (sb, 1_700_000_100_000): (1, None),
+    }
+    assert {r["series_id"] for r in res.series.to_pylist()} == {sa, sb}
     assert res.partial == 0
 
 

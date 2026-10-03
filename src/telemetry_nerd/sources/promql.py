@@ -302,8 +302,18 @@ class PromQLSource:
         if derived:
             # Values and count come from different queries here. Values without a count are
             # filled (lookback / range carried past the last sample): no sample arrived in the
-            # bucket, so it is empty. A count without values is samples the expression gives
-            # no value for (rate needs two). Neither is a half-returned cell; drop, don't count.
+            # bucket, so it is empty and dropped. A count without values is samples the
+            # expression gives no value for (rate needs two): kept with null values, like a
+            # non-finite cell, so bucket_state reads the samples that arrived (not EMPTY) and
+            # summaries flag the missing values (1h9.16).
+            def no_value(c: dict) -> bool:
+                return not (c.keys() & _VALUES)
+
+            complete = {
+                k: {f: c.get(f) for f in _FIELDS}
+                for k, c in cells.items()
+                if c.get("count") is not None and (no_value(c) or all(f in c for f in _FIELDS))
+            }
             partial = sum(1 for c in cells.values() if 0 < len(c.keys() & _VALUES) < 3)
             labels_by_sid = {sid: labels_by_sid[sid] for sid, _ in complete}
         else:
