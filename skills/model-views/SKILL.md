@@ -160,25 +160,17 @@ Assumptions, what each violation implies, hints and worked reading: `references/
 
 ## Sources of variation
 
-Every op that reports variation labels each finding (principle 8; spec §5.4): `source` on items and on
-`evidence` statistics, and a `variation` list of `{source, finding}` in the result.
+Labels, meanings and reporting rules are canonical in the `evidence` skill (principle 8; per-op
+table in its sources-of-variation reference). Here, only the binding-specific ones:
 
-- **common cause**: the system's inherent variability (control limits, the seasonal band, the
-  fleet's spread, behaviour groups as systemic structure, the small-system envelope). Do not
-  chase points inside it; the lever is changing the system.
-- **special cause**: assignable (SPC signals of a significant detector, shifts, drift, an unusual
-  window or member, a changed role, a transient). Investigate.
-- **measurement system**: the instruments (gaps, partial / untrusted data, the share of members
-  missing per step, membership changes (n moves), units, unknown input uncertainty, a systematic
-  Little's law offset). Fix or qualify them before reading the process. A membership change is
-  normal lifecycle, not a fault: it is labelled because n moving changes fleet aggregates
-  (principle 11).
-- **source undetermined**: the data cannot tell them apart (run rules on an out-of-control chart
-  without their own evidence, an outlier episode on partial buckets, a silent member, a
-  user-excluded cycle). Say so; propose what would separate them.
+- **common cause**: the small-system envelope in Little's law; behaviour groups and the fleet's spread.
+- **special cause**: transient windows beyond interval and envelope; a changed role; an unusual member.
+- **measurement system**: gaps, partial data, units, membership changes (n moving is normal
+  lifecycle, not a fault, but it changes fleet aggregates, principle 11), a systematic Little's law offset.
+- **undetermined**: a silent member; an outlier episode on partial buckets; a discrepancy only
+  transients carry.
 
-Report the label with the number, never instead of it, and pass `source` through to
-`finding_create` unchanged.
+Report the label with the number, never instead of it; pass `source` through to `finding_create` unchanged.
 
 ## Gaps and instrumentation
 
