@@ -319,9 +319,13 @@ class PromQLSource:
             dropped = {sid for sid, _ in complete} - valued
             if dropped:
                 complete = {k: c for k, c in complete.items() if k[0] in valued}
+                named = sorted(labels_json(labels_by_sid[sid]) for sid in dropped)
+                more = f" (+{len(named) - 3} more)" if len(named) > 3 else ""
                 notes_extra = (
                     f"{len(dropped)} series had samples but no value anywhere in the window "
-                    + "(or labels that match no value series) and are left out",
+                    + "(or labels that match no value series) and are left out: "
+                    + ", ".join(named[:3])
+                    + more,
                 )
             labels_by_sid = {sid: labels_by_sid[sid] for sid, _ in complete}
         else:

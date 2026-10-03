@@ -92,7 +92,10 @@ def dataset(handle: str, table: str = "rows", *, arrow: bool = False):
 
     Memory-mapped, zero-copy into Arrow. Tables: "rows" (time series: ts_ms, series_id, avg,
     min, max, count[, lo, hi]; distribution: ts_ms, series_id, bucket_lo, bucket_hi, count),
-    "series" (series_id, labels as JSON), "columns" (distribution: ts_ms, series_id, n)."""
+    "series" (series_id, labels as JSON), "columns" (distribution: ts_ms, series_id, n).
+
+    `avg` (and min/max) may be NaN (a non-finite value was reported) or null (a bucket with
+    samples but no value): filter both, e.g. `pl.col("avg").is_not_null() & pl.col("avg").is_finite()`."""
     t = _transport().read_table(handle, table)
     if arrow:
         return t

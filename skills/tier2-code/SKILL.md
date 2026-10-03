@@ -189,7 +189,8 @@ tn.meta("d3")  # unit, step_ms, representation, caveats, uncertainty, start_ms, 
 ```
 
 - Time series rows: `ts_ms, series_id, avg, min, max, count` (+ `lo, hi` when the input declared
-  an interval). Distribution rows: `ts_ms, series_id, bucket_lo, bucket_hi, count` (lowest bucket
+  an interval). `avg`/`min`/`max` may be NaN (non-finite value) or null (no value): filter both.
+  Distribution rows: `ts_ms, series_id, bucket_lo, bucket_hi, count` (lowest bucket
   starts at -inf, top one ends at +inf). Other tables: `tn.dataset(h, "series")` (series_id,
   labels JSON), `"columns"` (distribution step totals).
 - `tn.put(df, meta=None, *, columns=None, **meta_keys) -> name`: store a series. `df` needs

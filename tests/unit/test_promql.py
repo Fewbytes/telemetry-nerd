@@ -610,6 +610,7 @@ async def test_expression_fetch_keeps_samples_without_a_value_and_drops_filled_b
     assert [r["series_id"] for r in res.series.to_pylist()] == [sa]
     assert res.partial == 0
     assert len(res.notes) == 1 and "1 series had samples but no value" in res.notes[0]
+    assert '{"i":"b"}' in res.notes[0]  # names the dropped label set
 
 
 _TWO_NAMES = [
@@ -654,3 +655,25 @@ def test_histogram_matrix_series_differing_only_by_name_are_refused():
         for le in ("1", "+Inf")
     ]
     from_matrix("vm", ok)
+
+
+@respx.mock
+async def test_dropped_no_value_series_note_reaches_the_query_caveats(tmp_path):
+    """1h9.16: the disclosure surfaces as a `source_warning` caveat of the query result."""
+    from tests.unit.fakes import make_service
+
+    def responder(request):
+        q = request.url.params["query"]
+        if q.startswith("count_over_time(x["):
+            return httpx.Response(
+                200, json=matrix([{"metric": {"i": "b"}, "values": [[1_700_000_100, "1"]]}])
+            )
+        return httpx.Response(200, json=matrix([]))
+
+    respx.get(**ROUTE).mock(side_effect=responder)
+    svc = make_service(tmp_path, PromQLSource("default", BASE, flavor="prometheus"))
+    out = await svc.query("rate(x[5m])", start="1700000000", end="1700000100", step="1m")
+    assert any(
+        c.startswith("source_warning:1 series had samples but no value")
+        for c in out["summary"]["caveats"]
+    )
