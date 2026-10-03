@@ -63,3 +63,17 @@ def test_skills_referenced_exist(path):
     _, body = parse(path)
     for name in re.findall(r"`(\w[\w-]*)` skill", body):
         assert (ROOT / "skills" / name / "SKILL.md").exists() or name in PLANNED_SKILLS, name
+
+
+def test_investigate_annotates_and_can_call_what_triage_uses():
+    """Eval finding (pxu): the command never annotated and could not call annotate/analyze/..."""
+    fm, body = parse(ROOT / "commands" / "investigate.md")
+    allowed = {t.strip().removeprefix(PREFIX) for t in fm["allowed-tools"].split(",")}
+    triage = (ROOT / "skills" / "triage" / "SKILL.md").read_text()
+    needed = {"annotate", "analyze", "run_code", "code_get", "catalog_family", "catalog_search",
+              "compare_seasonal", "fleet", "check_littles_law", "binding_verdict", "show_binding",
+              "binding_suggest", "binding_accept", "hypothesis_update", "gap_create"}  # fmt: skip
+    assert needed <= allowed, needed - allowed
+    assert "annotate(" in body and 'kind="region"' in body
+    for name in ("analyze", "compare_seasonal", "fleet", "binding_verdict", "check_littles_law"):
+        assert name in triage and name in allowed
