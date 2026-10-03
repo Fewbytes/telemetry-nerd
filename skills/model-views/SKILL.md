@@ -119,15 +119,25 @@ Detail, field meanings and wording templates: `references/verdicts.md`.
 end, window, warmup, latency_unit, arrivals)` (defaults: last 6h, `window="auto"` about range/12) tests L (the in-flight gauge, time-averaged) against
 lambda x W (arrival rate times MEAN latency from histogram `_sum` / `_count`).
 
-- Read the pooled ratio R = L / (lambda W) with its 95% interval, the verdict (`consistent`,
-  `L_high`, `L_low`, `inconsistent_in_windows`), where it breaks (`flagged_windows`, per-`by`
-  `groups`, `unmatched`), then every entry of `assumptions` (ok / assumed / flagged) and `hints`.
+- Report the discrepancy FIRST, whatever the verdict: `discrepancy` (L - lambda W and R - 1 =
+  L / (lambda W) - 1, whole range and per window, with the measurement interval); `summary` is that
+  sentence ready-made. Then the verdict (`consistent`, `L_high`, `L_low`,
+  `inconsistent_in_windows`), `classification` (systematic offset, transient windows), then
+  `warnings`, every entry of `assumptions` (ok / assumed / flagged) and `hints`.
+- Name the source of each variation: **measurement system** (the measurement interval; a
+  systematic offset = instrumentation / model mismatch: unmeasured queueing, a missing instance,
+  units, subset/superset), **common cause** (small-system fluctuation +-X% per window at this
+  traffic, and the windows' own spread: do not chase windows inside it), **special cause**
+  (transient windows beyond both: a load peak leaving steady state — say "at a load peak"
+  explicitly — a draining backlog, or a change confined to those windows).
 - `L_high`: time in the system that the latency timer does not cover: queueing before the timer
   starts, leaked or stuck requests, latency on a subset, a gauge counting something broader.
   `L_low`: concurrency missing instances, a gauge missing bursts, latency on a superset.
   `L_high` can mean measured latency understates what the caller waits, but the check cannot tell
   queueing from the other causes without more evidence. `consistent` means no mismatch detected
   at this precision, not that the instruments are right: offsetting errors can cancel.
+- No concurrency signal: the check cannot be done; say so with the suggested in-flight gauge and
+  record a gap. Never derive L from lambda x W.
 - Percentile-only latency is refused: a percentile is not a mean and Little's law is about the
   mean. Supply a histogram or summary with `_sum` and `_count`, or record a gap.
 - Units: W is converted to seconds from `latency_unit`, the catalog, or the name suffix; otherwise

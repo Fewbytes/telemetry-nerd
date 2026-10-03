@@ -16,7 +16,16 @@ import numpy as np
 import polars as pl
 
 from telemetry_nerd.analysis.exprkind import rate_interval_ms
-from telemetry_nerd.analysis.littles import Block, GroupResult, Substeps, check, combine
+from telemetry_nerd.analysis.littles import (
+    COMMON,
+    MEASUREMENT,
+    SPECIAL,
+    Block,
+    GroupResult,
+    Substeps,
+    check,
+    combine,
+)
 from telemetry_nerd.catalog.models import native_family
 from telemetry_nerd.catalog.relations import SUGGESTIONS
 from telemetry_nerd.core.uncertainty import mark_statistics
@@ -67,6 +76,26 @@ HINTS = {
 LEAK_HINT = (
     "L - lambda W grows over the windows: leaked or stuck requests (gauge incremented, never "
     "decremented) or a backlog that is building"
+)
+TRANSIENT_HINTS = {
+    "peak": (
+        "transient at a load peak: possible transition out of steady state (toward overload); "
+        "check saturation (USE) and whether lambda approached capacity in those windows"
+    ),
+    "drain": "transient after a peak: a backlog draining (recovery), out of steady state",
+    "other": (
+        "transient not at a load peak: look for a deploy, an instance joining or leaving, or a "
+        "routing / instrumentation change in those windows"
+    ),
+}
+SOURCE_TEXT = {
+    MEASUREMENT: "measurement system",
+    COMMON: "common cause",
+    SPECIAL: "special cause",
+}
+NOT_POSSIBLE = (
+    "Little's law cannot be checked without a concurrency (in-flight) signal: L must be "
+    "measured, never derived from lambda x W (that would make the check circular)"
 )
 
 
@@ -201,9 +230,13 @@ class LittlesOps:
                 f"{r}: e.g. {h.metric_name(binding or 'service')} ({h.type})"
                 for r, h in zip(missing, hints, strict=True)
             )
+            lead = (
+                NOT_POSSIBLE if "concurrency" in missing
+                else "Little's law needs all three signals: the check cannot be done"
+            )  # fmt: skip
             raise ValueError(
-                f"no signal for {', '.join(missing)}: Little's law needs all three (hint: pass "
-                f"it, or instrument it — {sug})"
+                f"no signal for {', '.join(missing)}. {lead} (hint: pass it, or instrument it — "
+                f"{sug})"
             )
         return {r: str(roles[r]) for r in ROLES}, list(by) if by is not None else join, bound
 
@@ -403,6 +436,7 @@ class LittlesOps:
             return Substeps(
                 grid, get("arrival_rate")[0], get("latency_sum")[0] * cfg["unit_factor"],
                 get("latency_count")[0], conc, conc_n, step, cfg["lookback_ms"],
+                cfg["resolution_ms"],
             )  # fmt: skip
 
         matched, unmatched = [], []
@@ -428,7 +462,10 @@ class LittlesOps:
             if grouped
             else []
         )
-        out = {"total": total, "groups": groups, "unmatched": unmatched, "lacking": lacking}
+        out = {
+            "total": total, "groups": groups, "unmatched": unmatched, "lacking": lacking,
+            "no_concurrency": not per_role["concurrency"],
+        }  # fmt: skip
         self._memo.put(key, out)
         return out
 
@@ -541,12 +578,14 @@ class LittlesOps:
         groups = [_group(cfg, L_ds, {}, tot)]
         groups += [_group(cfg, L_ds, lb, g) for lb, g in r["groups"]]
         hints: list[str] = []
-        verdicts = {g["verdict"] for g in groups} | {
+        directions = {g["verdict"] for g in groups} | {
             w["verdict"] for g in groups for w in g["flagged_windows"]
         }
         for v in ("L_high", "L_low"):
-            if v in verdicts:
+            if v in directions:
                 hints += HINTS[v]
+        phases = {t["phase"] for g in groups for t in g["classification"]["transient"]}
+        hints += [TRANSIENT_HINTS[ph] for ph in ("peak", "drain", "other") if ph in phases]
         if any((g.get("growing") or {}).get("growing") for g in groups):
             hints.insert(0, LEAK_HINT)
         ratio = tot.pooled.ratio
@@ -558,6 +597,13 @@ class LittlesOps:
             hints.insert(0, "groups missing from some signals: " + "; ".join(
                 f"{_labels_text(u['labels'])} missing in {', '.join(u['missing_in'])}" for u in r["unmatched"][:5]
             ))  # fmt: skip
+        if r["no_concurrency"]:
+            sug = SUGGESTIONS[("littles_law", "concurrency")]
+            hints.insert(0, (
+                f"{NOT_POSSIBLE}: the concurrency query returned no data (hint: instrument an "
+                f"in-flight gauge, e.g. {sug.metric_name(cfg['binding']['key'] if cfg['binding'] else 'service')} "
+                f"({sug.type}); {sug.why})"
+            ))  # fmt: skip
         if not cfg["by"] and tot.verdict != "consistent":
             hints.append(
                 "to localise it to series, re-run with by=[a label all three share, e.g. instance]"
@@ -565,8 +611,13 @@ class LittlesOps:
         caveats = []
         if not cfg["unit_basis"]:
             caveats.append("latency_unit_assumed")
+        warnings = _warnings(groups, r["no_concurrency"])
         out = {
+            "summary": _summary_text(cfg, groups[0], warnings, r["no_concurrency"]),
+            "discrepancy": groups[0]["discrepancy"],
             "verdict": tot.verdict,
+            "classification": groups[0]["classification"],
+            "warnings": warnings,
             "question": "Is mean concurrency L consistent with throughput x mean latency (L = lambda W)?",
             "range": [iso(cfg["start_ms"]), iso(cfg["end_ms"])],
             "window": format_duration(cfg["window_ms"]),
@@ -582,7 +633,7 @@ class LittlesOps:
             "caveats": caveats,
             "draw": f'show("{L_ds}", question, mark="littles")',
         }
-        # the interval is built from the four series' own sampling and counting error; any
+        # the interval is built from the four series' own sampling and timing error; any
         # declared (or unknown) uncertainty of those datasets is not folded in (spec §5.3)
         return mark_statistics(out, self._datasets, list(cfg["datasets"].values()))
 
@@ -600,7 +651,17 @@ class LittlesOps:
                 {
                     "id": gid, "labels": lb, "verdict": g.verdict,
                     "pooled": _block_wire(g.pooled),
-                    "windows": [_block_wire(w) for w in g.windows],
+                    "windows": [
+                        {**_block_wire(w), "reference": sig(g.references.get(i))}
+                        for i, w in enumerate(g.windows)
+                    ],
+                    "reference": sig(g.reference),
+                    "systematic": _systematic_wire(g),
+                    "transient": [
+                        {"index": t["index"], "phase": t["phase"], "source": t["source"]}
+                        for t in g.transient
+                    ],
+                    "common_cause": _common_wire(g),
                 }
                 for gid, lb, g in groups
             ],
@@ -612,13 +673,111 @@ class LittlesOps:
 
 METHOD = (
     "R = L / (lambda W): L the gauge's time average, lambda from rate() of the counter, W = "
-    "rate(_sum) / rate(_count) (a mean, never a percentile). Interval: delta method on log R — "
-    "L's sampling error (successive differences of the scrapes, floored by a Poisson-occupancy "
-    "process sampled the same way) in quadrature with the counts' Poisson error (lambda and W "
-    "added linearly: correlation unknown), plus bias bounds for requests straddling the window "
-    "edges and the rate window's lookback; t with n-1 df. Verdicts: windows family-wise "
-    "(Bonferroni, 2.5%), pooled 2.5%: 5% false alarms overall at most."
+    "rate(_sum) / rate(_count) (a mean, never a percentile); the discrepancy L - lambda W and "
+    "R - 1 are always reported. Measurement interval (what the instruments add for this window; "
+    "source: measurement system): gauge sampling (successive differences of the scrapes, floored "
+    "by a Poisson-occupancy process sampled the same way), the steady-state straddle of requests "
+    "in flight at the window edges, counter scrape timing (increments between an edge and the "
+    "nearest scrape; lambda and W linearly), in quadrature on log R, plus a bias bound for the "
+    "rate window's lookback; t with n-1 df. The counts' Poisson noise is not in it: over a window "
+    "L and lambda W describe the same requests; it is the common-cause scale (a small system's "
+    "per-window fluctuation), reported apart. Systematic offset (measurement system: "
+    "instrumentation / model mismatch): the level of the windows that are not transient, equal "
+    "weights, its error the larger of measurement and window spread, at 2.5%. Transient windows: "
+    "off that level (or 1) beyond the measurement interval, Bonferroni over windows and groups "
+    "at 2.5%; special cause when also beyond the common-cause envelope (small-system scale or "
+    "3 robust sigma of the windows' own variation), else common cause. 5% false alarms overall "
+    "at most."
 )
+
+
+def _warnings(groups: list[dict], no_concurrency: bool) -> list[str]:
+    out: list[str] = []
+    if no_concurrency:
+        out.append(NOT_POSSIBLE + ": the concurrency signal returned no data")
+    for g in groups:
+        name = _labels_text(g["labels"] or {})
+        peaks = [t for t in g["classification"]["transient"] if t["at_peak"]]
+        if peaks:
+            out.append(
+                f"{name}: transient at a load peak in "
+                + ", ".join(f"{t['window'][0]}–{t['window'][1]}" for t in peaks[:4])
+                + ": possible transition out of steady state (toward overload)"
+            )
+        w = g["common_cause"].get("warning")
+        if w:
+            out.append(f"{name}: {w}")
+    return out
+
+
+def _n(v: float | None) -> str:
+    return "–" if v is None else f"{v:.3g}"
+
+
+def _pct(v: float | None) -> str:
+    return "–" if v is None else f"{100 * v:+.0f}%"
+
+
+def _summary_text(cfg: dict, g: dict, warnings: list[str], no_concurrency: bool) -> str:
+    """Discrepancy first, then the verdict and its classification, then the warnings."""
+    if no_concurrency:
+        return NOT_POSSIBLE + " (the concurrency query returned no data); L was not estimated."
+    d = g["discrepancy"]
+    if d["ratio"] is None:
+        return f"Not judged: {g.get('reason') or g['verdict']}."
+    win = format_duration(cfg["window_ms"])
+    pw = d["per_window"]
+    parts = [
+        (
+            f"Discrepancy over the range: L − λ·W = {d['difference']:+.3g} requests (L "
+            f"{_n(d['L'])} vs λ·W {_n(d['lambda_W'])}; L ÷ λW {_n(d['ratio'])}, "
+            f"{_pct(d['relative'])}, measurement interval {_pct(d['relative_ci95'][0])} to "
+            f"{_pct(d['relative_ci95'][1])})."
+        )
+    ]
+    if pw["windows"]:
+        parts.append(
+            f"Per {win} window: L ÷ λW {_n(pw['ratio_range'][0])}–{_n(pw['ratio_range'][1])} "
+            f"over {pw['windows']} judged window(s)."
+        )
+    c = g["classification"]
+    sysd = c["systematic"]
+    verdict = f"Verdict {g['verdict']}"
+    if sysd:
+        drift = " and drifting (L − λW trends over the range)" if sysd["drifting"] else ""
+        parts.append(
+            f"{verdict}: systematic offset L ÷ λW {_n(sysd['ratio'])} "
+            f"[{_n(sysd['ci95'][0])}, {_n(sysd['ci95'][1])}] in {sysd['windows'][0]} of "
+            f"{sysd['windows'][1]} windows{drift} — source: measurement system "
+            "(instrumentation / model mismatch, not the process)."
+        )
+    else:
+        parts.append(f"{verdict}: no systematic offset detected.")
+    tr = c["transient"]
+    if tr:
+        items = "; ".join(
+            f"{t['window'][0]}: L ÷ λW {_n(t['ratio'])} vs reference {_n(t['reference'])} "
+            f"({SOURCE_TEXT[t['source']]}, {t['phase']}"
+            + (", AT A LOAD PEAK" if t["at_peak"] else "")
+            + ")"
+            for t in tr[:6]
+        )
+        more = f" (+{len(tr) - 6} more)" if len(tr) > 6 else ""
+        parts.append(f"Transient windows ({len(tr)}): {items}{more}.")
+    else:
+        parts.append("Transient windows: none.")
+    cc = g["common_cause"]
+    parts.append(
+        f"Common cause: at this traffic (N≈{cc['completions_per_window']:.0f} completions per "
+        f"window) L and λW fluctuate ±{100 * (cc['rel95'] or 0):.0f}% per window"
+        + (
+            f"; the windows' own variation spans ±{100 * cc['spread_rel']:.0f}%"
+            if cc.get("spread_rel") else ""
+        ) + "."
+    )  # fmt: skip
+    if warnings:
+        parts.append("Warnings: " + " | ".join(warnings))
+    return " ".join(parts)
 
 
 def _role(r: str) -> str:
@@ -641,21 +800,102 @@ def _block_wire(b: Block) -> dict:
         "verdict": b.verdict,
         "n": b.n,
     }
-    for k in ("L", "lam", "W_s", "lambda_W", "ratio", "sd"):
+    for k in ("L", "lam", "W_s", "lambda_W", "ratio", "sd", "diff", "common"):
         out[k] = sig(d[k])
-    for k in ("L_ci", "lambda_W_ci", "ci95", "ci_test"):
+    for k in ("L_ci", "lambda_W_ci", "ci95", "ci_test", "diff_ci"):
         out[k] = sig_pair(d[k]) if d[k] is not None else None
+    out["source"] = b.source
     out["flags"] = list(b.flags)
     if b.reason:
         out["reason"] = b.reason
     return out
 
 
+def _rel(ci: tuple[float, float] | None) -> list[float | None] | None:
+    return sig_pair((ci[0] - 1, ci[1] - 1)) if ci else None
+
+
+def _systematic_wire(g: GroupResult) -> dict | None:
+    s = g.systematic
+    if s is None or s.ratio is None:
+        return None
+    judged = sum(w.ratio is not None for w in g.windows)
+    return {
+        "direction": s.verdict, "ratio": sig(s.ratio), "ci95": sig_pair(s.ci95) if s.ci95 else None,
+        "relative": sig(s.ratio - 1), "relative_ci95": _rel(s.ci95),
+        "difference": sig(s.diff), "difference_ci95": sig_pair(s.diff_ci) if s.diff_ci else None,
+        "windows": [len(g.core), judged],
+        "drifting": bool(g.growing and g.growing["significant"]),
+        "source": MEASUREMENT,
+        "meaning": (
+            "a persistent L != lambda W across most windows: the instruments do not describe the "
+            "same requests (unmeasured queueing, a missing instance, units, latency on a subset "
+            "or superset) — the measurement system, not the process"
+        ),
+    }  # fmt: skip
+
+
+def _common_wire(g: GroupResult) -> dict:
+    c = g.common_cause
+    return {
+        "completions_per_window": sig(c.get("completions_per_window")),
+        "rel95": sig(c.get("rel95")),
+        "pooled_rel95": sig(c.get("pooled_rel95")),
+        "spread_rel": sig(c.get("spread_rel")),
+        "warning": c.get("warning"),
+        "source": COMMON,
+    }
+
+
+def _transient_wire(g: GroupResult, t: dict) -> dict:
+    w = g.windows[t["index"]]
+    ref = g.references.get(t["index"], g.reference)
+    return {
+        "window": _span(w), "direction": t["direction"], "ratio": sig(w.ratio),
+        "ci95": sig_pair(w.ci95) if w.ci95 else None, "relative": sig((w.ratio or 0) - 1),
+        "difference": sig(w.diff), "difference_ci95": sig_pair(w.diff_ci) if w.diff_ci else None,
+        "reference": sig(ref), "vs_reference": sig(t["vs_reference"]),
+        "common_cause_rel95": sig(w.common), "source": t["source"], "phase": t["phase"],
+        "at_peak": t["at_peak"],
+        "load": {k: (sig(v) if isinstance(v, float) else v) for k, v in t["load"].items()},
+        "cause": t["cause"],
+    }  # fmt: skip
+
+
 def _group(cfg: dict, L_ds: str, labels: dict, g: GroupResult) -> dict:
     p = g.pooled
+    judged = [w for w in g.windows if w.ratio is not None]
+    ratios = [float(w.ratio) for w in judged]  # type: ignore[arg-type]
+    transient = [_transient_wire(g, t) for t in g.transient]
+    discrepancy = {
+        "L": sig(p.L), "lambda_W": sig(p.lambda_W), "difference": sig(p.diff),
+        "difference_ci95": sig_pair(p.diff_ci) if p.diff_ci else None,
+        "ratio": sig(p.ratio), "ratio_ci95": sig_pair(p.ci95) if p.ci95 else None,
+        "relative": sig(p.ratio - 1) if p.ratio is not None else None,
+        "relative_ci95": _rel(p.ci95),
+        "interval": "measurement: gauge sampling, edge straddle, scrape timing, rate lookback",
+        "per_window": {
+            "windows": len(judged),
+            "ratio_range": sig_pair((min(ratios), max(ratios))) if ratios else None,
+            "difference_range": sig_pair((
+                min(float(w.diff) for w in judged),  # type: ignore[arg-type]
+                max(float(w.diff) for w in judged),  # type: ignore[arg-type]
+            )) if judged else None,
+        },
+        "common_cause_rel95": {
+            "per_window": sig(g.common_cause.get("rel95")), "whole_range": sig(p.common),
+        },
+    }  # fmt: skip
     out: dict[str, Any] = {
         "labels": labels or None,
+        "discrepancy": discrepancy,
         "verdict": g.verdict,
+        "classification": {
+            "reference": sig(g.reference),
+            "systematic": _systematic_wire(g),
+            "transient": transient,
+        },
+        "common_cause": _common_wire(g),
         "ratio": sig(p.ratio),
         "ci95": sig_pair(p.ci95) if p.ci95 else None,
         "L": sig(p.L),
@@ -668,12 +908,16 @@ def _group(cfg: dict, L_ds: str, labels: dict, g: GroupResult) -> dict:
         "gauge_samples": p.gauge_samples,
         "sd_terms": {k: sig(v) for k, v in p.sd_terms.items()},
         "bias": {k: sig(v) for k, v in p.bias.items()},
+        "window_columns": ["start", "verdict", "ratio", "ci95_lo", "ci95_hi", "L_minus_lambda_W",
+                           "source"],
         "windows": [
             [
                 iso(w.start_ms),
                 w.verdict,
                 sig(w.ratio),
                 *(sig_pair(w.ci95) if w.ci95 else [None, None]),
+                sig(w.diff),
+                w.source,
             ]
             for w in g.windows
         ],
@@ -683,12 +927,14 @@ def _group(cfg: dict, L_ds: str, labels: dict, g: GroupResult) -> dict:
                 "verdict": w.verdict,
                 "ratio": sig(w.ratio),
                 "ci95": sig_pair(w.ci95) if w.ci95 else None,
+                "difference": sig(w.diff),
+                "source": w.source,
                 "flags": w.flags,
             }
             for i, w in enumerate(g.windows)
             if i in g.flagged
         ],
-    }
+    }  # fmt: skip
     if p.reason:
         out["reason"] = p.reason
     if g.growing:
@@ -702,14 +948,40 @@ def _group(cfg: dict, L_ds: str, labels: dict, g: GroupResult) -> dict:
             "group": labels or "total", "window": _span(p), "by": cfg["by"],
             "datasets": cfg["datasets"], "unit": cfg["unit"],
         }  # fmt: skip
-        out["evidence"] = [
+        ev = [
             statistic(L_ds, "littles_law_ratio", sig(p.ratio), sig_pair(p.ci95), METHOD,
                       {**params, "L": sig(p.L), "lambda_W": sig(p.lambda_W)}),
+            statistic(L_ds, "littles_law_discrepancy", sig(p.ratio - 1), _rel(p.ci95),
+                      "relative discrepancy L / (lambda W) - 1 over the whole range, with its "
+                      "measurement interval (source: measurement system)",
+                      {**params, "difference": sig(p.diff),
+                       "difference_ci95": sig_pair(p.diff_ci) if p.diff_ci else None,
+                       "common_cause_rel95": sig(p.common)}),
             statistic(L_ds, "mean_concurrency_L", sig(p.L), sig_pair(p.L_ci),
                       "time average of the gauge; successive-difference sampling error, "
-                      "Poisson-occupancy floor, edge bound", params),
+                      "Poisson-occupancy floor, edge straddle", params),
             statistic(L_ds, "lambda_times_W", sig(p.lambda_W), sig_pair(p.lambda_W_ci),
-                      "rate(counter) x rate(_sum)/rate(_count); Poisson count errors added "
-                      "linearly, alignment bound", params),
+                      "rate(counter) x rate(_sum)/rate(_count); scrape-timing error at the "
+                      "window edges (lambda and W linearly), lookback bound", params),
         ]  # fmt: skip
+        sysw = _systematic_wire(g)
+        if sysw and g.systematic is not None:
+            ev.append(statistic(
+                L_ds, "littles_law_systematic_offset", sysw["ratio"], sysw["ci95"],
+                "L / (lambda W) shared by the non-transient windows (equal weights; error the "
+                "larger of measurement and window spread); source: measurement system",
+                {**params, "window": _span(g.systematic), "windows": sysw["windows"],
+                 "drifting": sysw["drifting"]},
+            ))  # fmt: skip
+        for t in transient:
+            ev.append(statistic(
+                L_ds, "littles_law_transient", t["relative"],
+                [None if v is None else sig(v - 1) for v in t["ci95"]] if t["ci95"] else None,
+                "relative discrepancy L / (lambda W) - 1 of a transient window, measurement "
+                f"interval; source: {t['source'].replace('_', ' ')}",
+                {**params, "window": t["window"], "reference": t["reference"],
+                 "vs_reference": t["vs_reference"], "phase": t["phase"],
+                 "common_cause_rel95": t["common_cause_rel95"]},
+            ))  # fmt: skip
+        out["evidence"] = ev
     return out

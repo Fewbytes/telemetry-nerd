@@ -84,9 +84,12 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   (Little's law: mean concurrency L = throughput λ x mean latency W; W from
   histogram_sum/histogram_count, not from a percentile). "Do concurrency, throughput and latency
   agree?" is `check_littles_law(binding=... | arrival_rate, latency, concurrency)`, then
-  `show(<its concurrency dataset>, question, mark="littles")`. State the verdict with the ratio
-  and interval, where it breaks (windows, groups), every assumption marked flagged/assumed, and
-  the hints for the direction; cite `evidence`.
+  `show(<its concurrency dataset>, question, mark="littles")`. Report the discrepancy first
+  (L − λW and L/(λW) − 1 with the measurement interval, whatever the verdict), then the verdict
+  with each variation's source — measurement system (interval; systematic offset), common cause
+  (small-system ±X% per window), special cause (transient windows; say "at a load peak"
+  explicitly) — then warnings, every assumption marked flagged/assumed, the hints; cite
+  `evidence`. No concurrency signal: say the check cannot be done; never derive L.
 - Scope every claim: source, selector, time range, step. Do not generalize beyond it.
 - `workspace_get` shows open threads (user questions awaiting you), hypotheses, findings.
   `reply` answers a thread. `hypothesis_create`/`hypothesis_update` track explanations.
@@ -389,12 +392,18 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         window: judged span (default ~range/12); warmup: excluded from the start (e.g. "10m");
         latency_unit: s|ms|us|ns when the catalog does not know it (else ASSUMED s, flagged);
         arrivals: auto|arrivals|completions — what the counter counts (stated in assumptions).
-        Per window and pooled: L, λ·W and ratio L/(λW) with a 95% interval (delta method: L's
-        scrape-sampling error, floored by a Poisson-occupancy process, with the counts' Poisson
-        errors; edge and alignment bias bounds). Verdict per window and group: consistent |
-        L_high (time outside the latency timer: queueing before it starts, stuck/leaked requests,
-        latency on a subset) | L_low (concurrency missing instances, gauge missing bursts,
-        latency on a superset) | inconsistent_in_windows; ≤5% false alarms overall. `total` is the
+        Result leads with `summary` (text: discrepancy, verdict, warnings), `discrepancy` (L − λW
+        and L/(λW) − 1, whole range and per window, with the MEASUREMENT interval: gauge sampling
+        floored by a Poisson-occupancy process, steady-state edge straddle, counter scrape timing,
+        rate lookback bound — the counts' Poisson noise is not in it), `verdict`,
+        `classification` and `warnings`. Sources: measurement system (the interval; a systematic
+        offset over most windows), common cause (`common_cause`: at N requests/window L and λW
+        fluctuate ±X%; the windows' own spread), special cause (transient windows beyond both,
+        with `phase` peak|drain|other and load context). Verdict: consistent | L_high / L_low (a
+        systematic offset: time outside the latency timer, stuck/leaked requests, latency on a
+        subset / concurrency missing instances, gauge missing bursts, latency on a superset) |
+        inconsistent_in_windows (transients only); ≤5% false alarms overall. No concurrency
+        signal: the check says it cannot be done. `total` is the
         ungrouped view; `groups` per `by` value; `unmatched` = groups missing from a signal
         (localises a missing instance). `assumptions` (steady state, arrivals vs completions,
         label sets, units, alignment, warm-up, gauge sampling) each ok/assumed/flagged. Each

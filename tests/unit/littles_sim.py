@@ -23,6 +23,7 @@ def simulate(
     c: int = 4,
     scrape_s: float = 15.0,
     timer: str = "arrival",  # arrival | service_start
+    counter: str = "arrivals",  # arrivals | completions: when the request counter increments
 ) -> dict[str, np.ndarray]:
     rng = np.random.default_rng(seed)
     rates = rates or [(0.0, 2.0)]
@@ -45,11 +46,13 @@ def simulate(
     ts = np.arange(scrape_s, duration_s + 1e-9, scrape_s)
     order = np.argsort(depart)
     dep_sorted, lat_sorted = depart[order], np.cumsum(measured[order])
-    counter = np.searchsorted(t_arr, ts, side="right").astype(float)
+    arrived = np.searchsorted(t_arr, ts, side="right").astype(float)
     done = np.searchsorted(dep_sorted, ts, side="right")
     hsum = np.where(done > 0, lat_sorted[np.maximum(done - 1, 0)], 0.0)
-    gauge = counter - done  # arrived and not yet departed at the scrape instant
-    return {"ts": ts, "counter": counter, "count": done.astype(float), "sum": hsum, "gauge": gauge}
+    gauge = arrived - done  # arrived and not yet departed at the scrape instant
+    assert counter in ("arrivals", "completions")
+    req = arrived if counter == "arrivals" else done.astype(float)
+    return {"ts": ts, "counter": req, "count": done.astype(float), "sum": hsum, "gauge": gauge}
 
 
 def substeps(

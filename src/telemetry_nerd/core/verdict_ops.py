@@ -35,6 +35,7 @@ from telemetry_nerd.catalog.relations import BINDING_ROLES
 from telemetry_nerd.core.binding_ops import ROLE_FAILURES, BindingOps, parse_range
 from telemetry_nerd.core.binding_view import RolePlan, natural_bound
 from telemetry_nerd.core.events import Actor
+from telemetry_nerd.core.littles_ops import NOT_POSSIBLE
 from telemetry_nerd.core.uncertainty import mark_statistics
 from telemetry_nerd.core.wire import add_caveats, sig, sig_pair, statistic
 from telemetry_nerd.model.time import TimeRange, format_duration, iso
@@ -267,6 +268,12 @@ class VerdictOps:
             if role not in plans:
                 u = b.unfilled.get(role) or {}
                 out_roles[role] = {"status": "gap", "suggest": u.get("name"), "why": u.get("why")}
+                if b.kind == "littles_law" and role == "concurrency":
+                    out_roles[role]["model_check"] = {
+                        "status": "not_possible",
+                        "summary": NOT_POSSIBLE + ": the binding has no concurrency signal; L "
+                        "was not estimated (instrument the suggested in-flight gauge)",
+                    }
             elif role not in results:
                 out_roles[role] = _error_wire(roles[role])
             else:
@@ -451,12 +458,15 @@ class VerdictOps:
             return {"error": str(e)}
         t = out["total"]
         return {
-            "verdict": out["verdict"], "ratio": t.get("ratio"), "ci95": t.get("ci95"),
+            "summary": out["summary"], "discrepancy": out["discrepancy"],
+            "verdict": out["verdict"], "classification": out["classification"],
+            "warnings": out["warnings"], "ratio": t.get("ratio"), "ci95": t.get("ci95"),
             "L": t.get("L"), "lambda_W": t.get("lambda_W"), "W_s": t.get("W_s"),
             "window": out["window"], "dataset": out["datasets"]["concurrency"],
             "evidence": t.get("evidence", []),
-            "note": "check_littles_law (czt.2): its own propagated interval and 5% FWER; not a "
-            "test in this family",
+            "note": "check_littles_law (czt.2): the discrepancy L - λW with its measurement "
+            "interval; systematic offset = measurement system, transient windows = special or "
+            "common cause; its own 5% FWER, not a test in this family",
         }  # fmt: skip
 
     # wire ----------------------------------------------------------------------------------------

@@ -453,3 +453,26 @@ def test_a_bound_bucket_series_stands_for_its_classic_histogram(tmp_path):
     svc.ws.catalog.relearn("default", names, 1, complete=True)
     info = BindingOps(svc)._info("default", "lat_seconds_bucket", frozenset())
     assert (info.name, info.type, info.native) == ("lat_seconds", "histogram", False)
+
+
+async def test_littles_check_without_concurrency_says_it_cannot_be_done(tmp_path):
+    """60j: no in-flight gauge, no check: the group says so plainly, with the gauge to add, and
+    never derives L from lambda W."""
+    svc, _ = await _svc(tmp_path)
+    svc.ws.bind_claude(
+        "default", "littles_law", "svc", {
+            "arrival_rate": "http_server_requests_total",
+            "latency": "http_server_request_duration_seconds", "concurrency": None,
+        }, join_on=["service_name"], basis="test", confidence=0.8,
+    )  # fmt: skip
+    g = await svc.show_binding(source="default", kind="littles_law", key="svc", start="now-3h")
+    roles = {r.role: r for r in g.roles}
+    assert roles["concurrency"].view == "gap"
+    check = roles["check"]
+    assert check.view == "gap" and check.panel is None and check.suggestion
+    assert "cannot be checked without a concurrency" in check.why
+    out = await svc.binding_verdict(
+        source="default", kind="littles_law", key="svc", start="now-1h", reference="previous"
+    )
+    mc = out["roles"]["concurrency"]["model_check"]
+    assert mc["status"] == "not_possible" and "L was not estimated" in mc["summary"]

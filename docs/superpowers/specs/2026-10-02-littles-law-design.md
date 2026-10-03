@@ -30,47 +30,98 @@ multiple of the scrape interval giving ≥ 20 per window). Sub-steps where any o
 missing are dropped from all four (alignment); a window with < 4 is `insufficient`. `warmup`
 drops the start of the range.
 
-## Estimator and interval (per window, per group, and pooled)
+## Discrepancy first (60j, user decision 2026-10-03)
+The check always reports the discrepancy, whatever the verdict: per window and pooled, the
+absolute L − λ·W (requests) and the relative R − 1 with R = L / (λ·W), each with its measurement
+interval. A "consistent" verdict is context, never a reason to hide the numbers. The MCP result
+leads with `summary` (text: discrepancy, then verdict and classification, then warnings),
+`discrepancy`, `verdict`, `classification`, `warnings`.
+
+## Sources of variation (SPC vocabulary)
+Every reported variation is labelled with its source:
+- **measurement system** (instrumentation): the measurement interval (gauge sampling, edge
+  straddle, scrape timing, rate lookback) and a **systematic offset** (persistent L ≠ λW across
+  most windows: unmeasured queueing, subset/superset measured, a missing instance, units). Not
+  the process.
+- **common cause** (the system's inherent variability): the small-system fluctuation scale (at N
+  requests per window, L and λW each fluctuate about ±1.96·(1/√N_arrivals + 1/√N_completions)) and
+  the windows' own variation around the reference (3 robust sigma of the window ratios, less what
+  the measurement interval explains); the envelope is the wider of the two. Windows inside it are
+  not to be chased.
+- **special cause** (assignable): **transient** windows beyond the measurement interval around
+  the reference AND beyond the common-cause envelope — load peaks, leaving steady state, a change
+  confined to those windows. Investigate.
+
+## Estimator and measurement interval (per window, per group, and pooled)
 R = L̂ / (λ̂·Ŵ) with L̂, λ̂, S̄, C̄ the sub-step means and Ŵ = S̄/C̄.
 
 The estimand is the realised path: over a window, L·T = ∫N dt and λ·W·T = Σ measured latencies of
-the window's completions agree up to the requests straddling its edges. So the error is what the
-instruments add, not how the next window would differ:
+the window's completions describe the same requests up to those straddling its edges. So the
+interval holds only what the instruments add for THIS window, never how the next window would
+differ:
 
-1. **L (scrape sampling)**: the gauge is read at m scrape instants. Its sampling error is
-   estimated from successive differences (mean(ΔL²)/2 / n: σ²/m for a fast process, small for a
-   slowly varying, well-resolved one), never below the error a Poisson-occupancy process with
-   correlation time Ŵ would have under the same sampling — max(L̂, λŴ)/m · (coth(x/2) − 2/x),
-   x = scrape/Ŵ — because scrapes can miss short spikes even when every sample looks alike.
-   (A first version used the delta method over all four sub-step series with Geyer τ: it
-   estimates the long-run ratio, so a queue that wanders slowly made it hugely wide and missed 3×
-   mismatches; the realised-path version keeps the false-alarm rate and detects them.)
-2. **λ and W**: Poisson relative errors 1/√N (arrivals) and 1/√C (completions; CV ≥ 1), added
-   linearly — their correlation is unknown, so the worst case. They bound rate()
-   extrapolation and counting noise; at production rates they are small.
-3. **Delta method on log R**: L's error (another instrument: sampling instants) in quadrature with
-   the counts' (λ+W) error: sd_R² = (sd_L/λW)² + (R·(r_λ + r_W))².
-4. **Bias bounds added to the half-width**: window edges (L_first + L_last)·W_max/(λŴ·T);
-   alignment (rate() looks back δ = (rate interval − s)/2 further than the gauge average):
-   R·δ/T·(relative range of λ, S or C in the window).
+1. **Gauge sampling**: the gauge is read at m scrape instants. Successive differences estimate
+   the error (mean(ΔL²)/2 / n), never below a Poisson-occupancy process with correlation time Ŵ
+   under the same sampling — max(L̂, λŴ)/m · (coth(x/2) − 2/x), x = scrape/Ŵ — because scrapes can
+   miss short spikes even when every sample looks alike.
+2. **Edge straddle (steady state)**: requests in flight at an edge put their in-window time in
+   L·T and their whole latency in λW·T. In steady state the two edges cancel on average; per
+   contiguous segment the remainder has sd 2·W_rms·√max(L, λW) / (λW·T) (Poisson(L) requests per
+   edge, residual time second moment 2W², CV 1; W_rms the completion-weighted RMS of the sub-step
+   means). A backlog that builds or drains inside a window is NOT in it: that is out of steady
+   state, a real (special-cause) discrepancy.
+3. **Counter scrape timing**: increments between a window edge and the nearest scrape land in the
+   neighbouring window (rate() extrapolates over them): at most one scrape interval g per edge,
+   Poisson in that fragment: √(2·g·λ)/(λT) for the arrival counter and √(2·g·C)/(C·T) for the
+   latency count/sum (CV 1), added linearly (correlation unknown).
+4. **rate() lookback** (bias bound, added to the half-width): each sub-step's rate() looks back
+   δ = (rate interval − s)/2 further than the gauge average; the window's counts are those of a
+   window shifted by δ: R·δ/T·|x̄_end − x̄_start|/x̄ over the sub-steps one rate interval covers at
+   each end (λ, S, C; the largest), plus that estimate's own counting noise √(2/N_end).
 
-Interval = R ± (t_{n−1}·sd + bias), clipped at 0. L and λ·W get their own intervals for the panel.
-Measured on the simulations: pointwise 95% intervals cover 1 in ~98.5–100% of consistent windows
-(conservative), overall false alarms 0–2% at a nominal 5%.
+1–3 in quadrature on R (independent instruments / instants); interval = R ± (t_{n−1}·sd + bias),
+clipped at 0. L and λ·W get their own intervals for the panel. The counts' Poisson noise (±1/√N on
+λ and W) was in the interval before 60j; it is not measurement error of the comparison (both
+sides count the same realised requests) and is now reported apart as the common-cause scale, with
+a warning when it is ≥ 10% per window or when a transient window lies inside it: "at this
+traffic (N≈… completions per window) L and λW legitimately fluctuate ±X% per window; window
+differences smaller than that are not distinguishable from small-system behaviour".
 
-## Verdicts (α = 5% overall, split in two)
-- Window (per group): `consistent` | `L_high` | `L_low` from a Bonferroni interval over all
-  (group, window) tests at α/2; `insufficient` / `no_traffic` when it cannot be judged. `ci95` is
-  the pointwise 95% interval (panel bands, evidence).
-- Overall (per group and for the total): pooled over all usable sub-steps at α/2: `L_high` /
-  `L_low` when the pooled interval excludes 1; else `inconsistent_in_windows` when any window is
-  flagged; else `consistent`. False alarms: ≤ α by construction (Bonferroni + conservative sd).
-- `L_high`: time in system not covered by the latency timer (queueing before it starts: accept
-  queue, pool wait, middleware), leaked/stuck requests (L−λW grows: trend test), latency on a
-  subset of the requests the gauge counts, a gauge counting something broader.
-- `L_low`: concurrency missing instances/series, gauge sampling missing bursts, latency measured
-  on a superset (client/upstream time, retries), an arrival counter counting more than the gauge
+## Systematic vs transient (α = 5% overall, split in two)
+- **Window tests** (Bonferroni over all (group, window) tests at α/2): `consistent | L_high |
+  L_low` against 1 (`flagged_windows`), and the transient test against the reference level
+  (below). `ci95` is the pointwise 95% measurement interval.
+- **Reference and systematic offset**: start from the median window ratio; windows off it beyond
+  their measurement interval (combined with the level's) are transient; the level of the rest is
+  their equal-weight mean ratio (one heavy window cannot make an offset persistent), its standard
+  error the larger of the measurement one and the windows' spread (t with the windows' or the
+  sub-steps' df accordingly), tested at α/2. If it excludes 1 — or most windows are flagged on one
+  side of 1 — it is the systematic offset and the reference; else the reference is 1. Iterate
+  until the transient set is stable. A systematic offset needs most windows (with half or more
+  transient there is none). When L − λW trends over the windows (`growing`: a leak, a backlog
+  building over the range), the reference is the offset's linear trend: a drifting offset, not a
+  run of transients.
+- **Transient windows** carry their load context: λ, W and L against the median window, the
+  backlog change (gauge at the window's end − start), λ rising; `phase` = `peak` (λ ≥ 1.1× the
+  median and in the top quartile, W ≥ 1.5× the median, or a backlog building: possible transition
+  out of steady state, toward overload — called out in `warnings` and the summary), `drain` (a
+  backlog draining after a peak) or `other` (a change confined to those windows: a deploy, an
+  instance joining/leaving, queueing the timer misses, instrumentation).
+- **Overall verdict**: `L_high` / `L_low` when there is a systematic offset; else
+  `inconsistent_in_windows` when any window is transient; else `consistent`. False alarms ≤ α by
+  construction.
+- `L_high`: time in system not covered by the latency timer (queueing before it starts), leaked/
+  stuck requests (L−λW grows: trend test), latency on a subset of the requests the gauge counts, a
+  gauge counting something broader. `L_low`: concurrency missing instances/series, gauge sampling
+  missing bursts, latency measured on a superset, an arrival counter counting more than the gauge
   tracks. A ratio near 10^±3 adds a unit hint (ms vs s).
+
+## Concurrency is optional in real systems
+Without a concurrency (in-flight) signal the check cannot be done, and says so plainly with the
+suggested gauge (binding gaps / `SUGGESTIONS`): `check_littles_law` refuses a missing role; a
+concurrency query that returns no data gives a summary "cannot be checked", no L; a Little's law
+binding without concurrency shows a `check` card with the gauge to add, and `binding_verdict`'s
+`model_check` is `not_possible`. L is never derived from λ·W.
 
 ## Assumptions, checked and stated
 - **Steady state**: per window a trend test (stability.trend, n_eff) on L and λ; drift is
@@ -89,13 +140,39 @@ Measured on the simulations: pointwise 95% intervals cover 1 in ~98.5–100% of 
 - **Window ≫ W**: `window_short_vs_latency` when Ŵ > T/10.
 
 ## Output, evidence, panel
-Per group: overall result, windows, flagged windows, assumptions; `total` (all groups summed: what
-an ungrouped check sees); `unmatched` groups; `evidence` statistics (`littles_law_ratio`, `L`,
-`lambda_W`) through `core.wire.statistic`, citing the concurrency dataset with the other datasets
-in params. `show(<concurrency dataset>, question, mark="littles")` draws per group L and λ·W as
-window steps with 95% bands, and a ratio strip (1 line, band, verdict colours).
+Per group: `discrepancy` (L, λW, difference and relative with measurement intervals, per-window
+ranges, common-cause scale), verdict, `classification` (reference, systematic, transient),
+`common_cause`, windows (`window_columns`: start, verdict, ratio, interval, L − λW, source),
+flagged windows, assumptions; `total` (all groups summed: what an ungrouped check sees);
+`unmatched` groups. `evidence` statistics through `core.wire.statistic`, citing the concurrency
+dataset with the other datasets in params: `littles_law_ratio`, `littles_law_discrepancy` (pooled
+R − 1 with the measurement interval; the absolute difference and the common-cause scale in
+params), `mean_concurrency_L`, `lambda_times_W`, `littles_law_systematic_offset` (when present)
+and one `littles_law_transient` per transient window (its R − 1, interval, reference, source,
+phase). All marked with the inputs' uncertainty status (mark_statistics, spec §5.3).
+`show(<concurrency dataset>, question, mark="littles")` draws per group, first, the discrepancy
+strip (L ÷ λW per window, log scale; dark band = measurement interval; light band = common-cause
+envelope around the reference; dashed reference when a systematic offset exists, labelled
+"systematic offset … (measurement system)"; special-cause transients shaded, common-cause ones
+hatched), then L and λ·W as window steps with their bands; the common-cause warning under it.
 
-Validation: a seeded discrete-event M/M/c simulation (tests): consistent → false alarms at or
-below nominal; unmeasured queueing (timer starts after the queue) → `L_high` in the loaded
-windows; a missing instance → `L_low` for the total, localised to that instance (`missing_in:
-concurrency`); percentile-only latency refused.
+Validation (seeded discrete-event M/M/c, tests/unit/littles_sim.py; FAR = verdict not consistent):
+
+| scenario (seeds) | before 60j | after |
+|---|---|---|
+| consistent λ=2 c=4 (150): FAR, pointwise window coverage | 2.0%, 98.7% | 2.0%, 97.7% |
+| consistent λ=9.5 c=10 (150) / λ=19 c=25 (50) | 0%, 99.9% / 0%, 98.3% | 0%, 99.6% / 2.0%, 97.3% |
+| consistent λ=0.3 / λ=0.05, low traffic (150 each) | 1.3% / 1.3% | 1.3% / 0%; warning ±43% at N≈90 |
+| consistent, load steps ρ 0.5→0.925→0.5 (75) | 1.3% | 1.3% |
+| gauge ×1.05 / ×1.1 / ×1.2 at λ=9.5 (75): detection | 5% / 95% / 100% | 19% / 96% / 100% |
+| gauge ×1.05 / ×1.1 / ×1.2 at λ=2 (75) | 3% / 17% / 83% | 4% / 21% / 84% |
+| ρ 1.25 spike for 5 min, completions counter (75) | 0/75 detected | 75/75 transient at exactly the peak (L_high) and drain (L_low) windows |
+| hidden queueing only under load (50) | L_high (pooled; not localised) | 49/50 transient in the loaded windows, at the peak |
+| hidden queueing at constant ρ 0.95 (50) | L_high | systematic L_high 50/50 |
+| missing instance, 1 of 3 gauges (50) | L_low | systematic L_low 50/50, no transients |
+
+With an arrivals counter the same spike is mostly invisible (1/75): arrivals ≠ completions while
+the backlog builds and the instruments partly compensate; the flow-balance assumption and the
+transient load context are where it shows. Real rate() lookback (not in the simulation) adds a
+large bias bound in a window where the latency sum's rate changes fast, so a spike can be within
+the interval there.

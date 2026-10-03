@@ -8,6 +8,7 @@ from mcp import Client
 
 from telemetry_nerd.mcp.server import build_mcp
 from telemetry_nerd.model.discovery import Discovery, MetricInfo
+from telemetry_nerd.model.time import iso
 from telemetry_nerd.workspace.models import FindingIn
 
 from .fakes import NOW, make_service
@@ -49,6 +50,20 @@ def test_consistent_total_states_assumptions_and_cites_evidence(tmp_path):
     t = out["total"]
     assert t["ci95"][0] <= 1 <= t["ci95"][1]
     assert len(t["windows"]) == 12
+    assert len(t["windows"][0]) == len(t["window_columns"])
+    # the discrepancy comes first, whatever the verdict: absolute and relative, with the interval
+    assert list(out)[:5] == ["summary", "discrepancy", "verdict", "classification", "warnings"]
+    d = out["discrepancy"]
+    assert d["difference"] is not None and d["difference_ci95"][0] <= d["difference"]
+    assert d["relative_ci95"][0] <= d["relative"] <= d["relative_ci95"][1]
+    assert d["per_window"]["windows"] == 12 and d["common_cause_rel95"]["per_window"] > 0
+    assert out["summary"].startswith("Discrepancy over the range: L − λ·W = ")
+    assert out["summary"].index("Discrepancy") < out["summary"].index("Verdict consistent")
+    assert out["classification"] == {"reference": 1.0, "systematic": None, "transient": []}
+    names = [e["name"] for e in t["evidence"]]
+    assert names[:2] == ["littles_law_ratio", "littles_law_discrepancy"]
+    disc = t["evidence"][1]
+    assert disc["value"] == d["relative"] and disc["interval"] == d["relative_ci95"]
     # the statistics are evidence as they are
     ev = t["evidence"][0]
     assert ev["name"] == "littles_law_ratio" and ev["dataset"] == out["datasets"]["concurrency"]
@@ -95,6 +110,54 @@ def test_unmeasured_queueing_is_high(tmp_path):
     out = _run(svc)
     assert out["verdict"] == "L_high"
     assert any("queueing before the timer" in h for h in out["hints"])
+    sysd = out["classification"]["systematic"]
+    assert sysd["direction"] == "L_high" and sysd["source"] == "measurement_system"
+    assert sysd["windows"][0] * 2 > sysd["windows"][1]
+    assert "systematic offset" in out["summary"] and "measurement system" in out["summary"]
+    names = [e["name"] for e in out["total"]["evidence"]]
+    assert "littles_law_systematic_offset" in names
+    for t in out["classification"]["transient"]:  # each transient is cited with its window
+        assert t["source"] in ("special_cause", "common_cause")
+        ev = next(
+            e for e in out["total"]["evidence"]
+            if e["name"] == "littles_law_transient" and e["params"]["window"] == t["window"]
+        )  # fmt: skip
+        assert ev["value"] == t["relative"]
+
+
+def test_low_traffic_warns_with_the_common_cause_scale(tmp_path):
+    sims = {"i0": simulate(8, rates=[(0.0, 0.3)], c=4)}
+    svc = make_service(tmp_path, source=SimSource(sims, START))
+    out = _run(svc)
+    (w,) = [w for w in out["warnings"] if "fluctuate" in w]
+    cc = out["total"]["common_cause"]
+    assert f"±{100 * cc['rel95']:.0f}% per window" in w and "N≈" in w
+    assert cc["rel95"] > 0.3 and cc["source"] == "common_cause"
+    assert out["discrepancy"]["ratio"] is not None  # shown, not hidden
+    s = out["summary"]
+    assert s.index("Discrepancy") < s.index("Verdict") < s.index("Warnings")
+
+
+def test_load_spike_is_called_out_as_transient_at_a_peak(tmp_path):
+    spike = [(0.0, 2.0), (1500.0, 5.0), (1800.0, 2.0)]
+    sims = {"i0": simulate(602, rates=spike, c=4, counter="completions")}
+    svc = make_service(tmp_path, source=SimSource(sims, START))
+    out = _run(svc)
+    tr = out["classification"]["transient"]
+    peak = [t for t in tr if t["at_peak"]]
+    assert [t["window"][0] for t in peak] == [iso(START + 1_500_000)]  # the 5 min at rho 1.25
+    assert any("transient at a load peak" in w for w in out["warnings"])
+    assert "AT A LOAD PEAK" in out["summary"]
+    assert any("transition out of steady state" in h for h in out["hints"])
+
+
+def test_no_concurrency_data_says_the_check_cannot_be_done(tmp_path):
+    svc = _service(tmp_path, hide={("gauge", "i0")})
+    out = _run(svc)
+    assert out["summary"].startswith("Little's law cannot be checked without a concurrency")
+    assert "L was not estimated" in out["summary"]
+    assert out["discrepancy"]["L"] is None and out["discrepancy"]["ratio"] is None
+    assert any("in-flight gauge" in h for h in out["hints"])
 
 
 def test_millisecond_histogram_is_converted(tmp_path):
@@ -162,7 +225,9 @@ def test_binding_supplies_roles_and_join_on(tmp_path):
 
 def test_missing_role_is_refused_with_a_suggestion(tmp_path):
     svc = _service(tmp_path)
-    with pytest.raises(ValueError, match="concurrency.*active_requests"):
+    with pytest.raises(
+        ValueError, match="cannot be checked without a concurrency.*active_requests"
+    ):
         asyncio.run(svc.check_littles_law(arrival_rate=ARRIVALS, latency=LATENCY, start="now-1h"))
 
 
@@ -174,8 +239,11 @@ def test_show_littles_panel(tmp_path):
     data = svc.panel_data(panel.id, 800)
     assert data["kind"] == "littles"
     assert [s["id"] for s in data["series"]] == ["total", "instance=i0", "instance=i1"]
-    w = data["series"][0]["windows"][0]
+    s0 = data["series"][0]
+    w = s0["windows"][0]
     assert {"L", "L_ci", "lambda_W", "lambda_W_ci", "ratio", "ci95", "verdict"} <= set(w)
+    assert {"diff", "diff_ci", "common", "source", "reference"} <= set(w)
+    assert {"reference", "systematic", "transient", "common_cause"} <= set(s0)
 
 
 def test_show_littles_needs_a_check_first(tmp_path):

@@ -38,7 +38,9 @@ change that matches it.
 - `level`: now vs reference with intervals. `threshold` (latency): the bucket edge, the
   reference share and the share now. `members` (utilization, saturation): judged per member; the
   role reports the worst. `near_bound` / `at_capacity` (utilization): runs near the natural
-  bound. `model_check` (concurrency in a Little's law binding): the `check_littles_law` verdict.
+  bound. `model_check` (concurrency in a Little's law binding): the `check_littles_law` result — its
+  `summary`, `discrepancy` (report it first), verdict, `classification` and `warnings`;
+  `status: not_possible` when the binding has no concurrency signal.
 - `evidence`: statistics for `finding_create`, citing the role dataset.
 - `caveats`: `overdispersed`, `heavy_tails`, `noisier_than_reference`, input uncertainty flags.
 

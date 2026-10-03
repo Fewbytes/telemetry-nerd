@@ -30,6 +30,7 @@ from telemetry_nerd.core.binding_view import (
     plan_role,
 )
 from telemetry_nerd.core.events import Actor
+from telemetry_nerd.core.littles_ops import NOT_POSSIBLE
 from telemetry_nerd.datasets.store import Lineage
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.time import TimeRange, format_duration, parse_duration, parse_time
@@ -250,6 +251,13 @@ class BindingOps:
         ]
         if b.kind == "littles_law" and set(BINDING_ROLES[b.kind]) <= infos.keys():
             roles.append(await self._littles(group, b, infos, mt, rng, actor))
+        elif b.kind == "littles_law" and "concurrency" not in infos:
+            # the check is not possible: say so where its panel would be, with the gauge to add
+            g = _gap_role(b, "concurrency")
+            roles.append(g.model_copy(update={
+                "role": "check", "form": "littles",
+                "why": f"{NOT_POSSIBLE}; L is not estimated. Instrument: {g.why}",
+            }))  # fmt: skip
         await asyncio.gather(
             *(
                 svc.y_context(r.panel, actor)

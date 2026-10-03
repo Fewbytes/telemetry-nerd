@@ -21,8 +21,13 @@ What the numbers mean and how they are reported:
   (default 5%). Ordering "A moved first" is stated only when the onset intervals do not overlap.
 - Latency is judged as the share of requests above a stated bucket edge, never as an averaged
   percentile. Errors are a share with a Wilson interval on effective sample size.
-- Little's law uses the MEAN latency (`_sum` / `_count`); percentile-only latency is refused. A
-  ratio L / (lambda W) above 1 means time in the system that the latency timer does not cover.
+- Little's law uses the MEAN latency (`_sum` / `_count`); percentile-only latency is refused. The
+  discrepancy L - lambda W (absolute and relative, with its measurement interval) is always shown.
+  Each variation is labelled by source: measurement system (the interval; a systematic offset,
+  e.g. L / (lambda W) above 1 in most windows = time the latency timer does not cover), common
+  cause (small-system fluctuation at this traffic, the windows' own spread) or special cause
+  (transient windows, e.g. at a load peak leaving steady state). Without a concurrency gauge the
+  check says it cannot be done.
 - Every statistic is citable evidence; unknown input uncertainty is flagged, not hidden.
 
 For Claude: the `model-views` skill (`skills/model-views/`) holds the workflow, reporting rules and

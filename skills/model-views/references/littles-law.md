@@ -9,21 +9,42 @@ the system W. `check_littles_law` measures all three independently:
 - lambda: `rate()` of a request counter (or a histogram's `_count`).
 - W: `rate(_sum) / rate(_count)` of the latency histogram or summary: a MEAN.
 
-R = L / (lambda x W) with a 95% interval. R near 1 means the three instruments tell one story.
-The interval combines the gauge's sampling error (scrapes, floored by what a Poisson occupancy
-process would give), the counts' Poisson errors, and bias bounds for requests straddling window
-edges and the rate lookback. Verdicts are Bonferroni-controlled to at most 5% false alarms over
-all windows and groups.
+R = L / (lambda x W). The check ALWAYS reports the discrepancy first: `discrepancy` holds the
+absolute L - lambda W (requests) and the relative R - 1, whole range and per window, each with its
+MEASUREMENT interval. Report those numbers whatever the verdict: a `consistent` verdict is context,
+never a reason to leave the discrepancy out. `summary` is a ready sentence in that order
+(discrepancy, verdict and classification, warnings).
+
+## Sources of variation: say which one
+
+| source | what it is | in the output | what to do |
+|---|---|---|---|
+| measurement system | the measurement interval: gauge sampling, the steady-state edge straddle, counter scrape timing, the rate() lookback; and a **systematic offset** (persistent L != lambda W across most windows) | `ci95`, `discrepancy.*_ci95`; `classification.systematic` (`source: measurement_system`) | an offset is instrumentation / model mismatch, not the process: unmeasured queueing, latency on a subset or superset, a missing instance, units |
+| common cause | the system's inherent variability: at N requests per window L and lambda W legitimately fluctuate +-X% (small systems do not average out), and the windows' own spread | `common_cause` (`rel95`, `spread_rel`, `warning`); windows with `source: common_cause` | do not chase single windows inside the envelope; quote the warning when present |
+| special cause | **transient** windows beyond the measurement interval around the reference AND beyond the common-cause envelope | `classification.transient` with `source: special_cause`, `phase`, `at_peak`, `load` | investigate: a load peak (leaving steady state, toward overload), a backlog draining, or a change confined to those windows |
+
+The measurement interval does not contain the counts' Poisson noise: over a window L and lambda W
+count the same requests, so that noise is not an error of the comparison. It is the common-cause
+scale, reported apart as a warning ("at this traffic (N≈90 completions per window) L and lambda W
+legitimately fluctuate +-43% per window; window differences smaller than that are not
+distinguishable from small-system behaviour"). Use it to qualify window differences, never to
+hide them. Verdicts are Bonferroni-controlled to at most 5% false alarms over all windows and
+groups.
 
 ## Verdicts and what they imply
 
 | verdict | meaning | usual causes (the hints list them) |
 |---|---|---|
-| `consistent` | interval contains 1 | none needed; still read the assumptions |
-| `L_high` | more in flight than lambda x W explains | queueing before the latency timer starts (accept queue, pool wait, middleware), requests stuck or leaked (trend in L - lambda W), latency measured on a subset (one route, successes only), a gauge counting broader things (connections) |
-| `L_low` | less in flight than explained | gauge missing instances, gauge missing short bursts (scrape too coarse), latency on a superset (client or upstream time, retries), arrival counter counting more than the gauge tracks |
-| `inconsistent_in_windows` | pooled R is fine but some windows are flagged | a transient: read `flagged_windows` |
+| `consistent` | no systematic offset, no transient window | none needed; still report the discrepancy and read the assumptions |
+| `L_high` | a systematic offset: more in flight than lambda x W explains in most windows | queueing before the latency timer starts (accept queue, pool wait, middleware), requests stuck or leaked (`growing`; the offset is then `drifting`), latency measured on a subset (one route, successes only), a gauge counting broader things (connections) |
+| `L_low` | a systematic offset the other way | gauge missing instances, gauge missing short bursts (scrape too coarse), latency on a superset (client or upstream time, retries), arrival counter counting more than the gauge tracks |
+| `inconsistent_in_windows` | no systematic offset, but transient windows | read `classification.transient`: `phase: peak` (`at_peak`: possible transition out of steady state, toward overload — say so explicitly; correlate with lambda rising, W rising, backlog building), `drain` (recovery after a peak), `other` (a deploy, an instance joining or leaving, a routing or instrumentation change, queueing the timer misses) |
 | `insufficient` / `no_traffic` | cannot be judged | too few samples; widen the range or window |
+
+With a systematic offset, transient windows are relative to it (the `reference`), not to 1. A
+transient at a load peak is the system, not the instruments: with a counter that counts
+completions, a backlog building puts in-flight time in L that completed latencies do not show yet
+(`L_high` in the peak window, `L_low` while it drains).
 
 An `L_high` where W is the measured service time can mean the caller waits W plus an unmeasured
 queue. If the excess is queueing before the timer, it is L / lambda - W = W (R - 1): state that
@@ -32,9 +53,21 @@ other L_high causes (subset latency, broader gauge, leaks, arrivals vs completio
 evidence such as a per-instance run or a queue-depth metric. `consistent` means no mismatch
 detected at this precision: offsetting errors (subset latency plus broader gauge) can cancel.
 
+## No concurrency signal
+
+The in-flight gauge is optional in real systems. Without it the check cannot be done, and the
+tool says so: `check_littles_law` refuses (with the gauge to add), a concurrency query with no
+data gives a summary "cannot be checked" and no L, `show_binding` shows a `check` card with the
+suggested gauge, `binding_verdict`'s `model_check` is `not_possible`. Say so plainly and record
+the gap; never compute L from lambda x W.
+
 ## Localise
 
-- Time: `flagged_windows` and the per-window rows (`windows`), drawn by `show(..., mark="littles")`.
+- Time: `classification.transient` (against the reference), `flagged_windows` (against 1) and the
+  per-window rows (`windows`, columns in `window_columns`, each with its `source`), drawn by
+  `show(..., mark="littles")`: the discrepancy strip on top (dark band measurement interval,
+  light band common-cause envelope, dashed systematic level; special-cause transients shaded,
+  common-cause ones hatched), L and lambda x W under it.
 - Series: re-run with `by=["instance"]` (or the join label). `groups` give a verdict per member;
   `unmatched` lists groups missing from a signal (`missing_in: concurrency` is a missing
   instance in the gauge and explains `L_low` for the total).
@@ -51,6 +84,7 @@ detected at this precision: offsetting errors (subset latency plus broader gauge
 | `window_alignment` | one sub-step grid for all four signals | a bias term; samples missing in any signal are dropped from all |
 | `warmup` | start-up excluded only if `warmup` is given | pass `warmup="10m"` after a restart or deploy |
 | `gauge_sampling` | scrapes see the in-flight count often enough | bursts shorter than the scrape are invisible: L biased low; interval widened but not removed |
+| steady state at the edges | requests straddling window edges cancel out | the measurement interval carries the steady-state straddle only; a backlog building or draining inside a window shows as a transient (`phase: peak` / `drain`) |
 | window vs W | window much longer than W (`window_short_vs_latency`) | the straddling-requests bias is large: use a longer `window` |
 
 An `assumed` entry is a statement to repeat in the answer ("the counter was assumed to count
@@ -75,9 +109,15 @@ say that the check cannot be run and record a gap.
 
 ## Reporting
 
-"Pooled L / (lambda W) = 2.40 (95% interval 2.26-2.54), `L_high`; every 5-minute window flagged.
-Measured W is 1.0 s while L / lambda is 2.4 s: if the excess is queueing before the timer, about
-1.4 s per request (1.3-1.5 s from R's interval) is not covered by the latency timer. Assumed: the counter counts arrivals (flagged: assumed). Hints: queueing before
-the timer starts, latency on a subset, a broader gauge. Next: bind by instance and compare, check
-whether the timer starts after the accept queue." Cite `evidence` (`littles_law_ratio`, `L`,
-`lambda_W`) in `finding_create`, with any `input_uncertainty` flag.
+Discrepancy first, then verdict with its source, then warnings: "Over the hour L - lambda W =
++13.3 requests (L 22.9 vs lambda x W 9.54; L / (lambda W) 2.40, +140%, measurement interval +127%
+to +152%). Verdict `L_high`: a systematic offset of 2.10 (1.87-2.34) in 9 of 12 five-minute
+windows — measurement system: the instruments do not describe the same requests. If the excess is
+queueing before the timer, about 1.4 s per request is not covered by the latency timer. Three
+windows differ from that level beyond the measurement interval and the windows' own +-31% spread
+(special cause, not at a load peak: queue excursions the timer misses, or a change in those
+windows). Common cause: at about 2860 requests per window L and lambda W fluctuate +-8%. Assumed:
+the counter counts arrivals. Next: bind by instance; check whether the timer starts after the
+accept queue." Cite `evidence` (`littles_law_discrepancy`, `littles_law_ratio`,
+`littles_law_systematic_offset`, each `littles_law_transient`) in `finding_create`, with any
+`input_uncertainty` flag.

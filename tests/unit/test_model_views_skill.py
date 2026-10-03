@@ -154,8 +154,15 @@ async def test_littles_consistent_example(tmp_path):
     assert o["verdict"] == "consistent"
     t = o["total"]
     assert round(t["ratio"], 2) == 0.99 and t["ci95"][0] < 1 < t["ci95"][1]
-    assert round(t["ci95"][0], 2) == 0.91 and round(t["ci95"][1], 2) == 1.08
+    d = o["discrepancy"]
+    assert round(d["difference"], 2) == -0.13
+    assert [round(100 * x) for x in d["relative_ci95"]] == [-6, 5]
+    assert [round(x, 2) for x in d["per_window"]["ratio_range"]] == [0.84, 1.15]
     assert (round(t["L"], 1), round(t["lambda_W"], 1), round(t["W_s"], 1)) == (22.9, 23.0, 2.4)
+    assert o["classification"]["systematic"] is None and not o["classification"]["transient"]
+    cc = t["common_cause"]
+    assert round(cc["completions_per_window"]) == 2860 and round(100 * cc["rel95"]) == 8
+    assert cc["warning"] is None
     status = {a["name"]: a["status"] for a in o["assumptions"]}
     assert status["arrivals_vs_completions"] == "assumed" and status["warmup"] == "assumed"
     assert {v for k, v in status.items() if k not in ("arrivals_vs_completions", "warmup")} == {
@@ -170,7 +177,17 @@ async def test_littles_hidden_queueing_example(tmp_path):
     o = json.loads(t1)
     assert o["verdict"] == "L_high"
     t = o["total"]
-    assert round(t["ratio"], 2) == 2.40 and [round(x, 2) for x in t["ci95"]] == [2.26, 2.54]
+    assert round(t["ratio"], 2) == 2.40 and [round(x, 2) for x in t["ci95"]] == [2.27, 2.52]
+    assert round(o["discrepancy"]["difference"], 1) == 13.3
+    assert round(o["discrepancy"]["lambda_W"], 2) == 9.54
+    sysd = o["classification"]["systematic"]
+    assert round(sysd["ratio"], 2) == 2.10 and [round(x, 2) for x in sysd["ci95"]] == [1.87, 2.34]
+    assert sysd["windows"] == [9, 12] and sysd["source"] == "measurement_system"
+    tr = o["classification"]["transient"]
+    assert len(tr) == 3 and {(x["source"], x["phase"]) for x in tr} == {("special_cause", "other")}
+    assert round(100 * t["common_cause"]["spread_rel"]) == 31
+    names = [e["name"] for e in t["evidence"]]
+    assert "littles_law_discrepancy" in names and "littles_law_systematic_offset" in names
     assert (round(t["L"], 1), round(t["lambda_per_s"], 2), round(t["W_s"], 1)) == (22.9, 9.55, 1.0)
     assert t["flagged_windows"] and any("queueing before the timer" in h for h in o["hints"])
     assert any("subset" in h for h in o["hints"]) and any("broader" in h for h in o["hints"])
