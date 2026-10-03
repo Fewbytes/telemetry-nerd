@@ -67,7 +67,8 @@ so the order is claimed as timing, not as cause.
 ## 4. Blast radius and seasonal baseline
 
 Which services carry it, and is it just the usual load of this hour? Fetch the histogram per
-member (histograms first) and compare it with the same hour on the 7 previous days:
+member (histograms first) and compare it with the same hour on the 7 previous days (`cycles`
+`["1d"]` is that scheme):
 
 <!-- call: scenario=triage id=dist -->
 ```json
@@ -81,7 +82,8 @@ member (histograms first) and compare it with the same hour on the 7 previous da
 
 Read: both members are `unusual`, `higher`, source special cause: the share above 0.25 s is
 outside the band of 7 previous days for s0 and for s1. Blast radius: every member in this source,
-not one bad instance (with 5 or more members, `fleet` would name outliers).
+not one bad instance (with 5 or more members, `fleet` on a per-member rate or share series
+would name outliers; it does not take a distribution).
 
 ## 5. Hypotheses and ruling out
 
@@ -95,7 +97,7 @@ refute it.
 
 <!-- call: scenario=triage id=f_load -->
 ```json
-{"tool": "finding_create", "args": {"claim": "http.server request rate did not change in the last hour against the 4 previous hours (ratio about 0.99, interval spans 1): no traffic increase to explain the latency shift", "scope": {"source": "default", "selector": "http_server_requests_total", "start": "now-1h", "end": "now", "step": "1m", "aggregation": "sum by (service_name) of rate"}, "evidence": ["$verdict.roles.rate.evidence.0"], "hypothesis": "$h_load.hypothesis", "stance": "against"}}
+{"tool": "finding_create", "args": {"claim": "http.server request rate did not change in the last hour against the 4 previous hours (ratio about 0.99, interval spans 1): no traffic increase to explain the latency shift", "scope": {"source": "default", "selector": "http_server_requests_total", "start": "now-1h", "end": "now", "step": "1m", "aggregation": "sum by (service_name) of rate", "baseline_start": "now-5h", "baseline_end": "now-1h"}, "evidence": ["$verdict.roles.rate.evidence.0"], "hypothesis": "$h_load.hypothesis", "stance": "against"}}
 ```
 
 <!-- call: scenario=triage id=h_load_refuted -->
@@ -110,7 +112,7 @@ refute it.
 
 <!-- call: scenario=triage id=f_daily -->
 ```json
-{"tool": "finding_create", "args": {"claim": "For each of service_name s0 and s1 the share of requests above 0.25 s in the last hour is above the range of the same hour on the 7 previous days", "scope": {"source": "default", "selector": "http_server_request_duration_seconds_bucket", "start": "now-1h", "end": "now", "step": "1m", "aggregation": "share of observations above 0.25 s, per service_name"}, "evidence": ["$seasonal.series.0.share_over.evidence", "$seasonal.series.1.share_over.evidence"], "hypothesis": "$h_daily.hypothesis", "stance": "against"}}
+{"tool": "finding_create", "args": {"claim": "For each of service_name s0 and s1 the share of requests above 0.25 s in the last hour is above the range of the same hour on the 7 previous days", "scope": {"source": "default", "selector": "http_server_request_duration_seconds_bucket", "start": "now-1h", "end": "now", "step": "1m", "aggregation": "share of observations above 0.25 s, per service_name; reference: the same hour on 7 previous days"}, "evidence": ["$seasonal.series.0.share_over.evidence", "$seasonal.series.1.share_over.evidence"], "hypothesis": "$h_daily.hypothesis", "stance": "against"}}
 ```
 
 <!-- call: scenario=triage id=h_daily_refuted -->
@@ -130,27 +132,39 @@ reference window:
 
 <!-- call: scenario=triage id=f_main -->
 ```json
-{"tool": "finding_create", "args": {"claim": "From about 10:00Z (09:56-10:02Z) the share of http.server requests slower than 0.25 s rose from 1.2% to 5.4% against the 4 previous hours; a 5xx burst followed from 10:20Z; request rate unchanged", "scope": {"source": "default", "selector": "http_server_request_duration_seconds_bucket", "start": "now-1h", "end": "now", "step": "1m", "aggregation": "share of observations above 0.25 s, service_name s0+s1 summed", "baseline_start": "now-5h", "baseline_end": "now-1h"}, "evidence": ["$verdict.roles.duration.evidence.0", "$verdict.roles.duration.evidence.1", {"kind": "panel", "panel": "$group.roles.duration.panel"}, {"kind": "annotation", "annotation": "$onset.annotation.id"}], "caveats": ["overdispersed: intervals use effective n", "onset interval approximate", "order is timing, not cause"]}}
+{"tool": "finding_create", "args": {"claim": "From about 10:00Z (09:56-10:02Z) the share of http.server requests slower than 0.25 s rose from 1.2% to 5.4% against the 4 previous hours", "scope": {"source": "default", "selector": "http_server_request_duration_seconds_bucket", "start": "now-1h", "end": "now", "step": "1m", "aggregation": "share of observations above 0.25 s, service_name s0+s1 summed", "baseline_start": "now-5h", "baseline_end": "now-1h"}, "evidence": ["$verdict.roles.duration.evidence.0", "$verdict.roles.duration.evidence.1", {"kind": "panel", "panel": "$group.roles.duration.panel"}, {"kind": "annotation", "annotation": "$onset.annotation.id"}], "caveats": ["overdispersed: intervals use effective n", "onset interval approximate"]}}
 ```
 
-Read: the result lists `sources: ["special_cause"]`; report it with the finding.
+Read: the result lists `sources: ["special_cause"]`; report it with the finding. One claim per
+finding: the 5xx burst is its own finding, scoped to the request counter, and the timing is
+attached to the hypothesis it supports:
 
 <!-- call: scenario=triage id=h_cause -->
 ```json
 {"tool": "hypothesis_create", "args": {"statement": "The 10:00Z latency shift caused the 10:20Z 5xx burst (for example timeouts)"}}
 ```
 
-The order supports it only as timing; it stays `proposed`. Stop here: a special cause is
-localised (onset, scope: both members, all of this source), the two cheap alternatives are ruled
-out, and what would separate the remaining hypothesis (failed-request latency with
+<!-- call: scenario=triage id=f_errors -->
+```json
+{"tool": "finding_create", "args": {"claim": "The 5xx share of http.server requests rose in a burst from about 10:20Z (10:17-10:22Z), after the latency shift (09:56-10:02Z): non-overlapping onsets, timing only", "scope": {"source": "default", "selector": "http_server_requests_total{http_response_status_code=~\"5..\"} / http_server_requests_total", "start": "now-1h", "end": "now", "step": "1m", "aggregation": "errors / requests, service_name s0+s1 summed", "baseline_start": "now-5h", "baseline_end": "now-1h"}, "evidence": ["$verdict.roles.errors.evidence.0", {"kind": "panel", "panel": "$group.roles.errors.panel"}], "caveats": ["noisier_than_reference: the larger spread is used", "order is timing, not cause"], "hypothesis": "$h_cause.hypothesis", "stance": "for"}}
+```
+
+The order supports the hypothesis only as timing; it stays `proposed`. `split_outcome` (latency
+of failed vs successful requests) is deferred on purpose: the latency shift began 20 minutes
+before the errors, so fast or slow errors cannot explain it; it is the test for the burst.
+
+Stop here: a special cause is localised (onset, scope: both members, all of this source), the
+two cheap alternatives are ruled out, and what would separate the remaining hypothesis (failed-request latency with
 `split_outcome`, deploy or dependency events at 10:00Z) is the next step to offer.
 
 ## 7. Report
 
+The ids are those the run produces (asserted by the test).
+
 "http.server (both service_name members, source default), last hour against the 4 previous
 hours at 5% family-wise over 3 signals: from about 10:00Z (09:56-10:02Z) the share of requests
 slower than 250 ms rose from 1.2% to 5.4% (f3, special cause). A 5xx burst followed from about
-10:20Z (10:17-10:22Z); request rate did not change. Ruled out: a traffic increase (f1, h1
+10:20Z (10:17-10:22Z, f4); request rate did not change. Ruled out: a traffic increase (f1, h1
 refuted) and the normal load of this hour (f2, h2 refuted: outside 7 previous days). Open: did the
 latency shift cause the errors (h3, timing only). Next: `split_outcome` on the latency, and what
 changed at 10:00Z."

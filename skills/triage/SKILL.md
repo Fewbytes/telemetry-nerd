@@ -1,6 +1,6 @@
 ---
 name: triage
-description: This skill should be used when investigating a live or recent production problem with Telemetry Nerd: "the service is slow", "errors are up", "what's wrong with checkout", "investigate this alert", "what changed", "find the root cause", "is this incident real", "how bad is it / who is affected", or when running /tn:investigate. Gives the SRE incident flow step by step: symptom and window, blast radius, RED / USE per service, what moved first, changepoints, seasonal baseline, Little's law, hypotheses and ruling out, stop conditions, and the report.
+description: This skill should be used when investigating a live or recent production problem with Telemetry Nerd: "the service is slow", "errors are up", "what's wrong with checkout", "investigate this alert", "what changed", "find the root cause", "is this incident real", "how bad is it / who is affected", or when running /tn:investigate. Gives the step-by-step SRE incident flow, stop conditions and the report.
 ---
 
 # Incident triage
@@ -19,29 +19,40 @@ means), `tier2-code` (custom statistics). Load them when a step needs them.
   the same hour of past days when the service has a daily rhythm.
 - Decide the question before looking: every re-run with another range or reference is another
   look. Orient with `workspace_get`, `source_list`; `source_learn` once per source.
+- Steps 2-5 may run in the order the symptom suggests; the worked example judges the golden
+  signals first, then scopes the blast radius against the seasonal baseline.
 
 ## 2. Blast radius
 
 Which services, instances, regions carry the symptom?
 
 - Query by the identifying label (`sum by (service_name) (...)`); for latency,
-  `query_distribution(selector, by=[...])`, never per-member percentiles.
-- Five or more members: `fleet(dataset)` names outliers (one bad pod) against the fleet's own
-  spread. Every member moving together points away from a single instance.
+  `query_distribution(selector, by=[...])`: aggregate buckets, never average percentiles
+  across members.
+- Latency per member: `fraction_over(dataset, x, by_series=true)` or per-member
+  `compare_seasonal(dataset)` on the distribution. Five or more members of a rate or share
+  series (not a distribution): `fleet(dataset)` names outliers (one bad pod) against the
+  fleet's own spread. Every member moving together points away from a single instance.
 - Read `coverage`, `unknown_spans`, `silent_members`: a member that stopped reporting may be the
   sick one (undetermined, not healthy).
 
 ## 3. Golden signals: what moved, what moved first
 
 Per affected service, RED; per resource it waits on (CPU, pool, disk, node), USE. Follow the
-`model-views` workflow: `binding_suggest` → `binding_accept` → `show_binding` →
-`binding_verdict`. Report per role: changed or not, pattern, onset interval, the reference and
+`model-views` workflow: check `catalog_relations(source, kind="RED")` for an existing binding,
+else `binding_suggest` → `binding_accept`; then `show_binding` →
+`binding_verdict(..., reference=)` with the reference chosen in step 1 (`auto` falls back to
+`previous`, weak for daily rhythms). Report per role: changed or not, pattern, onset interval, the reference and
 the family-wise alpha; `summary.first` only when onset intervals do not overlap. A RED change with
 an unchanged rate argues against load; a USE role `at_capacity` argues for saturation.
+Latency of a service that returns errors: `split_outcome(dataset)` separates failed from
+successful requests (or say why it is deferred). Ask the user for deploy, config and dependency events near the onset; `annotate` them and
+compare them with the onset interval (an event outside it does not explain the change).
 
 ## 4. Changepoints and one signal in depth
 
-For a single signal: `analyze(dataset)` gives level shifts with onset intervals, drift, variance
+For a single signal (a dataset from `query`, or a rate or threshold count; histograms via
+`query_distribution`): `analyze(dataset)` gives level shifts with onset intervals, drift, variance
 change and the control chart (`show(dataset, question, mark="spc")`). `analyze(dataset,
 baseline="day")` judges against yesterday. `spectrum` when the symptom repeats (cron, GC,
 retries).
@@ -51,11 +62,15 @@ retries).
 Is now unusual for this hour? `compare_seasonal(dataset)` (latency from the histogram: share
 above an edge per cycle), `operating_profile(expr)` for the learned normal,
 `binding_verdict(..., reference="day")`, `show_marginal(panel, reference="week")`. A symptom
-inside the seasonal band is the usual peak (common cause), not the incident.
+inside the seasonal band is the usual peak (common cause): it can still hurt users, but the
+lever is capacity or the system, not a root cause in this window.
 
 ## 6. Little's law where concurrency exists
 
-A service with an in-flight gauge and a latency histogram: `check_littles_law(binding=...)`.
+When concurrency exists (a `littles_law` binding, an in-flight gauge in the catalog, or a
+`binding_suggest(source, kind="littles_law")` with the concurrency role filled) and latency is a
+histogram: `check_littles_law(binding=...)`. No in-flight gauge: skip the check, never derive L,
+and record the gap.
 `L_high` means time outside the latency timer (queueing before it, stuck requests, latency on a
 subset). Report the discrepancy first, then the verdict and assumptions (`model-views`).
 
@@ -63,7 +78,8 @@ subset). Report the discrepancy first, then the verdict and assumptions (`model-
 
 Open competing hypotheses early with `hypothesis_create`; for each, look first for the
 observation that would refute it. Attach results with `finding_create(...,
-hypothesis=<id>, stance="for" | "against")` and move status with `hypothesis_update`. The cheap
+hypothesis=<id>, stance="for" | "against")` (finding anatomy, scope and source labels: the
+`evidence` skill) and move status with `hypothesis_update`. The cheap
 alternatives to rule out first, and the test for each: `references/ruling-out.md`. Do not chase
 common-cause points; separate measurement-system issues into their own findings.
 
@@ -81,7 +97,10 @@ Stop and report when any holds:
 - **Normal**: the symptom is inside the common-cause envelope (seasonal band, control limits,
   fleet spread): say so with the envelope; the lever is the system, not a root cause.
 - **Cannot tell**: the source is undetermined or a needed signal is missing: say what would
-  separate the readings, and record it with `gap_create`.
+  separate the readings; record an undetermined source as a finding carrying its label, and a
+  missing signal with `gap_create`.
+- **Looks exhausted**: further re-runs with other ranges, references or alphas would only add
+  looks the family alpha does not cover: report what is known and how many looks were taken.
 - **Answered**: the user's question is answered at the precision asked; offer the next step
   instead of continuing unasked.
 

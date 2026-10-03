@@ -1,18 +1,19 @@
 # Marks: inputs, preconditions, what to say
 
 `show(dataset, question, mark=...)`. `question` is required. The answer returns `{panel, url,
-warnings, auto?, y_range_notes?, reframings?, context?, suggest?}`: read `warnings` and `auto`
-before describing the panel.
+warnings, auto?, drawn_dataset?, y_range_notes?, reframings?, context?, suggest?}`: read
+`warnings` and `auto` before describing the panel; `drawn_dataset` is the rate drawn for a
+counter, the handle to analyse further.
 
 ## Time series
 
 | Mark | Input | Preconditions | Say when citing |
 |---|---|---|---|
 | `mark="auto"` | series dataset | at most 5 series (the series budget) | step, envelope = min/max within each step, caveats (gaps, settling). A counter selector is drawn as its rate (`auto` says so); `raw=true` draws the running total |
-| `mark="spc"` | series, after `analyze` | not a percentile, distribution or raw counter; `windows=[{start, end}]` is the baseline (at most one) | the baseline window, centre and limits, n_eff, which points are signals |
-| `mark="seasonal"` | series or distribution, after `compare_seasonal` | enough history (3 usable cycles) | the reference chosen (cycles, timezone, excluded), the band, flagged points |
+| `mark="spc"` | series, after `analyze` | at most 5 series; not a percentile, distribution or raw counter; `windows=[{start, end}]` is the baseline (at most one) | the baseline window, centre and limits, n_eff, which points are signals |
+| `mark="seasonal"` | series, after `compare_seasonal` on it (a latency comparison has no seasonal panel: each cycle lists its own distribution dataset for `mark="histogram"`) | enough history (3 usable cycles) | the reference chosen (cycles, timezone, excluded), the band, flagged points |
 | `mark="fleet"` | many series of one metric, after `fleet` (or directly) | at least 5 members, one unit, not percentiles | member count, spread, named outliers with kind and effect, churn, missing share |
-| `mark="spectrum"` | series | not percentiles or raw counters | only significant peaks with interval; the periods it cannot see (`limits`) |
+| `mark="spectrum"` | series | at most 5 series; not percentiles or raw counters | only significant peaks with interval; the periods it cannot see (`limits`) |
 | `mark="spectrogram"` | series | `segment` between 16 steps and a quarter of the range; `overlap` default 0.5 | the segment length |
 | `mark="littles"` | the concurrency dataset from `check_littles_law` | the check ran on it | the discrepancy first (L vs λW per window, ratio strip), then the verdict |
 

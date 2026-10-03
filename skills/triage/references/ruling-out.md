@@ -17,11 +17,5 @@ with `stance` for or against, then `hypothesis_update`.
 | The instruments, not the service | coverage complete, no partial or untrusted data, units checked, no silent members | `query` summary `coverage`, `unknown_spans`, `silent_members`; `catalog_get` for units | a measurement-system finding of its own when it is the instrument |
 | A deploy or config change at the onset | no event inside the onset interval | an `annotate` event from the user's deploy log; compare it with the onset interval | the annotation, with the onset statistic |
 
-Notes:
-
-- "Not refuted" is not "supported". A hypothesis becomes `supported` only with evidence for it
-  and the obvious alternatives refuted; timing alone leaves it `proposed`.
-- A `common_cause` result can refute a hypothesis that predicts a change ("load rose"). It cannot
-  support one that predicts no change at a precision the test did not have: state the interval.
-- An `undetermined` result is neither for nor against: say so and name what would decide it.
-- The order of signals (`summary.first`) is timing of detected change, never causation.
+Notes: "not refuted" is not "supported", timing is not cause, and an `undetermined` result is
+neither for nor against. Status rules and wording: the `evidence` skill.

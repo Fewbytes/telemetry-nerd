@@ -129,10 +129,9 @@ async def test_triage_example_symptom_to_finding(tmp_path):
     ws = r["_workspace"]
     statuses = {h["id"]: h["status"] for h in ws["hypotheses"]}
     assert statuses == {"h1": "refuted", "h2": "refuted", "h3": "proposed"}
-    assert sorted(f["id"] for f in ws["findings"]) == ["f1", "f2", "f3"]
-    assert (r["f_load"]["finding"], r["f_daily"]["finding"], r["f_main"]["finding"]) == (
-        "f1", "f2", "f3",
-    )  # fmt: skip
+    assert sorted(f["id"] for f in ws["findings"]) == ["f1", "f2", "f3", "f4"]
+    ids = [r[k]["finding"] for k in ("f_load", "f_daily", "f_main", "f_errors")]
+    assert ids == ["f1", "f2", "f3", "f4"] and r["f_errors"]["sources"] == ["special_cause"]
 
 
 def test_triage_example_has_the_flow():

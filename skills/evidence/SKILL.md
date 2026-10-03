@@ -1,6 +1,6 @@
 ---
 name: evidence
-description: This skill should be used when recording or stating any conclusion about telemetry in Telemetry Nerd: before calling finding_create, hypothesis_create, hypothesis_update or gap_create, when asked to "record a finding", "write up what we found", "is this evidence enough", "summarise the investigation", "rule this out", "what is the uncertainty", "is this a real change or noise", or when deciding whether a number, a verdict or a chart supports a claim. Covers what counts as evidence, scoping, the uncertainty policy (unknown is citable but flagged, maximalist propagation), sources of variation (common cause, special cause, measurement system, undetermined), hypotheses with evidence for and against, and when to file a gap.
+description: This skill should be used when recording or stating any conclusion about telemetry in Telemetry Nerd: before calling finding_create, hypothesis_create, hypothesis_update or gap_create, when asked to "record a finding", "write up what we found", "is this evidence enough", "summarise the investigation", "rule this out", "what is the uncertainty", "is this a real change or noise", or when deciding whether a number, a verdict or a chart supports a claim. Covers scoping, uncertainty flags, sources of variation and ruling out.
 ---
 
 # Evidence discipline
@@ -14,9 +14,10 @@ habit suggests.
 
 | Evidence item | Shape in `finding_create` | Counts when |
 |---|---|---|
-| statistic | `{kind: "statistic", dataset, name, value, method, interval: [lo, hi] \| exact: true \| uncertainty_unknown: true, source?}` | it came from an op's `evidence` (pass it **as returned**) or a code output that declared its uncertainty |
+| statistic | `{kind: "statistic", dataset, name, value, method, params?, interval: [lo, hi] \| exact: true \| uncertainty_unknown: true, source?}` | it came from an op's `evidence` (pass it **as returned**) or a code output that declared its uncertainty |
 | panel | `{kind: "panel", panel: "p3"}` | the panel answers the question the claim is about |
 | annotation | `{kind: "annotation", annotation: "a2"}` | it marks the event or region the claim cites (an onset, a deploy) |
+| catalog claim | `{kind: "claim", source, metric, field, origins: [two or more], note?}` | catalog origins disagree about a metric's field (unit, type): a measurement-system finding (see `metric-learning`) |
 
 Not evidence: a thread reply, a number read off a chart by eye, a summary line without its
 statistic, a percentile without its sample count, an averaged percentile, a fit tagged
@@ -26,7 +27,8 @@ method, the interval, the dataset and the source label.
 ## Scope every claim
 
 `scope` is required: `{source, selector, start, end, step, aggregation, baseline_start?,
-baseline_end?}`. Write the claim so it is true **only** inside that scope:
+baseline_end?}`. `step` is the dataset's resolved step from its summary (`1m`), never `auto`
+(refused). Write the claim so it is true **only** inside that scope:
 
 - **Service and selector**: the metric and label filter the numbers came from, not the service
   name in general. Two members measured is "s0 and s1", not "the fleet".
@@ -58,7 +60,8 @@ measured. Say "no change detected in the 92% of the window that was measured", n
 
 Percentiles: never average them across series or time, never cite one without its n
 (n >= 10/(1-q): p95 ~200, p99 ~1000), and prefer the share of requests above a stated edge
-(`fraction_over`, exact at bucket edges) as the statistic.
+(`fraction_over`, exact at bucket edges) as the statistic. A percentile statistic needs
+`params.q` and `params.n`; the server refuses it without n, or with n below 10/(1-q).
 
 ## Sources of variation
 

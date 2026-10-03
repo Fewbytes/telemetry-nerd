@@ -6,11 +6,11 @@ come from the result's caveats.
 
 | Op | `common_cause` | `special_cause` | `measurement_system` | `undetermined` |
 |---|---|---|---|---|
-| `analyze` (SPC) | control limits, centre and sigma from the baseline; stable or periodic structure; wandering or heavy-tailed noise | points beyond limits, run rules, EWMA / CUSUM signals on an out-of-control chart; level shifts; drift; variance change | gaps, partial / missing / untrusted data, post-gap spikes, coarsening, unknown input uncertainty | violations no more frequent than the chart's false alarms (in control) |
-| `compare_seasonal` | the cycle-to-cycle band; a usual window | an unusual level, extremes, too many points outside the band; atypical reference cycles | cycles excluded as missing; data caveats | cycles the user excluded |
+| `analyze` (SPC) | control limits, centre and sigma from the baseline; stable or periodic structure; wandering or heavy-tailed noise; SPC signals on an in-control chart (no more than its false alarms) | signals of a significant deciding detector (Poisson-tested count); points after a material level shift on an out-of-control chart; level shifts; drift; variance change | gaps, partial / missing / untrusted data, post-gap spikes, coarsening, unknown input uncertainty | run rules on an out-of-control chart without a significant detector of their own |
+| `compare_seasonal` | the cycle-to-cycle band; a usual window | an unusual level, extremes, too many points outside the band; atypical reference cycles | cycles excluded as missing; data caveats | cycles the user excluded; histograms: a distribution shape further from the reference than every previous cycle (descriptive, chance 1/(k+1)) |
 | `fleet` | the per-step spread; behaviour groups (systemic strata) | outlying members (persistent, shifted, drifting, transient) | unknown spans, missing / skipped / ended members | a member that went silent; an outlier episode on partial buckets |
 | `binding_verdict` | a role with no change against its reference | a changed role and its onset | data caveats per role | a change on data with measurement-system caveats |
-| `check_littles_law` | the small-system envelope; windows inside it | transient windows beyond interval and envelope (say "at a load peak" when `phase` is peak) | the measurement interval; a systematic offset | — |
+| `check_littles_law` | the small-system envelope; windows inside it | transient windows beyond interval and envelope (say "at a load peak" when `phase` is peak) | the measurement interval; a systematic offset; the whole-range discrepancy when consistent or systematic | the whole-range discrepancy when only transient windows carry it (the transients carry their own labels) |
 
 ## Reporting each
 
