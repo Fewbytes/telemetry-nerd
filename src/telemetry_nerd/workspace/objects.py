@@ -19,6 +19,7 @@ from telemetry_nerd.workspace.models import (
     Gap,
     GapIn,
     Hypothesis,
+    HypothesisScope,
     HypothesisStatus,
     Message,
     PanelGroup,
@@ -98,12 +99,15 @@ class ObjectStore:
         return a
 
     # hypotheses ---------------------------------------------------------
-    def create_hypothesis(self, statement: str, author: str) -> Hypothesis:
+    def create_hypothesis(
+        self, statement: str, author: str, scope: HypothesisScope | None = None
+    ) -> Hypothesis:
         now = self._clock()
         h = Hypothesis(
             id=self._new_id("h"),
             statement=statement.strip(),
             author=author,
+            scope=scope,
             created_at_ms=now,
             updated_at_ms=now,
         )
@@ -114,10 +118,20 @@ class ObjectStore:
         return self._get("hypothesis", Hypothesis, obj_id)
 
     def set_hypothesis_status(
-        self, obj_id: str, status: HypothesisStatus, alternatives_considered: str | None = None
+        self,
+        obj_id: str,
+        status: HypothesisStatus,
+        alternatives_considered: str | None = None,
+        status_reason: str | None = None,
     ) -> tuple[str, Hypothesis]:
+        """Set the status; `status_reason` replaces the stored one (None clears it: a reason
+        belongs to the status it was given with)."""
         h = self.get_hypothesis(obj_id)
-        change: dict = {"status": status, "updated_at_ms": self._clock()}
+        change: dict = {
+            "status": status,
+            "updated_at_ms": self._clock(),
+            "status_reason": status_reason,
+        }
         if alternatives_considered is not None:
             change["alternatives_considered"] = alternatives_considered
         updated = h.model_copy(update=change)

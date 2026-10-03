@@ -15,14 +15,14 @@ from telemetry_nerd.charts.yview import YView
 from telemetry_nerd.core.cause_hint import cause_hint
 from telemetry_nerd.core.code_ops import CodeDisabled
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
-from telemetry_nerd.mcp.shapes import EvidenceContext, ShapeError, finding_in
+from telemetry_nerd.mcp.shapes import EvidenceContext, ShapeError, finding_in, hypothesis_scope
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.jsonsafe import dumps
 from telemetry_nerd.model.time import format_duration, iso, parse_duration, parse_time
 from telemetry_nerd.sources.base import SourceError
 from telemetry_nerd.sources.public import PUBLIC_SOURCES
 from telemetry_nerd.sources.spec import SourceSpec
-from telemetry_nerd.workspace.models import AnnotationIn, GapIn, HypothesisStatus
+from telemetry_nerd.workspace.models import AnnotationIn, GapIn, HypothesisScope, HypothesisStatus
 
 INSTRUCTIONS = """\
 Telemetry Nerd: an evidence-first telemetry workspace shared with the user's browser.
@@ -100,13 +100,17 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
 - Scope every claim: source, selector, time range, step. Do not generalize beyond it.
 - `workspace_get` shows open threads (user questions awaiting you), hypotheses, findings.
   `reply` answers a thread. `hypothesis_create`/`hypothesis_update` track explanations.
-- `hypothesis_create` names the suspected service/resource (a label value or metric you query).
+- `hypothesis_create` names the suspected service/resource (a label value or metric you query);
+  `scope` ({selector, start, end, source?}) says where it applies.
   `hypothesis_update(status="supported")` is refused unless the statement names a concrete
   subject, a finding with stance=for backs it, and an alternative was considered (another
   hypothesis refuted/inconclusive, or `alternatives_considered`: which ones, how ruled out).
-- A thread reply cannot be evidence. When data or a user reply contradicts a hypothesis,
-  also call `finding_create(hypothesis=<id>, stance="against", ...)` and, if the verdict
-  changes, `hypothesis_update`: that is how the contradiction surfaces on the hypothesis.
+  `refuted` needs a finding against it (or `reason`: what rules it out, citing findings).
+- A finding links several hypotheses, one stance each: `finding_create(hypotheses=[{"id":
+  "h1", "stance": "for"}, {"id": "h2", "stance": "against"}], ...)`. A thread reply cannot be
+  evidence: when data or a user reply contradicts a hypothesis, record the data as a finding
+  linked to it with stance="against", then `hypothesis_update`: that is how the contradiction
+  surfaces on it.
 - `finding_create` needs a scope and evidence; a statistic states its uncertainty: an
   interval, exact, or `uncertainty_unknown: true` when none can be derived. Unknown is citable
   but never silent: the finding carries `uncertainty unknown` (say so when you report it).
@@ -1599,12 +1603,28 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise _fail(e) from e
 
     @mcp.tool()
-    def hypothesis_create(statement: str) -> str:
-        """Record a hypothesis to test. Returns {hypothesis: id}."""
+    def hypothesis_create(statement: str, scope: dict[str, Any] | str | None = None) -> str:
+        """Record a hypothesis to test, naming its concrete subject. scope (optional): where it
+        applies, in a finding scope's shape: {selector, start, end, source?, step?,
+        aggregation?} (`range`: [start, end] works too), e.g. {"selector":
+        "traces_span_metrics_calls_total{service_name=\"payment\"}", "start": "now-1h",
+        "end": "now"}; its selector's services and metrics count as the hypothesis' subjects.
+        Prose ("payment, checkout; 14:30-15:00Z") is stored as text, shown, not checked.
+        Returns {hypothesis: id, scope?, read_as?}."""
         try:
-            return _dump({"hypothesis": ws.hypothesis_create(statement, "claude").id})
+            sc, notes = hypothesis_scope(scope, _t)
+            data = HypothesisScope.model_validate(sc) if sc is not None else None
+            h = ws.hypothesis_create(statement, "claude", data)
+        except ShapeError as e:
+            raise ToolError(f"invalid arguments: {e}") from e
         except (ValidationError, ValueError) as e:
             raise _fail(e) from e
+        out: dict[str, Any] = {"hypothesis": h.id}
+        if h.scope is not None:
+            out["scope"] = h.scope.model_dump(exclude_none=True)
+        if notes:
+            out["read_as"] = notes
+        return _dump(out)
 
     @mcp.tool()
     def hypothesis_update(
@@ -1613,6 +1633,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         note: str | None = None,
         alternatives_considered: str | None = None,
         id: str | None = None,
+        reason: str | None = None,
     ) -> str:
         """Change a hypothesis status (proposed, supported, refuted, inconclusive), e.g.
         hypothesis_update(hypothesis="h1", status="refuted") (`id` works for `hypothesis`).
@@ -1620,6 +1641,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         subject (a service/resource label value or metric the workspace has queried), a finding
         with stance=for backs it, and an alternative was considered: another hypothesis refuted
         or inconclusive, or alternatives_considered (which alternatives, how ruled out).
+        `refuted` is refused unless a finding with stance=against is linked to it, or `reason`
+        says what rules it out (cite the findings); `inconclusive` needs a linked finding, a
+        reason or a note saying why. The reason is stored with the status.
         Returns {hypothesis, status}."""
         if hypothesis is not None and id is not None and hypothesis != id:
             raise ToolError(f"hypothesis={hypothesis!r} and id={id!r} disagree: give one, e.g. "
@@ -1631,8 +1655,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         try:
             st = TypeAdapter(HypothesisStatus).validate_python(status.strip().lower())
             h = ws.hypothesis_update(
-                hypothesis, st, "claude", note=note, alternatives_considered=alternatives_considered
-            )
+                hypothesis, st, "claude", note=note,
+                alternatives_considered=alternatives_considered, reason=reason,
+            )  # fmt: skip
             return _dump({"hypothesis": h.id, "status": h.status})
         except ValidationError as e:
             raise ToolError(f"status must be one of proposed, supported, refuted, inconclusive; "
@@ -1656,6 +1681,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         stance: str | None = None,
         answers_panel: str | None = None,
         scope_note: str | None = None,
+        hypotheses: list[dict[str, Any] | str] | dict[str, Any] | str | None = None,
         source: str | None = None,
         selector: str | None = None,
         start: str | int | None = None,
@@ -1675,8 +1701,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         {kind: annotation, id: "a1"}. A dataset alone is not evidence: draw it (show) or cite a
         statistic. Pass an op's evidence statistic as is: its
         `source` (common_cause | special_cause | measurement_system | undetermined) says what
-        the variation is attributed to; never relabel it. hypothesis and stance (for|against)
-        go together. Coverage of the window is checked per evidence series that
+        the variation is attributed to; never relabel it. hypotheses: the hypotheses this
+        finding bears on, one stance each: [{"id": "h1", "stance": "for"}, {"id": "h2",
+        "stance": "against"}] (one observation may back one cause and rule out another);
+        hypothesis + stance (for|against) is the one-link form. Coverage of the window is checked per evidence series that
         scope.selector's label matchers name (e.g. up{pod="x"} for a claim about one pod);
         write it as PromQL (sum by (code) (rate(x{svc="a"}[5m])) or x{svc="a"}).
         Every entity the claim names (service, pod, job... values) must be covered by the
@@ -1688,7 +1716,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         sources: taken from the op that emitted a statistic, or undetermined; read_as: how a
         short form was read); report them with the finding."""
         args = {"claim": claim, "evidence": evidence, "scope": scope, "caveats": caveats,
-                "hypothesis": hypothesis, "stance": stance, "answers_panel": answers_panel,
+                "hypothesis": hypothesis, "stance": stance, "hypotheses": hypotheses,
+                "answers_panel": answers_panel,
                 "scope_note": scope_note, "source": source, "selector": selector,
                 "start": start, "end": end, "step": step, "aggregation": aggregation,
                 "range": range}  # fmt: skip
@@ -1700,6 +1729,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         except (ValidationError, NotFound, ValueError) as e:
             raise _fail(e) from e
         out: dict = {"finding": f.id, "url": f"{ui_url}/#/finding/{f.id}"}
+        if f.hypotheses:
+            out["hypotheses"] = [x.model_dump() for x in f.hypotheses]
         if f.evidence_flags:
             out["uncertainty"] = [e.model_dump() for e in f.evidence_flags]
         if f.scope_check is not None:

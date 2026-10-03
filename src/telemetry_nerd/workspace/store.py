@@ -108,6 +108,39 @@ class WorkspaceStore:
         self._db.execute("UPDATE panels SET closed = 1 WHERE id = ?", (panel_id,))
         return self.get_panel(panel_id)
 
+    # label listings (q1p): what a source's index listed for one label over a window ---------
+    def record_listing(
+        self,
+        source: str,
+        label: str,
+        values: list[str],
+        truncated: bool,
+        start_ms: int,
+        end_ms: int,
+        metric: str | None = None,
+    ) -> None:
+        self._db.execute(
+            "INSERT INTO label_listings (source, label, metric, start_ms, end_ms, label_values, "
+            "truncated, ts_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (source, label, metric, start_ms, end_ms) DO UPDATE SET "
+            "label_values = excluded.label_values, truncated = excluded.truncated, "
+            "ts_ms = excluded.ts_ms",
+            (source, label, metric or "", start_ms, end_ms, json.dumps(sorted(values)),
+             int(truncated), self._clock()),
+        )  # fmt: skip
+
+    def listings(self, source: str) -> list[dict]:
+        rows = self._db.execute(
+            "SELECT label, metric, start_ms, end_ms, label_values, truncated FROM label_listings "
+            "WHERE source = ? ORDER BY ts_ms",
+            (source,),
+        ).fetchall()
+        return [
+            {"source": source, "label": r[0], "metric": r[1] or None, "start_ms": r[2],
+             "end_ms": r[3], "values": json.loads(r[4]), "truncated": bool(r[5])}
+            for r in rows
+        ]  # fmt: skip
+
     @staticmethod
     def _panel(row: tuple) -> Panel:
         return Panel(

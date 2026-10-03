@@ -1,7 +1,7 @@
 <script lang="ts">
   import { postJSON, type Finding, type Hypothesis } from "../lib/api";
   import { isSendKey } from "../lib/keys";
-  import { hypothesisView, STATUS_FLOW, type FindingEntry } from "../lib/findings";
+  import { hypothesisScopeText, hypothesisView, STATUS_FLOW, type FindingEntry } from "../lib/findings";
   import PinButton from "./PinButton.svelte";
 
   let { hypotheses = [], findings = [] }: { hypotheses?: Hypothesis[]; findings?: Finding[] } = $props();
@@ -49,12 +49,22 @@
 
 {#snippet item(h: Hypothesis)}
   {@const v = hypothesisView(h, findings)}
+  {@const scope = hypothesisScopeText(h.scope)}
   <li class="hypothesis" id="hypothesis-{h.id}" data-status={h.status} aria-labelledby="statement-{h.id}">
     <div class="statement" id="statement-{h.id}"><span class="obj-id">{h.id}</span> {h.statement} <PinButton object={h.id} /></div>
+    {#if scope}
+      <div class="scope-line" class:text-scope={!!h.scope?.text}>
+        <span class="sub">Scope</span> <span class="scope-text">{scope}</span>
+        {#if h.scope?.text}<span class="chip caveat" title="given as prose: shown, not checked">as text</span>{/if}
+      </div>
+    {/if}
     <div class="status-line">
       <span class="chip status-chip {h.status}"><span class="sr-only">Status: </span>{h.status}</span>
       <span class="badge author {h.author}">{h.author}</span>
     </div>
+    {#if h.status_reason && (h.status === "refuted" || h.status === "inconclusive")}
+      <p class="status-reason"><span class="sub">Why</span> {h.status_reason}</p>
+    {/if}
     <div class="evidence-groups">
       {@render group(h, "for", "For", v.for)}
       {@render group(h, "against", "Against", v.against)}

@@ -56,7 +56,7 @@ def test_pinned_labels_of_the_evidence_expression_are_checked():
 
 
 def test_unreadable_selector_is_scope_undetermined_not_silent():
-    out = claim_series('a{pod="x"} / b{pod="x"}', {"s": {"pod": "x"}})
+    out = claim_series('label_replace(a{pod="x"}, "p", "$1", "pod", "(.*)")', {"s": {"pod": "x"}})
     assert out.undetermined
     [(level, text)] = out.notes
     assert level == "warn" and text.startswith("scope undetermined")
@@ -201,7 +201,9 @@ async def test_f1_citing_the_dataset_with_the_services_is_covered(run):
 
 
 async def test_unreadable_selector_is_stored_as_undetermined(run):
-    scope = dict(F1["scope"], selector='a{service_name="payment"} / b')
+    scope = dict(
+        F1["scope"], selector='label_replace(a{service_name="payment"}, "s", "$1", "x", "(.*)")'
+    )
     data = f1_in(claim="payment charge calls failed", scope=scope)
     data.scope.time_range.start_ms, data.scope.time_range.end_ms = NOW - 7_200_000, NOW - 3_600_000
     f = run.ws.finding_create(data, "claude")
@@ -240,11 +242,11 @@ async def test_a_concrete_hypothesis_with_an_alternative_ruled_out_is_supported(
     with pytest.raises(ValueError, match="no alternative considered"):
         run.ws.hypothesis_update(h1.id, "supported", "claude")
     vague = run.ws.hypothesis_create(H1["statement"], "claude")
-    run.ws.hypothesis_update(vague.id, "inconclusive", "claude")
+    run.ws.hypothesis_update(vague.id, "inconclusive", "claude", note="nothing separates it")
     with pytest.raises(ValueError, match="no alternative considered"):  # a vague one: no
         run.ws.hypothesis_update(h1.id, "supported", "claude")
     h2 = run.ws.hypothesis_create("checkout itself failed", "claude")
-    run.ws.hypothesis_update(h2.id, "refuted", "claude")
+    run.ws.hypothesis_update(h2.id, "refuted", "claude", reason="checkout's own spans are clean")
     assert run.ws.hypothesis_update(h1.id, "supported", "claude").status == "supported"
 
 

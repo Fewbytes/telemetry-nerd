@@ -96,8 +96,7 @@ def test_finding_unknown_dataset_and_answers_panel(svc, panel):
     assert evs[1].object_id == panel.id and evs[1].payload == {"finding": f.id}
     assert evs[0].payload == {
         "claim": "p99 doubled",
-        "hypothesis": None,
-        "stance": None,
+        "hypotheses": [],
         "answers_panel": panel.id,
     }
 

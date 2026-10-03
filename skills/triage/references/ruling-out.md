@@ -2,7 +2,8 @@
 
 Each row: the hypothesis, the observation that would refute it, the tool, and how to cite the
 result. Record the hypothesis first (`hypothesis_create`), then attach the result as a finding
-with `stance` for or against, then `hypothesis_update`.
+with a stance for or against each hypothesis it bears on (`hypotheses=[{"id", "stance"}]`),
+then `hypothesis_update` (`refuted` needs that finding against it, or a `reason`).
 
 | Hypothesis | Refuted when | Tool | Cite |
 |---|---|---|---|

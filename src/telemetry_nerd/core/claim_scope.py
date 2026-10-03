@@ -19,6 +19,7 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from itertools import pairwise
 from typing import Literal
 
 _IDENT = re.compile(r"[A-Za-z_:][A-Za-z0-9_:]*")
@@ -218,13 +219,16 @@ def read_selector(selector: str) -> SelectorRead:
 
 
 def pinned_matchers(expr: str | None) -> list[Matcher]:
-    """Label matchers (not `__name__`) every series of an evidence expression satisfies, read
-    from its one selector; [] when the expression cannot be read (binary operators, several
-    selectors, a code output)."""
+    """Label matchers (not `__name__`) every series of an evidence expression satisfies: those
+    of its one selector, or those every alternative of a combined expression shares (q1p:
+    `sum(x{s="a"}) / sum(y{s="a"})` pins s="a"); [] when it cannot be read (a code output)."""
     if not expr:
         return []
-    read = read_selector(expr)
-    return [m for m in read.matchers or [] if m.label != "__name__"]
+    read = read_expr(expr)
+    if not read.alternatives:
+        return []
+    first, *others = read.alternatives
+    return [m for m in first if m.label != "__name__" and all(m in o for o in others)]
 
 
 def undetermined_note(why: str | None) -> str:
@@ -264,14 +268,44 @@ def claim_series(
     ids = sorted(labels)
     if selector is None:
         return ClaimSeries(ids, [])
-    read = read_selector(selector)
-    if read.matchers is None:
+    read = read_expr(selector)
+    if read.alternatives is None:
         return ClaimSeries(ids, [("warn", undetermined_note(read.why))], undetermined=True)
     notes: list[tuple[Level, str]] = [("info", n) for n in read.notes]
+    results = [_claim_series(alt, labels, metric, pinned) for alt in read.alternatives]
+    if len(results) == 1:
+        (r,) = results
+        r.notes = notes + r.notes
+        return r
+    # several alternatives (`a or b`, "x, y"): the series any of them names
+    hits = [r for r in results if r.mismatch is None]
+    if not hits:
+        r = next((x for x in results if x.mismatch_kind == "labels"), results[0])
+        r.notes = notes + r.notes
+        return r
+    chosen = sorted({i for r in hits for i in r.ids})
+    extra = list(dict.fromkeys(n for r in hits for n in r.notes))
+    return ClaimSeries(
+        chosen, notes + extra, labels_unchecked=all(r.labels_unchecked for r in hits)
+    )
+
+
+def _claim_series(
+    matchers: Sequence[Matcher],
+    labels: Mapping[str, Mapping[str, str]],
+    metric: str | None,
+    pinned: Sequence[Matcher],
+) -> ClaimSeries:
+    """claim_series for one alternative: the series satisfying all of `matchers`."""
+    ids = sorted(labels)
+    notes: list[tuple[Level, str]] = []
     carried = {k for lb in labels.values() for k in lb}
     applied: list[Matcher] = []
-    for m in read.matchers:
+    for m in matchers:
         pins = [p for p in pinned if p.label == m.label] if m.label not in carried else []
+        if m in pins:  # the evidence's expression fixes exactly what the claim names
+            applied.append(m)
+            continue
         if eq := [p for p in pins if p.op == "="]:
             if all(m.matches(p.value) for p in eq):
                 applied.append(m)
@@ -304,6 +338,303 @@ def claim_series(
         named = ", ".join(str(m) for m in on_series)
         why = f"no evidence series matches {named} from scope.selector"
         return ClaimSeries([], notes, why, "labels")
-    wanted = [m for m in read.matchers if m.label != "__name__" and not m.matches("")]
+    wanted = [m for m in matchers if m.label != "__name__" and not m.matches("")]
     unchecked = bool(wanted) and not any(m in applied for m in wanted)
     return ClaimSeries(chosen, notes, labels_unchecked=unchecked)
+
+
+# --- whole expressions: binary operators, functions, several selectors (q1p) -----------------
+#
+# `read_selector` reads one selector. An evidence expression is often more: a ratio of two
+# aggregations (`sum(rate(x_sum[1m])) / sum(rate(x_count[1m]))`), `a or b`, a list of
+# selectors written as scope.selector ("x, y, z"). `parse_expr` reads such an expression into a
+# tree of selectors (leaves), numbers and binary operators with their vector matching; functions
+# and aggregations are read through to their one vector argument (they keep or pool series, never
+# rename labels), except those that rewrite labels (label_replace, count_values...), which stay
+# unread (`Opaque`). Callers then combine what each leaf says: the series of `a / b` are those
+# matched on both sides (an intersection), of `a or b` those of either (a union).
+
+#: binary operators, lowest precedence first (PromQL)
+_PREC = {"or": 1, "and": 2, "unless": 2, "==": 3, "!=": 3, "<=": 3, ">=": 3, "<": 3, ">": 3,
+         "+": 4, "-": 4, "*": 5, "/": 5, "%": 5, "atan2": 5, "^": 6}  # fmt: skip
+_SYMBOLS = ("==", "!=", "<=", ">=", "<", ">", "+", "-", "*", "/", "%", "^")
+_WORD_OP = re.compile(r"(?<![A-Za-z0-9_:])(or|and|unless|atan2)(?![A-Za-z0-9_:])", re.IGNORECASE)
+_MATCHING = re.compile(
+    r"\s*(?P<bool>bool\b)?\s*(?:(?P<kind>on|ignoring)\s*\((?P<labels>[^()]*)\))?"
+    r"\s*(?:(?P<group>group_left|group_right)\s*(?:\((?P<extra>[^()]*)\))?)?",
+    re.IGNORECASE,
+)
+_NUMBER = re.compile(
+    r"^[+-]?(?:0x[0-9a-f]+|inf|nan|(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)$", re.IGNORECASE
+)
+_CALL = re.compile(rf"^({_IDENT.pattern})\s*(?:(?:by|without)\s*\([^()]*\)\s*)?\(")
+_TRAILING = re.compile(r"^\s*(?:(?:by|without)\s*\([^()]*\))?\s*$", re.IGNORECASE)
+#: functions whose output labels are not their input's: what they cover is not read
+_REWRITES = frozenset({"label_replace", "label_join", "count_values", "absent",
+                       "absent_over_time", "scalar"})  # fmt: skip
+
+
+@dataclass(frozen=True)
+class Leaf:
+    expr: str
+    matchers: tuple[Matcher, ...]
+
+
+@dataclass(frozen=True)
+class Num:
+    """A number or a function of no series (vector(1), time()): restricts nothing."""
+
+
+@dataclass(frozen=True)
+class Opaque:
+    why: str
+
+
+@dataclass(frozen=True)
+class BinOp:
+    op: str  # lower-case; "," for a list of selectors (read as `or`)
+    left: Node
+    right: Node
+    on: tuple[str, ...] | None = None
+    ignoring: tuple[str, ...] | None = None
+    group: str | None = None  # group_left | group_right
+
+    def matched(self, label: str) -> bool:
+        """Is `label` matched across the operator (both sides agree on its value)?"""
+        if self.on is not None:
+            return label in self.on
+        if self.ignoring is not None:
+            return label not in self.ignoring
+        return True
+
+
+Node = Leaf | Num | Opaque | BinOp
+
+
+def _mask(s: str) -> tuple[str, list[int]]:
+    """s with strings, `{...}` and `[...]` blanked out, and the paren depth at each char."""
+    out: list[str] = []
+    depth: list[int] = []
+    d, i, n = 0, 0, len(s)
+    while i < n:
+        c = s[i]
+        if c in "\"'`":
+            _, j = _string(s, i)
+            out.append(" " * (j - i))
+            depth += [d] * (j - i)
+            i = j
+            continue
+        if c in "{[":
+            close = "}" if c == "{" else "]"
+            j = i + 1
+            while j < n and s[j] != close:
+                if s[j] in "\"'`":
+                    _, j = _string(s, j)
+                    continue
+                j += 1
+            if j >= n:
+                raise Unreadable("unbalanced braces" if c == "{" else "unbalanced brackets")
+            out.append(" " * (j + 1 - i))
+            depth += [d] * (j + 1 - i)
+            i = j + 1
+            continue
+        if c == ")":
+            d -= 1
+            if d < 0:
+                raise Unreadable("unbalanced parentheses")
+        out.append(c)
+        depth.append(d)
+        if c == "(":
+            d += 1
+        i += 1
+    if d:
+        raise Unreadable("unbalanced parentheses")
+    return "".join(out), depth
+
+
+def _unary(flat: str, i: int) -> bool:
+    """Is the +/- at flat[i] a sign (start, after an operator, '(' or ',', `offset`, or the
+    exponent of a number like 1e-3)?"""
+    if re.search(r"(?<![A-Za-z0-9_:.])\d+\.?\d*[eE]$", flat[:i]):
+        return True
+    before = flat[:i].rstrip()
+    if not before or before[-1] in "(,+-*/%^<>=!":
+        return True
+    word = re.search(r"([A-Za-z_]+)$", before)
+    return bool(word) and word.group(1).lower() in ("or", "and", "unless", "atan2", "bool",
+                                                    "offset")  # fmt: skip
+
+
+def _operators(flat: str, depth: list[int]) -> list[tuple[int, str]]:
+    found: list[tuple[int, str]] = []
+    for m in _WORD_OP.finditer(flat):
+        if depth[m.start()] == 0:
+            found.append((m.start(), m.group(1).lower()))
+    i, n = 0, len(flat)
+    while i < n:
+        if depth[i] != 0:
+            i += 1
+            continue
+        two = flat[i : i + 2]
+        if two in ("==", "!=", "<=", ">="):
+            found.append((i, two))
+            i += 2
+            continue
+        c = flat[i]
+        if c in "<>*/%^" or (c in "+-" and not _unary(flat, i)):
+            found.append((i, c))
+        i += 1
+    return sorted(found)
+
+
+def _split_commas(s: str) -> list[str]:
+    flat, depth = _mask(s)
+    cuts = [i for i, c in enumerate(flat) if c == "," and depth[i] == 0]
+    bounds = [-1, *cuts, len(s)]
+    return [s[a + 1 : b] for a, b in pairwise(bounds)]
+
+
+def _labels(text: str | None) -> tuple[str, ...]:
+    return tuple(x.strip() for x in (text or "").split(",") if x.strip())
+
+
+def parse_expr(expr: str, _top: bool = True) -> Node:
+    """Read a PromQL expression (or a comma-separated list of selectors, at the top) into a
+    tree; raises Unreadable with why when it cannot be read."""
+    s = expr.strip()
+    if not s:
+        raise Unreadable("empty expression")
+    flat, depth = _mask(s)
+    if _top and any(c == "," and depth[i] == 0 for i, c in enumerate(flat)):
+        parts = [parse_expr(p, False) for p in _split_commas(s)]
+        node = parts[0]
+        for p in parts[1:]:
+            node = BinOp(",", node, p)
+        return node
+    ops = _operators(flat, depth)
+    if ops:
+        low = min(_PREC[o] for _, o in ops)
+        at = [x for x in ops if _PREC[x[1]] == low]
+        i, op = at[0] if at[0][1] == "^" else at[-1]  # ^ is right-associative
+        left, right = s[:i], s[i + len(op) :]
+        m = _MATCHING.match(right)
+        rest = right[m.end() :] if m else right
+        if not left.strip():
+            raise Unreadable(f"operator {op!r} has no left side")
+        kind = (m.group("kind") or "").lower() if m else ""
+        labels = _labels(m.group("labels")) if m else ()
+        group = (m.group("group") or "").lower() if m else ""
+        return BinOp(
+            op,
+            parse_expr(left, False),
+            parse_expr(rest, False),
+            on=labels if kind == "on" else None,
+            ignoring=labels if kind == "ignoring" else None,
+            group=group or None,
+        )
+    if s[0] in "+-":
+        return parse_expr(s[1:], False)
+    if s[0] == "(" and _close(flat, depth, 0) == len(s) - 1:
+        return parse_expr(s[1:-1], False)
+    if _NUMBER.match(s) or s[0] in "\"'`":
+        return Num()
+    call = _CALL.match(s)
+    if call:
+        open_at = call.end() - 1
+        close = _close(flat, depth, open_at)
+        if close < 0 or not _TRAILING.match(_MODIFIERS.sub(" ", flat[close + 1 :])):
+            raise Unreadable(f"cannot read {s!r}")
+        name = call.group(1).lower()
+        if name in _REWRITES:
+            return Opaque(f"{name} rewrites or drops series labels")
+        inner = s[open_at + 1 : close]
+        args = [parse_expr(a, False) for a in _split_commas(inner)] if inner.strip() else []
+        vectors = [a for a in args if not isinstance(a, Num)]
+        if not vectors:
+            return Num()
+        if len(vectors) > 1:
+            return Opaque(f"{name} takes several series arguments")
+        return vectors[0]
+    read = read_selector(s)
+    if read.matchers is None:
+        raise Unreadable(read.why or f"cannot read {s!r}")
+    return Leaf(s, tuple(read.matchers))
+
+
+def _close(flat: str, depth: list[int], at: int) -> int:
+    """Index of the ')' matching the '(' at flat[at], or -1."""
+    for j in range(at + 1, len(flat)):
+        if flat[j] == ")" and depth[j] == depth[at]:
+            return j
+    return -1
+
+
+def leaves(node: Node) -> list[Leaf]:
+    if isinstance(node, Leaf):
+        return [node]
+    if isinstance(node, BinOp):
+        return leaves(node.left) + leaves(node.right)
+    return []
+
+
+def leaf_matchers(expr: str) -> list[Matcher]:
+    """Every matcher of every selector in expr (any side of any operator); [] when the
+    expression cannot be read."""
+    try:
+        return [m for lf in leaves(parse_expr(expr)) for m in lf.matchers]
+    except Unreadable:
+        return []
+
+
+_KEEPS_NAME = frozenset({"and", "unless", "or", ","})
+
+
+def _alternatives(node: Node) -> list[list[Matcher]]:
+    """The matchers every output series satisfies, per alternative (a series is named by the
+    expression when it satisfies one alternative). Raises Unreadable for an Opaque part."""
+    if isinstance(node, Leaf):
+        return [list(node.matchers)]
+    if isinstance(node, Num):
+        return [[]]
+    if isinstance(node, Opaque):
+        raise Unreadable(node.why)
+    left, right = _alternatives(node.left), _alternatives(node.right)
+    if node.op in ("or", ","):
+        return left + right
+    if node.op == "unless":
+        return left
+    keep_name = node.op in _KEEPS_NAME or node.op in ("==", "!=", "<=", ">=", "<", ">")
+    many_right = node.group == "group_right"
+    out = []
+    for a in left:
+        for b in right:
+            many, one = (b, a) if many_right else (a, b)
+            ms = [m for m in many if m.label != "__name__" or (keep_name and not many_right)]
+            ms += [m for m in one if m.label != "__name__" and node.matched(m.label)]
+            out.append(list(dict.fromkeys(ms)))
+    return out
+
+
+@dataclass
+class ExprRead:
+    alternatives: list[list[Matcher]] | None  # None: not read
+    why: str | None = None
+    notes: list[str] = field(default_factory=list)
+
+
+def read_expr(expr: str) -> ExprRead:
+    """Like `read_selector`, for any expression `parse_expr` reads: the matchers its output
+    series satisfy, per alternative (one for a selector or a ratio, several for `a or b` or a
+    list of selectors)."""
+    one = read_selector(expr)
+    if one.matchers is not None:
+        return ExprRead([one.matchers], notes=one.notes)
+    try:
+        node = parse_expr(expr)
+        alts = _alternatives(node)
+    except Unreadable as e:
+        return ExprRead(None, str(e))
+    notes = []
+    if isinstance(node, BinOp) and node.op == ",":
+        notes.append("scope.selector lists several selectors: read as any of them")
+    return ExprRead(alts, notes=notes)

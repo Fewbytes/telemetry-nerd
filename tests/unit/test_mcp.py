@@ -120,6 +120,9 @@ async def test_hypothesis_create_and_update(tmp_path):
     h = json.loads(text_of(await call(mcp, "hypothesis_create", {"statement": "cache cold"})))
     assert h["hypothesis"] == "h1"
     u = await call(mcp, "hypothesis_update", {"hypothesis": "h1", "status": "refuted"})
+    assert u.is_error and "h1 has no finding against it" in text_of(u)  # aiy
+    u = await call(mcp, "hypothesis_update",
+                   {"hypothesis": "h1", "status": "refuted", "reason": "hit ratio unchanged"})  # fmt: skip
     assert json.loads(text_of(u)) == {"hypothesis": "h1", "status": "refuted"}
     bad = await call(mcp, "hypothesis_update", {"hypothesis": "h99", "status": "refuted"})
     assert bad.is_error

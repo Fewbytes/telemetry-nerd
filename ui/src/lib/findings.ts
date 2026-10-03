@@ -1,4 +1,4 @@
-import type { CodeBrief, Finding, Hypothesis, Panel, Scope } from "./api";
+import type { CodeBrief, Finding, Hypothesis, HypothesisScope, Panel, Scope } from "./api";
 import { fmtRange, flagLabel } from "./format";
 import { sourceText } from "./sources";
 
@@ -168,6 +168,19 @@ export function hypothesisView(h: Hypothesis, findings: Finding[]): HypothesisVi
   return {
     for: pick(h.evidence_for),
     against: pick(h.evidence_against),
-    linked: findings.filter((f) => f.hypothesis === h.id && !listed.has(f.id)).map(entry),
+    linked: findings
+      .filter((f) => (f.hypotheses ?? []).some((x) => x.id === h.id) && !listed.has(f.id))
+      .map(entry),
   };
+}
+
+/** A hypothesis' scope as one line (qy7q): prose as given, else selector, range and source. */
+export function hypothesisScopeText(scope: HypothesisScope | null | undefined): string | null {
+  if (!scope) return null;
+  if (scope.text) return scope.text;
+  const parts: string[] = [];
+  if (scope.selector) parts.push(scope.selector);
+  if (scope.time_range) parts.push(fmtRange(scope.time_range.start_ms, scope.time_range.end_ms));
+  if (scope.source) parts.push(`source ${scope.source}`);
+  return parts.length ? parts.join(" · ") : null;
 }

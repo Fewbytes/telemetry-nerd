@@ -35,9 +35,13 @@ baseline_end?}`. `step` is the dataset's resolved step from its summary (`1m`), 
   PromQL (`x{service_name="payment"}`, groupings as `sum by (code) (...)`); one that cannot be
   read leaves the scope `undetermined`.
 - **Every entity the claim names is in its evidence.** The server reads which services, pods,
-  jobs... each cited dataset covers (series labels, and the matchers of its own query) and
-  refuses a claim naming others (`claim_beyond_evidence`, with the datasets that hold them):
-  cite those too, or split the claim. `scope_note` (why the claim reaches further) records it
+  jobs... each cited dataset covers (series labels, and the matchers of its own query, both
+  sides of a ratio: `sum(a{svc="x"}) / sum(b{svc="x"})` covers x, `sum(a) / sum(b)` pools) and
+  refuses a claim naming others (`claim_beyond_evidence`, with the datasets of the same metric
+  that hold them): cite those too, or split the claim. Pooled evidence (`sum(rate(x[1m]))`)
+  covers a service when the source holds one value of the label over its range: a dataset of
+  the same metric by service, or `entities(kind="service")` (or `metric=`) over a window
+  holding the range, listing exactly one; the result's `scope.message` names that witness. `scope_note` (why the claim reaches further) records it
   flagged `beyond_evidence` instead; use it rarely and repeat it in the report.
 - **Time range and reference**: the window judged and what it was compared with ("against the 4
   previous hours", "the same hour on 7 previous days"). A verdict without its reference is not a
@@ -122,21 +126,28 @@ another look; count the looks (principle 14).
 
 ## Hypotheses: for, against, ruled out (principle 13)
 
-1. `hypothesis_create(statement)` as soon as an explanation is entertained, and record the
-   competing ones too (load, saturation, one bad member, the daily peak, a dependency, the
+1. `hypothesis_create(statement, scope?)` as soon as an explanation is entertained, and record
+   the competing ones too (load, saturation, one bad member, the daily peak, a dependency, the
    instruments). A statement names its subject (the service, resource or metric) and what
    would be true in the data: "payment `charge` calls fail and checkout errors follow", not "a
-   fault in one service".
+   fault in one service". `scope` says where it applies, in a finding scope's shape:
+   `{selector, start, end, source?}` (its selector's services and metrics count as subjects);
+   prose is stored as text, shown and not checked.
 2. For each, find the observation that could **refute** it, and look for that first.
-3. Attach evidence with `finding_create(..., hypothesis=<id>, stance="for" | "against")`. A user
-   reply that contradicts a hypothesis still needs a finding with `stance="against"` built from
-   data.
-4. Move the status with `hypothesis_update(hypothesis, status, note)`: `proposed` (default),
-   `supported`, `refuted`, `inconclusive`. `supported` needs evidence for **and** the obvious
-   alternatives refuted; timing alone (A moved before B) is `proposed`, not `supported`.
+3. Attach evidence with `finding_create(..., hypotheses=[{"id": "h1", "stance": "for"},
+   {"id": "h2", "stance": "against"}])`: one link per hypothesis the observation bears on (the
+   rate that rose 3x backs "arrival surge" and refutes "slower at an unchanged rate").
+   `hypothesis=<id>, stance=...` is the one-link form. A user reply that contradicts a
+   hypothesis still needs a finding against it built from data.
+4. Move the status with `hypothesis_update(hypothesis, status, note, reason?)`: `proposed`
+   (default), `supported`, `refuted`, `inconclusive`. `supported` needs evidence for **and** the
+   obvious alternatives refuted; timing alone (A moved before B) is `proposed`, not `supported`.
    The server refuses `supported` without a concrete subject in the statement, a standing
    `stance="for"` finding, and an alternative considered: another hypothesis `refuted` /
-   `inconclusive`, or `alternatives_considered` (which, and how each was ruled out).
+   `inconclusive`, or `alternatives_considered` (which, and how each was ruled out). It
+   refuses `refuted` without a standing finding against it or a `reason` (what rules it out,
+   citing findings; stored with the status), and `inconclusive` without a linked finding, a
+   reason or a note. A note is not a reason: it does not link the finding it mentions.
    Refuted hypotheses stay visible: ruling out is a result.
 
 Causation is never claimed from ordering or correlation. "Latency moved first, 09:56-10:02Z,

@@ -262,12 +262,20 @@ def _span(v: Any, name: str) -> tuple[Any, Any]:
     )
 
 
-def read_scope(scope: Any, flat: Mapping[str, Any]) -> Read:
+FINDING_REQUIRED = ("source", "selector", "start", "end", "step")
+#: a hypothesis' scope: where it applies (source, step and aggregation are optional there)
+HYPOTHESIS_REQUIRED = ("selector", "start", "end")
+
+
+def read_scope(
+    scope: Any, flat: Mapping[str, Any], required: tuple[str, ...] = FINDING_REQUIRED
+) -> Read:
     """The scope as {source, selector, start, end, step, aggregation, baseline_start?,
     baseline_end?}: from the `scope` dict, flat arguments, or both (a field given twice with
     different values is refused). `range`/`time_range` as [start, end] or {start, end} spell
-    start/end, `baseline` the baseline. A missing aggregation is recorded as written in the
-    selector (said in the notes); every other missing field is refused with an example."""
+    start/end, `baseline` the baseline. For a finding (the default `required`), a missing
+    aggregation is recorded as written in the selector (said in the notes); every other missing
+    field is refused with an example."""
     notes: list[str] = []
     scope = _json_text(scope)
     if scope is None:
@@ -300,14 +308,14 @@ def read_scope(scope: Any, flat: Mapping[str, Any]) -> Read:
                 raise ShapeError(f"scope.{k} is given twice with different values ({sc[k]!r} "
                                  f"and {v!r}); give it once")  # fmt: skip
             sc[k] = v
-    missing = [k for k in ("source", "selector", "start", "end", "step") if sc.get(k) in (None, "")]
+    missing = [k for k in required if sc.get(k) in (None, "")]
     if missing:
         hint = ", ".join(f'"{k}": {example(SCOPE_EXAMPLE[k])}' for k in missing)
         raise ShapeError(
             f"scope.{missing[0]}: field required ({', '.join('scope.' + k for k in missing)} "
             f"missing; add {hint}). A full scope: {example(SCOPE_EXAMPLE)}"
         )
-    if sc.get("aggregation") in (None, ""):
+    if sc.get("aggregation") in (None, "") and required == FINDING_REQUIRED:
         sc["aggregation"] = AGGREGATION_AS_WRITTEN
         notes.append(f"scope.aggregation not given: recorded as {AGGREGATION_AS_WRITTEN!r}")
     return Read(sc, notes)
@@ -350,13 +358,72 @@ def explain(e: ValidationError, evidence: list[dict]) -> str:
                 hint = f'e.g. "{field_}": {example(SCOPE_EXAMPLE[field_])}'
             else:
                 hint = f"e.g. {example(SCOPE_EXAMPLE)}"
-        elif loc[:1] == ["stance"] or "stance" in msg:
-            hint = 'e.g. hypothesis="h1", stance="against"'
+        elif loc[:1] in (["stance"], ["hypotheses"]) or "stance" in msg:
+            hint = f"e.g. hypotheses={example(HYPOTHESES_EXAMPLE)}"
         parts.append(f"{path}: {msg}" + (f" ({hint})" if hint else ""))
     return "; ".join(parts)
 
 
 _FINDING_FIELDS = ("claim", "caveats", "hypothesis", "stance", "answers_panel", "scope_note")
+
+# --- hypothesis links (aiy) -----------------------------------------------------------------
+
+HYPOTHESES_EXAMPLE = [{"id": "h1", "stance": "for"}, {"id": "h2", "stance": "against"}]
+_STANCES = ("for", "against")
+
+
+def read_hypotheses(raw: Any) -> list[dict]:
+    """A finding's hypothesis links as [{id, stance}]: a list of {id, stance} (or {hypothesis,
+    stance}), one such dict, or a mapping {"h1": "for", "h2": "against"}. Anything else (an id
+    without its stance) is refused with an example: a link always says which way it points."""
+    raw = _json_text(raw)
+    if raw is None:
+        return []
+    bad = ShapeError(
+        f"hypotheses: give a list of {{id, stance}} links, e.g. {example(HYPOTHESES_EXAMPLE)} "
+        "(stance for or against, one per hypothesis)"
+    )
+    if (
+        isinstance(raw, dict)
+        and raw
+        and all(isinstance(k, str) and _ID.match(k) and k.startswith("h") for k in raw)
+    ):
+        raw = [{"id": k, "stance": v} for k, v in raw.items()]
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list):
+        raise bad
+    out = []
+    for item in raw:
+        if not isinstance(item, dict):
+            raise bad
+        d = dict(item)
+        if "hypothesis" in d and "id" not in d:
+            d["id"] = d.pop("hypothesis")
+        stance = d.get("stance")
+        if set(d) != {"id", "stance"} or not isinstance(d["id"], str):
+            raise bad
+        if not isinstance(stance, str) or stance.strip().lower() not in _STANCES:
+            raise bad
+        out.append({"id": d["id"].strip(), "stance": stance.strip().lower()})
+    return out
+
+
+def hypothesis_scope(raw: Any, to_ms: Callable[[Any], int | None]) -> tuple[dict | None, list[str]]:
+    """hypothesis_create's `scope` (qy7q) in the finding scope's shapes (dict, flat-free):
+    {selector, start, end, source?, step?, aggregation?}, or prose. Prose is stored as text and
+    said so (it is shown, not checked); a dict that does not read is refused with an example."""
+    raw = _json_text(raw)
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return None, []
+    if isinstance(raw, str):
+        note = ("scope stored as text: shown with the hypothesis, not checked; pass {selector, "
+                "start, end, source?} to make it checkable")  # fmt: skip
+        return {"text": raw.strip()}, [note]
+    sc_read = read_scope(raw, {}, HYPOTHESIS_REQUIRED)
+    sc = {k: v for k, v in sc_read.value.items() if not k.startswith("baseline")}
+    sc["time_range"] = {"start_ms": to_ms(sc.pop("start")), "end_ms": to_ms(sc.pop("end"))}
+    return sc, sc_read.notes
 
 
 def finding_in(
@@ -376,6 +443,9 @@ def finding_in(
         sc["baseline_range"] = {"start_ms": to_ms(bs), "end_ms": to_ms(be)}
     payload = {k: args.get(k) for k in _FINDING_FIELDS}
     payload["caveats"] = payload["caveats"] or []
+    payload["hypotheses"] = read_hypotheses(args.get("hypotheses"))
+    if isinstance(payload["stance"], str):
+        payload["stance"] = payload["stance"].strip().lower()
     try:
         data = FindingIn.model_validate({**payload, "scope": sc, "evidence": ev_read.value})
     except ValidationError as e:

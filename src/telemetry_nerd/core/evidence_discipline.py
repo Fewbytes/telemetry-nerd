@@ -24,7 +24,18 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal
 
-from telemetry_nerd.core.claim_scope import Matcher, read_selector
+from telemetry_nerd.core.claim_scope import (
+    Leaf,
+    Matcher,
+    Node,
+    Num,
+    Opaque,
+    Unreadable,
+    leaf_matchers,
+    parse_expr,
+    read_selector,
+)
+from telemetry_nerd.core.entity_ops import base_name
 
 #: labels whose values name an entity a claim can be about (a service, a workload, a host)
 ENTITY_LABELS = frozenset({
@@ -66,22 +77,35 @@ def mentions(text: str, value: str) -> bool:
 
 @dataclass(frozen=True)
 class Cover:
-    """What one evidence dataset covers of one entity label."""
+    """What one evidence dataset covers of one entity label. `all` / `any`: a combined
+    expression (q1p): `a / b` covers a value when both sides do, `a or b` when either does."""
 
-    kind: Literal["values", "matchers", "pooled", "undetermined"]
+    kind: Literal["values", "matchers", "pooled", "undetermined", "all", "any"]
     values: frozenset[str] = frozenset()
     matchers: tuple[Matcher, ...] = ()
-    #: datasets showing that a pooled dataset's series hold only `values` (see `single_values`)
+    #: what shows that a pooled dataset's series hold only `values` (see `single_values`):
+    #: witness datasets, or the label listings (`entities`) that found one value
     via: tuple[str, ...] = ()
+    parts: tuple[Cover, ...] = ()
+    why: str = ""  # undetermined: why the expression was not read
 
     def covers(self, value: str) -> bool | None:
         if self.kind == "values":
             return value in self.values
         if self.kind == "matchers":
             return all(m.matches(value) for m in self.matchers)
+        if self.kind in ("all", "any"):
+            got = [p.covers(value) for p in self.parts]
+            decisive = self.kind == "any"  # any: one True decides; all: one False decides
+            if decisive in got:
+                return decisive
+            return None if None in got else not decisive
         return None if self.kind == "undetermined" else False
 
     def describe(self, label: str) -> str:
+        if self.kind in ("all", "any"):
+            parts = list(dict.fromkeys(p.describe(label) for p in self.parts))
+            return ("each side: " if self.kind == "all" else "any of: ") + " | ".join(parts)
         if self.kind == "values" and self.via:
             (v,) = self.values
             return (f'{label}="{v}" (pooled over its only {label} value, per '
@@ -94,36 +118,81 @@ class Cover:
             return ", ".join(map(str, self.matchers))
         if self.kind == "pooled":
             return f"all {label} values pooled (none one by one)"
-        return f"{label} unknown (expression not read)"
+        return f"{label} unknown (expression not read" + (f": {self.why})" if self.why else ")")
+
+
+def _combine(kind: Literal["all", "any"], parts: Sequence[Cover]) -> Cover:
+    flat: list[Cover] = []
+    for p in parts:
+        flat += list(p.parts) if p.kind == kind else [p]
+    flat = list(dict.fromkeys(flat))
+    return flat[0] if len(flat) == 1 else Cover(kind, parts=tuple(flat))
+
+
+Single = Mapping[str, tuple[str, Sequence[str]]]
+
+
+def _tree_cover(node: Node, label: str, single: Callable[[Leaf], Single | None]) -> Cover | None:
+    """What an expression tree covers of `label`; None for a number (restricts nothing)."""
+    if isinstance(node, Num):
+        return None
+    if isinstance(node, Opaque):
+        return Cover("undetermined", why=node.why)
+    if isinstance(node, Leaf):
+        ms = tuple(m for m in node.matchers if m.label == label)
+        if ms:
+            return Cover("matchers", matchers=ms)
+        one = single(node)
+        if one and label in one:
+            v, via = one[label]
+            return Cover("values", frozenset({v}), via=tuple(via))
+        return Cover("pooled")
+    left = _tree_cover(node.left, label, single)
+    right = _tree_cover(node.right, label, single)
+    if left is None or right is None:
+        return left if right is None else right
+    if node.op in ("or", ","):
+        return _combine("any", [left, right])
+    if node.op in ("unless", "and"):  # the left side's series, filtered
+        return left
+    if not node.matched(label):
+        return Cover("undetermined", why=f"{label} is not matched across {node.op!r}")
+    return _combine("all", [left, right])
 
 
 def evidence_cover(
     expr: str | None,
     series: Sequence[Mapping[str, str]],
     readable: bool = True,
-    single: Mapping[str, tuple[str, Sequence[str]]] | None = None,
+    single: Single | Callable[[str], Single | None] | None = None,
 ) -> dict[str, Cover]:
     """Per entity label, what a dataset with these series (labels) and expression covers.
-    `readable`: the expression is the query (not a code output or a filter). `single`: label ->
-    (the one value, witness datasets) where the pooled series are known to hold a single value
-    of the label (`single_values`): pooling over one value covers that value."""
-    read = read_selector(expr) if readable and expr else None
+    `readable`: the expression is the query (not a code output or a filter). The expression
+    may combine selectors (`sum(rate(a[1m])) / sum(rate(b[1m]))`, `a or b`, q1p): each side is
+    read and their coverage intersected (binary operators) or joined (`or`). `single`: label ->
+    (the one value, witnesses) where the pooled series are known to hold a single value of the
+    label (`single_values`), or a function giving that per selector of the expression: pooling
+    over one value covers that value."""
+    node: Node | None = None
+    why = ""
+    if readable and expr:
+        try:
+            node = parse_expr(expr)
+        except Unreadable as e:
+            why = str(e)
+
+    def per_leaf(leaf: Leaf) -> Single | None:
+        return single(leaf.expr) if callable(single) else single
+
     out: dict[str, Cover] = {}
     for label in ENTITY_LABELS:
         vals = {lb[label] for lb in series if label in lb}
         if vals:
             out[label] = Cover("values", frozenset(vals))
-        elif read is not None and read.matchers is not None:
-            ms = tuple(m for m in read.matchers if m.label == label)
-            if ms:
-                out[label] = Cover("matchers", matchers=ms)
-            elif single and label in single:
-                v, via = single[label]
-                out[label] = Cover("values", frozenset({v}), via=tuple(via))
-            else:
-                out[label] = Cover("pooled")
+        elif node is not None:
+            out[label] = _tree_cover(node, label, per_leaf) or Cover("pooled")
         else:
-            out[label] = Cover("undetermined")
+            out[label] = Cover("undetermined", why=why)
     return out
 
 
@@ -139,13 +208,33 @@ class Fetched:
     series: Sequence[Mapping[str, str]]
 
 
-def single_values(pooled: Fetched, others: Iterable[Fetched]) -> dict[str, tuple[str, list[str]]]:
+@dataclass(frozen=True)
+class Listing:
+    """The values of one label a source's index listed over a window (`entities`): a witness
+    for `single_values` when it found exactly one (q1p)."""
+
+    source: str
+    label: str
+    values: tuple[str, ...]
+    truncated: bool
+    start_ms: int
+    end_ms: int
+    metric: str | None = None  # listed over one metric's series; None: the whole source
+    via: str = "entities"  # how to cite it
+
+
+def single_values(
+    pooled: Fetched, others: Iterable[Fetched], listings: Iterable[Listing] = ()
+) -> dict[str, tuple[str, list[str]]]:
     """Entity labels a pooled dataset aggregated away whose pooled series hold exactly one value,
     read from witnesses: other datasets of the same source and the same metric, over at least the
     same time range, selected with no matcher the pooled query lacks (so they hold at least its
-    series) and keeping the label on every series. When every witness shows the same single value,
-    the pooled series hold that value only (`sum(x)` over x{service="checkout"} alone is about
-    checkout). No witness, or two values: nothing (the pooled cover stays pooled).
+    series) and keeping the label on every series; and label listings (`listings`, from the
+    source's index: `entities`) of the same source over a window holding the pooled range, of the
+    whole source or of the same metric, complete (not truncated). When every witness shows the
+    same single value, the pooled series hold that value only (`sum(x)` over x{service="checkout"}
+    alone is about checkout; a source whose service label has one value in the window is about
+    that service). No witness, or two values: nothing (the pooled cover stays pooled).
     `others` must be datasets whose expr is the query that produced them."""
     read = read_selector(pooled.expr)
     if read.matchers is None:
@@ -178,8 +267,20 @@ def single_values(pooled: Fetched, others: Iterable[Fetched]) -> dict[str, tuple
                 continue  # aggregated away (or absent on some series): says nothing
             seen.setdefault(label, set()).update(v for v in vals if v is not None)
             via.setdefault(label, []).append(w.id)
+    (name,) = names
+    for li in listings:
+        if li.source != pooled.source or li.label not in ENTITY_LABELS or li.truncated:
+            continue
+        if not li.values or any(m.label == li.label for m in rest):
+            continue
+        if li.start_ms > pooled.start_ms or li.end_ms < pooled.end_ms:
+            continue
+        if li.metric is not None and base_name(li.metric) != base_name(name):
+            continue
+        seen.setdefault(li.label, set()).update(li.values)
+        via.setdefault(li.label, []).append(li.via)
     return {
-        label: (next(iter(vals)), sorted(via[label]))
+        label: (next(iter(vals)), sorted(dict.fromkeys(via[label])))
         for label, vals in seen.items()
         if len(vals) == 1
     }
@@ -197,11 +298,16 @@ def known_entities(
                 if k in ENTITY_LABELS and isinstance(v, str) and _nameable(v):
                     out.setdefault(k, {}).setdefault(v, set()).add(did)
     for did, expr in exprs.items():
-        read = read_selector(expr) if expr else None
-        for m in (read.matchers or []) if read else []:
+        for m in leaf_matchers(expr) if expr else []:
             if m.label in ENTITY_LABELS and m.op == "=" and _nameable(m.value):
                 out.setdefault(m.label, {}).setdefault(m.value, set()).add(did)
     return out
+
+
+def expr_metrics(expr: str | None) -> set[str]:
+    """Metric names an expression reads (histogram members as their base name)."""
+    return {base_name(m.value) for m in leaf_matchers(expr) if m.label == "__name__" and
+            m.op == "="} if expr else set()  # fmt: skip
 
 
 # --- claim scope ----------------------------------------------------------------------------
@@ -226,17 +332,21 @@ def check_claim(
     covers: Mapping[str, Mapping[str, Cover]],
     known: Mapping[str, Mapping[str, set[str]]],
     selector_undetermined: str | None = None,
+    metrics_of: Mapping[str, set[str]] | None = None,
 ) -> ClaimScope:
     """Entities the claim names that the evidence (`covers`: dataset -> label -> Cover) does not
     cover. A value seen under several labels is covered when any of them covers it.
     `selector_undetermined`: why scope.selector could not be read (the scope is then at best
-    undetermined)."""
+    undetermined). `metrics_of`: dataset -> metric names (histogram members as their base); the
+    hint then offers only datasets of a measure the cited evidence is about (q1p: another
+    metric holding the entity is not coverage for this claim)."""
     by_value: dict[str, list[str]] = {}
     for label in sorted(known):
         for value in sorted(known[label]):
             if mentions(claim, value):
                 by_value.setdefault(value, []).append(label)
     named, not_covered, undetermined, where = [], [], [], []
+    witnessed: list[str] = []  # covered only through a single-value witness: said, with it
     for value, labels in by_value.items():
         verdicts = {
             label: [c[label].covers(value) for c in covers.values() if label in c]
@@ -244,12 +354,27 @@ def check_claim(
         }
         named += [f'{label}="{value}"' for label in labels]
         if any(True in v for v in verdicts.values()):
+            direct = [(did, lb) for did, c in covers.items() for lb in labels
+                      if lb in c and c[lb].covers(value) is True]  # fmt: skip
+            if all(_witnessed(covers[did][lb]) for did, lb in direct):
+                witnessed += [f"{did}: {covers[did][lb].describe(lb)}" for did, lb in direct]
             continue
         if any(None in v for v in verdicts.values()):
             undetermined.append(f'{labels[0]}="{value}"')
             continue
         not_covered.append(f'{labels[0]}="{value}"')
         holders = sorted({d for label in labels for d in known[label][value]} - set(covers))
+        cited = {x for d in covers for x in (metrics_of or {}).get(d, set())}
+        if metrics_of is not None and cited:
+            same = [d for d in holders if metrics_of.get(d, set()) & cited]
+            if holders and not same:
+                where.append(f'no dataset of {", ".join(sorted(cited))} has {labels[0]}="{value}" '
+                             f'({", ".join(holders)} {"has" if len(holders) == 1 else "have"} it '
+                             "for another metric, which does not cover this claim): query it "
+                             f"by {labels[0]}, or list the source's {labels[0]} values over the "
+                             "range (entities: a single value covers pooled evidence)")  # fmt: skip
+                continue
+            holders = same
         if holders:
             where.append(f'{", ".join(holders)} {"has" if len(holders) == 1 else "have"} '
                          f'{labels[0]}="{value}"')  # fmt: skip
@@ -272,7 +397,17 @@ def check_claim(
     if parts:
         return ClaimScope("undetermined", named, [], undetermined,
                           "scope undetermined: " + "; ".join(parts))  # fmt: skip
+    if witnessed:
+        return ClaimScope("covered", named, message="covered through a single-value witness: "
+                          + "; ".join(dict.fromkeys(witnessed)))  # fmt: skip
     return ClaimScope("covered", named)
+
+
+def _witnessed(c: Cover) -> bool:
+    """Does this cover rest on a single-value witness (not on series labels or matchers)?"""
+    if c.kind in ("all", "any"):
+        return any(_witnessed(p) for p in c.parts)
+    return c.kind == "values" and bool(c.via)
 
 
 # --- hypotheses -----------------------------------------------------------------------------
@@ -283,9 +418,12 @@ def subjects(
     known: Mapping[str, Mapping[str, set[str]]],
     metrics: Iterable[str],
     is_metric: Callable[[str], bool] = lambda _t: False,
+    selector: str | None = None,
 ) -> list[str]:
     """Concrete subjects a hypothesis statement names: entity values the workspace has seen,
-    metric names of its datasets, or (catalog lookup) metric names of its sources."""
+    metric names of its datasets, or (catalog lookup) metric names of its sources. `selector`:
+    the hypothesis' scope selector; its entity equality matchers on values the workspace has
+    seen, and its metric names known as above, count too."""
     out = [f'{label}="{v}"' for label in sorted(known) for v in sorted(known[label])
            if mentions(statement, v)]  # fmt: skip
     ms = set(metrics)
@@ -293,6 +431,13 @@ def subjects(
         tok = tok.rstrip(".:")
         if tok in ms or (("_" in tok or ":" in tok) and is_metric(tok)):
             out.append(tok)
+    for m in leaf_matchers(selector) if selector else []:
+        if m.op != "=":
+            continue
+        if m.label == "__name__" and (m.value in ms or is_metric(m.value)):
+            out.append(m.value)
+        elif m.value in known.get(m.label, {}):
+            out.append(f'{m.label}="{m.value}"')
     return list(dict.fromkeys(out))
 
 
@@ -324,6 +469,41 @@ def support_problems(
                    "and refute it (or mark it inconclusive) with evidence, or pass "
                    "alternatives_considered saying which alternatives you ruled out and how")  # fmt: skip
     return out
+
+
+def ruled_out_problems(
+    hypothesis_id: str,
+    status: str,
+    evidence_for: Sequence[str],
+    evidence_against: Sequence[str],
+    rejected: set[str],
+    reason: str | None,
+    note: str | None,
+) -> list[str]:
+    """Why Claude may not mark a hypothesis refuted / inconclusive yet ([] = it may), the
+    symmetric side of `support_problems` (aiy). Refuted: a finding against it the user has not
+    rejected, or an explicit `reason`. Inconclusive: any standing linked finding, a `reason`, or
+    a `note` saying why. A note never stands in for a refutation's reason: it is not checked
+    and does not link the evidence it may cite."""
+    if (reason or "").strip():
+        return []
+    against = [f for f in evidence_against if f not in rejected]
+    if status == "refuted":
+        if against:
+            return []
+        rej = " the user has not rejected" if evidence_against else ""
+        return [(f"{hypothesis_id} has no finding against it{rej}: record the observation that "
+                f'rules it out with finding_create(hypotheses=[{{"id": "{hypothesis_id}", '
+                '"stance": "against"}], ...) (one finding may also back another hypothesis: '
+                'add {"id": ..., "stance": "for"} to the same list), or pass reason saying what '
+                "rules it out and citing the findings it rests on")]  # fmt: skip
+    if status == "inconclusive":
+        standing = [f for f in [*evidence_for, *evidence_against] if f not in rejected]
+        if standing or (note or "").strip():
+            return []
+        return [(f"{hypothesis_id} has no finding linked and no reason: say why it cannot be "
+                 "decided (reason or note), e.g. which signal is missing")]  # fmt: skip
+    return []
 
 
 # --- sources of variation -------------------------------------------------------------------

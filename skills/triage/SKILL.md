@@ -95,9 +95,10 @@ failing service, a flag, a deploy, an arrival surge), plus at least one competin
 test both: a question-framing or decoy hypothesis does not explain the episode.
 `finding_create` returns a `hint` when a special-cause finding's subject has no open hypothesis. `supported` is refused until a finding
 backs it and an alternative is refuted / inconclusive (or `alternatives_considered` says how
-it was ruled out). Attach results with `finding_create(...,
-hypothesis=<id>, stance="for" | "against")` (finding anatomy, scope and source labels: the
-`evidence` skill) and move status with `hypothesis_update`. The cheap
+it was ruled out); `refuted` is refused until a finding is against it (or a `reason` says what
+rules it out). Attach results with `finding_create(..., hypotheses=[{"id": <id>, "stance":
+"for" | "against"}, ...])`, one link per hypothesis the observation bears on (finding anatomy,
+scope and source labels: the `evidence` skill) and move status with `hypothesis_update`. The cheap
 alternatives to rule out first, and the test for each: `references/ruling-out.md`. Do not chase
 common-cause points; separate measurement-system issues into their own findings.
 

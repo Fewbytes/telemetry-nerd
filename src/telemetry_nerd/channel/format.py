@@ -29,8 +29,10 @@ def describe_event(e: Event) -> str:
             tail = f": {p['comment']}" if p.get("comment") else ""
             return f'{who} {p["verdict"]} {e.object_id} ("{p.get("claim", "")}"){tail}'
         case "hypothesis.status_changed":
-            return f"{who} set {e.object_id} {p['from']} → {p['to']}" + (
-                f": {p['note']}" if p.get("note") else ""
+            return (
+                f"{who} set {e.object_id} {p['from']} → {p['to']}"
+                + (f": {p['note']}" if p.get("note") else "")
+                + (f" (reason: {p['reason']})" if p.get("reason") else "")
             )
         case "annotation.created":
             on = f" on {p['panel']}" if p.get("panel") else ""

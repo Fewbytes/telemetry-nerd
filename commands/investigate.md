@@ -25,8 +25,9 @@ instructions apply throughout.
    result and scope the claim to the labels and window it searched.
 4. **Triage** per the `triage` skill: blast radius over those services, RED/USE per affected
    service, changepoints against the baseline, rule things out. Every panel answers an explicit
-   question. A question you want to test up front may be a hypothesis (`hypothesis_create`, naming
-   the scope and a concrete subject), but it does not replace step 5.
+   question. A question you want to test up front may be a hypothesis (`hypothesis_create` with a
+   concrete subject in the statement and its `scope`: `{selector, start, end, source?}`), but it
+   does not replace step 5.
    **Annotate as you go** (the user reads the chart, not the log): once the evidence places the
    onset, `annotate(kind="event", at=<onset>, panel=<the panel that shows it>, label="onset: ...")`;
    for a fault, outage or degradation window with a start and an end, `annotate(kind="region",
@@ -37,12 +38,15 @@ instructions apply throughout.
 5. **Cause hypotheses for the episode.** Once an episode is found (onset or window annotated),
    `hypothesis_create` a cause that names its concrete subject (the failing service, a flag, a
    deploy, an arrival surge vs. a slow service) and at least one competing cause, then test them:
-   `finding_create(..., hypothesis=<id>, stance="for" | "against")` and keep their status current
-   with `hypothesis_update`. `supported` is refused unless the statement names a concrete
-   subject, at least one finding with stance=for backs it, and an alternative was considered:
-   another hypothesis refuted or inconclusive, or `alternatives_considered` saying which
-   alternatives and how they were ruled out. A `hint` in finding_create's result means a
-   special-cause finding's subject has no open hypothesis yet.
+   `finding_create(..., hypotheses=[{"id": <cause>, "stance": "for"}, {"id": <competitor>,
+   "stance": "against"}])` (one observation that separates two causes is linked to both) and
+   keep their status current with `hypothesis_update`. `supported` is refused unless the
+   statement names a concrete subject, at least one finding with stance=for backs it, and an
+   alternative was considered: another hypothesis refuted or inconclusive, or
+   `alternatives_considered` saying which alternatives and how they were ruled out. `refuted`
+   is refused without a finding against it (or a `reason` citing the findings that rule it
+   out). A `hint` in finding_create's result means a special-cause finding's subject has no open
+   hypothesis yet.
 6. **Never claim without evidence.** (A signal you wish existed: `gap_create`.) A claim becomes `finding_create` with scope (source,
    selector, range, step) and evidence (cite the annotation id for an onset or window), and attaches to a hypothesis with its stance. Refuting
    evidence is recorded too. Name only the entities (services, pods, jobs) your cited evidence

@@ -90,9 +90,9 @@
 
   <div class="meta">
     <span class="badge author {finding.author}">{finding.author}</span>
-    {#if finding.hypothesis}
-      <a class="obj-link" href="#hypothesis-{finding.hypothesis}">{finding.stance ?? "relates to"} {finding.hypothesis}</a>
-    {/if}
+    {#each finding.hypotheses ?? [] as link (link.id)}
+      <a class="obj-link stance-{link.stance}" href="#hypothesis-{link.id}">{link.stance} {link.id}</a>
+    {/each}
   </div>
 
   <div class="verdict-row" role="group" aria-label="Verdict for {finding.id}">

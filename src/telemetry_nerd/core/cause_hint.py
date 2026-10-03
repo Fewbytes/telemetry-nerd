@@ -25,7 +25,7 @@ def subjects(f: Finding) -> list[str]:
 def cause_hint(f: Finding, hypotheses: list[Hypothesis]) -> str | None:
     if "special_cause" not in f.sources:
         return None
-    if f.hypothesis is not None and f.stance == "for":
+    if any(x.stance == "for" for x in f.hypotheses):
         return None  # it already backs a hypothesis
     live = [h for h in hypotheses if h.status != "refuted"]
     subj = subjects(f)

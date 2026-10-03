@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CodeBrief, Finding, Hypothesis, Panel } from "./api";
-import { evidenceViews, hypothesisView, scopeFields, scopeNotice, verdictText } from "./findings";
+import { evidenceViews, hypothesisScopeText, hypothesisView, scopeFields, scopeNotice, verdictText } from "./findings";
 
 const scope = {
   source: "default", selector: "tn_demo_latency_seconds",
@@ -18,7 +18,7 @@ const stat = (over: object) => ({
   method: "bootstrap", params: {}, ...over,
 });
 const fnd = (over: object): Finding => ({
-  id: "f1", claim: "c", scope, evidence: [], caveats: [], hypothesis: null, stance: null,
+  id: "f1", claim: "c", scope, evidence: [], caveats: [], hypotheses: [],
   answers_panel: null, author: "claude", created_at_ms: 0, verdict: null, verdict_comment: null, ...over,
 }) as Finding;
 
@@ -76,8 +76,8 @@ describe("hypothesisView", () => {
     const fs = [
       fnd({ id: "f1", evidence: [stat({})], evidence_flags: [{ evidence: 0, flag: "uncertainty_unknown", message: "" }, { evidence: 0, flag: "input_uncertainty_unknown", message: "" }], verdict: "accepted" }),
       fnd({ id: "f2", verdict: "rejected" }),
-      fnd({ id: "f3", hypothesis: "h1" }),
-      fnd({ id: "f4", hypothesis: "h9" }),
+      fnd({ id: "f3", hypotheses: [{ id: "h9", stance: "for" }, { id: "h1", stance: "against" }] }),
+      fnd({ id: "f4", hypotheses: [{ id: "h9", stance: "for" }] }),
     ];
     const v = hypothesisView(h, fs);
     expect(v.for.map((e) => [e.id, e.flagged, e.verdict])).toEqual([["f1", 1, "accepted"]]);
@@ -86,6 +86,15 @@ describe("hypothesisView", () => {
   });
   it("skips evidence ids that no longer resolve", () => {
     expect(hypothesisView(h, []).for).toEqual([]);
+  });
+});
+
+describe("hypothesisScopeText", () => {
+  it("shows prose as given and a structured scope as selector · range · source", () => {
+    expect(hypothesisScopeText(null)).toBeNull();
+    expect(hypothesisScopeText({ text: "payment, checkout; 14:30-15:00Z" })).toBe("payment, checkout; 14:30-15:00Z");
+    const t = hypothesisScopeText({ selector: 'x{service_name="payment"}', time_range: { start_ms: 0, end_ms: 60_000 }, source: "default" });
+    expect(t).toMatch(/^x\{service_name="payment"\} · .+ · source default$/);
   });
 });
 

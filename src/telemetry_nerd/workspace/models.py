@@ -47,12 +47,16 @@ class Scope(_Strict):
     @field_validator("step")
     @classmethod
     def _step(cls, v: str) -> str:
-        try:
-            if parse_duration(v) <= 0:
-                raise ValueError
-        except ValueError as e:
-            raise ValueError(f"step must be a positive duration like 30s or 1m, got {v!r}") from e
-        return v
+        return check_step(v)
+
+
+def check_step(v: str) -> str:
+    try:
+        if parse_duration(v) <= 0:
+            raise ValueError
+    except ValueError as e:
+        raise ValueError(f"step must be a positive duration like 30s or 1m, got {v!r}") from e
+    return v
 
 
 class PanelRef(_Strict):
@@ -186,6 +190,34 @@ class Annotation(AnnotationIn):
 HypothesisStatus = Literal["proposed", "supported", "refuted", "inconclusive"]
 
 
+class HypothesisScope(_Strict):
+    """Where a hypothesis applies (qy7q): a selector over a time range (source, step and
+    aggregation when known), or free text when the scope was given as prose. Text is stored as
+    given and is not checkable; the structured form is read like a finding's scope."""
+
+    text: str | None = None
+    source: str | None = None
+    selector: str | None = None
+    time_range: TimeSpan | None = None
+    step: str | None = None
+    aggregation: str | None = None
+
+    @model_validator(mode="after")
+    def _either(self) -> HypothesisScope:
+        structured = (self.source, self.selector, self.time_range, self.step, self.aggregation)
+        if self.text is not None:
+            if not self.text.strip():
+                raise ValueError("scope text must not be empty")
+            if any(v is not None for v in structured):
+                raise ValueError("a scope is either text or {selector, start, end, ...}, not both")
+            return self
+        if not (self.selector or "").strip() or self.time_range is None:
+            raise ValueError("a structured scope needs selector, start and end")
+        if self.step is not None:
+            check_step(self.step)
+        return self
+
+
 class Hypothesis(_Strict):
     id: str
     statement: str = Field(min_length=1)
@@ -196,8 +228,46 @@ class Hypothesis(_Strict):
     #: the competing explanations considered and why they were set aside (principle 13), when
     #: they are not recorded as refuted / inconclusive hypotheses of their own
     alternatives_considered: str | None = None
+    #: why the hypothesis was refuted or left inconclusive when no finding against it says so
+    #: (aiy): stated explicitly, never inferred from a note
+    status_reason: str | None = None
+    scope: HypothesisScope | None = None
     created_at_ms: int
     updated_at_ms: int
+
+
+Stance = Literal["for", "against"]
+
+
+class HypothesisLink(_Strict):
+    """A finding's stance on one hypothesis (aiy): one finding may back h1 and count against h2."""
+
+    id: str = Field(min_length=1)
+    stance: Stance
+
+
+def _legacy_link(data: object) -> object:
+    """Findings stored (or sent) before aiy carry one `hypothesis` + `stance`: read them as a
+    one-item `hypotheses` list. Both forms at once must agree (the single link is in the list)."""
+    if not isinstance(data, dict) or ("hypothesis" not in data and "stance" not in data):
+        return data
+    d = dict(data)
+    h, st = d.pop("hypothesis", None), d.pop("stance", None)
+    if (h is None) != (st is None):
+        raise ValueError("hypothesis and stance must be given together")
+    if h is None:
+        return d
+    links = list(d.get("hypotheses") or [])
+    same = [
+        x for x in links if (x.get("id") if isinstance(x, dict) else getattr(x, "id", None)) == h
+    ]
+    if same:
+        given = same[0].get("stance") if isinstance(same[0], dict) else same[0].stance
+        if given != st:
+            raise ValueError(f"hypothesis {h} is given twice with different stances")
+        return d
+    d["hypotheses"] = [{"id": h, "stance": st}, *links]
+    return d
 
 
 class FindingIn(_Strict):
@@ -205,18 +275,32 @@ class FindingIn(_Strict):
     scope: Scope
     evidence: list[EvidenceRef] = Field(min_length=1)
     caveats: list[str] = Field(default_factory=list)
-    hypothesis: str | None = None
-    stance: Literal["for", "against"] | None = None
+    #: the hypotheses this finding takes a stance on, one link each (aiy); the single
+    #: `hypothesis` + `stance` form (and stored findings before aiy) read as a one-item list
+    hypotheses: list[HypothesisLink] = Field(default_factory=list)
     answers_panel: str | None = None
     #: why the claim names entities its evidence does not cover; required for such a claim
     #: (the finding is then flagged beyond_evidence, never silently accepted)
     scope_note: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy(cls, data: object) -> object:
+        return _legacy_link(data)
+
     @model_validator(mode="after")
-    def _stance(self) -> FindingIn:
-        if (self.hypothesis is None) != (self.stance is None):
-            raise ValueError("hypothesis and stance must be given together")
+    def _links(self) -> FindingIn:
+        seen: dict[str, Stance] = {}
+        for link in self.hypotheses:
+            if seen.get(link.id, link.stance) != link.stance:
+                raise ValueError(f"a finding cannot be both for and against {link.id}")
+            seen[link.id] = link.stance
+        if len(seen) != len(self.hypotheses):  # the same link twice: kept once
+            self.hypotheses = [HypothesisLink(id=h, stance=st) for h, st in seen.items()]
         return self
+
+    def stance_on(self, hypothesis_id: str) -> Stance | None:
+        return next((x.stance for x in self.hypotheses if x.id == hypothesis_id), None)
 
     @property
     def sources(self) -> list[str]:

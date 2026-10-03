@@ -278,7 +278,9 @@ class TelemetryService:
     def __post_init__(self) -> None:
         self.bindings = BindingOps(self)
         self.verdicts = VerdictOps(self)
-        self.entity_index = EntityOps(self._source, self.clock, self.ws.binding_suggest)
+        self.entity_index = EntityOps(
+            self._source, self.clock, self.ws.binding_suggest, self.ws.workspace.record_listing
+        )
         self.signal = SignalOps(self.datasets, self.ws.catalog_facts)
         self.diagnostics = SeriesDiagnostics(
             self.signal, lambda *a: self.profiles.seasonal_excluding(*a), self.query

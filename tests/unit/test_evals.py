@@ -910,3 +910,20 @@ def test_run_claude_stops_a_run_past_max_turns(tmp_path):
     assert out["aborted"].startswith("turn cap: 4 tool-use rounds > max_turns 3")
     assert out["caps"]["stopped_by"] == "harness" and out["caps"]["turns_exceeded"]
     assert out["duration_s"] < 15
+
+
+def test_scorer_reads_structured_hypothesis_links():
+    """aiy: links come from `hypotheses` (the single hypothesis/stance of older snapshots too); a
+    finding for h1 and against h2 is still an incident finding; a refuted alternative counts as
+    considered only with a finding linked or a stated reason."""
+    from telemetry_nerd.evals.score import against_only, links, ruled_out
+
+    multi = {"hypotheses": [{"id": "h1", "stance": "for"}, {"id": "h2", "stance": "against"}]}
+    assert links(multi) == multi["hypotheses"] and not against_only(multi)
+    assert against_only({"hypotheses": [{"id": "h2", "stance": "against"}]})
+    assert links({"hypothesis": "h2", "stance": "against"}) == [{"id": "h2", "stance": "against"}]
+    assert against_only({"hypothesis": "h2", "stance": "against"}) and not against_only({})
+    assert not ruled_out({"status": "refuted"})  # round 3's h2: a status alone
+    assert ruled_out({"status": "refuted", "evidence_against": ["f3"]})
+    assert ruled_out({"status": "inconclusive", "status_reason": "no arrivals counter"})
+    assert not ruled_out({"status": "proposed", "evidence_against": ["f3"]})

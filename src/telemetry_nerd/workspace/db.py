@@ -158,6 +158,17 @@ CREATE TABLE IF NOT EXISTS catalog_findings (
     finding_id TEXT NOT NULL,
     PRIMARY KEY (source, metric, kind)
 );
+CREATE TABLE IF NOT EXISTS label_listings (
+    source TEXT NOT NULL,
+    label TEXT NOT NULL,
+    metric TEXT NOT NULL DEFAULT '',
+    start_ms INTEGER NOT NULL,
+    end_ms INTEGER NOT NULL,
+    label_values TEXT NOT NULL,
+    truncated INTEGER NOT NULL,
+    ts_ms INTEGER NOT NULL,
+    PRIMARY KEY (source, label, metric, start_ms, end_ms)
+);
 CREATE TABLE IF NOT EXISTS sources (
     name TEXT PRIMARY KEY,
     spec TEXT NOT NULL,

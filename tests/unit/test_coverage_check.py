@@ -160,8 +160,16 @@ def test_unknown_before_the_first_sample_on_every_pod_blocks_a_fleet_claim():
     assert c.message.startswith("20 of 20 series")
 
 
-def test_unparseable_selector_falls_back_to_every_series_and_says_so():
+def test_a_ratio_selector_is_read_whole():
+    # q1p: both sides pin pod="p03"; the claim is about p03 alone
     out = codes(check(fleet(p03=SILENT), 'up{pod="p03"} / on(pod) other{pod="p03"}'))
+    assert out["missing_data"].message.startswith('{job="api", pod="p03"} has no samples')
+    assert "scope_undetermined" not in out
+
+
+def test_unparseable_selector_falls_back_to_every_series_and_says_so():
+    sel = 'label_replace(up{pod="p03"}, "x", "$1", "pod", "(.*)")'
+    out = codes(check(fleet(p03=SILENT), sel))
     assert out["missing_data"].message.startswith("1 of 20 series")
     note = out["scope_undetermined"]
     assert note.severity == "warn" and note.message.startswith("scope undetermined")

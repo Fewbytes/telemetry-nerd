@@ -29,7 +29,9 @@ workspace
   within fault_window.start +- tolerance and none off target; unscoped claims (findings and the
   final transcript) == 0; a root-cause hypothesis supported; no hypothesis blaming a control
   supported; every supported hypothesis has a finding for it and an alternative considered
-  (another hypothesis refuted / inconclusive, or `alternatives_considered`).
+  (another hypothesis refuted / inconclusive with a finding linked or a stated reason, or
+  `alternatives_considered`). Finding-hypothesis links are read from the structured
+  `hypotheses` list (the single `hypothesis` + `stance` of older snapshots too).
 
 The text checks (entity mentions, direction and causal wording) are deliberately simple word rules,
 reported with the sentence they fired on so a reader can overrule them.
@@ -455,7 +457,7 @@ def score_finding(
                 dir_errs.append(f"{e} {m}: expected flat; {s}")
     # a control-only scope asserting a change blames the control
     control_only = sel_cov and sel_cov <= set(truth.control)
-    if control_only and asserts_change(claim) and f.get("stance") != "against":
+    if control_only and asserts_change(claim) and not against_only(f):
         blames.append(f"{', '.join(sorted(sel_cov))}: change asserted on a control-only scope")
     if blames:
         problems.append("blames an unaffected control")
@@ -465,7 +467,7 @@ def score_finding(
     # asserts a change (judged per sentence: long claims also say what did not change)
     # (the entity per sentence, the change per clause: "Span errors on payment (charge),
     # checkout (...) rose to 0.5/s ..., and were zero from 14:58", eval round 3)
-    incident = f.get("stance") != "against" and any(
+    incident = not against_only(f) and any(
         (named(s, truth.implicated) or names_term(s, truth.root_cause_terms, truth.entities))
         and any(asserts_change(c) for c in [s, *_CLAUSES.split(s)])
         for s in sentences(claim)
@@ -543,6 +545,31 @@ def _subject(text: str, truth: Truth) -> str | None:
     return first[1] if first else None
 
 
+def links(f: dict) -> list[dict]:
+    """A finding's hypothesis links [{id, stance}] (aiy), read from the structured list, or from
+    the single `hypothesis` + `stance` of findings recorded before it."""
+    if isinstance(f.get("hypotheses"), list):
+        return [x for x in f["hypotheses"] if isinstance(x, dict)]
+    if f.get("hypothesis") and f.get("stance"):
+        return [{"id": f["hypothesis"], "stance": f["stance"]}]
+    return []
+
+
+def against_only(f: dict) -> bool:
+    """The finding only argues against hypotheses (not an incident claim of its own)."""
+    ls = links(f)
+    return bool(ls) and all(x.get("stance") == "against" for x in ls)
+
+
+def ruled_out(h: dict) -> bool:
+    """Refuted or inconclusive with something behind it: a linked finding or a stated reason
+    (aiy: a status alone is not a ruled-out alternative)."""
+    return h.get("status") in ("refuted", "inconclusive") and bool(
+        h.get("evidence_against") or h.get("evidence_for")
+        or (h.get("status_reason") or "").strip()
+    )  # fmt: skip
+
+
 def score_hypothesis(h: dict, truth: Truth, others: list[dict] | None = None) -> HypothesisScore:
     st = h.get("statement", "")
     if names_term(st, truth.root_cause_terms, truth.entities):
@@ -564,10 +591,7 @@ def score_hypothesis(h: dict, truth: Truth, others: list[dict] | None = None) ->
         len(h.get("evidence_for", [])),
         len(h.get("evidence_against", [])),
         bool((h.get("alternatives_considered") or "").strip())
-        or any(
-            o.get("id") != h.get("id") and o.get("status") in ("refuted", "inconclusive")
-            for o in others or []
-        ),
+        or any(o.get("id") != h.get("id") and ruled_out(o) for o in others or []),
     )
 
 

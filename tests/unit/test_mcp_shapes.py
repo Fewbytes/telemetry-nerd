@@ -266,7 +266,7 @@ async def test_mcp_finding_create_refusal_shows_example(tmp_path):
 async def test_mcp_hypothesis_update_id_alias(tmp_path):
     _, mcp = await _workspace(tmp_path)
     c = next(c for c in CALLS if c["id"] == "os-hypothesis-update-id")
-    r = await call(mcp, "hypothesis_update", c["args"])
+    r = await call(mcp, "hypothesis_update", {**c["args"], "reason": "load was flat (f1)"})
     assert not r.is_error, text_of(r)
     assert json.loads(text_of(r)) == {"hypothesis": "h1", "status": "refuted"}
     r = await call(mcp, "hypothesis_update", {"id": "h1", "hypothesis": "h2", "status": "x"})

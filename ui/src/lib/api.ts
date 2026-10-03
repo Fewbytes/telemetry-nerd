@@ -203,15 +203,27 @@ export interface Annotation {
   value: number | null; value_hi: number | null; label: string; links: string[];
   author: string; created_at_ms: number; deleted: boolean;
 }
+/** Where a hypothesis applies (qy7q): a selector over a range, or prose as given. */
+export interface HypothesisScope {
+  text?: string | null;
+  source?: string | null; selector?: string | null;
+  time_range?: { start_ms: number; end_ms: number } | null;
+  step?: string | null; aggregation?: string | null;
+}
 export interface Hypothesis {
   id: string; statement: string; status: "proposed" | "supported" | "refuted" | "inconclusive";
   author: string; evidence_for: string[]; evidence_against: string[];
   alternatives_considered?: string | null;
+  /** why it was refuted / left inconclusive, when stated (aiy) */
+  status_reason?: string | null;
+  scope?: HypothesisScope | null;
   created_at_ms: number; updated_at_ms: number;
 }
+/** A finding's stance on one hypothesis (aiy): a finding may link several. */
+export interface HypothesisLink { id: string; stance: "for" | "against" }
 export interface Finding {
   id: string; claim: string; scope: Scope; evidence: EvidenceRef[]; caveats: string[];
-  hypothesis: string | null; stance: "for" | "against" | null; answers_panel: string | null;
+  hypotheses: HypothesisLink[]; answers_panel: string | null;
   author: string; created_at_ms: number;
   verdict: "accepted" | "rejected" | "needs-more" | null; verdict_comment: string | null;
   evidence_flags?: EvidenceFlag[];

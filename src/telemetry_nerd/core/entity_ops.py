@@ -78,10 +78,14 @@ class EntityOps:
         source: Callable[[str], Any],
         clock: Callable[[], int],
         suggest: Callable[..., dict[str, Any]],
+        record: Callable[..., None] | None = None,
     ) -> None:
         self._source = source
         self._clock = clock
         self._suggest = suggest
+        #: told every non-empty listing (source, label, values, truncated, start_ms, end_ms,
+        #: metric): a finding over pooled evidence may cite a single value as its witness (q1p)
+        self._record = record
         self._cache: dict[tuple, tuple[int, dict]] = {}
 
     async def entities(
@@ -141,6 +145,10 @@ class EntityOps:
             *(src.label_values(lb, match, rng, limit + 1) for lb in searched)
         )
         values = {lb: v for lb, v in zip(searched, found, strict=True) if v}
+        if self._record is not None:
+            for lb, v in values.items():
+                self._record(source, lb, list(v[:limit]), len(v) > limit, rng.start_ms,
+                             rng.end_ms, metric)  # fmt: skip
         labels = [
             {
                 "label": lb,
