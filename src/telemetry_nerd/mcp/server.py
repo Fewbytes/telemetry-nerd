@@ -201,6 +201,15 @@ def _workspace_row(w: dict) -> dict:
     return row
 
 
+def _capped(out: dict) -> dict:
+    """`out` with its workspace's title and question cut to the workspace_list caps."""
+    w = out["workspace"]
+    w = {**w, "title": w["title"][:60]}
+    if w.get("question"):
+        w["question"] = w["question"][:80]
+    return {**out, "workspace": w}
+
+
 def _dump(obj: dict) -> str:
     return dumps(obj, separators=(",", ":"))
 
@@ -2001,7 +2010,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
     @mcp.tool()
     def workspace_get() -> str:
-        """Compact workspace brief: panels, hypotheses, findings, open_threads, last_seq."""
+        """Compact workspace brief: workspace {id, title, question}, panels, hypotheses, findings,
+        open_threads, last_seq."""
         return _dump(ws.brief())
 
     @mcp.tool()
@@ -2018,11 +2028,13 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             out = await service.workspaces.create(title, question, "claude")
         except (ValueError, NotFound) as e:
             raise _fail(e) from e
-        return _dump({**out, "url": ui_url})
+        return _dump({**_capped(out), "url": ui_url})
 
     @mcp.tool()
     def workspace_list(include_archived: bool = False) -> str:
-        """Workspaces, newest activity first (20 max, `more` counts the rest), with counts."""
+        """Workspaces, newest activity first (20 max, `more` counts the rest), with counts.
+
+        A count key absent from a row means zero."""
         out = service.workspaces.list(include_archived, 20)
         rows = [_workspace_row(w) for w in out["workspaces"]]
         more = out["more"]
@@ -2045,9 +2057,13 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise _fail(e) from e
         out = {**out, "url": ui_url, "hint": "workspace_get for the brief"}
         threads = [{**t, "last": t["last"][:60]} for t in out["open_threads"]]
-        while len(_dump({**out, "open_threads": threads})) > WORKSPACE_LIST_BYTES and threads:
+        cut = 0
+        while threads and len(_dump({**out, "open_threads": threads})) > WORKSPACE_LIST_BYTES:
             threads.pop()  # the brief has the rest
-        return _dump({**out, "open_threads": threads})
+            cut += 1
+        return _dump(
+            {**out, "open_threads": threads, **({"more_open_threads": cut} if cut else {})}
+        )
 
     @mcp.tool()
     def workspace_update(
@@ -2063,7 +2079,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             )
         except (ValueError, NotFound) as e:
             raise _fail(e) from e
-        return _dump({"workspace": info.to_dict(), "url": ui_url})
+        return _dump(
+            {"workspace": _capped({"workspace": info.to_dict()})["workspace"], "url": ui_url}
+        )
 
     _forbid_unknown_arguments(mcp)
     return mcp

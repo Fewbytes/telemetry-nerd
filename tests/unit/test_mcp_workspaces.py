@@ -86,4 +86,11 @@ async def test_switch_result_stays_small_with_many_long_open_threads(tmp_path):
     await call(mcp, "workspace_create", {"title": "third"})
     out = await call(mcp, "workspace_switch", {"id": "w1"})
     assert len(out) < 2048
-    assert json.loads(out)["open_threads"]
+    assert "more_open_threads" not in json.loads(out)
+    await call(mcp, "workspace_update", {"id": "w1", "title": "t" * 1300})
+    await call(mcp, "workspace_create", {"title": "fourth"})
+    out = await call(mcp, "workspace_switch", {"id": "w1"})
+    assert len(out) < 2048
+    data = json.loads(out)
+    assert data["more_open_threads"] > 0
+    assert len(data["open_threads"]) + data["more_open_threads"] == 10  # WorkspaceOps caps at 10
