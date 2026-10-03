@@ -16,12 +16,14 @@ from telemetry_nerd.analysis import born_counters, sources
 from telemetry_nerd.analysis.diagnostics import (
     DEPARTURE_METHOD,
     MIN_DIAGNOSE_POINTS,
+    Departure,
     Diagnosis,
     detector_source,
     diagnose,
     violation_sources,
 )
 from telemetry_nerd.analysis.excursion import METHOD as EXCURSION_METHOD
+from telemetry_nerd.analysis.excursion import Excursion
 from telemetry_nerd.analysis.exprkind import events_per_step, range_windows_ms, rate_interval_ms
 from telemetry_nerd.analysis.profile import seasonal_shape
 from telemetry_nerd.analysis.seasonal import DEFAULT_K, cycle_shifts
@@ -534,73 +536,10 @@ class SeriesDiagnostics:
                 )  # fmt: skip
             shifts.append(item)
         stability = {"trend": trend, "shifts": shifts, "sigma_within": sig(d.sigma_within)}
-        if (dep := d.departure) is not None:
-            src = dep.status
-            models = {
-                "poisson": {"p": sig(dep.p, 2), "assumes": "independent events"},
-                "clustered": {
-                    "p": sig(dep.p_clustered, 2),
-                    "dispersion": sig(dep.dispersion, 3),
-                    "dispersion_source": dep.dispersion_source,
-                    "dispersion_judged": sig(dep.dispersion_judged, 3),
-                    "dispersion_sibling": (
-                        sig(dep.dispersion_sibling, 3) if dep.dispersion_sibling else None
-                    ),
-                    "clusters": sig(dep.clusters, 3),
-                    "assumes": "events in independent clusters with the stated dispersion, "
-                    "clusters shorter than the judged window",
-                },
-            }
-            stability["departure"] = {
-                "at": iso(dep.ts_ms), "events": dep.events, "mean": sig(dep.mean),
-                "interval": sig_pair(dep.interval), "p": sig(dep.p, 2),
-                "p_clustered": sig(dep.p_clustered, 2), "models": models,
-                "label_rests_on": "clustered",
-                "summary": dep.describe(lambda v: f"{v:.3g}"),
-                "n_baseline": dep.n_baseline, "n_judged": dep.n_judged, "source": src,
-                "evidence": ev(
-                    "departure_from_zero", dep.mean, dep.interval, DEPARTURE_METHOD,
-                    source=src, at=iso(dep.ts_ms), p=dep.p, p_poisson=dep.p,
-                    p_clustered=dep.p_clustered, dispersion=sig(dep.dispersion, 3),
-                    dispersion_source=dep.dispersion_source, events=dep.events,
-                    n_baseline=dep.n_baseline, n_judged=dep.n_judged,
-                ),
-            }  # fmt: skip
-        if (ex := d.excursion) is not None:
-            src = ex.status
-
-            def model(m, noise: str, sources_: str) -> dict:
-                return {
-                    "p": sig(m.p, 2), "sigma": sig(m.sigma), "sigma_used": sig(m.sigma_used),
-                    "tau": sig(m.tau, 3), "noise": noise, "assumes": sources_,
-                }  # fmt: skip
-
-            stability["excursion"] = {
-                "start": iso(ex.start_ms), "end": iso(ex.end_ms), "points": ex.points,
-                "returned": ex.returned, "mean": sig(ex.mean), "baseline_median": sig(ex.centre),
-                "delta": sig(ex.delta), "interval": sig_pair(ex.interval),
-                **({"ratio": sig(ex.mean / ex.centre, 3)} if ex.centre > 0 else {}),
-                "p": sig(ex.p, 2), "p_cautious": sig(ex.p_cautious, 2),
-                "models": {
-                    "baseline": model(
-                        ex.baseline, "normal",
-                        "sigma and autocorrelation of the baseline deviations only",
-                    ),
-                    "cautious": model(
-                        ex.cautious, "Student t4 (heavy tails)",
-                        "sigma and autocorrelation also from the residuals outside the run",
-                    ),
-                },
-                "label_rests_on": "cautious", "runs_scanned": ex.runs,
-                "n_baseline": ex.n_baseline, "n_judged": ex.n_judged, "source": src,
-                "evidence": ev(
-                    "excursion", ex.delta, ex.interval, EXCURSION_METHOD, source=src,
-                    start=iso(ex.start_ms), end=iso(ex.end_ms), points=ex.points,
-                    p=ex.p_cautious, p_baseline_model=ex.p, p_cautious=ex.p_cautious,
-                    baseline_median=sig(ex.centre), mean=sig(ex.mean),
-                    n_baseline=ex.n_baseline, n_judged=ex.n_judged,
-                ),
-            }  # fmt: skip
+        if d.departure is not None:
+            stability["departure"] = _departure_wire(d.departure, ev)
+        if d.excursion is not None:
+            stability["excursion"] = _excursion_wire(d.excursion, ev)
         if d.kpss is not None:
             stability["kpss"] = {
                 "stat": sig(d.kpss.stat, 3),
@@ -757,3 +696,76 @@ class SeriesDiagnostics:
             "skipped": prep.skipped,
             "caveats": caveats,
         }
+
+
+def _departure_wire(dep: Departure, ev: Callable[..., dict]) -> dict:
+    """analyze's `stability.departure`: both models, the label resting on the clustered one."""
+    src = dep.status
+    models = {
+        "poisson": {"p": sig(dep.p, 2), "assumes": "independent events"},
+        "clustered": {
+            "p": sig(dep.p_clustered, 2),
+            "dispersion": sig(dep.dispersion, 3),
+            "dispersion_source": dep.dispersion_source,
+            "dispersion_judged": sig(dep.dispersion_judged, 3),
+            "dispersion_sibling": (
+                sig(dep.dispersion_sibling, 3) if dep.dispersion_sibling else None
+            ),
+            "clusters": sig(dep.clusters, 3),
+            "assumes": "events in independent clusters with the stated dispersion, "
+            "clusters shorter than the judged window",
+        },
+    }
+    return {
+        "at": iso(dep.ts_ms), "events": dep.events, "mean": sig(dep.mean),
+        "interval": sig_pair(dep.interval), "p": sig(dep.p, 2),
+        "p_clustered": sig(dep.p_clustered, 2), "models": models,
+        "label_rests_on": "clustered",
+        "summary": dep.describe(lambda v: f"{v:.3g}"),
+        "n_baseline": dep.n_baseline, "n_judged": dep.n_judged, "source": src,
+        "evidence": ev(
+            "departure_from_zero", dep.mean, dep.interval, DEPARTURE_METHOD,
+            source=src, at=iso(dep.ts_ms), p=dep.p, p_poisson=dep.p,
+            p_clustered=dep.p_clustered, dispersion=sig(dep.dispersion, 3),
+            dispersion_source=dep.dispersion_source, events=dep.events,
+            n_baseline=dep.n_baseline, n_judged=dep.n_judged,
+        ),
+    }  # fmt: skip
+
+
+def _excursion_wire(ex: Excursion, ev: Callable[..., dict]) -> dict:
+    """analyze's `stability.excursion`: both models, the label resting on the cautious one."""
+    src = ex.status
+
+    def model(m, noise: str, sources_: str) -> dict:
+        return {
+            "p": sig(m.p, 2), "sigma": sig(m.sigma), "sigma_used": sig(m.sigma_used),
+            "tau": sig(m.tau, 3), "noise": noise, "assumes": sources_,
+        }  # fmt: skip
+
+    return {
+        "start": iso(ex.start_ms), "end": iso(ex.end_ms), "points": ex.points,
+        "returned": ex.returned, "mean": sig(ex.mean), "baseline_median": sig(ex.centre),
+        "delta": sig(ex.delta), "interval": sig_pair(ex.interval),
+        **({"ratio": sig(ex.mean / ex.centre, 3)} if ex.centre > 0 else {}),
+        "p": sig(ex.p, 2), "p_cautious": sig(ex.p_cautious, 2),
+        "models": {
+            "baseline": model(
+                ex.baseline, "normal",
+                "sigma and autocorrelation of the baseline deviations only",
+            ),
+            "cautious": model(
+                ex.cautious, "Student t4 (heavy tails)",
+                "sigma and autocorrelation also from the residuals outside the run",
+            ),
+        },
+        "label_rests_on": "cautious", "runs_scanned": ex.runs,
+        "n_baseline": ex.n_baseline, "n_judged": ex.n_judged, "source": src,
+        "evidence": ev(
+            "excursion", ex.delta, ex.interval, EXCURSION_METHOD, source=src,
+            start=iso(ex.start_ms), end=iso(ex.end_ms), points=ex.points,
+            p=ex.p_cautious, p_baseline_model=ex.p, p_cautious=ex.p_cautious,
+            baseline_median=sig(ex.centre), mean=sig(ex.mean),
+            n_baseline=ex.n_baseline, n_judged=ex.n_judged,
+        ),
+    }  # fmt: skip
