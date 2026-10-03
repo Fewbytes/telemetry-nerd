@@ -40,7 +40,7 @@ from telemetry_nerd.model.caveats import (
     runs,
     series_name,
 )
-from telemetry_nerd.model.time import iso
+from telemetry_nerd.model.time import format_duration, iso
 
 BLOCK_BELOW = 0.5  # share of expected samples under which a series cannot support a claim
 MAX_WITHOUT_DATA = 0.5  # share of a claim's series without data above which it is blocked
@@ -53,7 +53,9 @@ MAX_NAMED = 10  # series named per list in a message (where.series keeps MAX_WHE
 LONG_GAP_MS = 300_000
 # labels that name a member of a fleet, preferred when hinting at a membership check
 IDENTITY_LABELS = ("pod", "instance", "host", "container", "node")
-SCOPE_MISMATCH = "scope_mismatch"
+SCOPE_MISMATCH = "scope_mismatch"  # no series has the claimed labels: blocks
+METRIC_MISMATCH = "metric_mismatch"  # this evidence is another metric: a caller may skip it
+LABELS_UNCHECKED = "labels_unchecked"  # no label matcher of the selector applies here
 
 Labels = Mapping[str, Mapping[str, str]]
 Namer = Callable[[str], str]
@@ -72,15 +74,18 @@ def claim_coverage(
     """Caveats on the claim window (start, end] from a dataset's bucket_state. `labels`: series id
     -> labels (default: every series in `states`, unlabelled); `selector`: the claim's
     scope.selector; `metric`: the dataset's metric name when its expression has one. A selector
-    naming no series of this dataset gives one `scope_mismatch` caveat (blocks_claim; a caller
-    citing several datasets may skip this one instead)."""
+    naming another metric gives one `metric_mismatch` caveat (blocks_claim; a caller citing
+    several datasets may skip this one instead); one whose label matchers match no series gives
+    `scope_mismatch` (blocks_claim). `labels_unchecked` (warn) says no label matcher applied
+    here; a caller blocks when that holds for all of its evidence."""
     df = pl.from_arrow(states)
     if labels is None:
         labels = {sid: {} for sid in df["series_id"].unique().to_list()}
     scope = claim_series(selector, labels, metric)
     window = Where(spans=[(start_ms, end_ms)])
     if scope.mismatch:
-        return [Caveat(code=SCOPE_MISMATCH, severity="blocks_claim", where=window,
+        code = METRIC_MISMATCH if scope.mismatch_kind == "metric" else SCOPE_MISMATCH
+        return [Caveat(code=code, severity="blocks_claim", where=window,
                        source="validator", message=f"The claim names series this evidence does "
                        f"not contain: {scope.mismatch}.")]  # fmt: skip
     out = []
@@ -88,6 +93,11 @@ def claim_coverage(
         severity: Severity = "warn" if any(lv == "warn" for lv, _ in scope.notes) else "info"
         out.append(Caveat(code="claim_scope", severity=severity, where=window, source="validator",
                           message="; ".join(t for _, t in scope.notes) + "."))  # fmt: skip
+    if scope.labels_unchecked:
+        out.append(Caveat(code=LABELS_UNCHECKED, severity="warn", where=window,
+                          source="validator", message="None of scope.selector's label matchers "
+                          "applies to this evidence's series, so it does not check the claimed "
+                          "series."))  # fmt: skip
     df = df.filter(pl.col("series_id").is_in(scope.ids))
     return [
         *_verdict(df, scope.ids, labels, start_ms, end_ms, step_ms, selector),
@@ -162,15 +172,18 @@ def _judge(g: pl.DataFrame, start_ms: int, end_ms: int, step_ms: int, own_span: 
         w_lo, w_hi = w["ts_ms"].min(), w["ts_ms"].max()
         # silence at an edge is a membership question only when long, and when no unknown bucket
         # sits in it (then it is not known to be silence)
-        lead = w_lo < first <= w_hi and first - w_lo >= LONG_GAP_MS
+        # a first sample after the window: none of the window is observed (named, not dropped)
+        lead = w_lo < first and (first > w_hi or first - w_lo >= LONG_GAP_MS)
         if lead and not (unknown_ts < first).any():
             m.first_after = first
         trail = last < w_hi and g["ts_ms"].max() - last >= LONG_GAP_MS
         if trail and not (unknown_ts > last).any():
             m.last_before = last
         if own_span:
+            # short silence at either edge is lost scrapes: it stays in the span, as missing
+            lo = first if m.first_after is not None else w_lo
             hi = last if m.last_before is not None else w_hi
-            w = w.filter(pl.col("ts_ms").is_between(first, hi))
+            w = w.filter(pl.col("ts_ms").is_between(lo, hi))
         empty = g.filter(
             (pl.col("state") == int(State.EMPTY)) & pl.col("ts_ms").is_between(first, last)
         )["ts_ms"]
@@ -357,7 +370,7 @@ def _several(
                           f"samples than expected in the claim window: {_names(partial, name)}.",
                           partial))  # fmt: skip
     if gaps:
-        out.append(caveat("long_gap", "warn", f"Long gaps (≥ 5m, samples on both sides):"
+        out.append(caveat("long_gap", "warn", f"Long gaps (\u2265 {format_duration(LONG_GAP_MS)}, samples on both sides):"
                           f"{gaps}", [m.sid for m in alive if m.long_gaps]))  # fmt: skip
     if membership:
         sids = [m.sid for m in members if m.first_after or m.last_before]

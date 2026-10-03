@@ -75,7 +75,11 @@ from telemetry_nerd.charts.yview import (
 )
 from telemetry_nerd.core.card_payload import binding_row, browse_row, field_rows, relation_row
 from telemetry_nerd.core.code_outputs import evidence_problem
-from telemetry_nerd.core.coverage_check import SCOPE_MISMATCH, claim_coverage
+from telemetry_nerd.core.coverage_check import (
+    LABELS_UNCHECKED,
+    METRIC_MISMATCH,
+    claim_coverage,
+)
 from telemetry_nerd.core.events import Actor, Event, EventLog, check_actor
 from telemetry_nerd.core.panel_payloads import series_labels
 from telemetry_nerd.core.uncertainty import evidence_flags
@@ -222,7 +226,9 @@ class WorkspaceService:
         span = data.scope.time_range
         blocking: list[str] = []
         warnings: list[str] = []
-        mismatched: list[str] = []
+        mismatched: list[str] = []  # another metric: skipped, unless no dataset is this one
+        unchecked: list[str] = []  # this metric, but none of the claimed labels on its series
+        scope_notes: dict[str, list[str]] = {}  # message -> datasets: said once per finding
         checked = 0
         for did in self._evidence_datasets(data):
             if self.datasets.meta(did).representation not in ("bucket_agg", "quantile"):
@@ -239,8 +245,14 @@ class WorkspaceService:
                 labels=series_labels(result.series), selector=data.scope.selector,
                 metric=parts[0] if parts else None,
             ):  # fmt: skip
-                if c.code == SCOPE_MISMATCH:
+                if c.code == METRIC_MISMATCH:
                     mismatched.append(f"{did}: {c.message}")
+                    continue
+                if c.code == LABELS_UNCHECKED:
+                    unchecked.append(did)
+                    continue
+                if c.code == "claim_scope":
+                    scope_notes.setdefault(c.message, []).append(did)
                     continue
                 (blocking if c.severity == "blocks_claim" else warnings).append(
                     f"{did}: {c.message}"
@@ -249,6 +261,13 @@ class WorkspaceService:
             blocking = mismatched + blocking
         else:
             warnings += [f"{m} Not checked for coverage." for m in mismatched]
+            if unchecked and len(unchecked) == checked - len(mismatched):
+                blocking.append(
+                    f"{', '.join(unchecked)}: no evidence carries the labels scope.selector names "
+                    "(none of its label matchers applies to any evidence series), so nothing "
+                    "checked the claimed series."
+                )
+        warnings += [f"{', '.join(dids)}: {msg}" for msg, dids in scope_notes.items()]
         if blocking:
             raise ValueError(
                 "insufficient coverage for this claim: "

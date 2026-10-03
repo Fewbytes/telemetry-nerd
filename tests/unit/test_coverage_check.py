@@ -171,8 +171,10 @@ def test_selector_notes_survive_clean_data():
     agg = {"j": {"job": "api"}}  # evidence: sum by (job) (up)
     states = pa.table({"ts_ms": [STEP], "series_id": ["j"], "observed": [4.0], "expected": [4.0],
                        "state": [0], "flags": [0]}, schema=STATE_SCHEMA)  # fmt: skip
-    [c] = check(states, 'up{pod="p03"}', (0, STEP), labels=agg, metric=None)
-    assert (c.code, c.severity) == ("claim_scope", "warn")
+    out = codes(check(states, 'up{pod="p03"}', (0, STEP), labels=agg, metric=None))
+    assert set(out) == {"claim_scope", "labels_unchecked"}
+    c = out["claim_scope"]
+    assert c.severity == "warn"
     assert 'pod="p03" not applied' in c.message and "__name__" in c.message
 
 
@@ -180,10 +182,13 @@ def test_selector_matching_no_evidence_series_blocks():
     [c] = check(fleet(), 'up{pod="nope"}')
     assert (c.code, c.severity) == ("scope_mismatch", "blocks_claim")
     [c] = check(fleet(), 'down{pod="p01"}')
-    assert c.severity == "blocks_claim" and "metric 'up'" in c.message
+    assert (c.code, c.severity) == ("metric_mismatch", "blocks_claim")
+    assert "metric 'up'" in c.message
     [c] = check(fleet(), "rate(down[5m])")  # a bare name inside a call
-    assert c.code == "scope_mismatch"
-    [c] = check(fleet(), "down offset 5m")
+    assert c.code == "metric_mismatch"
+    [c] = check(fleet(), "down OFFSET 5m")  # keywords are case-insensitive
+    assert c.code == "metric_mismatch"
+    [c] = check(fleet(), 'up{pod="nope"}', metric=None)  # unknown metric, labels still checked
     assert c.code == "scope_mismatch"
 
 
@@ -217,3 +222,17 @@ def test_long_mid_gap_reads_as_loss_or_leave_and_rejoin():
     assert partial.message.startswith("1 of 20 series have fewer samples")
     assert gaps.code == "long_gap" and gaps.message.startswith("Long gaps")
     assert "rejoined" in gaps.message and gaps.where.series == ["p05"]
+
+
+def test_short_leading_silence_is_missing_data_not_membership():
+    short = [State.ABSENT] * 3 + [State.OK] * 27  # 3 min < LONG_GAP_MS
+    out = codes(check(fleet(p02=short), "up", (0, N * STEP)))
+    assert "membership" not in out
+    assert out["missing_data"].message.startswith("1 of 20 series have fewer samples")
+
+
+def test_series_first_seen_after_the_window_is_named_not_dropped():
+    late = [State.ABSENT] * 27 + [State.OK] * 3
+    [c] = check(fleet(p09=late), "up")
+    assert c.code == "membership" and c.where.series == ["p09"]
+    assert '{pod="p09"}: no samples before 1970-01-01T00:28:00+00:00 in this evidence' in c.message

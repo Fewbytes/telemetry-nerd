@@ -565,3 +565,30 @@ async def test_coarse_scrape_series_is_fully_covered_and_findings_are_accepted(t
     assert "missing_data" not in summary["caveats"]
     f = svc.ws.finding_create(claim_in(ds, meta.start_ms, meta.start_ms + 600_000), "claude")
     assert f.caveats == []
+
+
+async def test_claim_whose_labels_no_evidence_checks_is_blocked(tmp_path):
+    svc, up, _, hole = await _queried(tmp_path, HoleySource())
+    total = await svc.query("sum(errors_total)", start="now-2h", end="now-1h", step="1m")
+    errs = total["dataset"]
+    a, b = hole - 60_000, hole + 120_000
+    data = claim_on(up, a, b, 'up{instance="x"}').model_dump()
+    data["evidence"] = [*data["evidence"], {**data["evidence"][0], "dataset": errs}]
+    with pytest.raises(ValueError, match="does not contain"):  # up has no instance="x"
+        svc.ws.finding_create(FindingIn(**data), "claude")
+    data["evidence"] = [{**data["evidence"][0], "dataset": errs}]
+    data["scope"]["selector"] = 'errors_total{pod="x"}'
+    with pytest.raises(ValueError, match="nothing checked the claimed series"):
+        svc.ws.finding_create(FindingIn(**data), "claude")
+
+
+async def test_unchecked_metric_name_is_noted_once_per_finding(tmp_path):
+    svc, _, _, _ = await _queried(tmp_path, HoleySource())
+    meta_start = svc.datasets.meta("d1").start_ms
+    q = [(await svc.query(e, start="now-2h", end="now-1h", step="1m"))["dataset"]
+         for e in ("sum by (instance) (up)", "max by (instance) (up)")]  # fmt: skip
+    data = claim_on(q[0], meta_start, meta_start + 600_000, 'up{instance="i1"}').model_dump()
+    data["evidence"] = [{**data["evidence"][0], "dataset": d} for d in q]
+    f = svc.ws.finding_create(FindingIn(**data), "claude")
+    notes = [c for c in f.caveats if "not checked" in c]
+    assert len(notes) == 1 and notes[0].startswith(f"{q[0]}, {q[1]}: ")

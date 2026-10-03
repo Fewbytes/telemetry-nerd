@@ -117,7 +117,7 @@ Caveat {
 | `smoothed` | label on line + raw envelope beneath |
 | `estimated_counts`, estimator bounds | interval bars / bound band |
 | `companion_dropped` | footer only |
-| `membership`, `long_gap`, `claim_scope`, `scope_mismatch` (findings, §4.4) | finding caveats (text) |
+| `membership`, `long_gap`, `claim_scope`, `scope_mismatch`, `metric_mismatch`, `labels_unchecked` (findings, §4.4) | finding caveats (text) |
 
 ### 4.3 Footer and linking
 
@@ -144,9 +144,12 @@ series). `warn`/`info` caveats in the window are copied into the finding's cavea
   with operators, label rewriting, `count_values`, several selectors, an invalid regex or RE2-only
   syntax (POSIX classes, `\p`) is not read: every evidence series, with an `info` saying why.
   These notes are kept on clean data too.
-- **Evidence of several metrics.** An evidence dataset whose series the selector does not name
-  (`scope_mismatch`) is skipped with a note; the claim is blocked only when no checked evidence
-  dataset matches.
+- **Evidence of several metrics.** An evidence dataset of another metric (`metric_mismatch`) is
+  skipped with a note; the claim is blocked only when no checked evidence dataset is the claimed
+  metric. Label matchers that match no series of a dataset of the claimed (or an unknown) metric
+  block (`scope_mismatch`: the claim names series this evidence lacks). When no label matcher
+  applies to any checked dataset (`labels_unchecked` on all), nothing checked the claimed series
+  and the claim is blocked, saying so. Identical `claim_scope` notes are said once per finding.
 - **One series.** The whole claim window counts: < 50% of expected samples, or any `unknown`,
   blocks; less warns. Time before its first sample and after its last is unobserved (that it
   did not exist yet, or left, is a negative claim not provable from this evidence; principle
@@ -154,10 +157,11 @@ series). `warn`/`info` caveats in the window are copied into the finding's cavea
   evidence" with the alternatives (may not have existed yet or was not scraped; may have left or
   may return after the window), never that it was missing, not born or ended, plus a hint to
   check a wider window (`count by (pod) (<selector>)`).
-- **Several series.** Each is judged over its own span in the window: from its first sample,
-  to its last when the silence after it (to the data's end) lasts ≥ `LONG_GAP_MS`; shorter
-  trailing silence is lost scrapes and counts as missing. Silence at the start of the window
-  ≥ `LONG_GAP_MS`, and long trailing silence, are membership changes, not loss: named in a
+- **Several series.** Each is judged over its own span in the window: from its first sample
+  when the silence before it in the window lasts ≥ `LONG_GAP_MS` (or it comes after the
+  window), to its last when the silence after it (to the data's end) does; shorter silence at
+  either edge is lost scrapes and counts as missing. Long edge silence is membership change, not
+  loss (a series first seen after the window is named too, not dropped): named in a
   `membership` caveat with the alternatives above and a hint to check whether
   set(<identity label>) per bucket (`pod`, `instance`, `host`, `container`, `node` preferred,
   else the most distinct label; `count by (pod) (<selector>)`) is consistent over a wider window.

@@ -22,13 +22,15 @@ _OP = re.compile(r"=~|!~|!=|=")
 _ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "\\": "\\", '"': '"', "'": "'", "`": "`"}
 # modifiers that move or pin the evaluation time but keep the series: removed before reading
 _MODIFIERS = re.compile(
-    r"\boffset\s+-?[0-9a-zA-Z.]+|@\s*(?:start\s*\(\s*\)|end\s*\(\s*\)|[0-9.eE+-]+)"
+    r"\boffset\s+-?[0-9a-zA-Z.]+|@\s*(?:start\s*\(\s*\)|end\s*\(\s*\)|[0-9.eE+-]+)",
+    re.IGNORECASE,  # PromQL keywords are case-insensitive
 )
-_GROUPING = re.compile(r"\b(?:by|without)\s*\([^()]*\)")
+_GROUPING = re.compile(r"\b(?:by|without)\s*\([^()]*\)", re.IGNORECASE)
 # outside strings, selectors and ranges: anything that combines series or rewrites their labels
 _COMBINES = re.compile(
     r"[-+*/%^<>=!]|\b(?:and|or|unless|on|ignoring|group_left|group_right|label_replace|label_join"
-    r"|count_values|absent|absent_over_time|vector|scalar)\b"
+    r"|count_values|absent|absent_over_time|vector|scalar)\b",
+    re.IGNORECASE,
 )
 _BARE = re.compile(rf"(?<![0-9.A-Za-z_:]){_IDENT.pattern}")  # not the exponent of 1e3
 _KEYWORDS = {"by", "without", "bool", "inf", "nan", "offset"}
@@ -166,7 +168,7 @@ def _bare_names(rest: str) -> list[str]:
     return [
         m.group()
         for m in _BARE.finditer(rest)
-        if m.group() not in _KEYWORDS and not rest[m.end() :].lstrip().startswith("(")
+        if m.group().lower() not in _KEYWORDS and not rest[m.end() :].lstrip().startswith("(")
     ]
 
 
@@ -202,6 +204,12 @@ class ClaimSeries:
     ids: list[str]  # evidence series the claim is about
     notes: list[tuple[Level, str]]  # how the selector was applied, when not plainly
     mismatch: str | None = None  # the selector names series this evidence does not contain
+    # "metric": this evidence is another metric (cited alongside); "labels": the metric matches
+    # (or is unknown) but no series has the claimed labels
+    mismatch_kind: Literal["metric", "labels"] | None = None
+    # the selector has label matchers but none could be applied here: the claimed series are
+    # not checked by this evidence at all
+    labels_unchecked: bool = False
 
 
 def claim_series(
@@ -230,8 +238,8 @@ def claim_series(
                        "claim's metric is not confirmed")  # fmt: skip
                 notes.append(("warn", why))
             elif not m.matches(metric):
-                return ClaimSeries([], notes, f"scope.selector names {m}; this evidence is "
-                                   f"metric {metric!r}")  # fmt: skip
+                why = f"scope.selector names {m}; this evidence is metric {metric!r}"
+                return ClaimSeries([], notes, why, "metric")
         elif m.label in carried:
             applied.append(m)
         elif not m.matches(""):
@@ -241,5 +249,8 @@ def claim_series(
     chosen = [s for s in ids if all(m.matches(labels[s].get(m.label, "")) for m in applied)]
     if not chosen:
         named = ", ".join(str(m) for m in applied)
-        return ClaimSeries([], notes, f"no evidence series matches {named} from scope.selector")
-    return ClaimSeries(chosen, notes)
+        why = f"no evidence series matches {named} from scope.selector"
+        return ClaimSeries([], notes, why, "labels")
+    wanted = [m for m in read.matchers if m.label != "__name__" and not m.matches("")]
+    unchecked = bool(wanted) and not any(m in applied for m in wanted)
+    return ClaimSeries(chosen, notes, labels_unchecked=unchecked)
