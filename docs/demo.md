@@ -203,10 +203,17 @@ labelled with the expected source of variation (special cause for a demo fault),
 onset** within `fault_window.start` ± `tolerance.start_s` and none off target, **zero unscoped
 claims** (findings, and sentences of the final answer that state a cause, or that a named service
 is absent, citing no f/h/p/a/g id; the analyst's own limits such as "cannot confirm ... because"
-are not causes), a root-cause
+are not causes, nor are items listed under a "Not established" / "Unknowns" heading), a root-cause
 hypothesis supported, hypotheses blaming a control refuted or inconclusive. Bold = d77
 acceptance; the exit status is 0 only when they pass. Text rules are word heuristics; each flag
-lists the sentence it fired on.
+lists the sentence it fired on. Root-cause terms and entity names right after a negation ("at
+unchanged arrival rate", "not a payment fault") do not name the root cause; a hypothesis whose
+first-named entity is a control blames it. In queue-sim, a fault on every pod makes the service
+itself an origin entity, covered by any expression on the one-service VM.
+
+Each live run keeps the raw stream (`transcript.jsonl`) in its run directory;
+`uv run scripts/trim_eval_run.py <run dir> <name> "<note>"` turns it into regression fixtures
+(`tests/fixtures/evals/<name>.{snapshot,truth}.json`, `<name>.stream.jsonl`).
 
 ## Verifying Telemetry Nerd against it
 

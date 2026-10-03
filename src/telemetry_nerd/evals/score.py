@@ -528,6 +528,21 @@ def score_annotation(a: dict, truth: Truth) -> AnnotationScore:
     return AnnotationScore(a.get("id", "?"), a.get("kind", ""), label, t0, t1, d0, d1, verdict)
 
 
+def _subject(text: str, truth: Truth) -> str | None:
+    """The entity a statement is about: the first one it names, un-negated. "payment Charge calls
+    were the slow dependency of checkout" proposes payment as the cause (eval round 3, h2)."""
+    first: tuple[int, str] | None = None
+    for e in truth.entities:
+        alts = "|".join(re.escape(v) for v in _variants(e))
+        rx = rf"(?<![A-Za-z0-9_])(?:{alts})(?:service)?(?![A-Za-z0-9_])"
+        for m in re.finditer(rx, text, re.IGNORECASE):
+            if not _ENTITY_NEGATOR.search(text[: m.start()]):
+                if first is None or m.start() < first[0]:
+                    first = (m.start(), e)
+                break
+    return first[1] if first else None
+
+
 def score_hypothesis(h: dict, truth: Truth, others: list[dict] | None = None) -> HypothesisScore:
     st = h.get("statement", "")
     if names_term(st, truth.root_cause_terms, truth.entities):
@@ -536,6 +551,7 @@ def score_hypothesis(h: dict, truth: Truth, others: list[dict] | None = None) ->
         named(st, truth.control)
         and _CAUSAL.search(st)
         or (named(st, truth.entities) and named(st, truth.entities) <= set(truth.control))
+        or _subject(st, truth) in truth.control
     ):
         role = "blames_control"
     else:

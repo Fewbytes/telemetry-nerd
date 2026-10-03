@@ -780,6 +780,43 @@ def test_payment_round3_stream_counts_rounds_not_turns():
     assert (out["tool_rounds"], out["num_turns"], out["tool_results"]) == (22, 33, 31)
 
 
+def _ss3():
+    return load_truth(EV / "shipping-slowdown.live-sonnet-3.truth.json")
+
+
+def test_hypothesis_whose_subject_is_a_control_blames_it():
+    from telemetry_nerd.evals.score import score_hypothesis
+
+    t = _ss3()
+    h = {"id": "h2", "statement": "payment service Charge calls were the slow dependency of "
+         "checkout PlaceOrder in 15:00-15:15 UTC"}  # fmt: skip
+    assert score_hypothesis(h, t).role == "blames_control"
+    h["statement"] = "checkout PlaceOrder slowed on its own, not payment"
+    assert score_hypothesis(h, t).role == "other"
+
+
+def test_shipping_round3_scores_as_observed():
+    """Eval round 3, shipping-slowdown (latency): RED on span metrics, per-span latency found
+    POST /ship-order; h1 (shipping slow, checkout inherited it) supported against a refuted
+    payment decoy h2 (f2: checkout's Charge client span flat); region a1 +27 s. Fails only
+    source_label: f1 cites a panel (show_binding crashed again, gzrz), source undetermined."""
+    rep = score(snap("shipping-slowdown.live-sonnet-3"), _ss3())
+    st = {c.id: c.status for c in rep.checks}
+    assert [k for k, v in st.items() if v == "fail"] == ["source_label"]
+    assert st["decoys_not_supported"] == "pass"
+    assert [(h.id, h.role, h.status) for h in rep.hypotheses] == [
+        ("h1", "root_cause", "supported"), ("h2", "blames_control", "refuted")]  # fmt: skip
+    assert [a.verdict for a in rep.annotations] == ["onset_ok"]
+    assert (rep.passed, rep.applicable) == (12, 13) and rep.acceptance
+
+
+def test_shipping_round3_stream_counts_rounds_not_turns():
+    lines = (EV / "shipping-slowdown.live-sonnet-3.stream.jsonl").read_text().splitlines()
+    out = live.parse_stream(lines)
+    assert (out["tool_rounds"], out["num_turns"]) == (31, 46)
+    assert live.caps({**out, "aborted": None}, 40, 5.0)["turns_exceeded"] is False
+
+
 # --- turn and budget caps (zqa) ---------------------------------------------------------------
 
 

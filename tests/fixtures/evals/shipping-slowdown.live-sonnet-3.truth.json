@@ -1,0 +1,813 @@
+{
+  "version": 1,
+  "scenario": "shipping-slowdown",
+  "description": "intlShippingSlowdown=10sec: international orders wait 10 s in the shipping path; latency (not errors) on checkout PlaceOrder and the frontend checkout request.",
+  "run": {
+    "started_at": 1791039692.979,
+    "started_at_iso": "2026-10-03T15:01:32Z",
+    "baseline_end": 1791039992.979,
+    "baseline_end_iso": "2026-10-03T15:06:32Z",
+    "finished_at": 1791040472.984,
+    "finished_at_iso": "2026-10-03T15:14:32Z",
+    "completed": true,
+    "scale": 1.0
+  },
+  "fault_window": {
+    "start": 1791039992.981,
+    "start_iso": "2026-10-03T15:06:32Z",
+    "end": 1791040292.991,
+    "end_iso": "2026-10-03T15:11:32Z"
+  },
+  "faults": [
+    {
+      "flag": "intlShippingSlowdown",
+      "variant": "10sec",
+      "start": 1791039992.981,
+      "start_iso": "2026-10-03T15:06:32Z",
+      "start_served_at": 1791039993.995,
+      "start_served_at_iso": "2026-10-03T15:06:33Z",
+      "services": [
+        "shipping",
+        "checkout"
+      ],
+      "end": 1791040292.991,
+      "end_iso": "2026-10-03T15:11:32Z",
+      "end_served_at": 1791040294.009,
+      "end_served_at_iso": "2026-10-03T15:11:34Z",
+      "effect_end": 1791040292.991,
+      "effect_end_iso": "2026-10-03T15:11:32Z"
+    }
+  ],
+  "applied": [
+    {
+      "kind": "set",
+      "flags": {
+        "intlShippingSlowdown": "10sec"
+      },
+      "applied_at": 1791039992.981,
+      "applied_at_iso": "2026-10-03T15:06:32Z",
+      "served_at": {
+        "intlShippingSlowdown": 1791039993.995
+      }
+    },
+    {
+      "kind": "set",
+      "flags": {
+        "intlShippingSlowdown": "off"
+      },
+      "applied_at": 1791040292.991,
+      "applied_at_iso": "2026-10-03T15:11:32Z",
+      "served_at": {
+        "intlShippingSlowdown": 1791040294.009
+      }
+    }
+  ],
+  "root_cause": {
+    "service": "shipping",
+    "flag": "intlShippingSlowdown",
+    "summary": "shipping POST /ship-order stalls ~10 s for international orders; checkout PlaceOrder (its caller) inherits the latency; no errors. Observed: shipping /ship-order p90 ~8-12 s, checkout PlaceOrder p90 ~14 s in the first run (checkout p90 is too noisy to assert: low rate, a 15 s top-bucket baseline appears sporadically), shipping /get-quote unaffected."
+  },
+  "affected_services": {
+    "origin": [
+      "shipping",
+      "checkout"
+    ],
+    "propagated": [
+      "frontend"
+    ],
+    "unaffected_control": [
+      "payment",
+      "cart",
+      "ad"
+    ]
+  },
+  "tolerance": {
+    "start_s": 150,
+    "end_s": 180,
+    "note": "Observable onset lags the flag change: demo exports metrics and span-metrics every 60s and queries use 2m rate windows (expect 1-3 min of lag); judge annotations against fault_window.start/end within these tolerances."
+  },
+  "settle_s": 120,
+  "expected_signals": [
+    {
+      "id": "shipping-ship-order-p90",
+      "service": "shipping",
+      "description": "shipping POST /ship-order p90 latency (ms): where the delay is injected",
+      "metric": "traces_span_metrics_duration_milliseconds_bucket",
+      "query": "histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"shipping\",span_kind=\"SPAN_KIND_SERVER\",span_name=\"POST /ship-order\"}[2m])))",
+      "direction": "up",
+      "min_abs_delta": 2000
+    },
+    {
+      "id": "shipping-get-quote-control",
+      "service": "shipping",
+      "description": "shipping POST /get-quote p90 (ms) stays fast: only ship-order is slowed",
+      "metric": "traces_span_metrics_duration_milliseconds_bucket",
+      "query": "histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"shipping\",span_kind=\"SPAN_KIND_SERVER\",span_name=\"POST /get-quote\"}[2m])))",
+      "direction": "flat",
+      "max_abs_delta": 50
+    },
+    {
+      "id": "checkout-errors-control",
+      "service": "checkout",
+      "description": "latency, not errors",
+      "metric": "traces_span_metrics_calls_total",
+      "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"checkout\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+      "direction": "flat",
+      "max_abs_delta": 0.05
+    }
+  ],
+  "endpoints": {
+    "victoriametrics": "http://127.0.0.1:8429",
+    "flagd_ofrep": "http://127.0.0.1:8016",
+    "frontend": "http://127.0.0.1:18080"
+  },
+  "source_labels": {
+    "service": "service_name"
+  },
+  "verification": {
+    "all_passed": true,
+    "results": [
+      {
+        "id": "shipping-ship-order-p90",
+        "service": "shipping",
+        "metric": "traces_span_metrics_duration_milliseconds_bucket",
+        "query": "histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"shipping\",span_kind=\"SPAN_KIND_SERVER\",span_name=\"POST /ship-order\"}[2m])))",
+        "direction": "up",
+        "baseline_mean": 1.8,
+        "baseline_samples": 20,
+        "fault_mean": 4876.136231884058,
+        "fault_samples": 12,
+        "passed": true,
+        "detail": "baseline 1.8 -> fault 4876 (delta +4874, x2.71e+03)",
+        "series": [
+          [
+            1791039690.0,
+            1.8
+          ],
+          [
+            1791039705.0,
+            1.8
+          ],
+          [
+            1791039720.0,
+            1.8
+          ],
+          [
+            1791039735.0,
+            1.8
+          ],
+          [
+            1791039750.0,
+            1.8
+          ],
+          [
+            1791039765.0,
+            1.8
+          ],
+          [
+            1791039780.0,
+            1.8
+          ],
+          [
+            1791039795.0,
+            1.8
+          ],
+          [
+            1791039810.0,
+            1.8
+          ],
+          [
+            1791039825.0,
+            1.8
+          ],
+          [
+            1791039840.0,
+            1.8
+          ],
+          [
+            1791039855.0,
+            1.8
+          ],
+          [
+            1791039870.0,
+            1.8
+          ],
+          [
+            1791039885.0,
+            1.8
+          ],
+          [
+            1791039900.0,
+            1.8
+          ],
+          [
+            1791039915.0,
+            1.8
+          ],
+          [
+            1791039930.0,
+            1.8
+          ],
+          [
+            1791039945.0,
+            1.8
+          ],
+          [
+            1791039960.0,
+            1.8
+          ],
+          [
+            1791039975.0,
+            1.8
+          ],
+          [
+            1791039990.0,
+            1.8
+          ],
+          [
+            1791040005.0,
+            1.8
+          ],
+          [
+            1791040020.0,
+            1.8
+          ],
+          [
+            1791040035.0,
+            1.8
+          ],
+          [
+            1791040050.0,
+            1.866667
+          ],
+          [
+            1791040065.0,
+            1.866667
+          ],
+          [
+            1791040080.0,
+            1.866667
+          ],
+          [
+            1791040095.0,
+            1.866667
+          ],
+          [
+            1791040110.0,
+            1.878261
+          ],
+          [
+            1791040125.0,
+            1.878261
+          ],
+          [
+            1791040140.0,
+            1.878261
+          ],
+          [
+            1791040155.0,
+            1.878261
+          ],
+          [
+            1791040170.0,
+            2.0
+          ],
+          [
+            1791040185.0,
+            2.0
+          ],
+          [
+            1791040200.0,
+            2.0
+          ],
+          [
+            1791040215.0,
+            2.0
+          ],
+          [
+            1791040230.0,
+            11750.0
+          ],
+          [
+            1791040245.0,
+            11750.0
+          ],
+          [
+            1791040260.0,
+            11750.0
+          ],
+          [
+            1791040275.0,
+            11750.0
+          ],
+          [
+            1791040290.0,
+            11500.0
+          ],
+          [
+            1791040305.0,
+            11500.0
+          ],
+          [
+            1791040320.0,
+            11500.0
+          ],
+          [
+            1791040335.0,
+            11500.0
+          ],
+          [
+            1791040350.0,
+            1.989474
+          ],
+          [
+            1791040365.0,
+            1.989474
+          ],
+          [
+            1791040380.0,
+            1.989474
+          ],
+          [
+            1791040395.0,
+            1.989474
+          ],
+          [
+            1791040410.0,
+            1.8
+          ],
+          [
+            1791040425.0,
+            1.8
+          ],
+          [
+            1791040440.0,
+            1.8
+          ],
+          [
+            1791040455.0,
+            1.8
+          ],
+          [
+            1791040470.0,
+            1.8
+          ]
+        ]
+      },
+      {
+        "id": "shipping-get-quote-control",
+        "service": "shipping",
+        "metric": "traces_span_metrics_duration_milliseconds_bucket",
+        "query": "histogram_quantile(0.9, sum by (le) (rate(traces_span_metrics_duration_milliseconds_bucket{service_name=\"shipping\",span_kind=\"SPAN_KIND_SERVER\",span_name=\"POST /get-quote\"}[2m])))",
+        "direction": "flat",
+        "baseline_mean": 1.8241071428571427,
+        "baseline_samples": 20,
+        "fault_mean": 1.8,
+        "fault_samples": 12,
+        "passed": true,
+        "detail": "baseline 1.824 -> fault 1.8 (delta -0.02411), expected flat",
+        "series": [
+          [
+            1791039690.0,
+            1.8
+          ],
+          [
+            1791039705.0,
+            1.8
+          ],
+          [
+            1791039720.0,
+            1.8
+          ],
+          [
+            1791039735.0,
+            1.8
+          ],
+          [
+            1791039750.0,
+            1.8
+          ],
+          [
+            1791039765.0,
+            1.8
+          ],
+          [
+            1791039780.0,
+            1.8
+          ],
+          [
+            1791039795.0,
+            1.8
+          ],
+          [
+            1791039810.0,
+            1.85625
+          ],
+          [
+            1791039825.0,
+            1.85625
+          ],
+          [
+            1791039840.0,
+            1.85625
+          ],
+          [
+            1791039855.0,
+            1.85625
+          ],
+          [
+            1791039870.0,
+            1.864286
+          ],
+          [
+            1791039885.0,
+            1.864286
+          ],
+          [
+            1791039900.0,
+            1.864286
+          ],
+          [
+            1791039915.0,
+            1.864286
+          ],
+          [
+            1791039930.0,
+            1.8
+          ],
+          [
+            1791039945.0,
+            1.8
+          ],
+          [
+            1791039960.0,
+            1.8
+          ],
+          [
+            1791039975.0,
+            1.8
+          ],
+          [
+            1791039990.0,
+            1.8
+          ],
+          [
+            1791040005.0,
+            1.8
+          ],
+          [
+            1791040020.0,
+            1.8
+          ],
+          [
+            1791040035.0,
+            1.8
+          ],
+          [
+            1791040050.0,
+            1.8
+          ],
+          [
+            1791040065.0,
+            1.8
+          ],
+          [
+            1791040080.0,
+            1.8
+          ],
+          [
+            1791040095.0,
+            1.8
+          ],
+          [
+            1791040110.0,
+            1.8
+          ],
+          [
+            1791040125.0,
+            1.8
+          ],
+          [
+            1791040140.0,
+            1.8
+          ],
+          [
+            1791040155.0,
+            1.8
+          ],
+          [
+            1791040170.0,
+            1.8
+          ],
+          [
+            1791040185.0,
+            1.8
+          ],
+          [
+            1791040200.0,
+            1.8
+          ],
+          [
+            1791040215.0,
+            1.8
+          ],
+          [
+            1791040230.0,
+            1.8
+          ],
+          [
+            1791040245.0,
+            1.8
+          ],
+          [
+            1791040260.0,
+            1.8
+          ],
+          [
+            1791040275.0,
+            1.8
+          ],
+          [
+            1791040290.0,
+            1.8
+          ],
+          [
+            1791040305.0,
+            1.8
+          ],
+          [
+            1791040320.0,
+            1.8
+          ],
+          [
+            1791040335.0,
+            1.8
+          ],
+          [
+            1791040350.0,
+            1.8
+          ],
+          [
+            1791040365.0,
+            1.8
+          ],
+          [
+            1791040380.0,
+            1.8
+          ],
+          [
+            1791040395.0,
+            1.8
+          ],
+          [
+            1791040410.0,
+            1.8
+          ],
+          [
+            1791040425.0,
+            1.8
+          ],
+          [
+            1791040440.0,
+            1.8
+          ],
+          [
+            1791040455.0,
+            1.8
+          ],
+          [
+            1791040470.0,
+            1.8
+          ]
+        ]
+      },
+      {
+        "id": "checkout-errors-control",
+        "service": "checkout",
+        "metric": "traces_span_metrics_calls_total",
+        "query": "sum(rate(traces_span_metrics_calls_total{service_name=\"checkout\",status_code=\"STATUS_CODE_ERROR\"}[2m]))",
+        "direction": "flat",
+        "baseline_mean": 0.0,
+        "baseline_samples": 20,
+        "fault_mean": 0.0,
+        "fault_samples": 12,
+        "passed": true,
+        "detail": "baseline 0 -> fault 0 (delta +0), expected flat",
+        "series": [
+          [
+            1791039690.0,
+            0.0
+          ],
+          [
+            1791039705.0,
+            0.0
+          ],
+          [
+            1791039720.0,
+            0.0
+          ],
+          [
+            1791039735.0,
+            0.0
+          ],
+          [
+            1791039750.0,
+            0.0
+          ],
+          [
+            1791039765.0,
+            0.0
+          ],
+          [
+            1791039780.0,
+            0.0
+          ],
+          [
+            1791039795.0,
+            0.0
+          ],
+          [
+            1791039810.0,
+            0.0
+          ],
+          [
+            1791039825.0,
+            0.0
+          ],
+          [
+            1791039840.0,
+            0.0
+          ],
+          [
+            1791039855.0,
+            0.0
+          ],
+          [
+            1791039870.0,
+            0.0
+          ],
+          [
+            1791039885.0,
+            0.0
+          ],
+          [
+            1791039900.0,
+            0.0
+          ],
+          [
+            1791039915.0,
+            0.0
+          ],
+          [
+            1791039930.0,
+            0.0
+          ],
+          [
+            1791039945.0,
+            0.0
+          ],
+          [
+            1791039960.0,
+            0.0
+          ],
+          [
+            1791039975.0,
+            0.0
+          ],
+          [
+            1791039990.0,
+            0.0
+          ],
+          [
+            1791040005.0,
+            0.0
+          ],
+          [
+            1791040020.0,
+            0.0
+          ],
+          [
+            1791040035.0,
+            0.0
+          ],
+          [
+            1791040050.0,
+            0.0
+          ],
+          [
+            1791040065.0,
+            0.0
+          ],
+          [
+            1791040080.0,
+            0.0
+          ],
+          [
+            1791040095.0,
+            0.0
+          ],
+          [
+            1791040110.0,
+            0.0
+          ],
+          [
+            1791040125.0,
+            0.0
+          ],
+          [
+            1791040140.0,
+            0.0
+          ],
+          [
+            1791040155.0,
+            0.0
+          ],
+          [
+            1791040170.0,
+            0.0
+          ],
+          [
+            1791040185.0,
+            0.0
+          ],
+          [
+            1791040200.0,
+            0.0
+          ],
+          [
+            1791040215.0,
+            0.0
+          ],
+          [
+            1791040230.0,
+            0.0
+          ],
+          [
+            1791040245.0,
+            0.0
+          ],
+          [
+            1791040260.0,
+            0.0
+          ],
+          [
+            1791040275.0,
+            0.0
+          ],
+          [
+            1791040290.0,
+            0.0
+          ],
+          [
+            1791040305.0,
+            0.0
+          ],
+          [
+            1791040320.0,
+            0.0
+          ],
+          [
+            1791040335.0,
+            0.0
+          ],
+          [
+            1791040350.0,
+            0.0
+          ],
+          [
+            1791040365.0,
+            0.0
+          ],
+          [
+            1791040380.0,
+            0.0
+          ],
+          [
+            1791040395.0,
+            0.0
+          ],
+          [
+            1791040410.0,
+            0.0
+          ],
+          [
+            1791040425.0,
+            0.0
+          ],
+          [
+            1791040440.0,
+            0.0
+          ],
+          [
+            1791040455.0,
+            0.0
+          ],
+          [
+            1791040470.0,
+            0.0
+          ]
+        ]
+      }
+    ]
+  }
+}
