@@ -55,7 +55,9 @@ from telemetry_nerd.catalog.rules import (
     normalize_unit,
 )
 from telemetry_nerd.catalog.sample_store import SampleObservation, SampleStore
+from telemetry_nerd.catalog.search import family_prefix
 from telemetry_nerd.catalog.search import overview as family_overview
+from telemetry_nerd.catalog.search import row as search_row
 from telemetry_nerd.catalog.search import search as search_entries
 from telemetry_nerd.catalog.store import CatalogStore, FamilyStore
 from telemetry_nerd.channel.format import describe_event
@@ -1339,6 +1341,7 @@ class WorkspaceService:
             prefix=prefix,
             needs_review=needs_review,
             limit=max(1, min(limit, MAX_SEARCH)),
+            source=source,
         )
 
     def catalog_browse(self, source: str, b: Browse) -> dict:
@@ -1451,6 +1454,22 @@ class WorkspaceService:
 
     def catalog_overview(self, source: str, top: int = 30) -> list[dict]:
         return family_overview(self.catalog.list_entries(source), top)
+
+    def catalog_name_group(self, source: str, group: str, limit: int = 100) -> dict:
+        """The metrics of one name group (shared prefix, as `catalog_overview` lists them)."""
+        g = group.strip().rstrip("_*")
+        hot = self.catalog_hot(source)
+        entries = self.catalog.list_entries(source)
+        members = [e for e in entries if family_prefix(e.metric) == g] or [
+            e for e in entries if g and (e.metric == g or e.metric.startswith(g + "_"))
+        ]
+        members.sort(key=lambda e: e.metric)
+        return {
+            "family": g,
+            "kind": "name_group",
+            "total": len(members),
+            "metrics": [search_row(e, e.metric in hot) for e in members[:limit]],
+        }
 
     def catalog_write_claude(self, source: str, items: list[dict[str, Any]]) -> list[dict]:
         """Claude's batched catalog writes. Origin is always `claude`; every claim needs a

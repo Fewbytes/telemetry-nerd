@@ -98,7 +98,13 @@ def real(name):
 
 NODE = real("wikimedia_node_metadata.json")
 K8S = real("play_k8s_metadata.json")
-OTEL = real("play_otel_metadata.json")
+# Grafana Play's live metadata, plus the OpenTelemetry demo's span-metrics names (grounding:
+# the demo fixture's note); Play wins where both have a metric
+OTEL = {
+    n: e
+    for n, e in json.loads((FIX.parent / "demo" / "otel-demo.json").read_text())["metadata"].items()
+    if n.startswith("traces_span_metrics_")
+} | real("play_otel_metadata.json")
 PACKS = {lp.pack.name: lp for lp in builtin_packs().packs}
 ALL_PACKS = [("node_exporter", NODE), ("kubernetes", K8S), ("otel_semconv", OTEL)]
 

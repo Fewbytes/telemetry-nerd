@@ -332,7 +332,7 @@ class PromQLSource:
         return FetchResult(buckets, series, partial=partial, failed=failed, notes=notes)
 
     async def _get_json(
-        self, path: str, params: dict[str, str], timeout_s: float | None = None
+        self, path: str, params: Mapping[str, str | list[str]], timeout_s: float | None = None
     ) -> dict:
         url = f"{self.base_url}{path}"
         timeout_s = timeout_s or self.limits.timeout_s
@@ -659,6 +659,30 @@ class PromQLSource:
             caveats=tuple(caveats),
             partial=partial,
         )
+
+    async def label_values(
+        self,
+        label: str,
+        match: Sequence[str] = (),
+        rng: TimeRange | None = None,
+        limit: int | None = None,
+    ) -> list[str]:
+        """Values of one label among series matching `match` (any series when empty) that have
+        samples in `rng`: the index answers it (/api/v1/label/<label>/values), no samples are
+        read. Sorted; at most `limit` when given (VictoriaMetrics/Prometheus `limit`)."""
+        params: dict[str, str | list[str]] = {}
+        if match:
+            params["match[]"] = list(match)
+        if rng is not None:
+            params["start"] = f"{rng.start_ms / 1000:.3f}"
+            params["end"] = f"{rng.end_ms / 1000:.3f}"
+        if limit is not None:
+            params["limit"] = str(limit)
+        data = (await self._get_json(f"/api/v1/label/{label}/values", params)).get("data")
+        if not isinstance(data, list):
+            raise _malformed(f"label values for {label} are not a list")
+        vals = sorted(str(v) for v in data)
+        return vals[:limit] if limit is not None else vals
 
     async def _discover_metadata(self, names: set[str]) -> dict[str, dict] | None:
         """Union of /metadata responses: Thanos returns a different subset per call, so retry

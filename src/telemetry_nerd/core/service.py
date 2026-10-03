@@ -99,6 +99,7 @@ from telemetry_nerd.core.code_outputs import (
     refuse_estimate,
     refuse_requery,
 )
+from telemetry_nerd.core.entity_ops import EntityOps
 from telemetry_nerd.core.events import Actor, EventLog
 from telemetry_nerd.core.fleet_ops import FleetOps
 from telemetry_nerd.core.littles_ops import LittlesOps
@@ -233,6 +234,18 @@ def _bounds_text(lo: float | None, hi: float | None) -> str:
     return f"[{'-∞' if lo is None else f'{lo:g}'}, {'∞' if hi is None else f'{hi:g}'}]"
 
 
+def absence_note(source: str, expr: str, rng: object) -> str:
+    """What an empty result does and does not show (bead rbz): never a basis for "X does not
+    exist" on its own."""
+    span = f" over {rng[0]}..{rng[1]}" if isinstance(rng, list | tuple) and len(rng) == 2 else ""
+    return (
+        f"no series matched `{expr}` in source {source!r}{span}. Absence of evidence is not "
+        "evidence of absence: this metric, its label names or values may not be how this source "
+        "reports the entity. Before saying a service or signal does not exist, run `entities` "
+        "(which services report which metric families) and catalog_search, and cite them."
+    )
+
+
 @dataclass
 class TelemetryService:
     sources: SourceRegistry
@@ -259,10 +272,12 @@ class TelemetryService:
     code: CodeOps = field(init=False)
     bindings: BindingOps = field(init=False)
     verdicts: VerdictOps = field(init=False)
+    entity_index: EntityOps = field(init=False)
 
     def __post_init__(self) -> None:
         self.bindings = BindingOps(self)
         self.verdicts = VerdictOps(self)
+        self.entity_index = EntityOps(self._source, self.clock, self.ws.binding_suggest)
         self.signal = SignalOps(self.datasets, self.ws.catalog_facts)
         self.diagnostics = SeriesDiagnostics(
             self.signal, lambda *a: self.profiles.seasonal_excluding(*a), self.query
@@ -477,6 +492,8 @@ class TelemetryService:
             semantics_flags=_semantics_flags(src),
         )
         summary = self._time_summary(meta, result, now)
+        if summary.get("series_count") == 0:
+            summary["empty_result"] = absence_note(src.name, expr, summary.get("range"))
         if nonmergeable_caveats:  # a short code for the vocabulary; the argument is the payload
             summary["caveats"].append(NONMERGEABLE_CAVEAT)
             summary["nonmergeable"] = {

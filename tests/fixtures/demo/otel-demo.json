@@ -1,0 +1,1415 @@
+{
+ "_provenance": "Hand-assembled from the OpenTelemetry demo shape seen live on 2026-10-03 (d77.3 payment-failure re-run: source_learn families, the metric names Claude queried, scenarios/payment-failure.yml and shipping-slowdown.yml ground truth traces_span_metrics_calls_total / traces_span_metrics_duration_milliseconds_bucket). Series are one per label set with a constant rate; fault_rate applies from `onset_s` (seconds before end) and born_at_onset series have no samples before it.",
+ "onset_s": 1500,
+ "metadata": {
+  "http_server_request_duration_seconds": [
+   {
+    "type": "histogram",
+    "help": "Duration of HTTP server requests.",
+    "unit": "s"
+   }
+  ],
+  "http_client_request_duration_seconds": [
+   {
+    "type": "histogram",
+    "help": "Duration of HTTP client requests.",
+    "unit": "s"
+   }
+  ],
+  "rpc_server_call_duration_seconds": [
+   {
+    "type": "histogram",
+    "help": "Measures the duration of inbound RPC.",
+    "unit": "s"
+   }
+  ],
+  "rpc_server_duration_milliseconds": [
+   {
+    "type": "histogram",
+    "help": "Measures the duration of inbound RPC.",
+    "unit": "ms"
+   }
+  ],
+  "rpc_client_duration_milliseconds": [
+   {
+    "type": "histogram",
+    "help": "Measures the duration of outbound RPC.",
+    "unit": "ms"
+   }
+  ],
+  "traces_span_metrics_calls_total": [
+   {
+    "type": "counter",
+    "help": "",
+    "unit": ""
+   }
+  ],
+  "traces_span_metrics_duration_milliseconds": [
+   {
+    "type": "histogram",
+    "help": "",
+    "unit": "ms"
+   }
+  ],
+  "feature_flag_evaluation_requests_total": [
+   {
+    "type": "counter",
+    "help": "Number of feature flag evaluation requests.",
+    "unit": ""
+   }
+  ],
+  "feature_flag_evaluation_success_total": [
+   {
+    "type": "counter",
+    "help": "Number of successful feature flag evaluations.",
+    "unit": ""
+   }
+  ],
+  "demo_payment_transactions_total": [
+   {
+    "type": "counter",
+    "help": "Counts the total number of transactions",
+    "unit": ""
+   }
+  ],
+  "demo_cart_add_item_latency_seconds": [
+   {
+    "type": "histogram",
+    "help": "Add item latency",
+    "unit": "s"
+   }
+  ],
+  "demo_cart_get_cart_latency_seconds": [
+   {
+    "type": "histogram",
+    "help": "Get cart latency",
+    "unit": "s"
+   }
+  ],
+  "app_ads_ad_requests_total": [
+   {
+    "type": "counter",
+    "help": "Counts ad requests by request and response type",
+    "unit": ""
+   }
+  ],
+  "app_recommendations_counter_total": [
+   {
+    "type": "counter",
+    "help": "Counts the total number of given recommendations",
+    "unit": ""
+   }
+  ],
+  "nodejs_eventloop_delay_p99_seconds": [
+   {
+    "type": "gauge",
+    "help": "Event loop 99 percentile delay.",
+    "unit": "s"
+   }
+  ],
+  "v8js_memory_heap_used_bytes": [
+   {
+    "type": "gauge",
+    "help": "Heap Memory size allocated.",
+    "unit": "By"
+   }
+  ],
+  "jvm_memory_used_bytes": [
+   {
+    "type": "gauge",
+    "help": "Measure of memory used.",
+    "unit": "By"
+   }
+  ],
+  "go_goroutine_count": [
+   {
+    "type": "gauge",
+    "help": "Count of live goroutines.",
+    "unit": ""
+   }
+  ],
+  "process_runtime_cpython_cpu_utilization_ratio": [
+   {
+    "type": "gauge",
+    "help": "Runtime CPU utilization",
+    "unit": "1"
+   }
+  ],
+  "otelcol_receiver_accepted_spans_total": [
+   {
+    "type": "counter",
+    "help": "Number of spans successfully pushed into the pipeline.",
+    "unit": ""
+   }
+  ]
+ },
+ "series": [
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend",
+    "span_name": "POST /api/checkout",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend",
+    "span_name": "POST /api/checkout",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET",
+    "le": "+Inf"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_count",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend",
+    "span_name": "POST /api/checkout",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend",
+    "span_name": "POST /api/checkout",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 8.0
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend",
+    "span_name": "GET /api/products",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 3.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend",
+    "span_name": "GET /api/products",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET",
+    "le": "+Inf"
+   },
+   "rate": 3.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_count",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend",
+    "span_name": "GET /api/products",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 3.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend",
+    "span_name": "GET /api/products",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 60.0
+  },
+  {
+   "metric": "http_server_request_duration_seconds_bucket",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend",
+    "le": "+Inf",
+    "http_response_status_code": "200",
+    "http_request_method": "GET"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "http_server_request_duration_seconds_count",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend",
+    "http_response_status_code": "200",
+    "http_request_method": "GET"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "http_server_request_duration_seconds_sum",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend",
+    "http_response_status_code": "200",
+    "http_request_method": "GET"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "http_client_request_duration_seconds_bucket",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend",
+    "le": "+Inf"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "http_client_request_duration_seconds_count",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "http_client_request_duration_seconds_sum",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "nodejs_eventloop_delay_p99_seconds",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "v8js_memory_heap_used_bytes",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "cart",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/cart",
+    "span_name": "POST /oteldemo.CartService/GetCart",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 2.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "cart",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/cart",
+    "span_name": "POST /oteldemo.CartService/GetCart",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET",
+    "le": "+Inf"
+   },
+   "rate": 2.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_count",
+   "labels": {
+    "service_name": "cart",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/cart",
+    "span_name": "POST /oteldemo.CartService/GetCart",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 2.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "cart",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/cart",
+    "span_name": "POST /oteldemo.CartService/GetCart",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 40.0
+  },
+  {
+   "metric": "http_server_request_duration_seconds_bucket",
+   "labels": {
+    "service_name": "cart",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/cart",
+    "le": "+Inf",
+    "http_response_status_code": "200",
+    "http_request_method": "GET"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "http_server_request_duration_seconds_count",
+   "labels": {
+    "service_name": "cart",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/cart",
+    "http_response_status_code": "200",
+    "http_request_method": "GET"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "http_server_request_duration_seconds_sum",
+   "labels": {
+    "service_name": "cart",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/cart",
+    "http_response_status_code": "200",
+    "http_request_method": "GET"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "feature_flag_evaluation_requests_total",
+   "labels": {
+    "service_name": "cart",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/cart"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "feature_flag_evaluation_success_total",
+   "labels": {
+    "service_name": "cart",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/cart"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "demo_cart_add_item_latency_seconds_bucket",
+   "labels": {
+    "service_name": "cart",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/cart",
+    "le": "+Inf"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "demo_cart_add_item_latency_seconds_count",
+   "labels": {
+    "service_name": "cart",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/cart"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "demo_cart_add_item_latency_seconds_sum",
+   "labels": {
+    "service_name": "cart",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/cart"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "demo_cart_get_cart_latency_seconds_bucket",
+   "labels": {
+    "service_name": "cart",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/cart",
+    "le": "+Inf"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "demo_cart_get_cart_latency_seconds_count",
+   "labels": {
+    "service_name": "cart",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/cart"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "demo_cart_get_cart_latency_seconds_sum",
+   "labels": {
+    "service_name": "cart",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/cart"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "shipping",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/shipping",
+    "span_name": "POST /get-quote",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 0.8
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "shipping",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/shipping",
+    "span_name": "POST /get-quote",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET",
+    "le": "+Inf"
+   },
+   "rate": 0.8
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_count",
+   "labels": {
+    "service_name": "shipping",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/shipping",
+    "span_name": "POST /get-quote",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 0.8
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "shipping",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/shipping",
+    "span_name": "POST /get-quote",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 16.0
+  },
+  {
+   "metric": "http_server_request_duration_seconds_bucket",
+   "labels": {
+    "service_name": "shipping",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/shipping",
+    "le": "+Inf",
+    "http_response_status_code": "200",
+    "http_request_method": "GET"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "http_server_request_duration_seconds_count",
+   "labels": {
+    "service_name": "shipping",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/shipping",
+    "http_response_status_code": "200",
+    "http_request_method": "GET"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "http_server_request_duration_seconds_sum",
+   "labels": {
+    "service_name": "shipping",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/shipping",
+    "http_response_status_code": "200",
+    "http_request_method": "GET"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "ad",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/ad",
+    "span_name": "oteldemo.AdService/GetAds",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 1.5
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "ad",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/ad",
+    "span_name": "oteldemo.AdService/GetAds",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET",
+    "le": "+Inf"
+   },
+   "rate": 1.5
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_count",
+   "labels": {
+    "service_name": "ad",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/ad",
+    "span_name": "oteldemo.AdService/GetAds",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 1.5
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "ad",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/ad",
+    "span_name": "oteldemo.AdService/GetAds",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 30.0
+  },
+  {
+   "metric": "rpc_server_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "ad",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/ad",
+    "le": "+Inf"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "rpc_server_duration_milliseconds_count",
+   "labels": {
+    "service_name": "ad",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/ad"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "rpc_server_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "ad",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/ad"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "rpc_client_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "ad",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/ad",
+    "le": "+Inf"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "rpc_client_duration_milliseconds_count",
+   "labels": {
+    "service_name": "ad",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/ad"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "rpc_client_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "ad",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/ad"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "app_ads_ad_requests_total",
+   "labels": {
+    "service_name": "ad",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/ad"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "jvm_memory_used_bytes",
+   "labels": {
+    "service_name": "ad",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/ad"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "checkout",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/checkout",
+    "span_name": "oteldemo.CheckoutService/PlaceOrder",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "checkout",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/checkout",
+    "span_name": "oteldemo.CheckoutService/PlaceOrder",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET",
+    "le": "+Inf"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_count",
+   "labels": {
+    "service_name": "checkout",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/checkout",
+    "span_name": "oteldemo.CheckoutService/PlaceOrder",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "checkout",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/checkout",
+    "span_name": "oteldemo.CheckoutService/PlaceOrder",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 8.0
+  },
+  {
+   "metric": "rpc_server_call_duration_seconds_bucket",
+   "labels": {
+    "service_name": "checkout",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/checkout",
+    "le": "+Inf"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "rpc_server_call_duration_seconds_count",
+   "labels": {
+    "service_name": "checkout",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/checkout"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "rpc_server_call_duration_seconds_sum",
+   "labels": {
+    "service_name": "checkout",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/checkout"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "go_goroutine_count",
+   "labels": {
+    "service_name": "checkout",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/checkout"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "product-catalog",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/product-catalog",
+    "span_name": "oteldemo.ProductCatalogService/GetProduct",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 3.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "product-catalog",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/product-catalog",
+    "span_name": "oteldemo.ProductCatalogService/GetProduct",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET",
+    "le": "+Inf"
+   },
+   "rate": 3.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_count",
+   "labels": {
+    "service_name": "product-catalog",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/product-catalog",
+    "span_name": "oteldemo.ProductCatalogService/GetProduct",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 3.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "product-catalog",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/product-catalog",
+    "span_name": "oteldemo.ProductCatalogService/GetProduct",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 60.0
+  },
+  {
+   "metric": "rpc_server_call_duration_seconds_bucket",
+   "labels": {
+    "service_name": "product-catalog",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/product-catalog",
+    "le": "+Inf"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "rpc_server_call_duration_seconds_count",
+   "labels": {
+    "service_name": "product-catalog",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/product-catalog"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "rpc_server_call_duration_seconds_sum",
+   "labels": {
+    "service_name": "product-catalog",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/product-catalog"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "go_goroutine_count",
+   "labels": {
+    "service_name": "product-catalog",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/product-catalog"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "payment",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/payment",
+    "span_name": "charge",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "payment",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/payment",
+    "span_name": "charge",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET",
+    "le": "+Inf"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_count",
+   "labels": {
+    "service_name": "payment",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/payment",
+    "span_name": "charge",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "payment",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/payment",
+    "span_name": "charge",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 8.0
+  },
+  {
+   "metric": "demo_payment_transactions_total",
+   "labels": {
+    "service_name": "payment",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/payment"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "nodejs_eventloop_delay_p99_seconds",
+   "labels": {
+    "service_name": "payment",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/payment"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "v8js_memory_heap_used_bytes",
+   "labels": {
+    "service_name": "payment",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/payment"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "recommendation",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/recommendation",
+    "span_name": "oteldemo.RecommendationService/ListRecommendations",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "recommendation",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/recommendation",
+    "span_name": "oteldemo.RecommendationService/ListRecommendations",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET",
+    "le": "+Inf"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_count",
+   "labels": {
+    "service_name": "recommendation",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/recommendation",
+    "span_name": "oteldemo.RecommendationService/ListRecommendations",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "recommendation",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/recommendation",
+    "span_name": "oteldemo.RecommendationService/ListRecommendations",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 20.0
+  },
+  {
+   "metric": "app_recommendations_counter_total",
+   "labels": {
+    "service_name": "recommendation",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/recommendation"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "process_runtime_cpython_cpu_utilization_ratio",
+   "labels": {
+    "service_name": "recommendation",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/recommendation"
+   },
+   "rate": 1.0
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "currency",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/currency",
+    "span_name": "Currency/Convert",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 2.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "currency",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/currency",
+    "span_name": "Currency/Convert",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET",
+    "le": "+Inf"
+   },
+   "rate": 2.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_count",
+   "labels": {
+    "service_name": "currency",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/currency",
+    "span_name": "Currency/Convert",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 2.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "currency",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/currency",
+    "span_name": "Currency/Convert",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 40.0
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "email",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/email",
+    "span_name": "POST /send_order_confirmation",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "email",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/email",
+    "span_name": "POST /send_order_confirmation",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET",
+    "le": "+Inf"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_count",
+   "labels": {
+    "service_name": "email",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/email",
+    "span_name": "POST /send_order_confirmation",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "email",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/email",
+    "span_name": "POST /send_order_confirmation",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 8.0
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "quote",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/quote",
+    "span_name": "POST /getquote",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 0.8,
+   "last_seen_before_end_s": 1200
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "quote",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/quote",
+    "span_name": "POST /getquote",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET",
+    "le": "+Inf"
+   },
+   "rate": 0.8,
+   "last_seen_before_end_s": 1200
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_count",
+   "labels": {
+    "service_name": "quote",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/quote",
+    "span_name": "POST /getquote",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 0.8,
+   "last_seen_before_end_s": 1200
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "quote",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/quote",
+    "span_name": "POST /getquote",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 16.0,
+   "last_seen_before_end_s": 1200
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "accounting",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/accounting",
+    "span_name": "orders process",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "accounting",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/accounting",
+    "span_name": "orders process",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET",
+    "le": "+Inf"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_count",
+   "labels": {
+    "service_name": "accounting",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/accounting",
+    "span_name": "orders process",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "accounting",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/accounting",
+    "span_name": "orders process",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 8.0
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "fraud-detection",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/fraud-detection",
+    "span_name": "orders process",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "fraud-detection",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/fraud-detection",
+    "span_name": "orders process",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET",
+    "le": "+Inf"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_count",
+   "labels": {
+    "service_name": "fraud-detection",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/fraud-detection",
+    "span_name": "orders process",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 0.4
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "fraud-detection",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/fraud-detection",
+    "span_name": "orders process",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 8.0
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "frontend-proxy",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend-proxy",
+    "span_name": "ingress",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 4.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "frontend-proxy",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend-proxy",
+    "span_name": "ingress",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET",
+    "le": "+Inf"
+   },
+   "rate": 4.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_count",
+   "labels": {
+    "service_name": "frontend-proxy",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend-proxy",
+    "span_name": "ingress",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 4.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "frontend-proxy",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend-proxy",
+    "span_name": "ingress",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 80.0
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "load-generator",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/load-generator",
+    "span_name": "GET",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 4.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_bucket",
+   "labels": {
+    "service_name": "load-generator",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/load-generator",
+    "span_name": "GET",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET",
+    "le": "+Inf"
+   },
+   "rate": 4.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_count",
+   "labels": {
+    "service_name": "load-generator",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/load-generator",
+    "span_name": "GET",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 4.0
+  },
+  {
+   "metric": "traces_span_metrics_duration_milliseconds_sum",
+   "labels": {
+    "service_name": "load-generator",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/load-generator",
+    "span_name": "GET",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_UNSET"
+   },
+   "rate": 80.0
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "payment",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/payment",
+    "span_name": "charge",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_ERROR"
+   },
+   "rate": 0.0,
+   "fault_rate": 0.4,
+   "born_at_onset": true
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "checkout",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/checkout",
+    "span_name": "oteldemo.PaymentService/Charge",
+    "span_kind": "SPAN_KIND_CLIENT",
+    "status_code": "STATUS_CODE_ERROR"
+   },
+   "rate": 0.0,
+   "fault_rate": 0.4,
+   "born_at_onset": true
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "checkout",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/checkout",
+    "span_name": "oteldemo.CheckoutService/PlaceOrder",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_ERROR"
+   },
+   "rate": 0.0,
+   "fault_rate": 0.4,
+   "born_at_onset": true
+  },
+  {
+   "metric": "traces_span_metrics_calls_total",
+   "labels": {
+    "service_name": "frontend",
+    "service_namespace": "opentelemetry-demo",
+    "job": "opentelemetry-demo/frontend",
+    "span_name": "POST /api/checkout",
+    "span_kind": "SPAN_KIND_SERVER",
+    "status_code": "STATUS_CODE_ERROR"
+   },
+   "rate": 0.0,
+   "fault_rate": 0.4,
+   "born_at_onset": true
+  },
+  {
+   "metric": "otelcol_receiver_accepted_spans_total",
+   "labels": {
+    "job": "otel-collector",
+    "receiver": "otlp"
+   },
+   "rate": 30.0
+  }
+ ]
+}

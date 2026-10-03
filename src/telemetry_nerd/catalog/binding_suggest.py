@@ -249,6 +249,7 @@ def _spanmetrics_rules() -> dict[str, tuple[Rule, ...]]:
         "traces_spanmetrics_latency",
         "traces_spanmetrics_duration_seconds",
         "traces_span_metrics_duration_seconds",
+        "traces_span_metrics_duration_milliseconds",  # OTel demo spanmetrics connector (ms)
     )
     return {
         "request_rate": (
@@ -764,7 +765,7 @@ def _scopes() -> tuple[Scope, ...]:
         ),
         Scope(
             "spanmetrics",
-            "span-metrics (traces_spanmetrics_*)",
+            "span-metrics (traces_spanmetrics_* / traces_span_metrics_*)",
             "spanmetrics",
             ("service_name",),
             _spanmetrics_rules(),

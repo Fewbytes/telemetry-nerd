@@ -121,8 +121,14 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
 - When you tell the user to look at an object ("see p5"), also call `highlight(object, note?)`
   so it is accented in their UI; `unhighlight` clears it. Mention ids like p5/f2 in text: they
   become hoverable chips.
-- Before charting unfamiliar metrics, check what the catalog knows: `catalog_search`/`catalog_get`
-  (run `source_learn` once per source). When you work out what a metric is (unit, type, role,
+- Before charting unfamiliar metrics, check what the catalog knows: `catalog_search` (words
+  match names and descriptions)/`catalog_get` (run `source_learn` once per source).
+  "Which services exist, and what does each report?" is `entities(kind="service")` (label index,
+  cheap): start the blast radius there, with `binding_suggest(kind="RED")` over every service
+  (span metrics `traces_span_metrics_*` cover services with no HTTP/RPC metrics of their own).
+- An empty result (`empty_result`, a catalog `note`) is absence of evidence, not evidence of
+  absence. Never say a service or signal does not exist unless `entities` (or a series check)
+  was run and is cited; otherwise say it was not found where you looked. When you work out what a metric is (unit, type, role,
   bounds), record it with `catalog_write` and a basis; never claim a unit you cannot justify.
   Relations (`catalog_relate`: bounded_by, part_of, ...) and model bindings (`catalog_bind`:
   littles_law, RED, USE) go the same way; a binding role with no signal raises a Gap.
@@ -750,10 +756,22 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         """Discover a source's metrics and learn what is cheap to know (declared metadata, naming
         conventions, knowledge packs for node_exporter/Kubernetes). Slow on huge sources (it lists
         every metric name); run it once per source, then use catalog_search. Returns counts,
-        caveats and a family overview (least-reviewed families first)."""
+        caveats and `families`: name groups (metrics sharing a prefix, least-reviewed first;
+        catalog_family(family=<name>) lists one's metrics); `name_template_families` counts the
+        name-template families. Which services report which families: `entities`."""
         try:
             out = await service.learn(source, "claude")
-            return _dump({**out, "families": service.ws.catalog_overview(source)})
+            templates = out.pop("families", 0)
+            return _dump(
+                {
+                    **out,
+                    "name_template_families": templates,
+                    "families": service.ws.catalog_overview(source),
+                    "next": "catalog_family(family=<a families[].family>) lists its metrics; "
+                    "catalog_search(query=<words>) matches names and descriptions; "
+                    'entities(kind="service") lists the services and the families each reports',
+                }
+            )
         except SourceError as e:
             raise _source_error(e) from e
 
@@ -806,28 +824,61 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         source: str = "default",
         family: str | None = None,
     ) -> str:
-        """Decide a name-template family: `confirm` (its members really do share a metric with a
-        dimension encoded in the name) or `split` (they are unrelated metrics: dissolve it for good).
-        Families look like airflow_ti_finish_*_removed. Call with no arguments to LIST the families
-        (undecided first); then decide one: catalog_family(template="airflow_ti_finish_*_removed",
-        action="confirm", basis="members differ only in the task name"). `family` is accepted as an
-        alias of `template`; `source` defaults to "default". Needs a `basis`. You cannot change a
-        family the user confirmed."""
+        """Metric families, two kinds. A NAME GROUP is metrics sharing a name prefix, as
+        source_learn's `families` lists them (rpc_server, http_server, node_cpu):
+        catalog_family(family="rpc_server") returns its metrics. A NAME-TEMPLATE family encodes a
+        dimension in the name (airflow_ti_finish_*_removed); decide one: `confirm` (its members
+        really do share a metric) or `split` (unrelated metrics: dissolve it for good), e.g.
+        catalog_family(template="airflow_ti_finish_*_removed", action="confirm", basis="members
+        differ only in the task name"). No arguments LISTS both kinds (undecided templates first).
+        `family` is an alias of `template`; `source` defaults to "default". Deciding needs a
+        `basis`; you cannot change a family the user confirmed."""
         try:
             template = template or family
             known = service.ws.families_list(source)
-            if not template or not action:
+            names = {f["template"] for f in known}
+            usage = (
+                'catalog_family(family="<a name group>") lists its metrics; '
+                'catalog_family(template="<one of families[].template>", '
+                'action="confirm"|"split", basis="what you checked") decides a template'
+            )
+            if not action:
+                if template in names:
+                    return _dump(service.ws.family_members(source, template))
+                if template:
+                    group = service.ws.catalog_name_group(source, template)
+                    if group["metrics"]:
+                        return _dump(group)
                 return _dump(
                     {
                         "families": known,
-                        "usage": 'catalog_family(template="<one of families[].template>", '
-                        'action="confirm"|"split", basis="what you checked")',
+                        "name_groups": service.ws.catalog_overview(source, top=100),
+                        "usage": usage,
                     }
+                    | (
+                        {
+                            "note": f"no name group or name-template family {template!r} in "
+                            f"source {source!r} (searched {len(names)} templates and the name "
+                            "prefixes of every catalogued metric). The catalog holds what "
+                            "source_learn saw; it is not evidence that a signal is absent: "
+                            "try catalog_search with words, or `entities`."
+                        }
+                        if template
+                        else {}
+                    )
                 )
+            if not template:
+                raise ValueError("name the family: template=<one of families[].template>")
             if not basis or not basis.strip():
                 raise ValueError("basis is required: one line saying what you checked")
-            if template not in {f["template"] for f in known}:
-                near = [f["template"] for f in known if template.strip("*_") in f["template"]]
+            if template not in names:
+                near = [t for t in names if template.strip("*_") in t]
+                if not near and service.ws.catalog_name_group(source, template)["metrics"]:
+                    raise ValueError(
+                        f"{template!r} is a name group (a shared prefix), not a name-template "
+                        "family: there is nothing to confirm or split. List its metrics with "
+                        f'catalog_family(family="{template}")'
+                    )
                 raise NotFound(
                     f"no family {template!r} on {source!r}; "
                     f"{'did you mean ' + repr(near[:5]) if near else 'list them with no arguments'}"
@@ -989,6 +1040,39 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                 )
             )
         except (NotFound, ValueError) as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
+    async def entities(
+        kind: str = "service",
+        label: str | None = None,
+        metric: str | None = None,
+        window: str = "1h",
+        recent: str = "5m",
+        end: str = "now",
+        limit: int = 50,
+        source: str = "default",
+    ) -> str:
+        """Which services exist? (or instances, namespaces, nodes): the values of the
+        identifying labels (kind=service: service_name, service, app, k8s_deployment_name, job,
+        ...; instance: service_instance_id, instance, pod, host; namespace; node) in series with
+        samples in the `window` before `end`, from the source's label index (cheap: no samples
+        read; cached a minute). Per entity: the metric families and metrics it reports,
+        `active_recent` (samples in the last `recent`), and the binding_suggest ids whose metrics
+        it reports (`next`: binding_suggest(kind="RED", key=<entity>)). `metric` narrows to the
+        entities one metric reports; `label` searches one label of your choosing. `coverage`
+        says which labels were searched and which are absent: run this before saying a service
+        does not exist, and cite it; an entity not listed is "not found under these labels in
+        this window", never "absent"."""
+        try:
+            return _dump(
+                await service.entity_index.entities(
+                    source, kind, label, metric, window, recent, end, limit
+                )
+            )
+        except SourceError as e:
+            raise _source_error(e) from e
+        except ValueError as e:
             raise _fail(e) from e
 
     @mcp.tool()

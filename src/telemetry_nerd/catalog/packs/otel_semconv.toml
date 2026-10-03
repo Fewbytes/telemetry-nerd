@@ -470,6 +470,30 @@ additivity_time = "additive"
 role = "throughput"
 description = "Span-metrics-connector cumulative span size."
 
+# The OTel Collector spanmetrics connector with its current default namespace
+# (traces.span.metrics), as the OpenTelemetry demo exposes it through VictoriaMetrics/Prometheus.
+# Grounded on the live demo (scenarios/*.yml ground truth queries; d77.3 eval run 2026-10-03);
+# the names and shapes are pinned by tests/fixtures/demo/otel-demo.json (test_packs.py).
+[[metric]]
+name = "traces_span_metrics_calls_total"
+type = "counter"
+unit = "count"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "throughput"
+description = "Span-metrics connector call count (traces.span.metrics.calls) per service_name/span_name/span_kind/status_code: the R and E of RED for every traced service, including services that emit no HTTP/RPC server metrics of their own. The status_code=\"STATUS_CODE_ERROR\" series of a service/span exists only from its first error span: absent means 0 errors where the non-error series reports."
+
+[[metric]]
+name = "traces_span_metrics_duration_milliseconds"
+type = "histogram"
+unit = "ms"
+bounds = "≥0"
+additivity_series = "additive"
+additivity_time = "additive"
+role = "latency"
+description = "Span-metrics connector span duration (traces.span.metrics.duration), classic histogram in milliseconds (_bucket/_sum/_count) per service_name/span_name/span_kind/status_code: the D of RED from traces."
+
 # ===================================== k6 self-metrics ====================================
 # k6's own Prometheus/remote-write output labels each series with k6_metric_type (the original
 # k6 metric kind: gauge/counter/rate/trend); that label is what grounds the types below, since
