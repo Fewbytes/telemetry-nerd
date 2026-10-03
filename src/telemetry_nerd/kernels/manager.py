@@ -88,6 +88,10 @@ class KernelConfig:
     output_limit: int = 32_000
     #: extra environment for every kernel
     env: Mapping[str, str] = field(default_factory=dict)
+    #: size cap of kernel-<ws>.log, enforced when a kernel starts: a larger log is rotated to
+    #: kernel-<ws>.log.1 (one generation kept), so disk use per workspace is bounded by about
+    #: two caps plus what one kernel lifetime writes
+    log_max_bytes: int = 1_000_000
 
     @classmethod
     def from_settings(cls, settings: Settings) -> KernelConfig:
@@ -97,6 +101,15 @@ class KernelConfig:
             run_timeout_s=settings.kernel_run_timeout_s,
             memory_limit_mb=settings.kernel_memory_limit_mb,
         )
+
+
+def rotate_log(path: Path, max_bytes: int) -> None:
+    """Move `path` to `path`.1 (replacing the older generation) when it exceeds `max_bytes`."""
+    try:
+        if path.stat().st_size > max_bytes:
+            path.replace(path.with_name(path.name + ".1"))
+    except FileNotFoundError:
+        pass
 
 
 class KernelStartError(RuntimeError):
@@ -337,7 +350,9 @@ class KernelManager:
             kernel_spec_manager=_fixed_spec_manager(spec),
             connection_file=str(conn),
         )
-        logf = open(self.config.root / f"kernel-{name}.log", "ab")  # noqa: ASYNC230, SIM115
+        log_path = self.config.root / f"kernel-{name}.log"
+        rotate_log(log_path, self.config.log_max_bytes)
+        logf = open(log_path, "ab")  # noqa: ASYNC230, SIM115
         try:
             await km.start_kernel(
                 env=self._kernel_env(workspace_id), cwd=str(home), stdout=logf, stderr=logf

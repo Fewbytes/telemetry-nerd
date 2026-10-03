@@ -306,3 +306,27 @@ def test_app_shutdown_closes_kernels(tmp_path):
     with TestClient(create_app(service, allowed_hosts=["testserver"])):
         assert closed == []
     assert closed == [True]
+
+
+def test_rotate_log_caps_kernel_log(tmp_path):
+    from telemetry_nerd.kernels.manager import rotate_log
+
+    log = tmp_path / "kernel-a.log"
+    rotate_log(log, 10)  # absent: nothing to do
+    log.write_bytes(b"x" * 10)
+    rotate_log(log, 10)  # at the cap: kept
+    assert log.read_bytes() == b"x" * 10 and not (tmp_path / "kernel-a.log.1").exists()
+    log.write_bytes(b"y" * 11)
+    rotate_log(log, 10)
+    assert not log.exists() and (tmp_path / "kernel-a.log.1").read_bytes() == b"y" * 11
+    log.write_bytes(b"z" * 20)
+    rotate_log(log, 10)  # one generation only: the older one is replaced
+    assert (tmp_path / "kernel-a.log.1").read_bytes() == b"z" * 20
+
+
+async def test_kernel_start_rotates_oversized_log(tmp_path):
+    (tmp_path / "kernel-a.log").write_bytes(b"old" * 100)
+    async with KernelManager(KernelConfig(root=tmp_path, log_max_bytes=10)) as m:
+        assert (await m.execute("a", "1")).result == "1"
+    assert (tmp_path / "kernel-a.log.1").read_bytes() == b"old" * 100
+    assert (tmp_path / "kernel-a.log").stat().st_size < 300
