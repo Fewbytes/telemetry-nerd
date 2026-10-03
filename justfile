@@ -81,3 +81,25 @@ lab-up:
 
 lab-down:
     podman compose -f deploy/missing-data-lab/compose.yml down -v
+
+# --- OpenTelemetry demo (deploy/demo; docs/demo.md): own compose project tn-demo, VM on :8429 ---
+demo_compose := "podman compose -f deploy/demo/compose.yml"
+
+# Bring the trimmed demo up; `just demo-up full` adds frontend-proxy/flagd-ui/image-provider.
+demo-up profile="":
+    {{demo_compose}} {{ if profile != "" { "--profile " + profile } else { "" } }} up -d
+
+# Stop the demo; the VictoriaMetrics volume (tn-demo_tn-demo-vmdata) is kept.
+demo-down:
+    {{demo_compose}} --profile full --profile spike --profile queue-sim down
+
+# Stop the demo AND wipe its metrics volume. Never touches deploy/dev.
+demo-reset:
+    {{demo_compose}} --profile full --profile spike --profile queue-sim down -v
+
+demo-ps:
+    {{demo_compose}} --profile full --profile spike --profile queue-sim ps
+
+# List / get / set flagd flags: `just demo-flag set paymentFailure 50%`, `just demo-flag off`.
+demo-flag *args:
+    uv run scripts/demo_flag.py {{args}}

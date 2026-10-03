@@ -1,0 +1,6 @@
+# VictoriaMetrics scrape config. No self-scrape (it would put ~300 vm_*/go_* metrics into the
+# catalog next to the demo's). Extra scrape jobs, e.g. the queue-sim exporter (bead 1h9.17):
+# drop a file in deploy/demo/scrape.d/*.yml, see scrape.d/README.md.
+scrape_configs: []
+scrape_config_files:
+  - /etc/vm/scrape.d/*.yml

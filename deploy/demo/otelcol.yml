@@ -1,0 +1,40 @@
+# Demo collector: OTLP in, OTLP/HTTP out to VictoriaMetrics' native OTLP ingest. Chosen by the
+# §4.4 spike (docs/superpowers/specs/2026-10-03-demo-pipeline-spike.md): only OTLP keeps
+# TYPE/HELP/UNIT in VM; VM runs with -opentelemetry.usePrometheusNaming so names/labels are
+# Prometheus-style (http_server_request_duration_seconds, service_name).
+receivers:
+  otlp:
+    protocols:
+      grpc: {endpoint: "0.0.0.0:4317"}
+      http: {endpoint: "0.0.0.0:4318"}
+processors:
+  memory_limiter: {check_interval: 5s, limit_percentage: 80, spike_limit_percentage: 25}
+  batch: {}
+  # VictoriaMetrics v1.137 OTLP ingest bug (spike finding F6): a metric with an EMPTY unit
+  # inherits the unit of the metric before it in the same request, so names got wrong suffixes
+  # (traces_span_metrics_calls_milliseconds_total, process_thread_count_bytes, ...). An
+  # annotation unit is kept as metadata but adds no name suffix, and stops the leak.
+  transform/empty_unit:
+    metric_statements:
+      - set(metric.unit, "{unspecified}") where metric.unit == ""
+
+connectors:
+  span_metrics: {}     # RED-from-traces: traces_span_metrics_{calls_total,duration_milliseconds_*}
+exporters:
+  nop: {}
+  otlp_http/vm:
+    metrics_endpoint: http://victoriametrics:8428/opentelemetry/v1/metrics
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [span_metrics]     # traces are not stored; only the metrics derived from them
+    metrics:
+      receivers: [otlp, span_metrics]
+      processors: [memory_limiter, transform/empty_unit, batch]
+      exporters: [otlp_http/vm]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter]
+      exporters: [nop]

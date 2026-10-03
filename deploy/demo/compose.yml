@@ -1,0 +1,439 @@
+# Trimmed OpenTelemetry Demo -> OTel Collector -> VictoriaMetrics, for Telemetry Nerd (bead
+# telemetry-nerd-1h9.4; spec §9). Own compose project (`tn-demo`), own ports and volumes, so it
+# runs next to deploy/dev (VM :8428) without touching it.
+#
+#   just demo-up                 # trimmed profile (default services, ~1.6 GiB resident)
+#   just demo-up full            # + frontend-proxy (envoy), flagd-ui, image-provider
+#   just demo-down               # stop, keep the VM volume;  just demo-reset   # stop + wipe
+#
+# Endpoints (all bound to 127.0.0.1):
+#   VictoriaMetrics   http://127.0.0.1:8429     <- point Telemetry Nerd here (--source-url)
+#   frontend (shop)   http://127.0.0.1:18080
+#   locust UI         http://127.0.0.1:8089
+#   flagd gRPC/OFREP  127.0.0.1:8013 / http://127.0.0.1:8016   (flag file: ./flagd/demo.flagd.json)
+# Docs: docs/demo.md. Images pinned to the OpenTelemetry Demo 3.1.0 release.
+name: tn-demo
+
+x-logging: &logging
+  driver: json-file
+  options: {max-size: 5m, max-file: "2"}
+x-sdk-env: &sdk-env
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+  OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: cumulative
+  OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION: explicit_bucket_histogram
+  FLAGD_HOST: flagd
+  FLAGD_PORT: "8013"
+
+services:
+  # ---- storage ----
+  victoriametrics:
+    image: docker.io/victoriametrics/victoria-metrics:v1.137.0
+    command:
+      - -retentionPeriod=30d
+      - -search.latencyOffset=0s
+      - -dedup.minScrapeInterval=1ms
+      - -promscrape.config=/etc/vm/scrape.yml
+      # OTLP ingest: Prometheus-style names and labels (spike: docs/superpowers/specs/2026-10-03-demo-pipeline-spike.md)
+      - -opentelemetry.usePrometheusNaming
+    ports: ["127.0.0.1:8429:8428"]
+    volumes:
+      - tn-demo-vmdata:/victoria-metrics-data
+      - ./scrape.yml:/etc/vm/scrape.yml:ro
+      - ./scrape.d:/etc/vm/scrape.d:ro      # drop extra scrape jobs here (queue-sim hook)
+    mem_limit: 300m
+    restart: unless-stopped
+    logging: *logging
+
+  # Spike (bead 1h9.3) only: two extra VMs fed by the same collector; `--profile spike`.
+  vm-otlp-prom:     # OTLP ingest with -opentelemetry.usePrometheusNaming
+    image: docker.io/victoriametrics/victoria-metrics:v1.137.0
+    profiles: [spike]
+    command: [-retentionPeriod=30d, -opentelemetry.usePrometheusNaming]
+    ports: ["127.0.0.1:8442:8428"]
+    mem_limit: 300m
+  vm-rw:            # Prometheus remote-write ingest
+    image: docker.io/victoriametrics/victoria-metrics:v1.137.0
+    profiles: [spike]
+    command: [-retentionPeriod=30d]
+    ports: ["127.0.0.1:8441:8428"]
+    mem_limit: 300m
+
+  otel-collector:
+    image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.160.0
+    command: [--config=/etc/otelcol.yml]
+    volumes: ["./${OTELCOL_CONFIG:-otelcol.yml}:/etc/otelcol.yml:ro"]
+    ports: ["127.0.0.1:4318:4318"]          # OTLP/HTTP for ad-hoc senders (queue-sim, curl)
+    mem_limit: 400m
+    restart: unless-stopped
+    depends_on: [victoriametrics]
+    logging: *logging
+
+  # ---- flags ----
+  flagd:
+    image: ghcr.io/open-feature/flagd:v0.16.0
+    command: [start, --uri, "file:/etc/flagd/demo.flagd.json"]
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      GOMEMLIMIT: 60MiB
+      OTEL_SERVICE_NAME: flagd
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.1.0
+    volumes: ["./flagd:/etc/flagd"]         # directory mount: edits by rename are seen
+    ports: ["127.0.0.1:8013:8013", "127.0.0.1:8016:8016"]
+    mem_limit: 75m
+    restart: unless-stopped
+    logging: *logging
+
+  # ---- datastores the trimmed services strictly need ----
+  valkey-cart:
+    image: ghcr.io/valkey-io/valkey:9.1.2-alpine3.24
+    user: valkey
+    mem_limit: 30m
+    restart: unless-stopped
+    healthcheck: {test: [CMD-SHELL, valkey-cli ping], interval: 5s, timeout: 3s, retries: 10}
+    logging: *logging
+
+  astronomy-db:               # product-catalog reads its products from Postgres in 3.x
+    image: docker.io/library/postgres:18.6
+    command: postgres -c shared_preload_libraries=pg_stat_statements
+    environment: {POSTGRES_PASSWORD: changeit}
+    volumes: ["./postgres-init.sql:/docker-entrypoint-initdb.d/init.sql:ro"]
+    mem_limit: 120m
+    restart: unless-stopped
+    healthcheck: {test: [CMD-SHELL, pg_isready], start_period: 10s, interval: 5s, timeout: 5s, retries: 10}
+    logging: *logging
+
+  # ---- services ----
+  product-catalog:
+    image: ghcr.io/open-telemetry/demo:3.1.0-product-catalog
+    environment:
+      <<: *sdk-env
+      PRODUCT_CATALOG_PORT: "3550"
+      GOMEMLIMIT: 16MiB
+      OTEL_GO_X_OBSERVABILITY: "true"
+      OTEL_SERVICE_NAME: product-catalog
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.1.0,service.criticality=high
+      OTEL_CONFIG_FILE: /otel-config.yml
+      OTEL_SEMCONV_STABILITY_OPT_IN: database
+      DB_CONNECTION_STRING: postgres://astronomy_user:astronomy_password@astronomy-db:5432/astronomy_db?sslmode=disable
+    volumes: ["./product-catalog-otel-config.yml:/otel-config.yml:ro"]
+    depends_on: {otel-collector: {condition: service_started}, flagd: {condition: service_started}, astronomy-db: {condition: service_healthy}}
+    mem_limit: 40m
+    restart: unless-stopped
+    logging: *logging
+
+  currency:
+    image: ghcr.io/open-telemetry/demo:3.1.0-currency
+    environment:
+      <<: *sdk-env
+      CURRENCY_PORT: "7001"
+      VERSION: 3.1.0
+      OTEL_SERVICE_NAME: currency
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.1.0,service.criticality=high
+    mem_limit: 40m
+    restart: unless-stopped
+    healthcheck: {test: [CMD-SHELL, "nc -z localhost 7001"], start_period: 10s, interval: 5s, timeout: 5s, retries: 20}
+    depends_on: [otel-collector]
+    logging: *logging
+
+  cart:
+    image: ghcr.io/open-telemetry/demo:3.1.0-cart
+    environment:
+      <<: *sdk-env
+      CART_PORT: "7070"
+      VALKEY_ADDR: valkey-cart:6379
+      ASPNETCORE_HTTP_PORTS: "7070"
+      OTEL_SERVICE_NAME: cart
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.1.0,service.criticality=high
+    depends_on: {valkey-cart: {condition: service_healthy}, otel-collector: {condition: service_started}, flagd: {condition: service_started}}
+    mem_limit: 200m
+    restart: unless-stopped
+    logging: *logging
+
+  payment:
+    image: ghcr.io/open-telemetry/demo:3.1.0-payment
+    environment:
+      <<: *sdk-env
+      PAYMENT_PORT: "50051"
+      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
+      OTEL_SERVICE_NAME: payment
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.1.0,service.criticality=critical
+    healthcheck:
+      # podman splits exec-form healthcheck args on spaces and eats quotes: no spaces/quotes in the code
+      test: [CMD, /nodejs/bin/node, -e, "require(`net`).connect(50051,`127.0.0.1`,()=>process.exit(0))"]
+      start_period: 10s
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    depends_on: {otel-collector: {condition: service_started}, flagd: {condition: service_started}}
+    mem_limit: 160m
+    restart: unless-stopped
+    logging: *logging
+
+  email:
+    image: ghcr.io/open-telemetry/demo:3.1.0-email
+    environment:
+      <<: *sdk-env
+      APP_ENV: production
+      EMAIL_PORT: "6060"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: email
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.1.0,service.criticality=medium
+    healthcheck:
+      test: [CMD, ruby, -e, "require(%q(socket));TCPSocket.new(%q(localhost),6060).close"]
+      start_period: 10s
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    depends_on: [otel-collector]
+    mem_limit: 120m
+    restart: unless-stopped
+    logging: *logging
+
+  quote:                       # shipping's quote backend (PHP)
+    image: ghcr.io/open-telemetry/demo:3.1.0-quote
+    environment:
+      <<: *sdk-env
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_PHP_AUTOLOAD_ENABLED: "true"
+      OTEL_PHP_INTERNAL_METRICS_ENABLED: "true"
+      QUOTE_PORT: "8090"
+      OTEL_SERVICE_NAME: quote
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.1.0,service.criticality=low
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - php -r "fsockopen('localhost', 8090) or die('fail');"
+      start_period: 10s
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    depends_on: [otel-collector]
+    mem_limit: 60m
+    restart: unless-stopped
+    logging: *logging
+
+  shipping:
+    image: ghcr.io/open-telemetry/demo:3.1.0-shipping
+    environment:
+      <<: *sdk-env
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      SHIPPING_PORT: "50050"
+      QUOTE_ADDR: http://quote:8090
+      OTEL_SERVICE_NAME: shipping
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.1.0,service.criticality=high
+    depends_on: {otel-collector: {condition: service_started}, flagd: {condition: service_started}, quote: {condition: service_healthy}}
+    mem_limit: 40m
+    restart: unless-stopped
+    logging: *logging
+
+  checkout:
+    image: ghcr.io/open-telemetry/demo:3.1.0-checkout
+    environment:
+      <<: *sdk-env
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      CHECKOUT_PORT: "5050"
+      CART_ADDR: cart:7070
+      CURRENCY_ADDR: currency:7001
+      EMAIL_ADDR: http://email:6060
+      PAYMENT_ADDR: payment:50051
+      PRODUCT_CATALOG_ADDR: product-catalog:3550
+      SHIPPING_ADDR: http://shipping:50050
+      GOMEMLIMIT: 16MiB
+      OTEL_GO_X_OBSERVABILITY: "true"
+      OTEL_SERVICE_NAME: checkout
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.1.0,service.criticality=critical
+    depends_on:
+      cart: {condition: service_started}
+      currency: {condition: service_healthy}
+      email: {condition: service_healthy}
+      payment: {condition: service_healthy}
+      product-catalog: {condition: service_started}
+      shipping: {condition: service_started}
+      otel-collector: {condition: service_started}
+      flagd: {condition: service_started}
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 40m
+    restart: unless-stopped
+    logging: *logging
+
+  ad:                          # Java; adFailure / adHighCpu / adManualGc flags live here
+    image: ghcr.io/open-telemetry/demo:3.1.0-ad
+    environment:
+      <<: *sdk-env
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      AD_PORT: "9555"
+      OTEL_LOGS_EXPORTER: otlp
+      OTEL_SERVICE_NAME: ad
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.1.0,service.criticality=medium
+      _JAVA_OPTIONS: -Xmx160m
+    healthcheck:
+      test: [CMD-SHELL, "bash -c 'echo > /dev/tcp/localhost/9555'"]
+      start_period: 30s
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    depends_on: {otel-collector: {condition: service_started}, flagd: {condition: service_started}}
+    mem_limit: 300m
+    restart: unless-stopped
+    logging: *logging
+
+  recommendation:
+    image: ghcr.io/open-telemetry/demo:3.1.0-recommendation
+    environment:
+      <<: *sdk-env
+      RECOMMENDATION_PORT: "9001"
+      PRODUCT_CATALOG_ADDR: product-catalog:3550
+      OTEL_PYTHON_LOG_CORRELATION: "true"
+      OTEL_PYTHON_SDK_INTERNAL_METRICS_ENABLED: "true"
+      PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION: python
+      OTEL_SERVICE_NAME: recommendation
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.1.0,service.criticality=medium
+    healthcheck: {test: [CMD-SHELL, "nc -z localhost 9001"], start_period: 10s, interval: 5s, timeout: 5s, retries: 20}
+    depends_on: {product-catalog: {condition: service_started}, otel-collector: {condition: service_started}, flagd: {condition: service_started}}
+    mem_limit: 500m
+    restart: unless-stopped
+    logging: *logging
+
+  frontend:
+    image: ghcr.io/open-telemetry/demo:3.1.0-frontend
+    environment:
+      <<: *sdk-env
+      PORT: "8080"
+      FRONTEND_ADDR: frontend:8080
+      AD_ADDR: ad:9555
+      CART_ADDR: cart:7070
+      CHECKOUT_ADDR: checkout:5050
+      CURRENCY_ADDR: currency:7001
+      PRODUCT_CATALOG_ADDR: product-catalog:3550
+      RECOMMENDATION_ADDR: recommendation:9001
+      SHIPPING_ADDR: http://shipping:50050
+      ENV_PLATFORM: local
+      OTEL_COLLECTOR_HOST: otel-collector
+      PUBLIC_OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://localhost:8080/otlp-http/v1/traces
+      WEB_OTEL_SERVICE_NAME: frontend-web
+      OTEL_SERVICE_NAME: frontend
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.1.0,service.criticality=critical
+    ports: ["127.0.0.1:18080:8080"]
+    healthcheck:
+      test: [CMD, /nodejs/bin/node, -e, "require(`net`).connect(8080,require(`os`).hostname(),()=>process.exit(0))"]
+      start_period: 60s
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    depends_on:
+      ad: {condition: service_healthy}
+      cart: {condition: service_started}
+      checkout: {condition: service_started}
+      currency: {condition: service_healthy}
+      product-catalog: {condition: service_started}
+      recommendation: {condition: service_healthy}
+      shipping: {condition: service_started}
+      otel-collector: {condition: service_started}
+      flagd: {condition: service_started}
+    mem_limit: 300m
+    restart: unless-stopped
+    logging: *logging
+
+  load-generator:              # Locust; browser (playwright) traffic off to save ~1 GiB
+    image: ghcr.io/open-telemetry/demo:3.1.0-load-generator
+    environment:
+      <<: *sdk-env
+      LOCUST_WEB_PORT: "8089"
+      LOCUST_WEB_HOST: 0.0.0.0
+      LOCUST_USERS: "${DEMO_USERS:-20}"
+      LOCUST_HOST: http://frontend:8080
+      LOCUST_HEADLESS: "false"
+      LOCUST_AUTOSTART: "true"
+      LOCUST_BROWSER_TRAFFIC_ENABLED: "false"
+      FLAGD_OFREP_PORT: "8016"
+      PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION: python
+      OTEL_PYTHON_SDK_INTERNAL_METRICS_ENABLED: "true"
+      OTEL_SERVICE_NAME: load-generator
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.1.0,service.criticality=low
+    ports: ["127.0.0.1:8089:8089"]
+    depends_on: {frontend: {condition: service_healthy}, flagd: {condition: service_started}}
+    mem_limit: 400m
+    restart: unless-stopped
+    logging: *logging
+
+  # ---- profile `full`: the UI side of the demo (just demo-up full) ----
+  image-provider:
+    image: ghcr.io/open-telemetry/demo:3.1.0-image-provider
+    profiles: [full]
+    environment:
+      IMAGE_PROVIDER_PORT: "8081"
+      OTEL_COLLECTOR_HOST: otel-collector
+      OTEL_COLLECTOR_PORT_GRPC: "4317"
+      OTEL_SERVICE_NAME: image-provider
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.1.0,service.criticality=low
+    healthcheck: {test: [CMD, wget, --quiet, --tries=1, --spider, "http://localhost:8081/status"], start_period: 10s, interval: 5s, timeout: 5s, retries: 20}
+    depends_on: [otel-collector]
+    mem_limit: 120m
+    restart: unless-stopped
+    logging: *logging
+
+  flagd-ui:                    # web editor for ./flagd/demo.flagd.json (via frontend-proxy /feature)
+    image: ghcr.io/open-telemetry/demo:3.1.0-flagd-ui
+    profiles: [full]
+    environment:
+      FLAGD_UI_PORT: "4000"
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_SERVICE_NAME: flagd-ui
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.1.0,service.criticality=low
+      SECRET_KEY_BASE: yYrECL4qbNwleYInGJYvVnSkwJuSQJ4ijPTx5tirGUXrbznFIBFVJdPl5t6O9ASw
+      PHX_HOST: localhost
+    volumes: ["./flagd:/app/data"]
+    healthcheck: {test: [CMD, bash, -c, "echo > /dev/tcp/localhost/4000"], start_period: 10s, interval: 5s, timeout: 5s, retries: 20}
+    depends_on: [otel-collector, flagd]
+    mem_limit: 220m
+    restart: unless-stopped
+    logging: *logging
+
+  frontend-proxy:              # envoy: shop on /, locust on /loadgen, flagd-ui on /feature
+    image: ghcr.io/open-telemetry/demo:3.1.0-frontend-proxy
+    profiles: [full]
+    environment:
+      FRONTEND_PORT: "8080"
+      FRONTEND_HOST: frontend
+      LOCUST_WEB_HOST: load-generator
+      LOCUST_WEB_PORT: "8089"
+      FLAGD_UI_HOST: flagd-ui
+      FLAGD_UI_PORT: "4000"
+      FLAGD_HOST: flagd
+      FLAGD_PORT: "8013"
+      IMAGE_PROVIDER_HOST: image-provider
+      IMAGE_PROVIDER_PORT: "8081"
+      OTEL_COLLECTOR_HOST: otel-collector
+      OTEL_COLLECTOR_PORT_GRPC: "4317"
+      OTEL_COLLECTOR_PORT_HTTP: "4318"
+      # routes to services this demo does not run: envoy needs valid ports, DNS may fail
+      CHATBOT_HOST: chatbot
+      CHATBOT_PORT: "7860"
+      FIREPIT_HOST: firepit
+      FIREPIT_PORT: "8080"
+      GRAFANA_HOST: grafana
+      GRAFANA_PORT: "3000"
+      JAEGER_HOST: jaeger
+      JAEGER_UI_PORT: "16686"
+      OPAMP_SERVER_HOST: opamp-server
+      OPAMP_SERVER_UI_PORT: "4321"
+      TELEMETRY_DOCS_HOST: telemetry-docs
+      TELEMETRY_DOCS_PORT: "8000"
+      ENVOY_PORT: "8080"
+      ENVOY_ADDR: 0.0.0.0
+      ENVOY_ADMIN_PORT: "10000"
+      OTEL_SERVICE_NAME: frontend-proxy
+      OTEL_SERVICE_NAMESPACE: opentelemetry-demo
+      OTEL_RESOURCE_ATTRIBUTES: service.namespace=opentelemetry-demo,service.version=3.1.0,service.criticality=critical
+    ports: ["127.0.0.1:18081:8080"]
+    depends_on: {frontend: {condition: service_healthy}, flagd-ui: {condition: service_healthy}, image-provider: {condition: service_healthy}}
+    mem_limit: 100m
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  tn-demo-vmdata: {}
