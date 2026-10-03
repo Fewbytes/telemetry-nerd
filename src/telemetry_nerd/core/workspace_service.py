@@ -1336,6 +1336,10 @@ class WorkspaceService:
             "gaps": gaps,
         }
 
+    def families_list(self, source: str) -> list[dict]:
+        """Every name-template family on a source with its status (undecided ones first)."""
+        return self.families.list(source)
+
     def catalog_overview(self, source: str, top: int = 30) -> list[dict]:
         return family_overview(self.catalog.list_entries(source), top)
 

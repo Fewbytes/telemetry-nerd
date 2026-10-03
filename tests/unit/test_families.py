@@ -341,3 +341,21 @@ async def test_api_members_and_decisions(svc):
         assert c.post(
             "/api/catalog/families", json={"source": "default", "template": "x", "action": "melt"}
         ).status_code in (400, 404)
+
+
+async def test_mcp_family_tool_forgiving(svc):
+    async with Client(build_mcp(svc, "http://x")) as c:
+        listed = await c.call_tool("catalog_family", {})
+        assert not listed.is_error
+        out = json.loads(listed.content[0].text)
+        assert FAMILY in {f["template"] for f in out["families"]} and "usage" in out
+        # `family` alias for `template`, `source` omitted
+        ok = await c.call_tool(
+            "catalog_family", {"family": FAMILY, "action": "confirm", "basis": "same counter"}
+        )
+        assert not ok.is_error and json.loads(ok.content[0].text)["template"] == FAMILY
+        # unknown family: the error says what exists
+        miss = await c.call_tool(
+            "catalog_family", {"template": "airflow_ti_finish", "action": "split", "basis": "x"}
+        )
+        assert miss.is_error and "did you mean" in miss.content[0].text

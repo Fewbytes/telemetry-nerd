@@ -307,6 +307,17 @@ class FamilyStore:
             "rejected": len(rejected & {f.template for f in detection.families}),
         }
 
+    def list(self, source: str) -> list[dict]:
+        rows = self._db.execute(
+            "SELECT template, members, distinct_dims, status, decided_by FROM catalog_families "
+            "WHERE source = ? ORDER BY (status = 'confirmed'), members DESC, template",
+            (source,),
+        ).fetchall()
+        return [
+            {"template": t, "members": m, "distinct": d, "status": st, "decided_by": by}
+            for t, m, d, st, by in rows
+        ]
+
     def info(self, source: str, template: str) -> dict | None:
         r = self._db.execute(
             "SELECT members, distinct_dims, status, decided_by, basis FROM catalog_families "

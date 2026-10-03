@@ -280,3 +280,21 @@ def test_skill_frontmatter_and_discipline_rules():
         assert phrase in text, phrase
     cmd = (ROOT / "commands/learn.md").read_text()
     assert cmd.startswith("---") and "description:" in cmd.split("---")[1]
+
+
+async def test_source_defaults_to_default(svc):
+    """catalog_* tools work with no `source` (Claude only ever has one; the eval failed 2x)."""
+    mcp = build_mcp(svc, "http://x")
+    await call(mcp, "source_learn")
+    res, found = await call(mcp, "catalog_search", {"query": "app_"})
+    assert not res.is_error and "app_requests_total" in json.dumps(found)
+    res, got = await call(mcp, "catalog_get", {"metric": "app_requests_total"})
+    assert not res.is_error and got["metric"] == "app_requests_total"
+    res, _ = await call(mcp, "catalog_relations")
+    assert not res.is_error
+    res, _ = await call(mcp, "binding_suggest")
+    assert not res.is_error
+    res, _ = await call(mcp, "catalog_write", {"claims": []})
+    assert not res.is_error
+    res, _ = await call(mcp, "catalog_relate", {"claims": []})
+    assert not res.is_error

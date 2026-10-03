@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
@@ -153,6 +154,61 @@ def _issues(e: ValidationError) -> str:
 
 def _source_error(e: SourceError) -> ToolError:
     return ToolError(f"{e} (hint: {e.hint})" if e.hint else str(e))
+
+
+GAP_EXAMPLE = (
+    '{"missing_signal": "queue depth of the payments worker", '
+    '"needed_for": "saturation of the payments service", '
+    '"suggestion": {"name": "payments_queue_depth", "type": "gauge", "labels": ["worker"]}}'
+)
+_METRIC_TYPES = ("counter", "gauge", "histogram", "summary")
+
+
+def _guess_type(name: str) -> str:
+    return (
+        "counter"
+        if name.endswith("_total")
+        else "histogram"
+        if name.endswith("_bucket")
+        else "gauge"
+    )
+
+
+def _gap_suggestion(raw: Any) -> Any:
+    """Accept the shapes Claude naturally tries: a dict with `metric` for `name`, labels as a
+    string, or a bare string 'name', 'name (gauge)', 'name:gauge'. Anything else is left for the
+    model validation to reject with the expected example."""
+    if isinstance(raw, str):
+        parts = [p for p in re.split(r"[\s:()\[\],]+", raw.strip()) if p]
+        if not parts:
+            return raw
+        kind = next((p.lower() for p in parts[1:] if p.lower() in _METRIC_TYPES), None)
+        return {"name": parts[0], "type": kind or _guess_type(parts[0])}
+    if isinstance(raw, dict):
+        d = dict(raw)
+        if "name" not in d:
+            for alias in ("metric", "signal", "metric_name"):
+                if alias in d:
+                    d["name"] = d.pop(alias)
+                    break
+        if isinstance(d.get("labels"), str):
+            d["labels"] = [x for x in re.split(r"[\s,]+", d["labels"]) if x]
+        if isinstance(d.get("type"), str):
+            d["type"] = d["type"].strip().lower()
+        if "type" not in d and isinstance(d.get("name"), str):
+            d["type"] = _guess_type(d["name"])
+        return d
+    return raw
+
+
+def _gap_args(missing_signal: Any, needed_for: Any, suggestion: Any, description: Any) -> dict:
+    sug = _gap_suggestion(suggestion)
+    sug_name = sug.get("name") if isinstance(sug, dict) else None
+    return {
+        "missing_signal": missing_signal or description or sug_name,
+        "needed_for": needed_for or description,
+        "suggestion": sug,
+    }
 
 
 def group_summary(g, ui_url: str) -> dict:
@@ -691,11 +747,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
     @mcp.tool()
     def catalog_search(
-        source: str,
         query: str | None = None,
         prefix: str | None = None,
         needs_review: bool = False,
         limit: int = 50,
+        source: str = "default",
     ) -> str:
         """Find catalogued metrics. `query` matches name or description; `prefix` is a name
         prefix (a family, e.g. node_cpu). `needs_review` keeps metrics nobody has interpreted yet
@@ -707,7 +763,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise _fail(e) from e
 
     @mcp.tool()
-    def catalog_context(source: str, files: list[dict[str, str]], dry_run: bool = False) -> str:
+    def catalog_context(
+        files: list[dict[str, str]], dry_run: bool = False, source: str = "default"
+    ) -> str:
         """Teach the catalog what the repo, docs and dashboards say about this source's metrics.
         You read the files (rg/ast-grep to find them), send `files` as [{path, text}] (<= 50 files,
         <= 1 MB each; the daemon reads nothing itself). Extracted deterministically: Python
@@ -729,14 +787,39 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise _fail(e) from e
 
     @mcp.tool()
-    def catalog_family(source: str, template: str, action: str, basis: str | None = None) -> str:
+    def catalog_family(
+        template: str | None = None,
+        action: str | None = None,
+        basis: str | None = None,
+        source: str = "default",
+        family: str | None = None,
+    ) -> str:
         """Decide a name-template family: `confirm` (its members really do share a metric with a
         dimension encoded in the name) or `split` (they are unrelated metrics: dissolve it for good).
-        Families look like airflow_ti_finish_*_removed; list them with catalog_search (members are
-        hidden behind their family). Needs a `basis`. You cannot change a family the user confirmed."""
+        Families look like airflow_ti_finish_*_removed. Call with no arguments to LIST the families
+        (undecided first); then decide one: catalog_family(template="airflow_ti_finish_*_removed",
+        action="confirm", basis="members differ only in the task name"). `family` is accepted as an
+        alias of `template`; `source` defaults to "default". Needs a `basis`. You cannot change a
+        family the user confirmed."""
         try:
+            template = template or family
+            known = service.ws.families_list(source)
+            if not template or not action:
+                return _dump(
+                    {
+                        "families": known,
+                        "usage": 'catalog_family(template="<one of families[].template>", '
+                        'action="confirm"|"split", basis="what you checked")',
+                    }
+                )
             if not basis or not basis.strip():
                 raise ValueError("basis is required: one line saying what you checked")
+            if template not in {f["template"] for f in known}:
+                near = [f["template"] for f in known if template.strip("*_") in f["template"]]
+                raise NotFound(
+                    f"no family {template!r} on {source!r}; "
+                    f"{'did you mean ' + repr(near[:5]) if near else 'list them with no arguments'}"
+                )
             return _dump(
                 service.ws.catalog_family_decide(
                     source, template, action, "claude", "claude", basis=basis.strip()
@@ -746,7 +829,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise _fail(e) from e
 
     @mcp.tool()
-    def catalog_get(source: str, metric: str) -> str:
+    def catalog_get(metric: str, source: str = "default") -> str:
         """One metric's full catalog entry: resolved fields and every competing claim with its
         origin, confidence and basis, plus the fields where claims disagree."""
         try:
@@ -767,7 +850,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise _fail(e) from e
 
     @mcp.tool()
-    def catalog_write(source: str, claims: list[dict[str, Any]]) -> str:
+    def catalog_write(claims: list[dict[str, Any]], source: str = "default") -> str:
         """Record what you have learned about metrics, up to 200 claims per call. Each claim:
         {metric, field, value, confidence, basis}. field is one of type, unit, bounds,
         additivity_series, additivity_time, role, description, histogram_family, thresholds ([{value, label,
@@ -787,7 +870,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
     @mcp.tool()
     async def catalog_scan(
-        source: str,
+        source: str = "default",
         metrics: list[str] | None = None,
         prefix: str | None = None,
         limit: int = 25,
@@ -840,7 +923,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         return out
 
     @mcp.tool()
-    def catalog_relate(source: str, claims: list[dict[str, Any]], level: str = "catalog") -> str:
+    def catalog_relate(
+        claims: list[dict[str, Any]], level: str = "catalog", source: str = "default"
+    ) -> str:
         """Record typed edges between metrics (level=catalog) or datasets (level=workspace), up to
         200 per call. Each claim: {subject, kind, object, confidence, basis, params?, retract?}.
         kinds: derived_from, part_of (errors part_of requests), same_quantity, upstream_of,
@@ -861,7 +946,6 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
     @mcp.tool()
     def catalog_bind(
-        source: str,
         kind: str,
         key: str,
         roles: dict[str, str | None],
@@ -870,6 +954,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         join_on: list[str] | None = None,
         retract: bool = False,
         level: str = "catalog",
+        source: str = "default",
     ) -> str:
         """Bind signals to the roles of a model for one service/resource `key`. kinds and roles:
         littles_law {arrival_rate, latency, concurrency}; RED {rate, errors, duration};
@@ -896,7 +981,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
     @mcp.tool()
     def binding_suggest(
-        source: str, kind: str | None = None, key: str | None = None, limit: int = 10
+        kind: str | None = None,
+        key: str | None = None,
+        limit: int = 10,
+        source: str = "default",
     ) -> str:
         """Propose model bindings from what the catalog already knows (metric names, types, packs,
         relations; nothing is queried from the source). kind: littles_law | RED | USE (default all).
@@ -915,13 +1003,13 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
     @mcp.tool()
     def binding_accept(
-        source: str,
         id: str,
         basis: str,
         key: str | None = None,
         overrides: dict[str, str | None] | None = None,
         join_on: list[str] | None = None,
         confidence: float | None = None,
+        source: str = "default",
     ) -> str:
         """Confirm a `binding_suggest` suggestion by id: a catalog_bind with its roles and
         join_on. `basis` (required) says what you checked. `key` names the entity to bind (as in
@@ -1031,7 +1119,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
     @mcp.tool()
     def catalog_relations(
-        source: str,
+        source: str = "default",
         metric: str | None = None,
         kind: str | None = None,
         level: str = "catalog",
@@ -1476,20 +1564,27 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         return _dump(out)
 
     @mcp.tool()
-    def gap_create(missing_signal: str, needed_for: str, suggestion: dict[str, Any]) -> str:
-        """Record a signal you need but cannot query. suggestion: {name, type
-        (counter|gauge|histogram|summary), labels?}. Returns {gap}."""
+    def gap_create(
+        missing_signal: str | None = None,
+        needed_for: str | None = None,
+        suggestion: dict[str, Any] | str | None = None,
+        description: str | None = None,
+    ) -> str:
+        """Record a signal you need but cannot query (so the user can instrument it). Example:
+        gap_create(missing_signal="queue depth of the payments worker",
+        needed_for="saturation of the payments service",
+        suggestion={"name": "payments_queue_depth", "type": "gauge", "labels": ["worker"]}).
+        suggestion.type is counter|gauge|histogram|summary; labels is optional. Forgiving: a string
+        suggestion ("payments_queue_depth gauge") is parsed, `description` fills a missing
+        missing_signal/needed_for. Returns {gap}."""
         try:
             data = GapIn.model_validate(
-                {
-                    "missing_signal": missing_signal,
-                    "needed_for": needed_for,
-                    "suggestion": suggestion,
-                }
+                _gap_args(missing_signal, needed_for, suggestion, description)
             )
             return _dump({"gap": ws.gap_create(data, "claude").id})
         except (ValidationError, ValueError) as e:
-            raise _fail(e) from e
+            detail = _issues(e) if isinstance(e, ValidationError) else str(e)
+            raise ToolError(f"gap_create: {detail}. Expected: {GAP_EXAMPLE}") from e
 
     @mcp.tool()
     def reply(thread: str, text: str) -> str:

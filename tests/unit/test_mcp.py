@@ -315,3 +315,38 @@ async def test_finding_with_unknown_uncertainty_is_recorded_and_flagged(tmp_path
     assert "uncertainty unknown" in out["uncertainty"][0]["message"]
     brief = json.loads(text_of(await call(mcp, "workspace_get", {})))
     assert brief["findings"][0]["uncertainty"] == ["uncertainty_unknown"]
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"missing_signal": "q", "needed_for": "sat", "suggestion": "queue_depth gauge"},
+        {"missing_signal": "q", "needed_for": "sat", "suggestion": "queue_depth (gauge)"},
+        {"description": "queue depth, needed for saturation", "suggestion": "queue_depth:gauge"},
+        {"missing_signal": "q", "needed_for": "sat", "suggestion": {"metric": "queue_depth"}},
+        {
+            "missing_signal": "q",
+            "needed_for": "sat",
+            "suggestion": {"name": "queue_depth", "type": "Gauge", "labels": "a, b"},
+        },
+    ],
+)
+async def test_gap_create_forgiving_shapes(tmp_path, args):
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    r = await call(mcp, "gap_create", args)
+    assert not r.is_error, text_of(r)
+    assert json.loads(text_of(r))["gap"] == "g1"
+
+
+async def test_gap_create_error_shows_expected_json(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    r = await call(mcp, "gap_create", {"missing_signal": "q"})
+    assert r.is_error
+    msg = text_of(r)
+    assert "needed_for" in msg and '"suggestion": {"name"' in msg
+    r = await call(
+        mcp,
+        "gap_create",
+        {"missing_signal": "q", "needed_for": "x", "suggestion": {"name": "m", "type": "weird"}},
+    )
+    assert r.is_error and "Expected" in text_of(r)
