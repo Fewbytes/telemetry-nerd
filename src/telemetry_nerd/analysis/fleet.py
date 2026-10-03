@@ -269,8 +269,8 @@ def missing_bounds(
 ) -> dict[str, np.ndarray]:
     """Missing-member bounds of the per-step quantiles: at a step where m = alive - n - gone
     members did not report (`gone`: members the source marked stale, counted from their stale
-    point; the source marked them stale, so they have no value to bound), each quantile of all alive members is recomputed with the m missing values at
-    -inf (lower bound) and at +inf (upper bound). The bound is -inf / +inf when the quantile's
+    point; the source marked them stale, so they have no value to bound), each quantile of all
+    alive members is recomputed with the m missing values at -inf (lower bound) and at +inf (upper bound). The bound is -inf / +inf when the quantile's
     order statistics reach into the missing ones (m large enough for that rank): unbounded.
     Where nobody is missing the bounds equal the quantile. Gated like the spread (n per step).
     Returns {name_lo, name_hi} per quantile; NaN where the quantile itself is not drawn."""

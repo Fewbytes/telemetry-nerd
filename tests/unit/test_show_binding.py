@@ -3,6 +3,7 @@
 import json
 import math
 
+import numpy as np
 import pyarrow as pa
 import pytest
 from mcp import Client
@@ -579,3 +580,50 @@ def test_verdict_reference_window_gaps_and_absent_members_are_disclosed_in_one_n
     [note] = notes
     assert note.startswith("reference windows: members without an error series counted as 0")
     assert "1 member-steps: excluded" in note
+
+
+def test_verdict_pairs_members_on_the_labels_both_series_carry():
+    a5, a2 = {"service": "a", "status": "500"}, {"service": "a", "status": "502"}
+    num = [(a5, 60_000, 0.25), (a2, 60_000, 0.25)]
+    den = [({"service": "a"}, 60_000, 10.0)]
+    a, n, notes = _ratio(num, den, [60_000])
+    assert a[0] == pytest.approx(30.0) and n[0] == pytest.approx(600.0)  # errors summed
+    assert not any("counted as 0" in x for x in notes)
+
+
+def test_verdict_series_with_no_shared_labels_are_not_paired_not_zero():
+    num = [({"code": "500"}, 60_000, 0.5)]
+    den = [({"service": "a"}, 60_000, 10.0)]
+    a, n, notes = _ratio(num, den, [60_000])
+    assert np.isnan(a).all() and np.isnan(n).all()
+    assert any("do not share member labels; not paired" in x for x in notes)
+
+
+def test_verdict_absent_error_series_only_in_a_reference_window_says_so():
+    a_ = {"service": "a"}
+    _, _, notes = _ratio([], [(a_, 60_000, 10.0)], [60_000], shift=0)
+    assert not any("reference window" in x for x in notes)
+    from types import SimpleNamespace
+
+    from telemetry_nerd.core.verdict_ops import VerdictOps
+
+    data = {"num": _result([]), "den": _result([(a_, 0, 10.0)])}
+    datasets = SimpleNamespace(
+        meta=lambda ds: SimpleNamespace(parents=["num", "den"]), get=lambda ds: (None, data[ds])
+    )
+    ops = VerdictOps(SimpleNamespace(datasets=datasets))  # type: ignore[arg-type]
+    stats = ops._ratio_stats()
+    ops._ratio_counts("r", np.array([60_000]), 60_000, 60.0, stats)
+    out: list[str] = []
+    ops._ratio_notes(stats, out)
+    assert out and out[0].endswith("(in a reference window)")
+
+
+def test_error_ratio_names_absent_members_with_a_cap():
+    labs = [{"service": c} for c in "abcde"]
+    num = _result([(labs[0], 60_000, 0.5)])
+    den = _result([(lb, 60_000, 10.0) for lb in labs])
+    _, notes = error_ratio(num, den, 60_000)
+    [n] = [x for x in notes if "no error series" in x]
+    assert n.startswith("4 member(s)") and "(+1)" in n
+    assert n.count("service") == 3

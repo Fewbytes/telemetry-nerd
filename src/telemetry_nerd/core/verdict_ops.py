@@ -121,22 +121,40 @@ class VerdictOps:
         return "previous", "no seasonal operating profile cached: the preceding windows"
 
     # data ----------------------------------------------------------------------------------------
-    def _values(self, ds: str, shift: int) -> dict[str, dict[int, float]]:
-        """Per member (labels key): {ts on now's grid: avg}."""
+    def _label_sets(self, ds: str) -> list[dict]:
         _, r = self.svc.datasets.get(ds)
-        labels = {row["series_id"]: _labels_key(row["labels"]) for row in r.series.to_pylist()}
+        return [json.loads(row["labels"]) for row in r.series.to_pylist()]
+
+    @staticmethod
+    def _member(labels: dict, keys: frozenset[str] | None) -> str:
+        """The member identity: the labels, restricted to `keys` when given."""
+        return json.dumps(
+            {k: v for k, v in labels.items() if keys is None or k in keys}, sort_keys=True
+        )
+
+    def _values(
+        self, ds: str, shift: int, keys: frozenset[str] | None = None
+    ) -> dict[str, dict[int, float]]:
+        """Per member (labels key, restricted to `keys`): {ts on now's grid: avg}; series of one
+        member that differ only in the dropped labels are summed."""
+        _, r = self.svc.datasets.get(ds)
+        labels = {
+            row["series_id"]: self._member(json.loads(row["labels"]), keys)
+            for row in r.series.to_pylist()
+        }
         out: dict[str, dict[int, float]] = {}
         for row in r.buckets.to_pylist():
             v = row["avg"]
             if v is None or not math.isfinite(v):
                 continue
-            out.setdefault(labels.get(row["series_id"], "{}"), {})[row["ts_ms"] + shift] = v
+            pts = out.setdefault(labels.get(row["series_id"], "{}"), {})
+            t = row["ts_ms"] + shift
+            pts[t] = pts.get(t, 0.0) + v
         return out
 
-    def _member_keys(self, ds: str) -> set[str]:
+    def _member_keys(self, ds: str, keys: frozenset[str] | None = None) -> set[str]:
         """The members a dataset has a series for, whether or not any step has a value."""
-        _, r = self.svc.datasets.get(ds)
-        return {_labels_key(row["labels"]) for row in r.series.to_pylist()}
+        return {self._member(lb, keys) for lb in self._label_sets(ds)}
 
     @staticmethod
     def _arr(points: dict[int, float], grid: np.ndarray) -> np.ndarray:
@@ -163,12 +181,23 @@ class VerdictOps:
             nan = np.full(grid.size, np.nan)
             return nan, nan
         num, den = self.svc.datasets.meta(ds).parents[:2]
-        dv = self._values(den, shift)
-        nv = self._values(num, shift) if num is not None else {}
-        nkeys = self._member_keys(num) if num is not None else set()
+        side = "now" if shift == 0 else "ref"
+        keys: frozenset[str] | None = None
+        if num is not None and self._label_sets(num):
+            # pair on the label names both series carry (errors may carry an extra `status`)
+            num_names = set().union(*(lb.keys() for lb in self._label_sets(num)))
+            den_names = set().union(*(lb.keys() for lb in self._label_sets(den)))
+            common = frozenset(num_names & den_names)
+            if num_names and den_names and not common:
+                stats["unpaired"] = True  # no shared identity: not paired, nothing counted as 0
+                nan = np.full(grid.size, np.nan)
+                return nan, nan
+            keys = common
+        dv = self._values(den, shift, keys)
+        nv = self._values(num, shift, keys) if num is not None else {}
+        nkeys = self._member_keys(num, keys) if num is not None else set()
         a = np.full(grid.size, np.nan)
         n = np.full(grid.size, np.nan)
-        side = "now" if shift == 0 else "ref"
         for mem, dpts in dv.items():
             d = self._arr(dpts, grid)
             if not nkeys:
@@ -185,7 +214,7 @@ class VerdictOps:
             n = np.where(ok, np.where(np.isnan(n), 0.0, n) + d, n)
         a, n = a * step_s, n * step_s
         if not nkeys:
-            stats["all_absent"] = True
+            stats["all_absent_" + side] = True
         a = np.clip(a, 0, None)
         return np.minimum(a, n), n
 
@@ -195,8 +224,12 @@ class VerdictOps:
 
     @staticmethod
     def _ratio_notes(stats: dict, notes: list[str]) -> None:
-        if stats.get("all_absent"):
+        if stats.get("unpaired"):
+            notes.append("error and request series do not share member labels; not paired")
+        if stats.get("all_absent_now"):
             notes.append(_ABSENT_ERRORS_NOTE)
+        elif stats.get("all_absent_ref"):
+            notes.append(_ABSENT_ERRORS_NOTE + " (in a reference window)")
         for side, label in (("now", ""), ("ref", "reference windows: ")):
             zero = sorted(stats["zero_" + side])
             parts = []
