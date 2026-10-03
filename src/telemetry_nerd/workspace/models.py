@@ -8,6 +8,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from telemetry_nerd.analysis.exprkind import min_samples
+from telemetry_nerd.analysis.sources import Source as VariationSource
 from telemetry_nerd.model.time import parse_duration
 
 Finite = Annotated[float, Field(allow_inf_nan=False)]
@@ -75,6 +76,8 @@ class StatisticRef(_Strict):
     uncertainty_unknown: bool = False
     method: str = Field(min_length=1)
     params: dict = Field(default_factory=dict)
+    #: what the statistic's variation is attributed to (spec §5.4): the op's label, kept as is
+    source: VariationSource | None = None
 
     @model_validator(mode="after")
     def _uncertainty(self) -> StatisticRef:
@@ -208,6 +211,12 @@ class FindingIn(_Strict):
         if (self.hypothesis is None) != (self.stance is None):
             raise ValueError("hypothesis and stance must be given together")
         return self
+
+    @property
+    def sources(self) -> list[str]:
+        """Variation sources of the cited statistics (spec §5.4), in citation order."""
+        found = (getattr(e, "source", None) for e in self.evidence)
+        return list(dict.fromkeys(s for s in found if s))
 
 
 Verdict = Literal["accepted", "rejected", "needs-more"]

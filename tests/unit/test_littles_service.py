@@ -77,6 +77,13 @@ def test_consistent_total_states_assumptions_and_cites_evidence(tmp_path):
         "claude",
     )  # fmt: skip
     assert f.id
+    # spec §5.4: a discrepancy inside the measurement interval is the measurement system's; the
+    # label travels with the statistic into the finding and workspace_get
+    assert ev["source"] == disc["source"] == "measurement_system"
+    assert f.sources == ["measurement_system"]
+    brief = next(x for x in svc.ws.brief()["findings"] if x["id"] == f.id)
+    assert brief["sources"] == ["measurement_system"]
+    assert {v["source"] for v in out["variation"]} == {"measurement_system", "common_cause"}
 
 
 def test_queries_are_rates_of_sum_and_count_never_percentiles(tmp_path):
@@ -149,6 +156,10 @@ def test_load_spike_is_called_out_as_transient_at_a_peak(tmp_path):
     assert any("transient at a load peak" in w for w in out["warnings"])
     assert "AT A LOAD PEAK" in out["summary"]
     assert any("transition out of steady state" in h for h in out["hints"])
+    # the special-cause transient carries its label onto its evidence and the variation list
+    ev = [e for e in out["total"]["evidence"] if e["name"] == "littles_law_transient"]
+    assert {e["source"] for e in ev} == {t["source"] for t in tr}
+    assert {t["source"] for t in tr} <= {v["source"] for v in out["variation"]}
 
 
 def test_no_concurrency_data_says_the_check_cannot_be_done(tmp_path):
@@ -158,6 +169,14 @@ def test_no_concurrency_data_says_the_check_cannot_be_done(tmp_path):
     assert "L was not estimated" in out["summary"]
     assert out["discrepancy"]["L"] is None and out["discrepancy"]["ratio"] is None
     assert any("in-flight gauge" in h for h in out["hints"])
+    assert out["variation"] == []  # nothing measured, nothing labelled
+
+
+def test_unknown_unit_is_a_measurement_system_item(tmp_path):
+    svc = _service(tmp_path, latency_name="http_request_duration")
+    out = _run(svc, latency="http_request_duration")
+    assert {"source": "measurement_system", "finding": "latency unit assumed",
+            "caveat": "latency_unit_assumed"} in out["variation"]  # fmt: skip
 
 
 def test_millisecond_histogram_is_converted(tmp_path):

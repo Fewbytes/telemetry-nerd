@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from telemetry_nerd.analysis.sources import COMMON, MEASUREMENT, SPECIAL
 from telemetry_nerd.analysis.stability import trend
 from telemetry_nerd.analysis.stats import t_quantile
 
@@ -34,11 +35,6 @@ COMMON_CAUSE_WARN = 0.10  # common-cause half-width (95%, relative) from which t
 PEAK_LAMBDA = 1.1  # a window's lambda this far above the median window: a load peak
 PEAK_W = 1.5  # a window's W this far above the median window: a latency surge
 MAX_ITER = 6
-
-#: deviation sources (SPC vocabulary)
-MEASUREMENT = "measurement_system"
-COMMON = "common_cause"
-SPECIAL = "special_cause"
 
 
 @dataclass(frozen=True)

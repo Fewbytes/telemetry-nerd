@@ -7,6 +7,8 @@ import math
 from collections import OrderedDict
 from collections.abc import Hashable, Iterable
 
+from telemetry_nerd.analysis.sources import SOURCES
+
 
 def sig(v: float | None, digits: int = 4) -> float | None:
     """v to `digits` significant digits; None for None, NaN and +-inf."""
@@ -32,23 +34,34 @@ def add_caveats(caveats: list[str], more: Iterable[str]) -> None:
 
 
 def statistic(
-    dataset: str, name: str, value: float | None, interval: list | None, method: str, params: dict
+    dataset: str,
+    name: str,
+    value: float | None,
+    interval: list | None,
+    method: str,
+    params: dict,
+    source: str | None = None,
 ) -> dict:
     """An `evidence` statistic for finding_create (value and interval already rounded).
 
     No interval (None, or a bound that is not finite) is unknown uncertainty, not zero: the
     statistic is still evidence, stated `uncertainty_unknown: true` (spec §5.3). Derive one
-    where possible first (bootstrap, effective n, bucket bounds, propagation)."""
+    where possible first (bootstrap, effective n, bucket bounds, propagation).
+
+    `source`: what the statistic's variation or deviation is attributed to (spec §5.4,
+    `analysis.sources`): common_cause | special_cause | measurement_system | undetermined.
+    Left out when the statistic reports no variation (a level, a count)."""
+    if source is not None and source not in SOURCES:
+        raise ValueError(f"unknown variation source {source!r}")
+    out: dict = {"kind": "statistic", "dataset": dataset, "name": name, "value": value}
     if interval is None or any(v is None for v in interval):
-        return {
-            "kind": "statistic", "dataset": dataset, "name": name, "value": value,
-            "interval": None, "exact": False, "uncertainty_unknown": True, "method": method,
-            "params": params,
-        }  # fmt: skip
-    return {
-        "kind": "statistic", "dataset": dataset, "name": name, "value": value,
-        "interval": interval, "exact": False, "method": method, "params": params,
-    }  # fmt: skip
+        out |= {"interval": None, "exact": False, "uncertainty_unknown": True}
+    else:
+        out |= {"interval": interval, "exact": False}
+    out |= {"method": method, "params": params}
+    if source is not None:
+        out["source"] = source
+    return out
 
 
 class Memo[V]:

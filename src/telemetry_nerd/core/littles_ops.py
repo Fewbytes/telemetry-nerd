@@ -15,17 +15,16 @@ from typing import Any
 import numpy as np
 import polars as pl
 
+from telemetry_nerd.analysis import sources
 from telemetry_nerd.analysis.exprkind import rate_interval_ms
 from telemetry_nerd.analysis.littles import (
-    COMMON,
-    MEASUREMENT,
-    SPECIAL,
     Block,
     GroupResult,
     Substeps,
     check,
     combine,
 )
+from telemetry_nerd.analysis.sources import COMMON, MEASUREMENT, UNDETERMINED
 from telemetry_nerd.catalog.models import native_family
 from telemetry_nerd.catalog.relations import SUGGESTIONS
 from telemetry_nerd.core.uncertainty import mark_statistics
@@ -88,11 +87,7 @@ TRANSIENT_HINTS = {
         "routing / instrumentation change in those windows"
     ),
 }
-SOURCE_TEXT = {
-    MEASUREMENT: "measurement system",
-    COMMON: "common cause",
-    SPECIAL: "special cause",
-}
+SOURCE_TEXT = sources.TEXT
 NOT_POSSIBLE = (
     "Little's law cannot be checked without a concurrency (in-flight) signal: L must be "
     "measured, never derived from lambda x W (that would make the check circular)"
@@ -618,6 +613,7 @@ class LittlesOps:
             "verdict": tot.verdict,
             "classification": groups[0]["classification"],
             "warnings": warnings,
+            "variation": _variation(groups[0], caveats),
             "question": "Is mean concurrency L consistent with throughput x mean latency (L = lambda W)?",
             "range": [iso(cfg["start_ms"]), iso(cfg["end_ms"])],
             "window": format_duration(cfg["window_ms"]),
@@ -862,6 +858,45 @@ def _transient_wire(g: GroupResult, t: dict) -> dict:
     }  # fmt: skip
 
 
+def _variation(g: dict, caveats: list[str]) -> list[dict]:
+    """The total group's labelled findings (spec §5.4), in one list."""
+    d = g["discrepancy"]
+    if d["ratio"] is None:
+        return sources.measurement_items(caveats)
+    lo, hi = d["relative_ci95"] or (None, None)
+    out = [sources.item(
+        MEASUREMENT, f"measurement interval of L / (lambda W) - 1: {_pct(lo)} to {_pct(hi)} "
+        "(gauge sampling, edge straddle, scrape timing, rate lookback)",
+    )]  # fmt: skip
+    if sysd := g["classification"]["systematic"]:
+        out.append(sources.item(
+            MEASUREMENT, f"systematic offset L / (lambda W) {_n(sysd['ratio'])} in "
+            f"{sysd['windows'][0]} of {sysd['windows'][1]} windows", windows=sysd["windows"],
+        ))  # fmt: skip
+    cc = g["common_cause"]
+    out.append(sources.item(
+        COMMON, f"small-system envelope: L and lambda W fluctuate +-{100 * (cc['rel95'] or 0):.0f}% "
+        "per window at this traffic",
+    ))  # fmt: skip
+    out += [
+        sources.item(
+            t["source"], f"transient window {t['window'][0]}: L / (lambda W) {_n(t['ratio'])} vs "
+            f"reference {_n(t['reference'])} ({t['phase']})", window=t["window"],
+        )
+        for t in g["classification"]["transient"]
+    ]  # fmt: skip
+    return out + sources.measurement_items(caveats)
+
+
+def _pooled_source(g: GroupResult) -> str:
+    """Source of the whole-range discrepancy: a systematic offset, or one inside the
+    measurement interval, is the measurement system's; one carried by transient windows alone
+    cannot be told apart at the pooled level (the transients carry their own labels)."""
+    if g.systematic is not None or g.pooled.verdict == "consistent":
+        return MEASUREMENT
+    return UNDETERMINED
+
+
 def _group(cfg: dict, L_ds: str, labels: dict, g: GroupResult) -> dict:
     p = g.pooled
     judged = [w for w in g.windows if w.ratio is not None]
@@ -948,15 +983,16 @@ def _group(cfg: dict, L_ds: str, labels: dict, g: GroupResult) -> dict:
             "group": labels or "total", "window": _span(p), "by": cfg["by"],
             "datasets": cfg["datasets"], "unit": cfg["unit"],
         }  # fmt: skip
+        src = _pooled_source(g)
         ev = [
             statistic(L_ds, "littles_law_ratio", sig(p.ratio), sig_pair(p.ci95), METHOD,
-                      {**params, "L": sig(p.L), "lambda_W": sig(p.lambda_W)}),
+                      {**params, "L": sig(p.L), "lambda_W": sig(p.lambda_W)}, source=src),
             statistic(L_ds, "littles_law_discrepancy", sig(p.ratio - 1), _rel(p.ci95),
                       "relative discrepancy L / (lambda W) - 1 over the whole range, with its "
                       "measurement interval (source: measurement system)",
                       {**params, "difference": sig(p.diff),
                        "difference_ci95": sig_pair(p.diff_ci) if p.diff_ci else None,
-                       "common_cause_rel95": sig(p.common)}),
+                       "common_cause_rel95": sig(p.common)}, source=src),
             statistic(L_ds, "mean_concurrency_L", sig(p.L), sig_pair(p.L_ci),
                       "time average of the gauge; successive-difference sampling error, "
                       "Poisson-occupancy floor, edge straddle", params),
@@ -971,7 +1007,7 @@ def _group(cfg: dict, L_ds: str, labels: dict, g: GroupResult) -> dict:
                 "L / (lambda W) shared by the non-transient windows (equal weights; error the "
                 "larger of measurement and window spread); source: measurement system",
                 {**params, "window": _span(g.systematic), "windows": sysw["windows"],
-                 "drifting": sysw["drifting"]},
+                 "drifting": sysw["drifting"]}, source=MEASUREMENT,
             ))  # fmt: skip
         for t in transient:
             ev.append(statistic(
@@ -981,7 +1017,7 @@ def _group(cfg: dict, L_ds: str, labels: dict, g: GroupResult) -> dict:
                 f"interval; source: {t['source'].replace('_', ' ')}",
                 {**params, "window": t["window"], "reference": t["reference"],
                  "vs_reference": t["vs_reference"], "phase": t["phase"],
-                 "common_cause_rel95": t["common_cause_rel95"]},
+                 "common_cause_rel95": t["common_cause_rel95"]}, source=t["source"],
             ))  # fmt: skip
         out["evidence"] = ev
     return out

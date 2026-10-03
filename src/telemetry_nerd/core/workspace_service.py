@@ -1737,6 +1737,8 @@ class WorkspaceService:
                     if f.evidence_flags
                     else {}
                 ),
+                # spec §5.4: what the cited variation is attributed to
+                **({"sources": f.sources} if f.sources else {}),
             }
             for f in reversed(self.objects.list_findings())
         ]

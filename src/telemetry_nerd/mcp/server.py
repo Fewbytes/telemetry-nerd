@@ -1403,9 +1403,12 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         aggregation, baseline_start?, baseline_end?} (times: now-2h, epoch ms, ISO).
         evidence: [{kind: panel, panel} | {kind: annotation, annotation} |
         {kind: statistic, dataset, name, value, method, interval: [lo, hi] | exact: true |
-        uncertainty_unknown: true}]. hypothesis and stance (for|against) go together.
-        Returns {finding, url, uncertainty?: [{evidence, flag, message}]}: flags the server
-        derived (uncertainty unknown / lower bound); report them with the finding."""
+        uncertainty_unknown: true, source?}]. Pass an op's evidence statistic as is: its
+        `source` (common_cause | special_cause | measurement_system | undetermined) says what
+        the variation is attributed to; never relabel it. hypothesis and stance (for|against)
+        go together. Returns {finding, url, uncertainty?: [{evidence, flag, message}],
+        sources?}: flags the server derived (uncertainty unknown / lower bound) and the cited
+        variation sources; report them with the finding."""
         try:
             sc = dict(scope)
             try:
@@ -1433,6 +1436,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         out: dict = {"finding": f.id, "url": f"{ui_url}/#/finding/{f.id}"}
         if f.evidence_flags:
             out["uncertainty"] = [e.model_dump() for e in f.evidence_flags]
+        if f.sources:
+            out["sources"] = f.sources  # spec §5.4: variation sources of the cited statistics
         return _dump(out)
 
     @mcp.tool()
