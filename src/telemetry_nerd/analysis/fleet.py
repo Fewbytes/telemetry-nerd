@@ -20,7 +20,7 @@ from typing import Literal
 import numpy as np
 
 from telemetry_nerd.analysis.autocorr import n_eff, tau_int
-from telemetry_nerd.analysis.stats import MAD_SCALE, poisson_sf, t_isf
+from telemetry_nerd.analysis.stats import MAD_SCALE, binom_sf, poisson_sf, t_isf
 
 MIN_MEMBERS = 5  # fewer: draw the members as lines / small multiples
 MIN_TESTED = 10  # members with enough data for the outlier tests
@@ -30,6 +30,10 @@ LOO_MAX = (
 MIN_OTHERS = 4  # other members reporting at a step for a z there
 MIN_OBS = 10  # z values a member needs to be tested
 POOL_HALF = 6  # per-step sigma pooled over +-6 steps
+POOL_CELLS = 4_000_000  # values held at once while pooling (memory bound)
+MAX_BAND_WINDOW = 121  # widest drawn band pool (steps)
+P_BEYOND_3 = math.erfc(3 / math.sqrt(2))  # 0.27%: a normal value beyond +-3 sigma
+WIDENING_ALPHA = 0.01  # per step: more members beyond 3 sigma than Bin(n_t, 0.27%) at 99%
 TAIL_POINTS = (1e-3, 1e-4)  # two-sided tail points of the heavy-tail check
 TRIM = 0.2  # level/change: 20% trimmed means over time (see design: medians are miscalibrated)
 EXCURSIONS = {"spike": 1, "episode": 5, "long_episode": 15}  # rolling-median widths (steps)
@@ -71,12 +75,20 @@ def _pooled(others: np.ndarray, half: int = POOL_HALF) -> tuple[np.ndarray, np.n
         c = np.nanmedian(others, axis=0)
         dev = others - c
         w = 2 * half + 1
-        pad = np.pad(dev, ((0, 0), (half, half)), constant_values=np.nan)
-        win = np.lib.stride_tricks.sliding_window_view(pad, w, axis=1)  # (n_o, T, w)
-        flat = np.moveaxis(win, 1, 0).reshape(dev.shape[1], -1)
-        cnt = np.sum(~np.isnan(flat), axis=1)
-        mad = np.nanmedian(np.abs(flat), axis=1) * MAD_SCALE * mad_factor(cnt)
-        meanad = np.nanmean(np.abs(flat), axis=1) * MEANAD_SCALE
+        pad = np.abs(np.pad(dev, ((0, 0), (half, half)), constant_values=np.nan))
+        t_ = dev.shape[1]
+        med, mean, cnt = np.full(t_, np.nan), np.full(t_, np.nan), np.zeros(t_, int)
+        # blocks of steps, so the windows never hold more than ~4M values (wide band_window)
+        blk = max(1, POOL_CELLS // max(1, dev.shape[0] * w))
+        for a in range(0, t_, blk):
+            b = min(t_, a + blk)
+            win = np.lib.stride_tricks.sliding_window_view(pad[:, a : b + 2 * half], w, axis=1)
+            flat = np.moveaxis(win, 1, 0).reshape(b - a, -1)  # (steps, members x w)
+            cnt[a:b] = np.sum(~np.isnan(flat), axis=1)
+            med[a:b] = np.nanmedian(flat, axis=1)
+            mean[a:b] = np.nanmean(flat, axis=1)
+        mad = med * MAD_SCALE * mad_factor(cnt)
+        meanad = mean * MEANAD_SCALE
     s = np.where(mad > 0, mad, meanad)
     bad = (n < MIN_OTHERS) | ~(s > 0)
     return np.where(bad, np.nan, c), np.where(bad, np.nan, s), np.where(bad, 0, cnt)
@@ -252,9 +264,12 @@ def _hf7(x: np.ndarray, h: float) -> float:
     return a + frac * (b - a)
 
 
-def missing_bounds(y: np.ndarray, n: np.ndarray, alive: np.ndarray) -> dict[str, np.ndarray]:
-    """Missing-member bounds of the per-step quantiles: at a step where m = alive - n members
-    did not report, each quantile of all alive members is recomputed with the m missing values at
+def missing_bounds(
+    y: np.ndarray, n: np.ndarray, alive: np.ndarray, gone: np.ndarray | None = None
+) -> dict[str, np.ndarray]:
+    """Missing-member bounds of the per-step quantiles: at a step where m = alive - n - gone
+    members did not report (`gone`: members the source marked stale, counted from their stale
+    point: a positive observation that they ended, so they have no value to bound), each quantile of all alive members is recomputed with the m missing values at
     -inf (lower bound) and at +inf (upper bound). The bound is -inf / +inf when the quantile's
     order statistics reach into the missing ones (m large enough for that rank): unbounded.
     Where nobody is missing the bounds equal the quantile. Gated like the spread (n per step).
@@ -265,7 +280,8 @@ def missing_bounds(y: np.ndarray, n: np.ndarray, alive: np.ndarray) -> dict[str,
              "q10": SPREAD_MIN_N["q10"], "q90": SPREAD_MIN_N["q10"]}  # fmt: skip
     for t in range(t_):
         x = np.sort(y[:, t][~np.isnan(y[:, t])])
-        k, m = x.size, max(int(alive[t]) - int(n[t]), 0)
+        g = 0 if gone is None else int(gone[t])
+        k, m = x.size, max(int(alive[t]) - int(n[t]) - g, 0)
         low = np.concatenate([np.full(m, -np.inf), x])
         high = np.concatenate([x, np.full(m, np.inf)])
         for name, q in QUANTILES.items():
@@ -298,6 +314,17 @@ class ControlBand:
     threshold_hi: np.ndarray | None
     outside3: np.ndarray  # per step: unflagged member-steps beyond the drawn 3 sigma
     outside3_members: int  # members with any such step
+    cells: int  # unflagged member-steps with a value and a band (the count's denominator)
+    widening: np.ndarray  # per step: more beyond 3 sigma than Bin(n_t, 0.27%) gives at 99%
+
+    @property
+    def outside3_total(self) -> int:
+        return int(self.outside3.sum())
+
+    @property
+    def expected3(self) -> float:
+        """Unflagged member-steps beyond 3 sigma expected if the deviations were normal."""
+        return P_BEYOND_3 * self.cells
 
     @property
     def pool_half(self) -> int:
@@ -307,15 +334,44 @@ class ControlBand:
 DEFAULT_BAND_WINDOW = 2 * POOL_HALF + 1
 
 
-def check_band_window(window: int | None) -> int:
-    if window is None:
+def max_band_window(steps: int | None) -> int:
+    """The widest band_window: MAX_BAND_WINDOW steps, and no more than the window has (odd)."""
+    cap = MAX_BAND_WINDOW if steps is None else min(steps, MAX_BAND_WINDOW)
+    return cap if cap % 2 else cap - 1
+
+
+def check_band_window(window: int | None, steps: int | None = None) -> int:
+    """band_window: None (the tests' pool) or an odd number of steps from 13 to
+    min(steps, 121)."""
+    if window is None or window == DEFAULT_BAND_WINDOW:
         return DEFAULT_BAND_WINDOW
-    if window < DEFAULT_BAND_WINDOW or window % 2 == 0:
+    cap = max_band_window(steps)
+    if window < DEFAULT_BAND_WINDOW or window % 2 == 0 or window > cap:
+        limit = (
+            f"<= {cap} (at most {MAX_BAND_WINDOW}, and no more than the {steps} steps of the "
+            "window)"
+            if cap >= DEFAULT_BAND_WINDOW
+            else f"is only {DEFAULT_BAND_WINDOW} here (the window has {steps} steps)"
+        )
         raise ValueError(
-            f"band_window must be an odd number of steps >= {DEFAULT_BAND_WINDOW} (the outlier "
-            f"tests pool sigma over +-{POOL_HALF} steps; larger is calmer), got {window}"
+            f"band_window must be an odd number of steps >= {DEFAULT_BAND_WINDOW} and {limit}: "
+            f"the outlier tests pool sigma over +-{POOL_HALF} steps, larger is calmer; got {window}"
         )
     return window
+
+
+_WIDEN: dict[int, int] = {}
+
+
+def widening_count(n: int) -> int:
+    """The smallest count of members beyond 3 sigma that Bin(n, 0.27%) reaches with probability
+    below WIDENING_ALPHA: a step with at least that many is wider than chance."""
+    if n not in _WIDEN:
+        k = 1
+        while k <= n and binom_sf(k, n, P_BEYOND_3) >= WIDENING_ALPHA:
+            k += 1
+        _WIDEN[n] = k
+    return _WIDEN[n]
 
 
 def control_band(
@@ -326,7 +382,7 @@ def control_band(
     steps (a calmer band; the flag line stays the tests'). flagged: member-steps the outlier
     tests flagged (whole members for level / change, episode steps for transients); member-steps
     beyond the drawn 3 sigma that are not flagged are counted per step."""
-    w = check_band_window(window)
+    w = check_band_window(window, f.values.shape[1])
     log = f.scale == "log"
     with np.errstate(divide="ignore", invalid="ignore"):
         y = np.log(f.values) if log else f.values.astype(float)
@@ -338,20 +394,32 @@ def control_band(
         c = rolling_median(c0[None, :], w)[0]
         s = np.where(np.isnan(c), np.nan, s)
     back = np.exp if log else (lambda v: v)
-    thr = f.thresholds.get("spike_tail_threshold", f.thresholds.get("spike_threshold"))
+    # the spike bar the tests used: the Gumbel bar replaces the t bar where it is higher
+    bars = [
+        f.thresholds[k] for k in ("spike_threshold", "spike_tail_threshold") if k in f.thresholds
+    ]
+    thr = max(bars) if bars else None
     if thr is not None and not math.isfinite(thr):
         thr = None
     with np.errstate(invalid="ignore"):
-        beyond = np.abs(y - c) > 3 * s
+        dev = np.abs(y - c)
+        beyond = dev > 3 * s
+    usable = np.isfinite(dev) & np.isfinite(s)[None, :]
     if flagged is not None:
         beyond &= ~flagged
+        usable &= ~flagged
+    count, n_t = beyond.sum(axis=0), usable.sum(axis=0)
+    widening = np.array(
+        [c_ > 0 and c_ >= widening_count(int(k)) for c_, k in zip(count, n_t, strict=True)]
+    )
     return ControlBand(
         window=w, scale=f.scale, centre=back(c), sigma=s,
         lo2=back(c - 2 * s), hi2=back(c + 2 * s), lo3=back(c - 3 * s), hi3=back(c + 3 * s),
         threshold_z=thr,
         threshold_lo=None if thr is None else back(c0 - thr * s0),
         threshold_hi=None if thr is None else back(c0 + thr * s0),
-        outside3=beyond.sum(axis=0), outside3_members=int(beyond.any(axis=1).sum()),
+        outside3=count, outside3_members=int(beyond.any(axis=1).sum()),
+        cells=int(usable.sum()), widening=widening,
     )  # fmt: skip
 
 

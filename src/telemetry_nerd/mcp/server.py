@@ -451,9 +451,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
         Band (`band`, the panel's default view): a stable SPC reference, per-step median +-
         2 / 3 sigma, sigma = the pooled robust sigma the outlier tests use (+-6 steps; log
-        scale: multiplicative); the dashed flag line is the tests' single-step threshold, and
-        `outside_3sigma_unflagged` counts member-steps beyond 3 sigma the family-wise tests did
-        not flag (expected: zones are for reading, flags come from the tests). Spread (`spread`,
+        scale: multiplicative; per behaviour group when split); the dashed flag line is the
+        tests' single-step bar (approximate), `outside_3sigma_unflagged` counts member-steps
+        beyond 3 sigma the family-wise tests did not flag against the ~0.27% a normal fleet
+        gives (zones are for reading, flags come only from the tests), and `widening` lists
+        steps where more members lie beyond 3 sigma than chance gives (common cause). Spread (`spread`,
         the panel's quantile view): median, quartiles, 10/90% and min/max across the members
         that reported at each step (descriptive; missing members reduce n, never imputed; drawn
         with missing-member bounds), n per step and missing share. Outliers are judged against the OTHER members (leave-one-out median / MAD),
@@ -465,7 +467,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         threshold), since (start of the current deviation; since_window_start = at least
         since the window began), effect (ratio or difference with 99% interval, from n_eff),
         transient episodes (sustained vs momentary relative to the autocorrelation time; a
-        level or change outlier may also carry episodes beyond its own level) and
+        level or change outlier may also carry episodes beyond its own level, `calibrated:
+        false`: a lead, not a finding) and
         an `evidence` statistic for finding_create. Churn: members that appeared or stopped
         reporting (state silent = may be the sick one; ended = staleness marker). Unknown spans
         (failed fetches) leave n and alive; partial buckets are flagged on members/episodes;
@@ -475,9 +478,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         by: label names that identify members (must be unique per series; default: the labels
         that vary). scale: auto (log = ratios when every value > 0) | log | linear.
         normalise: none | member (each member relative to its own median: compares shapes of
-        members with different sizes; the level test is off). band_window: odd steps >= 13
-        (default 13 = the tests' pool); larger pools sigma wider and smooths the centre by a
-        moving median for a calmer band (flags unchanged). Ranges over 1440 steps are
+        members with different sizes; the level test is off). band_window: odd steps, 13 (the
+        tests' pool, default) to min(steps, 121); larger pools sigma wider and smooths the
+        centre by a moving median for a calmer band (flags unchanged). Ranges over 1440 steps are
         averaged per member first. Refused on percentile series (median of p99s is not the
         fleet p99), distributions, raw counters, < 5 members, members with different units.
         Sources (`variation`, `source`): the spread = common cause; behaviour groups = systemic

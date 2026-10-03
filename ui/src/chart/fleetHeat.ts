@@ -112,7 +112,8 @@ export function decimate(cols: (number | null)[][], roles: string[], maxPts: num
   if (n <= maxPts) return cols;
   const k = Math.ceil(n / maxPts);
   const bins = Math.ceil(n / k);
-  const medIdx = roles.indexOf("median");
+  // the centre an outlier's deviation is measured from: the fleet median, else the first group's
+  const medIdx = roles.indexOf("median") >= 0 ? roles.indexOf("median") : roles.indexOf("cmedian");
   return cols.map((col, c) => {
     const role = roles[c];
     const out: (number | null)[] = [];
@@ -127,7 +128,7 @@ export function decimate(cols: (number | null)[][], roles: string[], maxPts: num
         if (lowEdge(role)) pick = pick === null ? v : Math.min(pick, v);
         else if (highEdge(role)) pick = pick === null ? v : Math.max(pick, v);
         else if (LINES.has(role)) {
-          const m = cols[medIdx][i];
+          const m = medIdx >= 0 ? cols[medIdx][i] : null;
           const dev = m === null ? 0 : Math.abs(v - m);
           if (dev > bestDev) { bestDev = dev; pick = v; }
         }

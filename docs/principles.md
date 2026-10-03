@@ -118,8 +118,10 @@ The common-cause envelope that is drawn is a **reference**, so it must be stable
 2026-10-03, fleet band: "stable to be usable; it need not be accurate"). The fleet band is an SPC
 reference: per-step median ± 2σ/3σ with the robust σ the outlier tests use, pooled over
 neighbouring steps, on the analysis scale. Points are named special causes only by the
-family-wise tests (principle 14), never because they leave a zone: a point beyond 3σ that no test
-flagged is shown as "not significant at fleet-wide 1%". A descriptive view (the per-step
+family-wise tests (principle 14), never because they leave a zone: points beyond 3σ that no test
+flagged are counted against what chance gives (0.27% if normal), never marked one by one, and only
+a step where more members lie beyond 3σ than chance allows is marked, as the fleet widening
+(common cause). A descriptive view (the per-step
 quantiles across members) is a separate toggle and carries missing-member bounds (principles 9,
 11), never a sampling interval. (Here, not in 14: the band's job is to be the envelope this
 principle names; 14 governs the flags drawn against it.)

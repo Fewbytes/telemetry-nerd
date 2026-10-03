@@ -1,19 +1,24 @@
 """Fleet SPC band, missing-member bounds and both-mode outliers (bead telemetry-nerd-nq6)."""
 
 import math
+import re
 
 import numpy as np
 import pytest
 
 from telemetry_nerd.analysis.fleet import (
+    P_BEYOND_3,
     _pooled,
     analyse,
     check_band_window,
     control_band,
     flagged_steps,
     loo_deviations,
+    max_band_window,
     missing_bounds,
+    widening_count,
 )
+from telemetry_nerd.analysis.stats import binom_sf
 from tests.unit.fakes import make_service
 from tests.unit.fleet_sim import fleet
 from tests.unit.test_fleet_service import put
@@ -121,12 +126,57 @@ def test_unflagged_beyond_3_sigma_are_counted_and_flagged_steps_excluded():
     tran = next(o for o in f.outliers if o.kind == "transient")
     assert fl[tran.member].sum() == sum(e.end - e.start + 1 for e in tran.episodes)
     b = control_band(f, flagged=fl)
-    assert 0 < b.outside3.sum() < raw.outside3.sum()
-    # about 0.27% of the unflagged member-steps of a normal fleet lie beyond 3 sigma
-    assert b.outside3.sum() < 0.01 * y.size
+    assert 0 < b.outside3_total < raw.outside3_total
+    assert b.cells == raw.cells - int((fl & np.isfinite(y)).sum())
+    # the count against what a normal fleet gives: 0.27% of the unflagged member-steps
+    assert b.expected3 == pytest.approx(0.0026998 * b.cells, rel=1e-3)
+    assert 0.3 * b.expected3 < b.outside3_total < 3 * b.expected3
 
 
-def test_summary_states_the_band_and_the_3_sigma_unflagged_message(tmp_path):
+def test_widening_marks_only_steps_beyond_the_binomial_99_point():
+    assert widening_count(100) == 3  # P(Bin(100, 0.27%) >= 3) < 1% <= P(>= 2)
+    assert binom_sf(3, 100, P_BEYOND_3) < 0.01 <= binom_sf(2, 100, P_BEYOND_3)
+    assert widening_count(500) == 6
+    y, _ = fleet(41, m=100)
+    b = control_band(analyse(y))
+    assert b.widening.mean() < 0.03  # a homogeneous normal fleet: about 1% of steps by chance
+    wide = y.copy()
+    wide[:, 150] = np.exp(np.log(wide[:, 150]) * 1.0 + np.random.default_rng(0).normal(0, 0.6, 100))
+    wb = control_band(analyse(wide))
+    assert wb.widening[150] and wb.outside3[150] >= widening_count(100)
+
+
+def test_unknown_member_steps_are_neither_counted_nor_in_the_band():
+    y, _ = fleet(42, m=40)
+    unknown = np.zeros(y.shape, bool)
+    unknown[:, 100:130] = True
+    y_bad = y.copy()
+    y_bad[:, 100:130] *= 50  # garbage that came back from a failed chunk
+    f = analyse(y_bad, unknown=unknown)
+    b = control_band(f)
+    assert np.all(np.isnan(b.centre[100:130])) and b.outside3[100:130].sum() == 0
+    clean = control_band(analyse(y))
+    assert b.cells == clean.cells - 40 * 30
+
+
+def test_band_window_is_capped_and_pooling_is_memory_bounded(monkeypatch):
+    from telemetry_nerd.analysis import fleet as fl
+
+    assert max_band_window(None) == 121 and max_band_window(100) == 99 and max_band_window(8) == 7
+    with pytest.raises(ValueError, match="<= 121"):
+        check_band_window(123)
+    with pytest.raises(ValueError, match="<= 49 .*50 steps"):
+        check_band_window(51, steps=50)
+    assert check_band_window(13, steps=8) == 13  # the tests' own pool always draws
+    y, _ = fleet(43, m=30, t=200)
+    want = _pooled(np.log(y), 30)
+    monkeypatch.setattr(fl, "POOL_CELLS", 500)  # tiny blocks: same result
+    got = fl._pooled(np.log(y), 30)
+    for a, b in zip(want, got, strict=True):
+        np.testing.assert_allclose(a, b)
+
+
+def test_summary_states_the_band_and_the_3_sigma_count(tmp_path):
     svc = make_service(tmp_path)
     d = put(svc, fleet(37, m=100, plant=True)[0])
     out = svc.fleet(d)
@@ -135,11 +185,17 @@ def test_summary_states_the_band_and_the_3_sigma_unflagged_message(tmp_path):
     assert band["window_steps"] == 13 and band["source"] == "common_cause"
     assert "not propagated" in band["caveat"] and "not propagated" in out["spread"]["caveat"]
     un = band["outside_3sigma_unflagged"]
-    assert un["note"] == "outside 3σ, not significant at fleet-wide 1% (100 members tested)"
-    assert un["member_steps"] > 0 and un["members"] > 0
-    assert band["flag_threshold_z"] > 3
+    assert re.fullmatch(
+        r"\d+ member-steps beyond 3σ unflagged; ≈\d+ expected if normal \(0\.27% of \d+\)",
+        un["note"],
+    )
+    assert un["each"] == "outside 3σ, not significant at fleet-wide 1% (100 members tested)"
+    assert un["member_steps"] > 0 and un["expected_if_normal"] > 0
+    assert band["flag_threshold_z"] > 3 and "approximate" in band["flag_line"]
+    assert "Binomial" in band["widening"]["note"] and band["widening"]["source"] == "common_cause"
     wide = svc.fleet(d, band_window=37)["band"]
     assert "pooled ±18 steps" in wide["basis"] and "37-step moving median" in wide["basis"]
+    assert "lags" in wide["smoothing"]
     with pytest.raises(ValueError, match="odd"):
         svc.fleet(d, band_window=20)
 
@@ -147,11 +203,11 @@ def test_summary_states_the_band_and_the_3_sigma_unflagged_message(tmp_path):
 def test_too_few_tested_members_say_no_tests_ran(tmp_path):
     svc = make_service(tmp_path)
     out = svc.fleet(put(svc, fleet(38, m=6)[0]))
-    note = out["band"]["outside_3sigma_unflagged"]["note"]
+    note = out["band"]["outside_3sigma_unflagged"]["each"]
     assert note == "outside 3σ; no outlier tests ran (6 members tested, 10 needed)"
 
 
-def test_persistent_member_with_a_spike_carries_episodes_beyond_its_own_level():
+def test_persistent_member_with_a_spike_carries_episodes_beyond_its_own_level(tmp_path):
     y, planted = fleet(39, m=100, plant=True)
     p = planted["persistent"]
     y[p, 60:64] *= math.exp(1.5)  # a short excursion on top of its x1.8 offset
@@ -164,9 +220,32 @@ def test_persistent_member_with_a_spike_carries_episodes_beyond_its_own_level():
     # without the spike: a level outlier has no episodes (its offset alone is not an excursion)
     clean = analyse(fleet(39, m=100, plant=True)[0])
     assert not next(o for o in clean.outliers if o.member == p).episodes
+    # summary: uncalibrated (bead db0), a lead, not a finding
+    svc = make_service(tmp_path)
+    item = next(o for o in svc.fleet(put(svc, y))["outliers"] if o["member"] == f"pod=api-{p:03d}")
+    assert item["episodes"][0]["calibrated"] is False and "not calibrated" in item["episodes_note"]
 
 
-def test_panel_carries_spc_band_bounds_and_mode_marks(tmp_path):
+def test_both_mode_episodes_on_clean_level_and_change_members_are_rare():
+    """Null check for the uncalibrated both-mode scan (bead db0): clean persistent and drifting
+    members (no excursion planted) across seeds; the share that gets an episode beyond its own
+    level. Normal AR(1) noise, 15 seeds x 8 members: 0 of 120 (100 seeds: 0 of 800; with t(4)
+    noise 21 of 800, 2.6%: recorded in db0)."""
+    flagged = with_ep = 0
+    for seed in range(15):
+        y, _ = fleet(1000 + seed, m=60)
+        t_ = y.shape[1]
+        for i in range(8):
+            y[i] *= np.exp(0.5 + 0.1 * i) if i < 4 else np.exp(0.9 * np.arange(t_) / (t_ - 1))
+        for o in analyse(y).outliers:
+            if o.member < 8 and o.kind != "transient":
+                flagged += 1
+                with_ep += bool(o.episodes)
+    assert flagged >= 100
+    assert with_ep / flagged <= 0.02
+
+
+def test_panel_carries_spc_band_sparse_bounds_and_mode_marks(tmp_path):
     svc = make_service(tmp_path)
     y, planted = fleet(40, m=100, plant=True)
     y[3:6, 200:210] = np.nan  # three members silent: missing-member bounds there
@@ -177,19 +256,94 @@ def test_panel_carries_spc_band_bounds_and_mode_marks(tmp_path):
     spc = data["spc"]
     assert spc["window"] == 25 and spc["pool_half"] == 12
     assert spc["legend"] == "median ± 2σ/3σ (robust, pooled ±12 steps, log scale: multiplicative)"
-    for k in ("centre", "lo2", "hi2", "lo3", "hi3", "threshold_lo", "threshold_hi", "outside3"):
+    for k in ("centre", "lo2", "hi2", "lo3", "hi3", "threshold_lo", "threshold_hi"):
         assert len(spc[k]) == 288, k
+    assert "outside3" not in spc and spc["outside3_total"] >= 0 and spc["outside3_expected"] > 0
     assert spc["outside3_note"].startswith("outside 3σ, not significant at fleet-wide 1%")
-    assert "not propagated" in spc["note"]
+    assert "approximate" in spc["threshold_note"] and "leave-one-out" in spc["threshold_note"]
+    assert all(0 <= j < 288 for j in spc["widening"])
+    assert "not propagated" in data["member_error_note"]
     bb = data["band_bounds"]
-    assert bb["median_lo"][205] <= data["band"]["median"][205] <= bb["median_hi"][205]
-    assert bb["median_lo"][0] == bb["median_hi"][0] == data["band"]["median"][0]
+    assert bb["steps"] == list(range(200, 210)) and bb["missing"] == [3] * 10
+    k = bb["steps"].index(205)
+    assert bb["median_lo"][k] <= data["band"]["median"][205] <= bb["median_hi"][k]
     by_id = {o["id"]: o for o in data["outliers"]}
     tran = by_id[f"pod=api-{planted['transient']:03d}"]
     (ep,) = tran["episodes"]
     assert set(ep) == {"start_ms", "end_ms", "peak_z", "sustained", "beyond_own_level"}
     assert ep["peak_z"] > 3 and not ep["beyond_own_level"]
     pers = by_id[f"pod=api-{planted['persistent']:03d}"]
+    assert pers["since_window_start"] and pers["effect"]["over"] == "window"
     assert pers["effect"]["as"] == "ratio" and 1.5 < pers["effect"]["offset"] < 2.2
     drift = by_id[f"pod=api-{planted['drifting']:03d}"]
     assert drift["effect"]["change_per_hour"] > 1  # a ratio per hour
+    # nobody missing: no bounds on the wire
+    full = svc.panel_data(svc.show(put(svc, fleet(40, m=100)[0]), "q", mark="fleet").panel.id, 800)
+    assert "band_bounds" not in full
+
+
+def test_grouped_panel_and_summary_carry_each_groups_own_band(tmp_path):
+    svc = make_service(tmp_path)
+    y, _ = fleet(18, m=100, plant=True)
+    y[:30] *= 2.0
+    labels = [{"pod": f"api-{i:03d}", "size": "small" if i < 30 else "large"} for i in range(100)]
+    d = put(svc, y, labels=labels)
+    out = svc.fleet(d, by=["pod"])
+    assert out["band"]["basis"].startswith("per behaviour group")
+    groups = out["clusters"]["groups"]
+    for g in groups:
+        assert g["band"]["flag_threshold_z"] > 3 and "outside_3sigma_unflagged" in g["band"]
+    total = sum(g["band"]["outside_3sigma_unflagged"]["member_steps"] for g in groups)
+    assert out["band"]["outside_3sigma_unflagged"]["member_steps"] == total
+    data = svc.panel_data(svc.show(d, "who is off?", mark="fleet").panel.id, 800)
+    assert "spc" not in data  # the whole-fleet band would sit between the groups
+    for c in data["clusters"]:
+        assert len(c["spc"]["centre"]) == 288 and c["spc"]["threshold_hi"] is not None
+        assert c["spc"]["legend"].startswith("median ± 2σ/3σ")
+    small, large = sorted(data["clusters"], key=lambda c: c["size"])
+    assert np.nanmedian(np.array(small["spc"]["centre"], float)) > 1.5 * np.nanmedian(
+        np.array(large["spc"]["centre"], float)
+    )
+
+
+def test_a_member_marked_stale_is_gone_not_missing_in_the_bounds():
+    y = np.array([[1.0], [2.0], [3.0], [4.0], [5.0], [np.nan], [np.nan]])
+    b = missing_bounds(y, np.array([5]), np.array([7]), gone=np.array([1]))  # m = 1
+    # N = 6, median h = 2.5: lower [-inf, 1, 2, 3, 4, 5] -> 2.5, upper [1..5, inf] -> 3.5
+    assert b["median_lo"][0] == 2.5 and b["median_hi"][0] == 3.5
+
+
+def test_panel_bounds_drop_members_the_source_marked_stale(tmp_path, monkeypatch):
+    """I5: a member the source marked stale (churn `ended`) has no value to bound after its
+    stale point; trailing silence without a marker still counts as missing (alive, silent)."""
+    import dataclasses
+
+    import polars as pl
+
+    from telemetry_nerd.core import fleet_ops
+    from telemetry_nerd.model.bucket_state import STATE_SCHEMA, Flag
+    from telemetry_nerd.model.series import series_id
+    from tests.unit.test_fleet_service import STEP, T0
+
+    y, _ = fleet(21, m=30)
+    y[4, 200:] = np.nan
+    svc = make_service(tmp_path)
+    silent = svc.panel_data(svc.show(put(svc, y), "q", mark="fleet").panel.id, 800)
+    assert silent["band_bounds"]["steps"][0] == 200 and set(silent["band_bounds"]["missing"]) == {1}
+    real = fleet_ops.dataset_bundle
+
+    def marked(store, meta, result):
+        b = real(store, meta, result)
+        st = pl.from_arrow(b.companions["bucket_state"])
+        sid = series_id("default", {"pod": "api-004", "job": "api"})
+        st = st.with_columns(
+            pl.when((pl.col("series_id") == sid) & (pl.col("ts_ms") == T0 + 200 * STEP))
+            .then(int(Flag.STALE_MARKER)).otherwise(pl.col("flags")).cast(pl.UInt16).alias("flags")
+        )  # fmt: skip
+        return dataclasses.replace(b, companions={"bucket_state": st.to_arrow().cast(STATE_SCHEMA)})
+
+    monkeypatch.setattr(fleet_ops, "dataset_bundle", marked)
+    (tmp_path / "b").mkdir()
+    svc2 = make_service(tmp_path / "b")
+    ended = svc2.panel_data(svc2.show(put(svc2, y), "q", mark="fleet").panel.id, 800)
+    assert "band_bounds" not in ended

@@ -151,13 +151,17 @@ M7, C4). A pile of lines is not evidence.
     pooled over ±6 steps, on the analysis scale (log: multiplicative); `band_window` pools
     wider and smooths the centre for a calmer band. Raw per-step quantiles jitter with n and are
     not what the tests judge against.
-  - **Flags are the tests', not the zones** (principle 14): the family-wise single-step
-    threshold is a thin dashed line; a point beyond 3σ that no test flagged is marked "not
-    significant at fleet-wide 1% (n members tested)", never highlighted as an outlier.
+  - **Flags are the tests', not the zones** (principle 14): the family-wise single-step bar is a
+    thin dashed line (approximate); points beyond 3σ that no test flagged are counted against the
+    0.27% a normal fleet gives, never marked per point (with 100 members a quarter of the steps
+    would carry one by chance); a drawn line's point there says "not significant at fleet-wide
+    1%" on hover. Only a step with more members beyond 3σ than chance allows (binomial, 99%) is
+    marked: the fleet widened (common cause).
   - **Two outlier modes, two marks.** Consistently off / shifted / drifting: the whole member
     line coloured, labelled kind + effect ("+38% since 09:10", "drifting +2%/h"). Transient:
     the line grey where inside, only its episodes coloured and bracketed on the time axis,
-    labelled with the peak ("spike 6.1σ 10:22–10:25"). Both: coloured line plus brackets.
+    labelled with the peak ("spike 6.1σ 10:22–10:25"). Both: coloured line plus muted, unlabelled
+    brackets (that scan is not calibrated yet).
   - **Quantile view** (toggle): the descriptive per-step quantiles (min–max, 10–90, 25–75),
     with missing-member bounds where alive members did not report (the missing values at ±∞;
     unbounded once they reach a quantile's rank; min/max "unknown beyond"). No sampling

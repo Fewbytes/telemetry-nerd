@@ -86,7 +86,8 @@ test("fleet panel: band, 3 planted outliers labelled, heatmap and small multiple
     // SPC band (nq6): the reference the tests use, the flag threshold, distinct marks per mode
     await expect(el.locator("[data-fleet-encoding]")).toContainText("median ± 2σ/3σ (robust, pooled ±6 steps, log scale: multiplicative) across 100 members");
     for (const id of ["z3", "z2", "median", "flag", "outlier", "transient"]) await expect(el.locator(`[data-fleet-key-id=${id}]`)).toHaveCount(1);
-    await expect(el.locator("[data-fleet-legend]")).toContainText("fleet-wide 1%");
+    await expect(el.locator("[data-fleet-legend]")).toContainText(/\d+ member-steps beyond 3σ unflagged \(≈\d+ expected if normal\)/);
+    await expect(el.locator("[data-fleet-key-id=flag]")).toHaveAttribute("title", /approximate.*leave-one-out/);
     await expect(el.locator("[data-fleet-legend]")).toContainText("member measurement error not propagated");
     await expect(el.locator("[data-fleet-band]")).toHaveAttribute("data-fleet-band", "spc");
     await expect(el.locator(`.outliers li[data-fleet-kind=transient]`)).toContainText(/(spike|episode) [\d.]+σ/);

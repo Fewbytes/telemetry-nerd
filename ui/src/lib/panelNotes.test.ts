@@ -78,10 +78,11 @@ describe("describeShown", () => {
   });
   it("describes a fleet split into behaviour groups by its groups, not one band (oyi)", () => {
     const r = { representation: "bucket_agg" } as const;
-    expect(describeShown(r, "1m", "fleet", "", "band", true)).toMatch(/behaviour groups.*per group.*median ± 2σ\/3σ zones/);
+    expect(describeShown(r, "1m", "fleet", "", "band", true)).toMatch(/behaviour groups.*per group.*own reference band/);
     expect(describeShown(r, "1m", "fleet", "", "quantiles", true)).toMatch(/behaviour groups.*per group.*25–75% band and median/);
-    expect(describeShown(r, "1m", "fleet", "", "band", false)).toMatch(/^Fleet: the SPC reference band/);
-    expect(describeShown(r, "1m", "fleet", "", "quantiles", false)).toMatch(/^Fleet spread: every member.*lighter where members missing/);
+    expect(describeShown(r, "1m", "fleet", "", "band", false)).toMatch(/^Fleet: the reference band the outlier tests judge against/);
+    expect(describeShown(r, "1m", "fleet", "", "band", false)).not.toMatch(/σ/); // the formula is in the key, once
+    expect(describeShown(r, "1m", "fleet", "", "quantiles", false)).toMatch(/^Fleet spread: .*lighter where missing members/);
     expect(caveatText("clustered")).toContain("each group has its own median ± 2σ/3σ zones");
   });
   it("describes the average-with-envelope default", () => {

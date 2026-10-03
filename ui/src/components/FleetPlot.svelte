@@ -4,7 +4,7 @@
   import {
     FLEET_HUE, MUTED_LINE, OUTLIER_COLORS, THRESHOLD_DASH, bandFills, bandView, boundFill, boundsAt, boundsText, coverageGaps, fleetAxisLabel,
     fleetKey, fleetLegend, groupEnds, groupFill, groupStyle, groupZoneFills, grouped, isolatedIdx, missingSteps, modeText, nearestOutlier,
-    outlierEnds, outlierText, outsideRug, outsideUnflagged, placeEndLabels, toFleetUplot, untrustedSpans, type BandView, type EndLabel,
+    outlierEnds, outlierText, outsideUnflagged, spcOf, wideningMarks, placeEndLabels, toFleetUplot, untrustedSpans, type BandView, type EndLabel,
   } from "../chart/fleet";
   import { drawHatch, HIDDEN_SERIES, plotAxes } from "../chart/plotKit";
   import { fmtTimeZ } from "../lib/format";
@@ -76,6 +76,8 @@
     const u = new uPlot(
       {
         width, height, series,
+        // fleet times are UTC everywhere (labels, summaries): the axis too, like the time panels
+        tzDate: (ts: number) => uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"),
         bands: m.bands.map((b, i) => ({ ...b, fill: fills[i] })),
         axes: plotAxes(stroke, grid, { label: data.normalise === "member" ? "× own median" : unit ?? undefined, ...(gutter ? { size: gutter - GROUP_LABEL_PX, labelSize: GROUP_LABEL_PX, labelGap: 0 } : {}) }),
         legend: { show: false },
@@ -95,10 +97,11 @@
               const o = nearestOutlier(data, idx, yv, span * 0.04);
               const ox = p.bbox.left / (window.devicePixelRatio || 1), oy = p.bbox.top / (window.devicePixelRatio || 1);
               if (!o) {
-                // SPC: the rug of unflagged member-steps beyond 3σ (top edge); quantiles: missing-member bounds
-                const n3 = data.spc?.outside3[idx] ?? 0;
+                // SPC: a widening mark (top edge); quantiles: missing-member bounds
+                const wm = top < 10 ? wideningMarks(data).find((w) => w.j === idx) : undefined;
+                const ws = wm ? (wm.k === null ? data.spc : data.clusters![wm.k].spc) : undefined;
                 const text = zoned
-                  ? (top < 10 && n3 > 0 ? `${fmtTimeZ(data.ts[idx])} · ${n3} member${n3 > 1 ? "s" : ""} ${data.spc!.outside3_note}` : null)
+                  ? (wm && ws ? `${fmtTimeZ(data.ts[idx])}${wm.k === null ? "" : ` · group ${data.clusters![wm.k].id}`} · ${ws.widening_note}` : null)
                   : boundsText(data, idx, fmtTimeZ);
                 tipColor = muted;
                 tip = text ? { x: ox + left + 12, y: oy + top + 12, px: ox + left, py: oy + top, text } : null;
@@ -106,7 +109,7 @@
               }
               const v = o.values[idx] as number;
               tipColor = OUTLIER_COLORS[data.outliers.indexOf(o) % OUTLIER_COLORS.length];
-              const note = zoned && outsideUnflagged(data, o, idx) ? ` · ${data.spc!.outside3_note}` : "";
+              const note = zoned && outsideUnflagged(data, o, idx) ? ` · ${spcOf(data, o)!.outside3_note}` : "";
               tip = { x: ox + left + 12, y: oy + top + 12, px: ox + left, py: oy + p.valToPos(v, "y"), text: `${o.id} · ${fmtTimeZ(data.ts[idx])} · ${Number(v.toPrecision(4))}${note}` };
             },
           ],
@@ -138,11 +141,13 @@
                   }
                 }
               } else {
-                // rug (top edge): steps with member-steps beyond 3σ that no test flagged
-                for (const r of outsideRug(data)) {
-                  c.fillStyle = dark ? `rgba(200,205,210,${0.4 + 0.5 * Math.min(1, r.count / 5)})` : `rgba(90,95,100,${0.4 + 0.5 * Math.min(1, r.count / 5)})`;
-                  c.fillRect(p.valToPos(r.x, "x", true) - Math.max(w, dpr) / 2, top, Math.max(w, dpr), 5 * dpr);
+                // widening marks (top edge): steps where more members lie beyond 3σ than chance gives at 99%
+                for (const r of wideningMarks(data)) {
+                  const x = p.valToPos(r.x, "x", true);
+                  c.fillStyle = r.k === null ? muted : groupStyle(dark, r.k).line;
+                  c.beginPath(); c.moveTo(x - 3.5 * dpr, top); c.lineTo(x + 3.5 * dpr, top); c.lineTo(x, top + 6 * dpr); c.closePath(); c.fill();
                 }
+                host.dataset.fleetWidening = String(wideningMarks(data).length);
               }
               // dots where a drawn column has an isolated sample (a line cannot show it), ringed in the background colour
               m.roles.forEach((r, col) => {
@@ -160,7 +165,8 @@
               data.outliers.forEach((o, i) => {
                 if (!o.episodes.length) return;
                 const yb = y0 - (5 + 4 * lane++) * dpr;
-                c.strokeStyle = OUTLIER_COLORS[i % OUTLIER_COLORS.length]; c.lineWidth = 1.5 * dpr;
+                // a transient's episodes in its colour; a level / change member's (uncalibrated, db0) muted
+                c.strokeStyle = o.kind === "transient" ? OUTLIER_COLORS[i % OUTLIER_COLORS.length] : muted; c.lineWidth = 1.5 * dpr;
                 for (const e of o.episodes) {
                   const x1 = p.valToPos(e.start_ms / 1000, "x", true) - w / 2, x2 = Math.max(x1 + 3 * dpr, p.valToPos(e.end_ms / 1000, "x", true) + w / 2);
                   c.beginPath(); c.moveTo(x1, yb - 4 * dpr); c.lineTo(x1, yb); c.lineTo(x2, yb); c.lineTo(x2, yb - 4 * dpr); c.stroke();
@@ -228,7 +234,7 @@
     <div class="encoding" data-fleet-encoding>{axisLabel}</div>
     <ul class="key" data-fleet-key aria-label="Fleet chart encoding">
       {#each key as k (k.id)}
-        <li data-fleet-key-id={k.id}><span class="sw {k.id.startsWith('group-') ? 'group' : k.id}" class:hatch={k.hatch} style:background={k.hatch ? undefined : k.swatch}
+        <li data-fleet-key-id={k.id} title={k.title}><span class="sw {k.id.startsWith('group-') ? 'group' : k.id}" class:hatch={k.hatch} style:background={k.hatch ? undefined : k.swatch}
           style:border-top={k.line ? `2px ${k.line.style} ${k.line.color}` : undefined}></span>{k.label}</li>
       {/each}
     </ul>
@@ -260,7 +266,8 @@
   .sw.median { height: 2px; border: 0; }
   .sw.flag { height: 0; border-left: 0; border-right: 0; border-bottom: 0; }
   .sw.transient { height: 3px; border-left: 0; border-right: 0; border-bottom: 0; }
-  .sw.rug { width: 2px; height: 9px; border: 0; }
+  .sw.widening { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 7px solid var(--muted, #888); background: none !important; }
+  .sw.own-level { height: 0; border-left: 0; border-right: 0; border-bottom: 0; }
   .sw.outlier { width: 8px; height: 8px; border-radius: 50%; border: 0; }
   .sw.hatch { background: repeating-linear-gradient(135deg, var(--muted, #888) 0 1px, transparent 1px 5px); }
   .wrap { position: relative; }

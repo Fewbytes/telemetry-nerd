@@ -50,17 +50,34 @@ judge against:
   steps**. On the scale the analysis chose: log scale (every value > 0) makes the band
   multiplicative, c_t x exp(+-k sigma_t), linear additive. Stated in the legend:
   "median ± 2σ/3σ (robust, pooled ±6 steps, log scale: multiplicative)".
-- **`band_window`** (odd steps >= 13, default 13 = the tests' pool): larger pools sigma over
-  +-band_window // 2 steps and smooths the centre by a centred moving median over band_window steps
-  (a calmer band for long windows). Flags are unchanged.
+- **`band_window`** (odd steps from 13, the tests' pool and default, to min(steps, 121); else
+  refused, saying the limit): larger pools sigma over +-band_window // 2 steps and smooths the
+  centre by a centred moving median over band_window steps (a calmer band for long windows).
+  Flags are unchanged. The median is centred, so no phase lag mid-window, but a fleet-wide step
+  is spread over +-band_window // 2 steps, fleet-wide peaks shorter than that are cut, and in the
+  last band_window // 2 steps the median is one-sided and lags (stated as `smoothing`). Pooling
+  works in blocks of steps (at most ~4M values at once), so a wide window does not materialise
+  members x steps x window.
 - **Flags are not the zones.** A member is flagged only by the family-wise tests (below). The
-  dashed flag line is the single-step (spike) threshold, `excursion_thresholds_z.spike` x sigma_t
-  around the tests' own centre and pool (whatever band_window); level, change and episode tests
-  flag members whose single steps stay inside it. Member-steps beyond the drawn 3 sigma that no
-  test flagged are counted per step (`outside_3sigma_unflagged`; a rug in the panel) with the note
-  "outside 3σ, not significant at fleet-wide 1% (k members tested)". In a normal fleet about 0.27%
-  of member-steps lie there by chance: at Bonferroni levels that is not evidence.
-- **Behaviour groups**: each group's zones from its own analysis (its own centre and sigma).
+  dashed flag line is the single-step (spike) bar, the larger of the t bar and the Gumbel tail bar,
+  x sigma_t around the tests' own centre and pool (whatever band_window). It is approximate: the
+  tests' per-member bar varies with pooling, and they use leave-one-out sigma up to 64 members
+  (the key says so on hover); level, change and episode tests flag members whose single steps
+  stay inside it.
+- **Beyond 3 sigma, unflagged.** Counted, never marked per point: in a normal fleet 0.27% of
+  member-steps lie there by chance, so with 100 members about a quarter of the steps would carry
+  one (more with heavy tails), mostly on members that are not drawn. The summary and legend say
+  "N member-steps beyond 3σ unflagged; ≈0.27%·cells expected if normal"; a drawn line's point
+  there says "outside 3σ, not significant at fleet-wide 1% (k members tested)" on hover. No
+  per-member run rules.
+- **Widening.** A step is marked (a small wedge at the top) when its count of unflagged members
+  beyond 3 sigma reaches the point Binomial(n_t, 0.27%) exceeds with probability < 1%: the fleet
+  as a whole spread out there, a common-cause signal (about 1% of steps by chance; `widening`
+  {steps, at, note}).
+- **Behaviour groups**: each group has its own band, flag bar, counts and widening (its own
+  centre and sigma: what its members were judged against), in `clusters.groups[].band` and per
+  group in the panel; the whole-fleet band is not drawn (it would sit between the groups) and the
+  top-level `band` sums the counts.
 - **Measurement error** of each member's value is not propagated into sigma (principle 4): the
   band and the tests treat reported values as exact; stated in both views and the summary.
 
@@ -83,7 +100,10 @@ and at +inf (upper bound), Hyndman-Fan 7 over n_t + m values. A bound whose orde
 reach into the missing ranks is unbounded (m >= the quantile's rank: e.g. 2 of 7 missing leave
 q25 unbounded below and q75 unbounded above). The min / max envelope is unbounded on the missing
 side ("unknown beyond", never a fake limit). Payload `band_bounds.{q}_lo/_hi` (None = unbounded
-where the quantile is drawn and n_t < alive_t).
+where the quantile is drawn), sparse: only the `steps` with members missing, with `missing` per
+step; absent when nobody is. Members the source marked stale (churn `ended`) are gone, not
+missing, from their stale point on: a positive observation (principle 9) that they have no value
+to bound. Trailing silence without a marker still counts as missing (alive, silent).
 
 Summary: median relative spread (IQR / median on log scale as q75/q25), spread in the last vs the
 first third, time of the widest spread, min/median n per step, missing_member_bounds (how many
@@ -188,7 +208,10 @@ noise down to t(3) (1.3% at 300 seeds, 1.6% at 1000). See Calibration.
   runs beyond them are its `episodes` (`beyond_own_level`, peak z relative to that level). The
   plain excursion tests fire on such members trivially (an offset member is beyond every bar), so
   without this a persistent member would carry one window-long "episode". These extra scans run
-  only on already-flagged members (a looser look, stated).
+  only on already-flagged members and are **not calibrated** (bead db0): summary episodes carry
+  `calibrated: false`, the panel draws them as muted unlabelled brackets. Null check (clean
+  persistent and drifting members, M = 60): normal AR(0.6) noise 0 of 800; t(4) noise 21 of 800
+  (2.6%).
 `since`: start of the final stretch where the member's rolling median z (window max(5, 2 tau))
 stays beyond 2 in the outlier's direction; `since_window_start` when it covers the window start
 (the member was off at least since then). `score` = the largest |statistic| / threshold (>= 1).
@@ -296,21 +319,23 @@ dataset whose op drops it) the fleet falls back to presence from values and says
   beyond_own_level}] and `effect` {as: ratio | difference, offset, change?, at_ms?,
   change_per_hour?}; per group `spc` zones.
   - **SPC band + outliers** (default view): +-3 sigma and +-2 sigma as nested fills of one hue
-    (outer lighter), the median line, the flag threshold thin dashed on both sides, a rug of
-    unflagged member-steps beyond 3 sigma along the top (hover: the note).
+    (outer lighter), the median line, the flag bar thin dashed on both sides, widening wedges
+    along the top (hover: the note). The x axis is UTC, like every fleet time.
   - **Marks per mode** (<= 6 drawn, Okabe-Ito): persistent / shifted / drifting: the whole member
     line coloured, end label kind + effect ("+38% since 09:10", "shifted +41% at 10:07",
-    "drifting +2%/h"). Transient: the line grey (3:1 muted) where inside, only its episode
+    "drifting +2%/h"; "since window start" when the offset covers the window, the offset over
+    the since stretch, or "(window mean)" when it is not). Transient: the line grey (3:1 muted) where inside, only its episode
     segments coloured, each episode bracketed on the time axis, peak z in the label ("spike 6.1σ
     10:22–10:25 (momentary)"; a sustained run is an "episode"). Both: the coloured line plus
-    episode brackets, the label names both ("+38% since 09:10 · spike 4σ beyond own level ...").
+    muted, unlabelled episode brackets (uncalibrated, db0).
   - **Spread (quantiles)** (toggle): min-max, 10-90, 25-75 as nested fills, median line,
     missing-member bounds as lighter cells at steps with members missing (unbounded to the plot
     edge; hover lists each quantile's bounds and "min / max: unknown beyond").
   - Both views: a coverage strip at steps where alive members did not report (darker = more
-    missing), the legend "100 members · 3 outliers · 92-100 reporting per step · zones ..." with
-    "member measurement error not propagated", and one line per drawn outlier (kind, direction,
-    effect or episode).
+    missing). The key carries the encoding (explanations on hover); the legend only counts and
+    caveats ("100 members · 3 outliers · 92-100 reporting per step · 66 member-steps beyond 3σ
+    unflagged (≈79 expected if normal) · member measurement error not propagated"); one line per
+    drawn outlier (kind, direction, effect or episode).
 - The chart validator's `series_budget` refusal for line charts now suggests `fleet`.
 
 ## Calibration (seeded simulation)
