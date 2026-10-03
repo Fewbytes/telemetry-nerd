@@ -353,8 +353,10 @@ Flags on top of the states: `reset` (↺ on the plot), `interval_change` (axis t
   expected samples at the resolution · last seen · for groups, `reporting/alive` and the
   silent members.
 - **Missing data travels to Claude and to findings.** Summaries report coverage %, the
-  longest gap, silent members, resets and unknown spans. A finding whose claim window
-  overlaps a blocking caveat is rejected, or must narrow its scope.
+  longest gap, silent members, resets and unknown spans. A finding's coverage is judged
+  per series its selector names, never pooled: a claim on one silent pod is rejected even
+  when the fleet is fine; a fleet claim names its silent members and is rejected only when
+  more than half of them lack data. Never average coverage (or percentiles) across series.
 - States are told apart by pattern (solid / dots / hatch / dotted), never by colour alone;
   greys must pass 3:1 against the background in both themes.
 

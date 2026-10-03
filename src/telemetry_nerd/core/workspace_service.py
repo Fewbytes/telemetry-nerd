@@ -64,6 +64,7 @@ from telemetry_nerd.charts.dataview import SignalViews
 from telemetry_nerd.charts.indexed import check_index, shifted
 from telemetry_nerd.charts.spec import ChartSpec, Marginal, Reference, YContext
 from telemetry_nerd.charts.units import infer_unit_with_provenance, metric_names
+from telemetry_nerd.charts.ycontext import counter_rate_parts, selector_parts
 from telemetry_nerd.charts.yview import (
     BUILTIN_LABELS,
     INDEX_LABELS,
@@ -76,6 +77,7 @@ from telemetry_nerd.core.card_payload import binding_row, browse_row, field_rows
 from telemetry_nerd.core.code_outputs import evidence_problem
 from telemetry_nerd.core.coverage_check import claim_coverage
 from telemetry_nerd.core.events import Actor, Event, EventLog, check_actor
+from telemetry_nerd.core.panel_payloads import series_labels
 from telemetry_nerd.core.uncertainty import evidence_flags
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.companions import dataset_bundle
@@ -225,7 +227,13 @@ class WorkspaceService:
             states = dataset_bundle(self.datasets, meta, result).companions.get("bucket_state")
             if states is None:
                 continue
-            for c in claim_coverage(states, span.start_ms, span.end_ms, meta.step_ms):
+            plain = meta.derived is None and meta.code_node is None  # expr is the query
+            parts = (selector_parts(meta.expr) or counter_rate_parts(meta.expr)) if plain else None
+            for c in claim_coverage(
+                states, span.start_ms, span.end_ms, meta.step_ms,
+                labels=series_labels(result.series), selector=data.scope.selector,
+                metric=parts[0] if parts else None,
+            ):  # fmt: skip
                 (blocking if c.severity == "blocks_claim" else warnings).append(
                     f"{did}: {c.message}"
                 )
@@ -233,7 +241,9 @@ class WorkspaceService:
             raise ValueError(
                 "insufficient coverage for this claim: "
                 + " ".join(blocking)
-                + " (hint: narrow scope.time_range or the selector to data that exists)"
+                + " (hint: coverage is judged per series that scope.selector's label matchers"
+                " name: name only series with data in the window, narrow scope.time_range to"
+                " where they have samples, or cite evidence that contains the series claimed)"
             )
         if warnings:
             data = data.model_copy(update={"caveats": [*data.caveats, *warnings]})

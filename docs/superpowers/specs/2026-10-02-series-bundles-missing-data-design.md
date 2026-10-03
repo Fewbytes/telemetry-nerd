@@ -125,10 +125,41 @@ a localized mark ⇒ show its caveat.
 
 ### 4.4 Findings
 
-A finding whose claim window/series overlaps a `blocks_claim` caveat is rejected with a hint to
-narrow scope. `warn` caveats in the window are copied into the finding's caveats. Thresholds for
-promoting `missing_data` to `blocks_claim` (e.g. coverage < 50% in the claim window, or any
-`unknown`) live with the validator rules.
+A finding whose claim window/series overlaps a `blocks_claim` caveat is rejected with a hint
+(name only series with data, narrow the window, or cite evidence that contains the claimed
+series). `warn`/`info` caveats in the window are copied into the finding's caveats. Rules
+(`core/coverage_check.py`, `core/claim_scope.py`):
+
+- **Which series.** Coverage is judged per series, never pooled (Σobserved / Σexpected over a
+  fleet hides one silent pod and lets one bad pod block everything). The claim is about the
+  evidence series that `scope.selector`'s label matchers name (`=`, `!=`, `=~`, `!~`; regex
+  fully anchored; a missing label reads `""`). They are read from a plain selector or from the one
+  selector inside an expression that keeps its series' labels (`rate(x{pod="a"}[5m])`,
+  `sum by (pod) (...)`). Series carry no `__name__`: a name matcher is checked against the
+  dataset's metric when its expression has one, else noted as not checked. A matcher on a label
+  no evidence series carries (aggregated away) is not applied, and said. An expression with
+  operators, label rewriting or several selectors is not read: every evidence series, said in
+  the caveat. Matchers that match no evidence series block (the claim names series the evidence
+  does not contain).
+- **One series.** The whole claim window counts: < 50% of expected samples, or any `unknown`,
+  blocks; less warns. Buckets before its first sample and after its last are unobserved
+  (it may not have existed yet, may have left, or may return just outside the window): they
+  count as missing, and the caveat says "first/last sample at T" with those alternatives,
+  never that the series ended.
+- **Several series.** Each is judged over its own span in the window (first to last sample),
+  so a series first seen inside the window or silent from some time on is membership change,
+  not loss: named in a `membership` caveat with the alternatives above and a hint to check
+  whether set(<identity label>) per bucket (`count by (pod) (<selector>)`) is consistent over a
+  wider window. Members silent, under 50%, or with any `unknown` in their span are named
+  (`MAX_NAMED` per list, with totals) in a warning; the claim is blocked only when more than
+  half of the members alive in the window are such, or none has a sample.
+- **Long gaps.** A run of `empty` buckets bounded by samples on both sides and ≥ 5 min long
+  (Prometheus' default lookback delta: past it the source itself drops the series at an
+  instant) reads "no samples T0–T1 (scrape loss, or the series left and rejoined; not
+  distinguished yet)". It still counts as missing (`telemetry-nerd-ojo` tracks telling the two
+  apart).
+- `post_gap_spike` warns per series (named on several-series claims). No rule aggregates a
+  percentile or coverage across series.
 
 ### 4.5 Migration
 
@@ -144,7 +175,7 @@ accepts both shapes during migration.
 |---|---|
 | `observed` | samples in the bucket (today's `count`) |
 | `expected` | step / series' own sample interval (see below) |
-| `state` | `ok` · `partial` (observed/expected < 0.9) · `empty` (alive, 0 samples) · `absent` (before the first sample in the window: not alive yet; trailing silence is `empty`, principle 9) · `unknown` (fetch failed, outside retention, source can't tell) |
+| `state` | `ok` · `partial` (observed/expected < 0.9) · `empty` (alive, 0 samples; also after the last sample, which cannot tell a series that left from one that will return) · `absent` (before the first sample in the window: not alive yet; trailing silence is `empty`, principle 9) · `unknown` (fetch failed, outside retention, source can't tell) |
 | `flags` | bitmask: `reset`, `interval_change`, `stale_marker`, `source_filled` |
 | `reason` | for `unknown`/`source_filled`: short code from the source profile or error |
 

@@ -490,7 +490,26 @@ async def test_finding_over_a_window_with_no_data_is_rejected(tmp_path):
 async def test_finding_over_a_partial_window_is_created_with_a_warning(tmp_path):
     svc, ds, _, hole = await _queried(tmp_path, HoleySource())
     f = svc.ws.finding_create(claim_in(ds, hole - 60_000, hole + 120_000), "claude")
-    assert len(f.caveats) == 1 and f.caveats[0].startswith(f"{ds}: 50%")
+    assert len(f.caveats) == 1 and f.caveats[0].startswith(f"{ds}: 1 of 2 series")
+    assert 'no samples: {instance="i0"}' in f.caveats[0]  # the silent one, by name
+
+
+def claim_on(dataset, start_ms, end_ms, selector):
+    data = claim_in(dataset, start_ms, end_ms).model_dump()
+    data["scope"]["selector"] = selector
+    return FindingIn(**data)
+
+
+async def test_claim_coverage_follows_the_selector(tmp_path):
+    svc, ds, _, hole = await _queried(tmp_path, HoleySource())
+    a, b = hole - 60_000, hole + 120_000
+    with pytest.raises(ValueError, match=r'instance="i0"\} has no samples'):
+        svc.ws.finding_create(claim_on(ds, a, b, 'up{instance="i0"}'), "claude")
+    assert svc.ws.finding_create(claim_on(ds, a, b, 'up{instance="i1"}'), "claude").caveats == []
+    with pytest.raises(ValueError, match="does not contain"):
+        svc.ws.finding_create(claim_on(ds, a, b, 'up{instance="i9"}'), "claude")
+    with pytest.raises(ValueError, match="does not contain.*metric 'up'"):
+        svc.ws.finding_create(claim_on(ds, a, b, 'down{instance="i1"}'), "claude")
 
 
 async def test_finding_over_a_clean_window_gains_no_caveats(tmp_path):

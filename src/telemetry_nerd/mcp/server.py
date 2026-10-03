@@ -1425,7 +1425,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         uncertainty_unknown: true, source?}]. Pass an op's evidence statistic as is: its
         `source` (common_cause | special_cause | measurement_system | undetermined) says what
         the variation is attributed to; never relabel it. hypothesis and stance (for|against)
-        go together. Returns {finding, url, uncertainty?: [{evidence, flag, message}],
+        go together. Coverage of the window is checked per evidence series that
+        scope.selector's label matchers name (e.g. up{pod="x"} for a claim about one pod).
+        Returns {finding, url, uncertainty?: [{evidence, flag, message}],
         sources?}: flags the server derived (uncertainty unknown / lower bound) and the cited
         variation sources; report them with the finding."""
         try:
