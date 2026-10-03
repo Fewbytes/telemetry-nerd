@@ -112,35 +112,29 @@ def run_demo_scenario(name: str, scale: float | None) -> Path:
 # --- live: queue-sim
 
 
+def _vqs():
+    """scripts/validate_queue_sim.py, whose exporter and VM helpers the live queue-sim run uses."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import validate_queue_sim
+
+    return validate_queue_sim
+
+
 def run_queue_sim(name: str, duration: float | None, vm_port: int, d: Path) -> Path:
     """Exporter + throwaway VM (scripts/validate_queue_sim.py's helpers); returns the truth."""
-    sys.path.insert(0, str(ROOT / "scripts"))
-    import validate_queue_sim as vqs
-
     from telemetry_nerd.devtools.queue_sim import load_scenario, resolve_scenario
+
+    vqs = _vqs()
 
     vqs.OUT.mkdir(parents=True, exist_ok=True)
     sc = load_scenario(resolve_scenario(name))
-    arg = name
-    if duration:
-        from dataclasses import asdict
-
-        raw = asdict(sc)
-        raw["duration_s"] = duration
-        raw["faults"] = [{**f, "instances": list(f["instances"])} for f in raw["faults"]]
-        raw["instances"] = list(raw["instances"])
-        (vqs.OUT / f"{name}.scenario.json").write_text(json.dumps(raw))
-        arg = f"{name}.scenario.json"
+    arg = vqs.scenario_arg(name, sc, duration)
     (vqs.OUT / f"{name}.truth.json").unlink(missing_ok=True)
     port = 9301
     ip = vqs.start_exporters(vm_port, {name: arg}, {name: port})
     scrape_s = int(sc.scrape_interval_s)
     scrape = d / "scrape.yml"
-    scrape.write_text(
-        f"scrape_configs:\n  - job_name: qs-{name}\n    scrape_interval: {scrape_s}s\n"
-        f"    static_configs:\n      - targets: ['{ip}:{port}']\n"
-        f"        labels: {{scenario: {name}}}\n"
-    )
+    scrape.write_text(vqs.scrape_config({name: f"{ip}:{port}"}, scrape_s))
     vqs.start_vm(vm_port, scrape, scrape_s, network=True)
     horizon = duration or sc.duration_s
     print(f"queue-sim {name} on VM :{vm_port}; running {horizon:.0f}s ...", flush=True)
@@ -152,10 +146,7 @@ def run_queue_sim(name: str, duration: float | None, vm_port: int, d: Path) -> P
 
 
 def stop_queue_sim(vm_port: int) -> None:
-    sys.path.insert(0, str(ROOT / "scripts"))
-    import validate_queue_sim as vqs
-
-    vqs.stop_vm(vm_port)
+    _vqs().stop_vm(vm_port)
 
 
 # --- main

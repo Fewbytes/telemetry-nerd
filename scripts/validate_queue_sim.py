@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 import httpx
@@ -30,6 +31,7 @@ from telemetry_nerd.devtools.queue_sim import (
     METRIC_ACTIVE,
     METRIC_LATENCY,
     METRIC_REQUESTS,
+    Scenario,
     exact_windows,
     load_scenario,
     resolve_scenario,
@@ -61,6 +63,29 @@ def free_port() -> int:
 
 def sh(*cmd: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, capture_output=True, text=True, check=check)
+
+
+def scenario_arg(name: str, sc: Scenario, duration: float | None) -> str:
+    """The exporter's scenario argument: its name, or with `duration` a copy of the scenario
+    with duration_s overridden (written to OUT)."""
+    if not duration:
+        return name
+    raw = asdict(sc)
+    raw["duration_s"] = duration
+    raw["faults"] = [{**f, "instances": list(f["instances"])} for f in raw["faults"]]
+    raw["instances"] = list(raw["instances"])
+    (OUT / f"{name}.scenario.json").write_text(json.dumps(raw))
+    return f"{name}.scenario.json"
+
+
+def scrape_config(targets: dict[str, str], scrape_s: int) -> str:
+    """VictoriaMetrics scrape config: one job per scenario (name -> host:port)."""
+    jobs = "".join(
+        f"  - job_name: qs-{n}\n    scrape_interval: {scrape_s}s\n    static_configs:\n"
+        f"      - targets: ['{target}']\n        labels: {{scenario: {n}}}\n"
+        for n, target in targets.items()
+    )
+    return "scrape_configs:\n" + jobs
 
 
 def start_vm(port: int, scrape_yml: Path, scrape_s: int, network: bool = False) -> None:
@@ -338,19 +363,7 @@ def main() -> int:
         if not a.analyse_only:
             for n in scs:
                 (OUT / f"{n}.truth.json").unlink(missing_ok=True)
-            runs = {}
-            for n, sc in scs.items():
-                arg = n
-                if a.duration:
-                    from dataclasses import asdict
-
-                    d = asdict(sc)
-                    d["duration_s"] = a.duration
-                    d["faults"] = [{**f, "instances": list(f["instances"])} for f in d["faults"]]
-                    d["instances"] = list(d["instances"])
-                    (OUT / f"{n}.scenario.json").write_text(json.dumps(d))
-                    arg = f"{n}.scenario.json"
-                runs[n] = arg
+            runs = {n: scenario_arg(n, sc, a.duration) for n, sc in scs.items()}
             if a.exporters == "container":
                 ip = start_exporters(a.vm_port, runs, ports)
                 targets = {n: f"{ip}:{ports[n]}" for n in scs}
@@ -362,12 +375,7 @@ def main() -> int:
                     procs.append(subprocess.Popen(cmd, cwd=ROOT))
                 targets = {n: f"{a.host_alias}:{ports[n]}" for n in scs}
             scrape = tmp / "scrape.yml"
-            jobs = "".join(
-                f"  - job_name: qs-{n}\n    scrape_interval: {scrape_s}s\n    static_configs:\n"
-                f"      - targets: ['{targets[n]}']\n        labels: {{scenario: {n}}}\n"
-                for n in scs
-            )
-            scrape.write_text("scrape_configs:\n" + jobs)
+            scrape.write_text(scrape_config(targets, scrape_s))
             start_vm(a.vm_port, scrape, scrape_s, network=a.exporters == "container")
             horizon = max((a.duration or s.duration_s) for s in scs.values())
             print(f"VM on :{a.vm_port}; scenarios run for {horizon:.0f}s ...", flush=True)
