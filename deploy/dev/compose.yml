@@ -5,9 +5,17 @@ services:
       - -retentionPeriod=100y
       - -search.latencyOffset=0s
       - -dedup.minScrapeInterval=1ms
+      - -promscrape.config=/etc/vm/scrape.yml
     ports:
       - "8428:8428"
     volumes:
       - vmdata:/victoria-metrics-data
+      - ./scrape.yml:/etc/vm/scrape.yml:ro
+    depends_on:
+      - node-exporter
+  node-exporter:
+    image: prom/node-exporter:v1.9.1
+    ports:
+      - "9100:9100"
 volumes:
   vmdata: {}
