@@ -245,20 +245,49 @@ describe("workspace frames in the store", () => {
     stop();
   });
 
-  it("reloads after a reconnect drops a snapshot of another workspace for being behind the stream", async () => {
+  it("resync: applies another workspace's snapshot taken after the fetch started, even behind the stream", async () => {
     vi.useFakeTimers();
     const { ws, load, stop, send } = await started(snap("w1", 1));
     const resolvers = pending(load);
     void ws.reload(); // e.g. the post-outage resync, no frame seen: the daemon switched meanwhile
-    send(quiet(8, "w2"));
+    send(quiet(8, "w2")); // streamed while the fetch was in flight (lastSeq was 5 at its start)
     resolvers[0](snap("w2", 7));
     await vi.advanceTimersByTimeAsync(0);
-    expect(ws.snapshot?.workspace.id).toBe("w1"); // behind the stream: not applied as is
-    await vi.advanceTimersByTimeAsync(100);
-    expect(load).toHaveBeenCalledTimes(3); // initial, the dropped one, the rescheduled one
-    resolvers[1](snap("w2", 8));
-    await vi.advanceTimersByTimeAsync(0);
     expect(ws.snapshot?.workspace.id).toBe("w2");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(load).toHaveBeenCalledTimes(2); // no extra resync poll
+    stop();
+  });
+
+  it("resync: a snapshot behind the fetch start is retried a bounded number of times, then accepted", async () => {
+    vi.useFakeTimers();
+    const { ws, load, stop } = await started(snap("w1", 1));
+    load.mockResolvedValue(snap("w2", 2)); // e.g. a daemon restarted on a wiped events DB (lastSeq 5)
+    void ws.reload();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(ws.snapshot?.workspace.id).toBe("w2");
+    expect(load.mock.calls.length).toBeLessThanOrEqual(6); // initial + resync + at most 4 retries
+    const calls = load.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(load).toHaveBeenCalledTimes(calls);
+    stop();
+  });
+
+  it("a lost frame does not strand the board: a later switch's snapshot is reconciled", async () => {
+    const { ws, load, stop, send } = await started(snap("w1", 1));
+    const resolvers = pending(load);
+    send(frame("w2"));
+    resolvers[0](snap("w2", 6));
+    await vi.waitFor(() => expect(ws.snapshot?.workspace.id).toBe("w2"));
+    // Claude switches to w3 but its frame is dropped (full queue): only the stream shows it
+    send(JSON.stringify({ seq: 9, ts_ms: 0, actor: "claude", type: "workspace.opened", object_id: "w3",
+      klass: "internal", payload: {}, workspace: "w3" }));
+    await vi.waitFor(() => expect(resolvers.length).toBe(2));
+    resolvers[1](snap("w3", 9));
+    await vi.waitFor(() => expect(ws.snapshot?.workspace.id).toBe("w3"));
+    // and the reconciled target holds: a later frame for w3 only patches in place
+    send(frame("w3"));
+    expect(load).toHaveBeenCalledTimes(3);
     stop();
   });
 

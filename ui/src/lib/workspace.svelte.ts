@@ -18,6 +18,9 @@ const RELOAD_TYPES = new Set([
 
 const RETRY_BASE_MS = 1000;
 const RETRY_MAX_MS = 15000;
+// a resync whose snapshot stays behind the stream (e.g. a wiped events DB) is retried this
+// many times in a row, then accepted as is
+const RESYNC_RETRIES = 3;
 
 // highlights are transient UI state folded from the stream; they never change the snapshot
 export const needsReload = (e: WorkspaceEvent): boolean =>
@@ -36,6 +39,8 @@ export function createWorkspace() {
   // the workspace the latest frame named; null until one arrives and after the socket drops
   // (frames are not replayed, so after an outage only the snapshot knows what is active)
   let target: string | null = null;
+  let frames = 0; // workspace frames seen; a load started before the latest one is outdated
+  let resyncs = 0; // consecutive resync retries
   let timer: ReturnType<typeof setTimeout> | undefined;
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let failures = 0;
@@ -49,29 +54,47 @@ export function createWorkspace() {
     armExpiry();
   };
 
-  const load = (): Promise<void> =>
-    fetchWorkspace()
+  const load = (): Promise<void> => {
+    const startSeq = lastSeq;
+    const startFrames = frames;
+    return fetchWorkspace()
       .then((s) => {
         const id = s.workspace.id;
         const shown = snapshot?.workspace.id;
-        // Concurrent loads can return out of order; never apply a stale snapshot. last_seq is
-        // global and the /ws stream forwards a switch's frame and then the new workspace's
-        // events before this fetch lands, so the first snapshot of the frame's workspace wins
-        // even when those events raised lastSeq past it. A load that raced a later frame (a
-        // switch and a switch back) is for a workspace no longer active: dropped.
-        const fresh = target === null
-          ? s.last_seq >= lastSeq
-          : id === target && (s.last_seq >= lastSeq || shown !== target);
+        // Never apply a stale snapshot: concurrent loads can return out of order, and last_seq
+        // is global, so one taken before another is behind it whatever its workspace.
+        const newer = s.last_seq >= startSeq && s.last_seq >= (snapshot?.last_seq ?? 0);
+        let fresh: boolean;
+        if (target === null) {
+          // No frame to go by (the first load, or the resync after an outage). A snapshot of
+          // the shown workspace must not be behind the stream; one of another workspace (the
+          // daemon switched meanwhile) only behind the fetch start: the stream keeps running
+          // while it is in flight. One that stays behind is retried, then accepted.
+          fresh = id === shown ? s.last_seq >= lastSeq : newer;
+          if (!fresh && shown !== undefined && id !== shown) {
+            if (resyncs++ < RESYNC_RETRIES) schedule();
+            else fresh = true;
+          }
+        } else if (id === target) {
+          // The /ws stream forwards a switch's frame and then the new workspace's events before
+          // this fetch lands, so the first snapshot of the frame's workspace wins even when
+          // those events raised lastSeq past it.
+          fresh = s.last_seq >= lastSeq || shown !== target;
+        } else {
+          // A load that raced a later frame (a switch and a switch back) is for a workspace no
+          // longer active: dropped. With no frame since the fetch started, the daemon switched
+          // and its frame was lost (a full queue) or is still in flight: the snapshot wins.
+          fresh = startFrames === frames && newer;
+          if (fresh) target = id;
+        }
         if (fresh) {
           const first = snapshot === null;
           const switched = workspaceChanged(snapshot, s);
           snapshot = s;
           error = null;
+          resyncs = 0;
           if (switched) clearHighlights();
           if (switched || first) refreshList();
-        } else if (target === null && shown !== undefined && id !== shown) {
-          // no frame to go by (e.g. the resync after an outage): the daemon switched, retry
-          schedule();
         }
         lastSeq = Math.max(lastSeq, s.last_seq);
         failures = 0;
@@ -82,6 +105,7 @@ export function createWorkspace() {
         clearTimeout(retryTimer);
         retryTimer = setTimeout(load, Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** failures++));
       });
+  };
 
   const armExpiry = () => {
     clearTimeout(expiryTimer);
@@ -134,6 +158,7 @@ export function createWorkspace() {
           // On a switch, the reloaded snapshot refreshes the list once it lands.
           onWorkspace: (f) => {
             target = f.active.id;
+            frames++;
             if (snapshot !== null && f.active.id === snapshot.workspace.id) {
               snapshot = { ...snapshot, workspace: f.active };
               refreshList();
