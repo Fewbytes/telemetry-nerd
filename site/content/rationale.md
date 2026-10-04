@@ -21,15 +21,24 @@ it. You look at the same graphs, ask about any part of them, and decide which hy
 
 It is deliberately **not** three things:
 
-- **Not an "AI SRE".** It does not take actions on your behalf. It reads metrics and never changes
-  your infrastructure.
+- **Not an "AI SRE".** This isn't about permissions — it doesn't need write access to your
+  infrastructure to oversell itself. It's that we don't sell automated root-cause analysis.
+  Root-causing a real incident takes judgment about your specific system, your specific failure
+  mode, and the context that never made it into a metric; a tool that claims to do that for you
+  is selling snake oil, however confident it sounds. Telemetry Nerd proposes explanations and goes
+  looking for the evidence that would rule them out, but it stops there. The conclusion is yours.
+  It also happens to read metrics and never change your infrastructure, but that's a consequence
+  of staying in its lane, not the point.
 - **Not a dashboarding tool.** There are no wallboards or KPI grids. Panels appear in the order an
   investigation produces them, and each one exists to answer a single question.
 - **Not an alerting system.** It does not watch your systems. You bring it a question.
 
-The division of labour is fixed. Claude proposes explanations, gathers evidence for and against
-them, draws the graphs that make the data legible and suggests where to look next. Humans draw the
-conclusions: the verdict on a finding is always yours.
+It's a powerful tool built for people who already know how to debug a system and want an
+assistant that does the tedious, error-prone parts honestly — the querying, the charting, the
+bookkeeping of what's been checked. It is not a powerful tool that pretends to replace the
+judgment debugging actually takes. Humble about what it can't do is the whole design, not a
+caveat bolted on afterward: the division of labour is fixed, Claude proposes and gathers evidence,
+you decide, and that boundary doesn't move just because the next question is harder.
 
 ## A different job from Grafana and Kibana
 

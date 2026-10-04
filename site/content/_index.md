@@ -16,9 +16,12 @@ part of them, and mark hypotheses supported or refuted.
 It **is** an analysis workspace for people who need to understand what their systems are doing:
 during an incident, in a capacity review, or when a graph looks wrong.
 
-It **isn't** an "AI SRE" that takes actions on your behalf, a dashboarding tool, or an alerting
-system. It reads metrics; it never changes your infrastructure. Read the [rationale](/rationale/)
-for why that distinction, and the rest of the design, is deliberate.
+It **isn't** an "AI SRE" that does automated root-cause analysis, a dashboarding tool, or an
+alerting system. Root-causing a real incident takes judgment a tool doesn't have; claiming
+otherwise is snake oil. Telemetry Nerd proposes and gathers evidence — you conclude. It's a
+powerful tool for people who already know how to debug, built to stay humble about what it
+can't do. Read the [rationale](/rationale/) for why that boundary, and the rest of the design, is
+deliberate.
 
 ## What you can do with it
 
