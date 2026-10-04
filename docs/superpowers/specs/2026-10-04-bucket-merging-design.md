@@ -5,7 +5,8 @@ Bead `telemetry-nerd-7jme`. Status: design, not implemented. Direction agreed wi
 (P3 never erode peaks, P6 bulk data stays out of context, P10 means and ratios merge only with
 their weights, P11 missing is not zero, P16 results are model outputs, P17 a new model is fine
 when implemented and used correctly and explained; labels must hold under the cautious model).
-User decisions 2026-10-04 on §11: Q1, Q2, Q4, Q5, Q6 decided (folded in below); Q3 open.
+User decisions 2026-10-04 on §11: all resolved (Q1-Q6, plus `$__rate_interval` and
+panel-statement decisions), folded in below.
 
 **Terms** (`docs/glossary.md`): *series interval* (a series' natural sample spacing); *query
 window* (the `[w]` of a range function); *query resolution* (evaluation spacing inside a query
@@ -179,25 +180,34 @@ the panel note (UI) and `requery: bool` on `show`/panel data (MCP, `force_requer
 re-query of a query-step-invariant expression uses the rollup fetch with query step `S` (the expression as written);
 of a rewritable one, `rewindow` + `fetch_values` as below. The result is a dataset (Q6).
 
-**Choosing a query window (decided, Q2).** Whenever *we* choose the query window
-(`$__rate_interval`, this rewrite), we prefer a tile: query window = query step, fetched with one
-evaluation per query bucket, as long as each tile holds ≥ 2 samples (query step ≥ 2 × series
-interval). Only when it would not do we widen, to `rate_interval_ms(step, series interval)`
-(`exprkind.py:62`), and the panel names that query window. `choose_window(query_step,
-series_interval) -> (query_window, tile: bool)` in `exprkind.py` is the one rule; `expand` and
-`rewindow` use it. The series interval is the source's learned resolution
-(`learn_resolution`, `sources/promql.py:797`) unless a per-series interval is known. A tile
-chosen this way is fetched with one evaluation per query bucket: `rollup((expr)[step:step])`
-(the adapter's `_window`, `promql.py:226-230`, takes the query resolution as a parameter
-instead of always `self.resolution_ms`) or `fetch_values`. This changes what `$__rate_interval`
-expands to for new queries (Grafana's `max(4 × res, step + res)` today, `exprkind.py:62-64`);
-existing datasets keep their stored expression (§7).
+**Choosing a query window (decided, Q2; `$__rate_interval` decided 2026-10-04).** Two rules,
+by who chose the window:
+
+- **`$__rate_interval` is Grafana's.** It appears mostly in imported dashboards and catalog
+  bindings; it expands the Grafana way, `max(4 × series interval, query step + series interval)`
+  (`rate_interval_ms`, `exprkind.py:62-64`, today's behaviour), so the numbers match the
+  dashboard it came from.
+- **Where we choose the window, we prefer a tile.** `choose_window(query_step, series_interval)
+  -> (query_window, tile: bool)` in `exprkind.py`: a tile (query window = query step, one
+  evaluation per query bucket) as long as each tile holds ≥ 2 samples (query step ≥ 2 × series
+  interval); otherwise widen to the Grafana interval and the panel names that query window. It
+  governs our own placeholder `$__window` (new; expanded by `choose_window`), the re-query
+  rewrite below, and `profile_target`'s widening. Users rarely write PromQL: they ask in natural
+  language and Claude writes the expression, so in practice `choose_window` governs
+  Claude-written queries (Claude writes `$__window`); Claude may infer intent from context
+  ("match the Grafana dashboard" → `$__rate_interval`). The charting skill says so (plan Task 11).
+
+The series interval is the source's learned resolution (`learn_resolution`,
+`sources/promql.py:797`) unless a per-series interval is known. A tile is fetched with one
+evaluation per query bucket: `rollup((expr)[step:step])` (the adapter's `_window`,
+`promql.py:226-230`, takes the query resolution as a parameter instead of always
+`self.resolution_ms`) or `fetch_values`.
 
 **Rewrite** `rewindow(template, base_query_step, S, series_interval)` (new in `exprkind.py`,
 generalising `core/profiles.py:79-135` `profile_target.widen`, which profiles then reuse), `S` the
 re-query's query step (= the display bucket):
 
-1. `$__rate_interval` → `choose_window(S, series_interval)`.
+1. `$__rate_interval` → the Grafana interval at `S`; `$__window` → `choose_window(S, series_interval)`.
 2. Query windows equal to the base query step (tiles as written) → `S` by the same rule.
 3. Query windows of `rate`/`increase`/`delta`/`changes`/`*_over_time` shorter than `S` →
    `choose_window(S, ...)`.
@@ -299,38 +309,59 @@ display bucket), floored by the series interval, as "detail shorter than {X} is 
 the query window when it exceeds the query step ("rate over 5 m windows"). It changes with zoom
 (the display bucket) and is part of the `describeShown` sentence.
 
-The display bucket changes with zoom and with panel width (`lod` factor = buckets / width,
-`analysis/resample.py:62-69`), so whatever an increase panel draws must not change meaning when
-the user resizes the browser.
+**Every panel states its display bucket and what merging did (decided).** Alongside the
+effective time resolution: "each point averages 4 × 15 s tiles", "each point is the time mean of
+4 × 15 s query buckets", "each point is the sample mean of 1 m", "each bar sums 1 m", "points are
+the source's own 15 s buckets (no merge)". The display bucket changes with zoom and panel width
+(`lod` factor = query buckets / pixels, `analysis/resample.py:62-69`), so the statement is
+recomputed per response (`merge.display_bucket_ms`, `merge.statement` in the payload).
 
-Options: (a) sum per displayed bucket; (b) per-second rate; (c) **per original tile**: the mean
-of the tiles in each displayed bucket, in the tile's unit.
+**Render a new panel at this zoom (decided).** When the display bucket ≠ the query step, the
+panel offers "render a new panel at this zoom": a re-query with the display bucket as query step
+(the §4 forced re-query; windows by §4's rules), creating a real dataset (Q6) **and** a new panel
+with lineage to this one (the `rescope()` pattern, `core/service.py:1058-1090`: new panel id, the
+old panel untouched). Its buckets are then the source's own, no merge. Claude can suggest it when
+a question depends on the merged buckets (MCP: `show(..., at_display_bucket=true)` or the hint
+in the panel payload). Not offered where `requery == "impossible"`.
 
-**Recommendation: (c).** At native zoom it is exactly the value the user queried (150 per 15 s);
-zoomed out it reads 225 per 15 s for the spiky minute, the same unit, so the line does not jump
-by ×k on a resize; the envelope (smallest/largest tile) is in the same unit as the line (with (a)
-it would not be); the normal band (the operating profile's hourly value is also a per-tile mean,
-`core/profiles.py:79-135`), the last-week ghost, indexed baselines and limit lines stay
-comparable; `events_per_step` (`exprkind.py:393`) stays valid for the series merged into display buckets, so the
-departure-from-zero and verdict counts downstream need no special case. (a) changes every
-y-value ×k per zoom and breaks those comparisons; (b) changes the number the user wrote and
-makes native zoom (per tile) disagree with zoomed out (per second) unless the panel always shows
-per second, which is a different chart from the one asked for.
+**Increase on zoom (decided, Q3): depends on the mark.**
 
-The total is not lost: each displayed point carries `total` and `tiles` (query buckets merged),
-and the tooltip reads "900 in this 1 m bucket (4 × 15 s tiles); 225 per 15 s, 15 /s".
+*Line panels* (`line+envelope`) of `sum`-kind series draw the **mean per tile**, labelled in the
+tile's unit: "errors per 15 s (avg of 4 tiles)". At native zoom it is exactly the value queried
+(150 per 15 s); zoomed out the spiky minute reads 225 per 15 s, the same unit, so the line does not
+jump by ×k on a resize; the envelope (smallest/largest tile) shares the unit; the normal band
+(the operating profile's hourly value is also a per-tile mean, `core/profiles.py:79-135`), the
+last-week ghost, indexed baselines and limit lines stay comparable; `events_per_step`
+(`exprkind.py:393`) stays valid for merged series. The hover shows the total in the display
+bucket, the per-tile mean, the per-second rate and the tile min–max: "900 in this 1 m (4 × 15 s
+tiles) · 225 per 15 s · 15 /s · tiles 150–450". Each point carries `total` and `tiles`.
 
-`describeShown` (`ui/src/lib/panelNotes.ts:242-299`), the panel's one-line "what is drawn":
+*Bar panels* (new mark `bars`, for event counts: `sum`-kind only; refused for other kinds since a
+bar's height must be additive) draw the **total per display bucket**; the y-axis names the
+display bucket width: "errors per 1 m". Bars re-aggregate on zoom (each bar = Σ tiles), so the
+axis label changes with the display bucket and says so. Overlays:
 
-| kind | text (step = display bucket, tile = the dataset's query step) |
+| overlay | on bars | why |
+|---|---|---|
+| last-week ghost | **rescaled**: the reference dataset's own tiles summed per display bucket (data, not a scaled line) | exact: same sum merge |
+| threshold / limit lines with a per-time unit (`/s`, per tile) | **rescaled** × display bucket length (per second) or × tiles per bucket (per tile) | a count over a longer interval scales linearly with time |
+| threshold / limit lines without a per-time unit, or unit unknown | **hidden**, chip says "limit is not per unit time: cannot scale to per 1 m" | rescaling would invent a limit |
+| normal band (operating profile) | **hidden**, chip says "the normal band is a range of per-tile means; band edges do not add up to a per-1 m range — see it on the line view" | the centre would scale ×k, but a prediction band of a sum of k tiles is not k × the band (P10, P16) |
+| indexed view | not offered on bars | indexing is a ratio of levels, a line view |
+
+`describeShown` (`ui/src/lib/panelNotes.ts:242-299`), the panel's "what is drawn" sentence,
+then the merge statement and the effective time resolution:
+
+| kind / mark | text (bucket = display bucket, tile = the dataset's query step) |
 |---|---|
-| `sample_mean` | "Average of the samples per {step} bucket (line), min–max (band)." (today's text, made explicit) |
-| `time_mean` | "Time average per {step} bucket of the value (line), min–max (band)." |
-| `sum` | "Increase per {tile} (mean of the {tile} tiles in each {step} bucket; hover for the bucket total), smallest–largest tile (band)." At native zoom: "Increase per {tile} tile." |
-| `max` / `min` | "Largest / smallest value in each {step} bucket (line = band edge)." |
-| local time mean (`requery == "none"`) | "… local time mean of the fetched {query step} query buckets (not re-queried)" with a "re-query at {S}" action (Q1) |
-| re-queried | "… re-queried from the source at {S} (dataset {id}): {expr_S}" plus the pending/failed badge |
-| `cannot_combine` / envelope only | "Range of the values in each {step} bucket (band); no line: {why}. Zoom in for the source's own values." |
+| `sample_mean` | "Average of the samples per {bucket} (line), min–max (band)." |
+| `time_mean` | "Time average per {bucket} of the value (line), min–max (band)." |
+| `sum`, line | "{metric} per {tile} (avg of {k} tiles per point; hover for the {bucket} total), smallest–largest tile (band)." Native zoom: "{metric} per {tile} tile." |
+| `sum`, bars | "{metric} per {bucket} (each bar sums {k} × {tile} tiles)." |
+| `max` / `min` | "Largest / smallest value in each {bucket} (line = band edge)." |
+| local time mean (`requery == "none"`) | "… local time mean of the fetched {query step} query buckets (not re-queried)" + "re-query at {S}" (Q1) |
+| re-queried | "… re-queried from the source at {S} (dataset {id}): {expr_S}" + pending/failed badge |
+| `cannot_combine` / envelope only | "Range of the values in each {bucket} (band); no line: {why}. Zoom in, or render a new panel at this zoom." |
 
 ## 7. Migration and compatibility
 
@@ -343,9 +374,8 @@ and the tooltip reads "900 in this 1 m bucket (4 × 15 s tiles); 225 per 15 s, 1
 - `DatasetMeta.producer` gains the `requery` kind (parents = the panel dataset) and an optional
   `retired: bool` (default false; §4 fold/retire). `Lineage` gains optional per-column `merge`
   (Q4). All optional JSON fields: old metas load unchanged.
-- New queries with `$__rate_interval` may get a tile instead of Grafana's window (§4): a
-  different cache key (the expanded expression differs), so no stale chunk is reused; panels
-  re-queried after the change show the effective time resolution they now have.
+- `$__rate_interval` keeps today's Grafana expansion, so existing expressions and cache keys are
+  unchanged. `$__window` is new; its expansions are new cache keys.
 - `rebucket(buckets, new_step, kind)` gains `kind`; the default stays `sample_mean` for one
   release so unconverted callers keep today's behaviour, then the default is removed (the plan's
   last task) so no caller is left on the implicit count-weighted mean.
@@ -470,7 +500,14 @@ Decided by the user 2026-10-04:
    the user can fold or retire them. Fold/retire does not exist yet (only panel close): built in
    the plan (§4 dependency).
 
-Still open:
+3. **Increase on zoom: by mark.** Line panels of tile series draw the mean per tile in the
+   tile's unit, hover with total / per tile / per second / tile range; bar panels (new `bars`
+   mark) draw the total per display bucket with the axis naming its width; ghost and per-time
+   limits rescale, the normal band and unit-less limits are hidden with the reason (§6).
+7. **`$__rate_interval`** expands the Grafana way; `choose_window` tiles apply only where we
+   choose the window (`$__window`, re-queries, profiles); Claude infers intent from context (§4).
+8. **Every panel states** its display bucket, what merging did and its effective time
+   resolution, and offers "render a new panel at this zoom" when the display bucket ≠ the query
+   step (§6).
 
-3. **Increase on zoom**: per original tile (recommended, §6) vs per second vs sum per displayed
-   bucket.
+Nothing is open.

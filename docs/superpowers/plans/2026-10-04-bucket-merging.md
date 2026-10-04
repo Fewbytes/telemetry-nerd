@@ -25,8 +25,12 @@ Decided 2026-10-04 (spec §11): Q1 local time mean + forced re-query, Q4 validat
 declarations, Q5 principles 10/17 (already in `docs/principles.md`), Q6 re-queries are kept
 datasets; Q2 values sum only for tiles (query window = query step and one evaluation per query
 bucket), we prefer tiles when choosing query windows, every panel states its effective time
-resolution. Still open: Q3 (increase label on zoom, affects Tasks 5 and 10); do not start those
-parts before it is answered.
+resolution; Q3 line panels of tile series draw the mean per tile (hover: total, per tile, per
+second, tile range), bar panels (new `bars` mark) draw the total per display bucket with
+rescaled ghost/per-time limits and hidden band/unit-less limits; `$__rate_interval` expands the
+Grafana way, `choose_window` tiles only where we choose the window (`$__window`, re-queries,
+profiles); every panel states its display bucket, what merging did and its effective time
+resolution, and offers "render a new panel at this zoom". Nothing is open.
 
 Terms follow `docs/glossary.md`: series interval, query window, query resolution, query step,
 display bucket, time range, tile, effective time resolution.
@@ -160,7 +164,8 @@ CASES = [
 ### Task 3: `choose_window` and `rewindow` (prefer tiles, widen only when needed) **[Opus]**
 
 **Files:**
-- Modify: `src/telemetry_nerd/analysis/exprkind.py` (`expand` uses `choose_window`),
+- Modify: `src/telemetry_nerd/analysis/exprkind.py` (`expand`: `$__rate_interval` stays Grafana,
+  new `$__window` uses `choose_window`),
   `src/telemetry_nerd/core/profiles.py`, `src/telemetry_nerd/sources/promql.py` (`_window` takes
   the query resolution, so a chosen tile is fetched as `rollup((expr)[step:step])`)
 - Test: `tests/unit/test_rewindow.py`, existing `test_profiles.py`, `test_exprkind.py`,
@@ -170,11 +175,11 @@ CASES = [
 - Produces: `choose_window(query_step_ms, series_interval_ms) -> (query_window_ms, tile: bool)`
   (tile when query step ≥ 2 × series interval, else `rate_interval_ms`); `rewindow(template,
   base_query_step_ms, new_query_step_ms, series_interval_ms) -> (expr, tile: bool)` (spec §4 steps
-  1-4); `expand` and `profile_target` use them.
+  1-4); `WINDOW = "$__window"`; `expand` (for `$__window` only) and `profile_target` use them.
 
-- [ ] **Step 1:** Golden-string tests: `$__rate_interval` at a 1 m query step with 15 s series
-  interval → `[1m]` tile; at a 15 s query step with 15 s series interval → widened (< 2 samples
-  per tile); tile `increase(x[15s])` → `[5m]`; `rate(x[1m])` at S = 5 m → `[5m]` tile; `rate(x[1h])`
+- [ ] **Step 1:** Golden-string tests: `$__rate_interval` unchanged (Grafana `max(4 × 15 s,
+  1 m + 15 s)` = `[75s]` at a 1 m query step); `$__window` at a 1 m query step with 15 s series
+  interval → `[1m]` tile; at a 15 s query step → widened (< 2 samples per tile); tile `increase(x[15s])` → `[5m]`; `rate(x[1m])` at S = 5 m → `[5m]` tile; `rate(x[1h])`
   unchanged; `offset`/`@` kept; subquery ranges kept; quoted brackets untouched; a chosen tile is
   fetched with query resolution = query step. Profile tests unchanged except where the tile rule
   now applies (pin them).
@@ -330,18 +335,43 @@ kept re-query datasets need it (spec §4 dependency).
   that calls the force route.
 - [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS; commit.
 
-### Task 10: Labels (`describeShown`, caveat texts)
+### Task 10: Panel statements, labels and "render a new panel at this zoom"
 
 **Files:**
-- Modify: `ui/src/lib/panelNotes.ts`
-- Test: `ui/src/lib/panelNotes.test.ts`, `ui/e2e/bucket-merging.spec.ts`
+- Modify: `ui/src/lib/panelNotes.ts`, `ui/src/Panel.svelte`, `core/service.py` (a
+  `render_at_display_bucket(panel_id, display_bucket_ms)` reusing Task 8's forced re-query and
+  the `rescope()` new-panel pattern), `api/app.py` (route), `mcp/server.py`
+  (`show(..., at_display_bucket=true)`), `core/panel_payloads.py` (`merge.display_bucket_ms`,
+  `merge.statement`)
+- Test: `ui/src/lib/panelNotes.test.ts`, `tests/unit/test_render_at_zoom.py`,
+  `ui/e2e/bucket-merging.spec.ts`
 
-- [ ] **Step 1:** Tests: the spec §6 sentence per kind, each with the effective time resolution
-  ("detail shorter than 5 m is smoothed"; the query window named when it exceeds the query
-  step); texts for `raw_counter`,
+- [ ] **Step 1:** Tests: the spec §6 sentence per kind/mark, each followed by the merge statement
+  ("each point averages 4 × 15 s tiles") and the effective time resolution ("detail shorter than
+  5 m is smoothed"; the query window named when it exceeds the query step); the line hover for a
+  tile series shows total / per tile / per second / tile range; "render a new panel at this
+  zoom" appears only when display bucket ≠ query step and `requery != "impossible"`, and creates
+  a new panel + dataset with lineage, leaving the old panel untouched; texts for `raw_counter`,
   `tiles_extrapolated`, `time_mean_partial`, `merged_plotted_mean`, `cannot_combine`,
   `requery_failed`. E2E on the fixture source: resizing an increase panel keeps its y-values and
   its "per 15 s" label; a ratio panel shows "re-querying" then the line.
+- [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS; commit.
+
+### Task 10a: `bars` mark for event counts **[Opus]**
+
+**Files:**
+- Modify: `src/telemetry_nerd/charts/spec.py` (`Mark` gains `bars`; validator refuses it for
+  non-`sum` kinds), `core/service.py` panel data (bars: Σ tiles per display bucket),
+  `core/panel_payloads.py` (ghost summed per display bucket; per-time limits rescaled; normal
+  band and unit-less limits hidden with the spec §6 reasons), `ui/src/chart/toUplot.ts`
+  (bar paths), `ui/src/lib/panelNotes.ts`
+- Test: `tests/unit/test_chart_spec.py`, `tests/unit/test_bars_payload.py`,
+  `ui/src/chart/toUplot.test.ts`
+
+- [ ] **Step 1:** Tests: bars on a `time_mean` series refused with the reason; bar heights =
+  totals (900 for the §1 minute); y-axis "errors per 1 m" and it changes with the display bucket;
+  ghost bars are the reference's own sums; a `/s` limit × 60 at 1 m; a unit-less limit and the
+  normal band hidden with their reason chips.
 - [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS; commit.
 
 ### Task 11: Docs, skills, MCP hints
@@ -350,7 +380,12 @@ kept re-query datasets need it (spec §4 dependency).
 - Modify: `docs/telemetry-graphing-guide.md` §5, `docs/superpowers/specs/2026-09-30-telemetry-nerd-mvp-design.md`
   §6.5, `skills/charting/SKILL.md`, `skills/tier2-code/SKILL.md` (merge declarations),
   `src/telemetry_nerd/mcp/server.py` (query/show docstrings: `merge` in the summary,
-  `force_requery`, re-query datasets are citable and foldable). Principles 10/17 already done.
+  `force_requery`, `at_display_bucket`, re-query datasets are citable and foldable). Principles
+  10/17 already done. In `skills/charting/SKILL.md` (and the evidence skill's method notes):
+  users rarely write PromQL, Claude writes it, so Claude uses `$__window` (tiles where possible,
+  via `choose_window`) by default; `$__rate_interval` (Grafana expansion) when the intent is to
+  match a Grafana dashboard or a catalog binding that uses it; when a question depends on merged
+  buckets, suggest "render a new panel at this zoom"; bars only for event counts.
 
 - [ ] Update; `just lint`; commit `docs: bucket merge kinds in the guide, skills and MCP hints (7jme)`.
 
@@ -376,6 +411,5 @@ kept re-query datasets need it (spec §4 dependency).
 
 ## Order and dependencies
 
-1 → 2 → (3, 4) → 5 → 6 → 7 → 8 → (8a, 8b) → 9 → 10 → 11 → 12 → 13. Tasks 3/4 and 8a/8b are
-independent pairs. Tasks 9-10 need 8's payload shape and 8b's listing. Open Q3 gates the
-`sum` label in Tasks 5 and 10.
+1 → 2 → (3, 4) → 5 → 6 → 7 → 8 → (8a, 8b) → 9 → 10 → 10a → 11 → 12 → 13. Tasks 3/4 and 8a/8b
+are independent pairs. Tasks 9-10a need 8's payload shape and 8b's listing.
