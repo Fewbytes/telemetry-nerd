@@ -33,18 +33,24 @@ conclusions: the verdict on a finding is always yours.
 
 ## A different job from Grafana and Kibana
 
-Grafana, Kibana and similar tools are very good at what they are designed for: putting many
-signals in front of an operator at a glance, and raising an alert when a threshold is crossed. They
-render whatever query you give them and leave the interpretation to you, which is the right
-trade-off for a wall of graphs you watch every day.
+Grafana, Kibana and similar tools are renderers: they draw whatever query you give them and leave
+the interpretation to you. That alone would be a defensible trade-off for a wall of graphs you
+glance at once a shift. What makes them actively bad for an investigation is that their defaults
+quietly misinform you, and nothing on screen says so. Averaged-down rollups erase the spike you're
+looking for. Autoscaled axes turn a 3% wiggle into something that looks like an outage. Gaps get
+bridged with a straight line, so a dead exporter looks like a flat, healthy metric. A "p99" panel
+is usually the mean of per-host p99s, which is not anyone's p99 and can be off by 60-70% against
+the true merged value. None of this is surfaced as a caveat; it is just how the chart looks, and
+you only find out it lied to you after you've acted on it.
 
-Investigation is a different job. The question is no longer "is anything red?" but "what is
-actually happening, how sure are we, and what would prove us wrong?" A tool for that job needs
-things a rendering layer does not have: knowledge of what each metric means, the ability to run
-real analyses rather than only plot series, an honest account of what the data cannot tell you,
-and a way to record conclusions so they can be checked. That matters twice over once an AI agent
-is reading the graphs, because an agent that reads a misleading chart inherits its mistakes and
-then reports them confidently.
+Investigation is a different job from the one these tools do, and it has no tolerance for that
+kind of silent error. The question is no longer "is anything red?" but "what is actually
+happening, how sure are we, and what would prove us wrong?" That needs things a rendering layer
+does not have and was never built to have: knowledge of what each metric means, the ability to
+run real analyses rather than only plot series, an honest account of what the data cannot tell
+you, and a way to record conclusions so they can be checked. It matters twice over once an AI
+agent is reading the graphs, because an agent that reads a misleading chart inherits its mistakes
+and then reports them with complete confidence.
 
 ### It knows what your metrics mean
 
@@ -264,8 +270,9 @@ The remaining principles are less visible but just as load-bearing:
 
 ## Where this leaves your dashboards
 
-Telemetry Nerd does not replace your dashboards or your alerts. It connects to the same
-Prometheus-compatible sources, including Grafana datasource proxies, and it can read the code,
-docs and dashboard definitions in your repository as context for what your metrics mean. Keep using them for what they are good
-at. When a graph looks wrong and you need to know why, how sure you can be, and what would change
-your mind, that is the job Telemetry Nerd was built for.
+Telemetry Nerd does not replace your dashboards or your alerts, and you don't need to rip anything
+out to use it. It connects to the same Prometheus-compatible sources, including Grafana
+datasource proxies, and it can read the code, docs and dashboard definitions in your repository
+as context for what your metrics mean. When a graph looks wrong and you need to know why, how
+sure you can be, and what would change your mind, that is the job Telemetry Nerd was built for —
+and it's the job your dashboard was quietly getting wrong.
