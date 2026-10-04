@@ -163,6 +163,7 @@ def window_histogram(
         .group_by("series_id")
         .agg(pl.col("n").sum(), pl.len().alias("columns"),
              pl.col("ts_ms").min().alias("first"), pl.col("ts_ms").max().alias("last"))
+        .sort("series_id")  # group_by order is random per process; callers take the first
     )  # fmt: skip
     r = (
         rows.filter(inside)

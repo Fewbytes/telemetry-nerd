@@ -107,3 +107,15 @@ def test_window_takes_whole_overlapping_columns():
     w = window_histogram(rows, cols, 60_000, 70_000, 150_000)["a"]
     assert (w["start_ms"], w["end_ms"], w["columns"], w["n"]) == (60_000, 180_000, 2, 6.0)
     assert (w["lo"], w["hi"], w["c"]) == ([0.0], [1.0], [6.0])
+
+
+def test_window_histogram_series_order_is_deterministic():
+    """gu4u: polars group_by order is random per process; callers take series[0], so the
+    result must be ordered by series_id whatever the input order."""
+    sids = [f"s{i:02d}" for i in range(40)]
+    cols = pl.DataFrame({"series_id": sids[::-1], "ts_ms": [120_000] * 40, "n": [1.0] * 40})
+    rows = pl.DataFrame(
+        {"series_id": sids[::-1], "ts_ms": [120_000] * 40, "bucket_lo": [0.0] * 40,
+         "bucket_hi": [1.0] * 40, "count": [1.0] * 40}
+    )  # fmt: skip
+    assert list(window_histogram(rows, cols, 60_000, 60_000, 120_000)) == sids
