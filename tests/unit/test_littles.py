@@ -9,7 +9,9 @@ counter is special cause at its peak 75/75 (1/75 before), with a completions cou
 before: the rest common cause); consistent traffic, rho 0.95, load steps and low traffic: no
 promotion. Table: docs/superpowers/specs/2026-10-02-littles-law-design.md."""
 
+import json
 import math
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -444,3 +446,33 @@ def test_with_five_windows_the_spread_still_decides():
     r = check(_sub(d), k=20, offset=False)
     assert r.windows[2].source == SPECIAL  # MIN_SPREAD windows: the Poisson / spread envelope
     assert r.common_cause["envelope"] == "small_system_or_spread"
+
+
+def _recorded(name: str) -> tuple[Substeps, dict, dict]:
+    """A Substeps recorded from check_littles_law on VictoriaMetrics (None = NaN)."""
+    path = Path(__file__).parents[1] / "fixtures" / "littles" / f"{name}.json"
+    rec = json.loads(path.read_text())
+    s = rec["substeps"]
+    arr = {k: np.array([math.nan if x is None else x for x in v], float)
+           for k, v in s.items() if isinstance(v, list) and k != "ts_ms"}  # fmt: skip
+    sub = Substeps(ts_ms=np.array(s["ts_ms"], np.int64), **arr,
+                   **{k: v for k, v in s.items() if not isinstance(v, list)})  # fmt: skip
+    return sub, rec["call"], rec
+
+
+def test_a_load_peak_window_does_not_make_a_systematic_offset():
+    """1i26 (CI, integration overload_spike / arrivals, a placement 60 ms past a tile edge): the
+    load-peak window (backlog building, not steady: its exact R 1.075 is the process leaving
+    steady state, not the instruments) sat in the level of the non-transient windows with five
+    steady ones whose gauge sampling read 0-9% high, and the level's interval cleared 1: an
+    `L_high` systematic offset (measurement system) on a simulation whose instruments agree
+    (exact R of the steady windows 0.994-1.005). Little's law over a window holds only in
+    steady state, so a measurement offset is judged on the steady windows when they are most."""
+    sub, call, rec = _recorded("overload_spike_arrivals_1i26")
+    r = check(sub, **call)
+    assert r.systematic is None and r.verdict == "inconsistent_in_windows", r.verdict
+    (t,) = [t for t in r.transient if "grid" not in t]
+    assert t["index"] == 3 and t["phase"] == "drain" and t["direction"] == "L_low"
+    # every window's measurement interval still holds the exact R
+    for w, exact in zip(r.windows, rec["exact_R"], strict=True):
+        assert w.ci95[0] <= exact <= w.ci95[1]

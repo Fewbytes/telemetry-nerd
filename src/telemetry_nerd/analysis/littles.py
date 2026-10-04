@@ -580,12 +580,19 @@ def _classify(
     the reference is 1. When L - lambda W trends over the windows (a leak, a backlog building
     over the range), the reference is the offset's linear trend, not a constant. Repeat until
     the transient set is stable. A systematic offset needs most windows: with half or more of
-    them transient there is none."""
+    them transient there is none. Little's law over a window holds only in steady state, so the
+    level is taken over the windows not flagged `not_steady` (L or lambda drifting materially
+    inside the window) when they are most: such a window's own R is the process leaving steady
+    state, not the instruments, and must not make a measurement-system offset (1i26)."""
     ws = out.windows
     ratio = {i: float(ws[i].ratio) for i in judged}  # type: ignore[arg-type]
     side = {v: sum(ws[i].verdict == v for i in judged) for v in ("L_high", "L_low")}
     majority = next((v for v, k in side.items() if 2 * k > len(judged)), None)
     drift = bool(out.growing and out.growing["significant"])
+    steady = [i for i in judged if "not_steady" not in ws[i].flags]
+    # the level's candidates: the steady windows when they are most (a leak or a long overload
+    # may be not steady anywhere: then all of them, and the trend below takes the drift)
+    pool = set(steady) if 2 * len(steady) > len(judged) else set(judged)
     med = float(np.median(list(ratio.values())))
     refs = dict.fromkeys(judged, med)
     ref_sd = ref_bias = 0.0
@@ -593,7 +600,7 @@ def _classify(
     sysb: Block | None = None
     for _ in range(MAX_ITER):
         new = [i for i in judged if _off(ws[i], refs[i], ref_sd, ref_bias, q)]
-        core = [i for i in judged if i not in new]
+        core = [i for i in judged if i not in new and i in pool]
         # the level's windows: the non-transient ones when they are most; when most windows
         # are off 1 on one side the offset is persistent even if they differ among themselves
         basis = core if 2 * len(core) > len(judged) else (judged if majority else [])

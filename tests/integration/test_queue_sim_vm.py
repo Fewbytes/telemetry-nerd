@@ -12,6 +12,7 @@ import random
 import re
 from dataclasses import replace
 from datetime import datetime
+from itertools import product
 
 import pytest
 
@@ -32,6 +33,16 @@ pytestmark = pytest.mark.integration
 
 SCRAPE_S = 5
 WARMUP_S = 20
+
+
+def placed_t0(ago_ms: int, phase_ms: int = 0) -> int:
+    """The scenario start ~`ago_ms` before now, at a fixed `phase_ms` past a 5 s tile edge (1i26).
+    With the scrape jitter seeded, where the scrapes fall against VictoriaMetrics' tiles is the
+    only thing a wall-clock t0 left to chance: within ~150 ms of an edge a few scrapes change
+    tiles, so a verdict could depend on the millisecond the test ran. Pinned, a run is
+    reproducible; the placements themselves are swept by the tests' parameters."""
+    tile = SCRAPE_S * 1000
+    return (now_ms() - ago_ms) // tile * tile + phase_ms
 
 
 @pytest.fixture(scope="module")
@@ -103,7 +114,7 @@ def assert_covers_exact(out: dict, truth: dict) -> None:
     ],
 )
 async def test_check_matches_ground_truth(vm, tmp_path, name, window):
-    t0 = now_ms() - 1_100_000
+    t0 = placed_t0(1_100_000, 2_500)  # scrapes mid-tile
     truth = seed_vm(vm, name, t0)
     out = await run_check(vm, tmp_path, truth, window)
     exp = truth["expect"]
@@ -122,18 +133,26 @@ async def test_check_matches_ground_truth(vm, tmp_path, name, window):
     assert_covers_exact(out, truth)  # exact L: the exported gauges (missing_instance: 2 of 3)
 
 
-@pytest.mark.parametrize("counter", ["completions", "arrivals"])
-@pytest.mark.parametrize("window", ["1m", "auto"])
-@pytest.mark.parametrize("offset_s", [0, 20, 40])
+@pytest.mark.parametrize(
+    ("offset_s", "window", "counter", "phase_ms"),
+    [
+        *product([0, 20, 40], ["1m", "auto"], ["completions", "arrivals"], [2_500]),
+        (0, "auto", "arrivals", 60),  # 1i26: the CI placement
+    ],
+)
 async def test_overload_spike_is_special_cause_wherever_it_falls(
-    vm, tmp_path, counter, window, offset_s
+    vm, tmp_path, counter, window, offset_s, phase_ms
 ):
     """xa4/9fd: rho 1.5 for 60 s. Wherever the spike falls on the window grid (windows follow
     the requested start), a window of its episode (load + drain) is special cause — a transient
     beyond the envelope or a promoted load peak — nothing outside it is, `peak` only on windows
     overlapping the load and `drain` only after it began; every window's interval holds the
-    exact R (the rate() lookback that smeared the spike into its neighbours is gone)."""
-    t0 = now_ms() - 1_400_000
+    exact R (the rate() lookback that smeared the spike into its neighbours is gone).
+
+    The scrapes sit mid-tile (2.5 s past an edge). 1i26: 60 ms past an edge (the jitter moves a
+    few scrapes across it), the CI placement where the load-peak window, not steady, sat in the
+    systematic level and read `L_high` (measurement system) on instruments that agree."""
+    t0 = placed_t0(1_400_000, phase_ms)
     truth = seed_vm(vm, "overload_spike", t0, counter)
     # windows are anchored at the requested start: moving it moves the grid over the spike
     out = await run_check(vm, tmp_path, truth, window, WARMUP_S + offset_s)
@@ -177,7 +196,7 @@ async def test_scrapes_on_the_tile_edges_do_not_inflate_lambda(vm, tmp_path, nam
     their increase is 0 and the next tile holds two scrapes. Dropping them set two intervals of
     counts against one gauge reading (lambda 1.4-1.6x: an L_low 'systematic offset' in every
     window); they are kept, so the check is as on any other phase."""
-    t0 = (now_ms() - 1_400_000) // (SCRAPE_S * 1000) * (SCRAPE_S * 1000)
+    t0 = placed_t0(1_400_000)
     truth = seed_vm(vm, name, t0, "completions")
     out = await run_check(vm, tmp_path, truth, "auto", 60)
     assert out["classification"]["systematic"] is None, out["summary"]
@@ -192,7 +211,7 @@ async def test_a_5s_source_connected_without_a_resolution_learns_it_and_takes_1m
     refused 1m windows and analyze had too few points for the 3x arrival surge. Connected with
     no resolution, the source measures its scrape spacing (the series pushed at 5 s) and the
     default settings take 1m windows."""
-    t0 = now_ms() - 1_100_000  # the last samples fall inside the probe's 10m lookback
+    t0 = placed_t0(1_100_000, 2_500)  # the last samples fall inside the probe's 10m lookback
     truth = seed_vm(vm, "overload_spike", t0)
     svc = build_service(Settings(data_dir=tmp_path / "d", source_url="http://127.0.0.1:9"))
     await svc.source_connect(SourceSpec(name="vm", url=vm, flavor="victoriametrics"))
