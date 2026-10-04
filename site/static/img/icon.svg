@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="6 9 52 52" width="512" height="512">
+  <title>Telemetry Nerd</title>
+  <defs>
+    <clipPath id="lens-l"><circle cx="21.5" cy="30" r="8"/></clipPath>
+    <clipPath id="lens-r"><circle cx="42.5" cy="30" r="8"/></clipPath>
+  </defs>
+  <!-- head -->
+  <ellipse cx="32" cy="35" rx="24" ry="22" fill="#f2b544" stroke="#1b2124" stroke-width="3"/>
+  <!-- smile and buck teeth -->
+  <path d="M24 45 Q32 52 40 45" fill="none" stroke="#1b2124" stroke-width="3" stroke-linecap="round"/>
+  <rect x="29" y="47.3" width="6" height="4.4" rx="0.8" fill="#ffffff" stroke="#1b2124" stroke-width="1.4"/>
+  <path d="M32 47.5 V51.5" stroke="#1b2124" stroke-width="1.2"/>
+  <!-- lenses -->
+  <circle cx="21.5" cy="30" r="9.8" fill="#ffffff"/>
+  <circle cx="42.5" cy="30" r="9.8" fill="#ffffff"/>
+  <!-- left lens: histogram -->
+  <g clip-path="url(#lens-l)" fill="#1f6f8b">
+    <rect x="14.6" y="30" width="2.7" height="5" rx="0.4"/>
+    <rect x="17.9" y="26" width="2.7" height="9" rx="0.4"/>
+    <rect x="21.2" y="23" width="2.7" height="12" rx="0.4"/>
+    <rect x="24.5" y="28" width="2.7" height="7" rx="0.4"/>
+  </g>
+  <!-- right lens: fitted bell curve -->
+  <path clip-path="url(#lens-r)" d="M35 33 C38.6 33 39.6 23.5 42.5 23.5 C45.4 23.5 46.4 33 50 33" fill="none" stroke="#1f6f8b" stroke-width="2.4" stroke-linecap="round"/>
+  <!-- rims, bridge, temples -->
+  <g fill="none" stroke="#1b2124" stroke-linecap="round">
+    <circle cx="21.5" cy="30" r="9.8" stroke-width="4.2"/>
+    <circle cx="42.5" cy="30" r="9.8" stroke-width="4.2"/>
+    <path d="M31 28.5 Q32 26.8 33 28.5 M11.7 29 L8.6 27.4 M52.3 29 L55.4 27.4" stroke-width="3"/>
+  </g>
+</svg>

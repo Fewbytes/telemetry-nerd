@@ -1,0 +1,31 @@
+baseURL = "https://telemetry-nerd.dev/"
+locale = "en-us"
+title = "Telemetry Nerd"
+disableKinds = ["taxonomy", "term"]
+
+enableRobotsTXT = true
+enableEmoji = false
+
+[params]
+  description = "Evidence-first telemetry analysis for you and your agent."
+  github = "https://github.com/Fewbytes/telemetry-nerd"
+  twitter = "https://x.com/nukemberg"
+  twitterHandle = "@nukemberg"
+
+[markup.goldmark.renderer]
+  unsafe = true
+
+[[menu.main]]
+  name = "Rationale"
+  url = "/rationale/"
+  weight = 10
+
+[[menu.main]]
+  name = "Getting Started"
+  url = "/getting-started/"
+  weight = 20
+
+[[menu.main]]
+  name = "GitHub"
+  url = "https://github.com/Fewbytes/telemetry-nerd"
+  weight = 30

@@ -14,6 +14,15 @@ lint:
 fmt:
     uv run ruff format . && uv run ruff check --fix .
 
+site-serve:
+    cd site && hugo server --buildDrafts
+
+site-build:
+    cd site && hugo --minify
+
+site-deploy: site-build
+    cd site && npx wrangler deploy
+
 dev-up:
     podman compose -f deploy/dev/compose.yml up -d
 

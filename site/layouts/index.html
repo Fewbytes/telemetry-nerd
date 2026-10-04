@@ -1,0 +1,14 @@
+{{ define "main" }}
+<section class="hero wrap">
+  <img src="/img/logo.svg" alt="" width="96" class="hero-logo">
+  <h1>Telemetry Nerd</h1>
+  <p class="tagline">{{ .Site.Params.description }}</p>
+  <div class="cta">
+    <a class="button" href="/getting-started/">Get started</a>
+    <a class="button secondary" href="/rationale/">Why we built this</a>
+  </div>
+</section>
+<section class="wrap prose">
+{{ .Content }}
+</section>
+{{ end }}

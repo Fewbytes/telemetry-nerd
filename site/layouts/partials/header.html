@@ -1,0 +1,13 @@
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="/">
+      <img src="/img/logo.svg" alt="Telemetry Nerd" height="28">
+      <span>Telemetry Nerd</span>
+    </a>
+    <nav>
+      {{ range .Site.Menus.main }}
+      <a href="{{ .URL }}">{{ .Name }}</a>
+      {{ end }}
+    </nav>
+  </div>
+</header>
