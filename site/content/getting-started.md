@@ -245,5 +245,7 @@ tests, threshold fractions and the rest) are coming. Until then:
 
 - The [rationale](/rationale/) explains *why* Telemetry Nerd draws telemetry this way, and why each
   of these design choices is deliberate.
+- The [architecture](/architecture/) page explains how the plugin, the MCP bridge and the daemon
+  fit together, and how to point Telemetry Nerd at a daemon running on another machine.
 - The [GitHub repository](https://github.com/Fewbytes/telemetry-nerd) has the install docs, the
   design principles, and the graphing guide the panels are built on.

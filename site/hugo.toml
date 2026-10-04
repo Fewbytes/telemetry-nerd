@@ -26,6 +26,11 @@ enableEmoji = false
   weight = 20
 
 [[menu.main]]
+  name = "Architecture"
+  url = "/architecture/"
+  weight = 25
+
+[[menu.main]]
   name = "GitHub"
   url = "https://github.com/Fewbytes/telemetry-nerd"
   weight = 30
