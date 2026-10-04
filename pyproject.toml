@@ -52,10 +52,11 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 markers = [
-    "integration: requires Docker or the public internet",
+    "integration: needs Docker (testcontainers VictoriaMetrics); required in CI (`just test-integration`)",
+    "network: needs the public internet; non-blocking in CI (`just test-network`)",
     "slow: starts real subprocesses (seconds); deselect with -m 'not slow'",
 ]
-addopts = "-m 'not integration'"
+addopts = "-m 'not integration and not network'"
 
 [tool.ruff]
 line-length = 100

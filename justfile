@@ -5,8 +5,13 @@ default: test
 test:
     uv run pytest
 
+# Container tests (testcontainers: needs a Docker-compatible socket). Required in CI.
 test-integration:
     uv run pytest -m integration
+
+# Public-internet tests (public sources, Grafana, Wikimedia). Flaky by nature; non-blocking in CI.
+test-network:
+    uv run pytest -m network
 
 lint:
     uv run ruff check . && uv run ruff format --check .

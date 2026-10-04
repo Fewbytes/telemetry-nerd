@@ -1,0 +1,96 @@
+name: Release
+
+# The ONLY way to cut a release. Never push v* tags by hand.
+#
+#   prepare --> ci (reusable ci.yml: python, ui, e2e, integration) --> tag --> image (image.yml)
+#
+# The tag is created only after every required job is green, on the exact commit that was tested,
+# so an existing tag implies a green release. Why the image is built here and not by ci.yml's tag
+# trigger: a tag pushed with the default GITHUB_TOKEN does not start other workflows, so ci.yml
+# would never see it. Calling image.yml directly avoids a PAT/app token and cannot double-publish
+# (ci.yml's own tag path only fires for tags pushed by a person).
+# The non-blocking `network` job in ci.yml runs too but does not gate (continue-on-error).
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, X.Y.Z (must equal the version in pyproject.toml)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Validate version on master
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.sha.outputs.sha }}
+      tag: ${{ steps.sha.outputs.tag }}
+    steps:
+      - name: Must run on master
+        if: github.ref != 'refs/heads/master'
+        run: echo "::error::Run the Release workflow from master (got $GITHUB_REF)"; exit 1
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+          fetch-tags: true
+      - id: sha
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::version must be X.Y.Z"; exit 1; }
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::tag v$VERSION already exists"; exit 1
+          fi
+          python3 scripts/check_version.py "v$VERSION"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+  ci:
+    name: CI gates
+    needs: prepare
+    # ci.yml also contains its tag-path `image` job (packages: write); a called workflow may not
+    # request more than its caller grants, so grant it here even though it never runs under
+    # workflow_dispatch.
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/ci.yml
+
+  tag:
+    name: Create and push tag
+    needs: [prepare, ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+      - name: Annotated tag on the tested commit
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" "$SHA" -m "Release $TAG"
+          git push origin "refs/tags/$TAG"
+
+  image:
+    name: Publish image
+    needs: [prepare, tag]
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/image.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}

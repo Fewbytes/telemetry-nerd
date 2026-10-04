@@ -1,6 +1,6 @@
 """Discover and connect real Grafana datasources over the network (slow, polite).
 
-Run: just test-integration -k grafana
+Run: just test-network -k grafana
 Exercises the acceptance criteria directly: list play.grafana.org/grafana.wikimedia.org
 datasources, connect the Prometheus one by uid, and check the detected flavor.
 """
@@ -12,7 +12,7 @@ from telemetry_nerd.core.bootstrap import build_service
 from telemetry_nerd.sources.grafana import discover_datasources, probe_backend
 from telemetry_nerd.sources.spec import SourceSpec
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.network
 
 
 async def test_play_mimir_datasource_detected_as_prometheus_flavor():

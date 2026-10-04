@@ -1,6 +1,6 @@
 """Live: operating profiles through the wikimedia -> wikimedia-1h pairing (bead 2as.23).
 
-Run: just test-integration -k wikimedia_profile   (~10 s, ~8 narrow requests, 1 at a time,
+Run: just test-network -k wikimedia_profile   (~10 s, ~8 narrow requests, 1 at a time,
 >= 1 s apart: interactive volume only, Wikimedia's robots.txt disallows crawling).
 """
 
@@ -11,7 +11,7 @@ from telemetry_nerd.core.bootstrap import build_service
 from telemetry_nerd.sources.presets import WIKIMEDIA, WIKIMEDIA_1H
 from telemetry_nerd.sources.promql import PromQLSource
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.network
 
 GAUGE = 'node_load1{site="eqiad",instance="wdqs1018:9100"}'
 

@@ -192,7 +192,8 @@ just ui-install   # once
 just ui-test      # UI unit tests
 just ui-check     # svelte-check
 just e2e          # Playwright UI e2e on the fixture PromQL source (no VictoriaMetrics, no podman)
-just test-integration  # -m integration: VictoriaMetrics/Prometheus containers, public sources
+just test-integration  # -m integration: VictoriaMetrics containers (needs Docker/podman socket)
+just test-network      # -m network: public sources over the internet (flaky; non-blocking in CI)
 just serve        # run the daemon from the checkout
 just dev-up       # local VictoriaMetrics for development (podman compose)
 just seed         # push synthetic demo series into it
@@ -206,7 +207,7 @@ Unit tests and the UI e2e suite never read an external VictoriaMetrics: unit tes
 recorded responses (`tests/fixtures`), and e2e runs the daemon against
 `src/telemetry_nerd/devtools/promfixture`, a small Prometheus-API server whose PromQL engine
 evaluates synthetic series anchored at its start (specs import their own series into it). Only
-`tests/integration` (`-m integration`) talks to real backends, for wire and client compatibility.
+`tests/integration` (`-m integration` containers, `-m network` public internet) talks to real backends, for wire and client compatibility.
 
 ---
 

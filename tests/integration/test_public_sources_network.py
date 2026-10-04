@@ -1,6 +1,6 @@
 """Connect every public registry source by name over the real network (slow, polite).
 
-Run: just test-integration -k public  (one probe per source, spaced by the registry's gate)
+Run: just test-network -k public  (one probe per source, spaced by the registry's gate)
 """
 
 import pytest
@@ -9,7 +9,7 @@ from telemetry_nerd.config import Settings
 from telemetry_nerd.core.bootstrap import build_service
 from telemetry_nerd.sources.public import PUBLIC_SOURCES
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.network
 
 
 @pytest.mark.parametrize("name", sorted(PUBLIC_SOURCES))
