@@ -569,8 +569,21 @@ def _step_runs(nz: pl.DataFrame, step_ms: int) -> pl.DataFrame:
     keep = lambda e: pl.when(~pl.col("_cut")).then(e).otherwise(0.0).sum().over(_S, "_run")
     g, c, n = keep(pl.col("_g")), keep(pl.col("_c")), keep(pl.lit(1.0))
     step_rate = (n >= LOCAL_MIN_GAPS) & (c > 1) & (g / (c - 1) <= SLOW_MARGIN * step_ms)
+    # and locally: the LOCAL_GAPS gaps before or after it at the step's rate too, so a slower
+    # stretch next to a step-rate one (1.5x, its long gaps isolated, or 1.67x, bridged pairs)
+    # is not judged with it and keeps its cadence (it falls back to the neighbourhood rule)
+    k = LOCAL_GAPS
+    part = lambda e: pl.when(~pl.col("_cut")).then(e).otherwise(0.0)
+    back = lambda e: part(e).rolling_sum(k, min_samples=1).over(_S)
+    ahead = lambda e: part(e).reverse().rolling_sum(k, min_samples=1).reverse().over(_S)
+    # (Σgap / Σsamples: the run's own check already took one sample off; a 1.1x stretch with a
+    # loss next to a slower one still passes, a 1.5x one does not)
+    rate_ok = lambda gg, cc: (cc > 1) & (gg / cc <= SLOW_MARGIN * step_ms)
+    g_, c_ = pl.col("_g"), pl.col("_c")
+    local = rate_ok(back(g_), back(c_)) | rate_ok(ahead(g_), ahead(c_))
     return nz.with_columns(
-        (~pl.col("_end") & step_rate).fill_null(False).alias("_inrun"), (g / c).alias("_Irun")
+        (~pl.col("_end") & step_rate & local).fill_null(False).alias("_inrun"),
+        (g / c).alias("_Irun"),
     ).drop("_cut", "_end", "_run", "_long", "_big", "_first", "_open", "_one", "_two")
 
 

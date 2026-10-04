@@ -171,6 +171,13 @@ def from_bucket_state(
         if empty or partial:
             parts = [f"no samples for {_total(empty)}"] if empty else []
             parts += [f"fewer samples than expected for {_total(partial)}"] if partial else []
+            cadence = g.filter(
+                (pl.col("state") == int(State.PARTIAL))
+                & ((pl.col("flags") & int(Flag.CADENCE)) != 0)
+            )
+            if cadence.height:  # coarse or merged buckets holding a CADENCE unknown
+                spans = runs(cadence["ts_ms"].to_list(), step_ms)
+                parts.append(f"{_total(spans)} of it {CADENCE_OR_LOSS} ({CADENCE_REASON})")
             out.append(
                 Caveat(
                     code="missing_data",

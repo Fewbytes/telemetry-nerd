@@ -1150,3 +1150,36 @@ def test_only_a_configured_or_learned_interval_is_recorded_as_known(origin, know
     series = pa.table({"series_id": ["a"], "labels": ["{}"]}, schema=SERIES_SCHEMA)
     st = states(derive_states(meta, FetchResult(buckets(rows), series)))
     assert (State.UNKNOWN in st) is not known
+
+
+# --- review round 2: a slower stretch next to a step-rate one is not absorbed into its run ---
+
+
+@pytest.mark.parametrize("ratio", [1.33, 1.5, 1.67, 1.8, 2.0])
+@pytest.mark.parametrize("step", [S15, 60_000])
+@pytest.mark.parametrize("slow_first", [True, False])
+def test_slower_stretch_next_to_a_step_rate_one_keeps_its_cadence(ratio, step, slow_first):
+    # 1.5 h at ratio x the step, 2.5 h at the step, loss-free: judged once over the whole run,
+    # a 1.5x stretch (isolated long gaps) or 1.67x one (bridged pairs) joined the step-rate run
+    # and every skip read EMPTY (120 of them for 1.5x at 15s)
+    end, interval = 4 * HOUR, int(step * ratio)
+    ts, t = [], 3_001
+    while t < end:
+        ts.append(t)
+        slow = t < 1.5 * HOUR if slow_first else t >= 2.5 * HOUR
+        t += interval if slow else step
+    out = _compute_rows(_count_rows(ts, step), step=step, end=end, res=step)
+    # at most the last few skips next to the step-rate stretch, whose 16 gaps on that side are at
+    # the step's rate: where the change lies is ambiguous within a few samples
+    assert states(out).count(State.EMPTY) <= 4
+
+
+def test_coarse_cadence_partial_names_its_reason():
+    # the 5m caveat said only "fewer samples than expected"
+    from telemetry_nerd.model.bucket_state import coarsen
+    from telemetry_nerd.model.caveats import CADENCE_REASON, from_bucket_state
+
+    out = coarsen(_cadence_pair(), 20 * S15)
+    [c] = [c for c in from_bucket_state(out, {"a": "A", "b": "B"}, 20 * S15)
+           if c.code == "missing_data"]  # fmt: skip
+    assert CADENCE_REASON in c.message

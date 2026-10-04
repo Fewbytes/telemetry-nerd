@@ -230,7 +230,12 @@ next to the skip of a slightly slower cadence) with ordinary gaps on both sides,
 whose rate is judged without its holes; a genuinely slower stretch only two gaps long therefore
 reads as losses (the cautious side). It counts with 2 gaps or more when it is at the step's rate even
 with one sample fewer (Σgap / (Σsamples − 1) ≤ 1.25 × step), so a short marginally slower stretch
-keeps its cadence. Its gaps take the run's interval and are not slow. This only takes slowness
+keeps its cadence. A gap also needs the run to be at the step's rate locally: the 16 gaps
+before it, or the 16 after it (holes left out), have Σgap / Σsamples ≤ 1.25 × step. Judged only
+over the whole run, a slower stretch next to a step-rate one (1.5 ×, its long gaps isolated; 1.67 ×,
+bridged pairs) joined it and every skip read `empty`; locally it falls back to the neighbourhood
+rule and keeps its cadence, except the last few skips next to the step-rate stretch (where the change
+lies is ambiguous within a few samples). Its gaps take the run's interval and are not slow. This only takes slowness
 away. (The run rule replaced 9li's edge CUSUM: it is cheaper, and the 200 series × 1440 bucket
 benchmark went from ≈ 0.17–0.19 s back to ≈ 0.14 s, the level before 9li.)
 
