@@ -171,7 +171,7 @@ Telemetry Nerd answers.
 
 ## The design principles
 
-Everything above follows from sixteen principles, kept in one canonical document in the
+Everything above follows from seventeen principles, kept in one canonical document in the
 repository (`docs/principles.md`). Each one is backed by code, schema validation or a skill that
 states the rule as an operational instruction, not just by asking the agent to behave. Four of
 them shape the experience most directly.
@@ -246,6 +246,12 @@ The remaining principles are less visible but just as load-bearing:
 
 - **Correct over conventional (3).** The table above. Conventional views exist only on request and
   carry a caveat.
+- **All models are wrong, some are useful (17).** Correctness doesn't mean only conventional
+  models: a new or unconventional one is fine to invent when it's useful, as long as it's
+  implemented correctly and used only within its own assumptions, and the user is told what was
+  used and why. This is a refinement of "correct over conventional" and "results are model
+  outputs," not an exception to either: an unconventional model is fine, an incorrect one never
+  is.
 - **Every number carries its uncertainty and its aggregation (4).** Unknown uncertainty is shown as
   unknown, never treated as zero. Errors are aggregated pessimistically. Where a tool gives no
   uncertainty, one is derived (bootstrap, effective sample size, bucket bounds, Wilson or Poisson
