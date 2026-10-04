@@ -519,3 +519,28 @@ export const fetchFamilyMembers = (source: string, template: string, offset = 0)
 export const decideFamily = (source: string, template: string, action: "confirm" | "split") =>
   postJSON<unknown>("/api/catalog/families", { source, template, action });
 
+
+/** Retrospective proposals (bead 3fs.4): Claude proposes, the user decides. */
+export interface LessonScope { source: string; service?: string | null; metric_family?: string | null; labels?: Record<string, string> }
+export type LessonState = "proposed" | "approved" | "rejected" | "refuted" | "expired";
+export interface LessonItem {
+  id: string; text: string; scope: LessonScope; evidence: string[];
+  status: Exclude<LessonState, "expired">; state: LessonState; author: string; workspace: string;
+  created_at_ms: number; expires_at_ms: number; decided_at_ms: number | null; comment: string | null;
+  proposed_text: string | null; refuted_by: string[]; refute_reason: string | null;
+  scope_check: { covered_by: string[]; partial: { id: string; why: string }[] };
+  evidence_where: Record<string, string | null>;
+}
+export interface CatalogProposalItem {
+  id: string; source: string; metric: string; field: string; value: unknown; confidence: number;
+  basis: string; evidence: string[]; status: "proposed" | "approved" | "rejected"; author: string;
+  workspace: string; created_at_ms: number; decided_at_ms: number | null; decided_value: unknown;
+  edited: boolean; comment: string | null; evidence_where: Record<string, string | null>;
+}
+export interface Proposals { catalog: CatalogProposalItem[]; lessons: LessonItem[]; pending: number }
+export const fetchProposals = () => fetch("/api/proposals").then((r) => json<Proposals>(r));
+export interface Decision { decision: "approve" | "reject"; comment?: string; text?: string; expires?: string; value?: unknown }
+export const decideProposal = (id: string, body: Decision) =>
+  postJSON<unknown>(`/api/proposals/${encodeURIComponent(id)}/decide`, body);
+export const refuteLesson = (id: string, reason: string) =>
+  postJSON<LessonItem>(`/api/lessons/${encodeURIComponent(id)}/refute`, { reason });

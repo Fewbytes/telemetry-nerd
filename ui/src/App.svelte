@@ -13,6 +13,8 @@
   import ConnectionPill from "./components/ConnectionPill.svelte";
   import WorkspaceSwitcher from "./components/WorkspaceSwitcher.svelte";
   import CatalogView from "./components/CatalogView.svelte";
+  import ProposalsView from "./components/ProposalsView.svelte";
+  import { fetchProposals, type Proposals } from "./lib/api";
   import { setContext } from "svelte";
   import { refTargets } from "./lib/refs";
   import CodeView from "./components/CodeView.svelte";
@@ -48,13 +50,32 @@
     seen = new Map(current);
   });
 
-  // two views in one page: panels (default) and the catalog; evidence links (#/panel/p3) go back
-  let route = $state<"panels" | "catalog">(location.hash.startsWith("#/catalog") ? "catalog" : "panels");
+  // three views in one page: panels (default), the catalog and the retrospective proposals;
+  // evidence links (#/panel/p3, #/finding/f2) go back to the panels
+  type Route = "panels" | "catalog" | "proposals";
+  const routeOf = (h: string): Route =>
+    h.startsWith("#/catalog") ? "catalog" : h.startsWith("#/proposals") ? "proposals" : "panels";
+  let route = $state<Route>(routeOf(location.hash));
   $effect(() => {
-    const sync = () => (route = location.hash.startsWith("#/catalog") ? "catalog" : "panels");
+    const sync = () => (route = routeOf(location.hash));
     window.addEventListener("hashchange", sync);
     return () => window.removeEventListener("hashchange", sync);
   });
+
+  // proposals are global (they outlive workspaces): fetched on start, on any proposal/lesson
+  // event and on a workspace switch (evidence links depend on the workspace on screen)
+  let proposals = $state.raw<Proposals | null>(null);
+  let proposalsError = $state<string | null>(null);
+  const loadProposals = (): Promise<void> =>
+    fetchProposals()
+      .then((p) => { proposals = p; proposalsError = null; })
+      .catch((e) => { proposalsError = String(e); });
+  $effect(() => {
+    void ws.proposalsSeq;
+    void ws.snapshot?.workspace.id;
+    loadProposals();
+  });
+  const pending = $derived(proposals?.pending ?? 0);
 
   const panels = $derived((ws.snapshot?.panels ?? []).filter((p) => !p.closed));
   const threads = $derived(ws.snapshot?.threads ?? []); // anchored ones render inside Panel
@@ -63,7 +84,7 @@
 
   $effect(() => {
     const scrollToHash = () => {
-      const match = location.hash.match(/^#\/(panel|group)\/(\w+)$/);
+      const match = location.hash.match(/^#\/(panel|group|finding)\/(\w+)$/);
       if (match && panels.length > 0) {
         document.getElementById(`${match[1]}-${match[2]}`)?.scrollIntoView();
       }
@@ -81,6 +102,9 @@
     <nav class="views" aria-label="Views">
       <a href="#/panels" aria-current={route === "panels" ? "page" : undefined}>Panels</a>
       <a href="#/catalog" aria-current={route === "catalog" ? "page" : undefined}>Catalog</a>
+      <a href="#/proposals" aria-current={route === "proposals" ? "page" : undefined} data-proposals-link>
+        Proposals{#if pending > 0}<span class="count-badge" data-pending={pending}><span class="sr-only">, </span>{pending}<span class="sr-only"> awaiting review</span></span>{/if}
+      </a>
     </nav>
     <div class="header-controls">
       <WorkspaceSwitcher active={ws.snapshot?.workspace ?? null} workspaces={ws.workspaces} onopen={ws.refreshWorkspaces} />
@@ -100,7 +124,10 @@
   {#if ws.error}<div class="error">{ws.error}</div>{/if}
   <HighlightStrip highlights={ws.highlights} />
   {#if route === "catalog"}<CatalogView />{/if}
-  <div class="layout" hidden={route === "catalog"}>
+  {#if route === "proposals"}
+    <ProposalsView data={proposals} active={ws.snapshot?.workspace.id ?? null} error={proposalsError} onreload={loadProposals} />
+  {/if}
+  <div class="layout" hidden={route !== "panels"}>
     <div class="panels">
       {#if panels.length === 0}
         <p class="empty">No panels yet in {ws.snapshot?.workspace.title ?? "this workspace"}. Ask Claude a question about your metrics.</p>

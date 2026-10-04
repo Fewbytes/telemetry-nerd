@@ -321,3 +321,37 @@ ul.gaps { list-style: none; margin: 0; padding: 0; }
 /* panel groups (bead czt.3): the linked crosshair and selection drawn on every role */
 .plot .xhair { position: absolute; width: 0; border-left: 1px dashed var(--fg); opacity: 0.55; pointer-events: none; z-index: 3; }
 .plot .xbrush { position: absolute; background: var(--ann-claude); opacity: 0.12; pointer-events: none; z-index: 2; }
+
+/* Retrospective proposals (bead 3fs.4): theme tokens only, both themes */
+.count-badge { display: inline-block; min-width: 1.4em; margin-left: 4px; padding: 0 5px; border-radius: 8px; font-size: 11px; text-align: center; background: var(--ann-claude); color: var(--on-claude); }
+.proposals-view { font-size: 13px; max-width: 960px; }
+.proposals-head h2 { margin: 0; font-size: 16px; }
+.proposals-head h2:focus { outline: none; }
+.proposals-view h3 { font-size: 14px; margin: 18px 0 8px; }
+.proposal { border: 1px solid var(--border); border-left: 4px solid var(--ann-claude); border-radius: 6px; padding: 10px; margin-bottom: 10px; background: var(--bg); }
+.proposal[data-state="approved"] { border-left-color: var(--ok); }
+.proposal[data-state="rejected"], .proposal[data-state="refuted"] { border-left-color: var(--error); }
+.proposal[data-state="expired"] { border-left-color: var(--off); }
+.proposal-title { margin: 0 0 6px; font-size: 14px; font-weight: 500; }
+.proposal-title:focus-visible { outline: 2px solid var(--ann-claude); outline-offset: 2px; }
+.proposal .chip.state { font-size: 10px; margin-left: 6px; color: var(--muted); }
+.proposal-meta { display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; margin: 0 0 8px; }
+.proposal-meta > div { display: contents; }
+.proposal-meta dt { color: var(--muted); }
+.proposal-meta dd { margin: 0; overflow-wrap: anywhere; }
+.proposal-meta .basis { color: var(--muted); }
+.evidence-refs { display: flex; gap: 6px; flex-wrap: wrap; }
+.proposal-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.proposal-actions button, .proposal-actions input, .proposal-form textarea, .proposal-form input, .proposals-view .toggle-decided {
+  font: inherit; font-size: 12px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 3px 8px;
+}
+.proposal-actions button, .proposals-view .toggle-decided { cursor: pointer; }
+.proposal-actions button:hover:not(:disabled) { border-color: var(--fg); }
+.proposal-actions button:disabled { opacity: 0.5; cursor: default; }
+.proposal-actions button.approve { border-color: var(--ok); }
+.proposal-actions button.reject { border-color: var(--error); }
+.proposal-actions input { flex: 1 1 160px; min-width: 0; }
+.proposal-form { display: flex; flex-direction: column; gap: 6px; }
+.proposal-form label { display: flex; flex-direction: column; gap: 2px; color: var(--muted); }
+.proposal-form textarea { resize: vertical; }
+:is(.proposal-actions, .proposal-form, .proposals-view) :is(button, input, textarea):focus-visible { outline: 2px solid var(--ann-claude); outline-offset: 1px; }

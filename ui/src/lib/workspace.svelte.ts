@@ -33,6 +33,7 @@ export function createWorkspace() {
   let presence = $state.raw<Presence | null>(null);
   let highlights = $state.raw<Highlights>(new Map());
   let catalogSeq = $state(0); // bumps when anything the metric card shows may have changed
+  let proposalsSeq = $state(0); // bumps when a retrospective proposal or lesson changes
   let expiryTimer: ReturnType<typeof setTimeout> | undefined;
   let workspaces = $state.raw<WorkspaceInfo[]>([]);
   let lastSeq = 0;
@@ -134,6 +135,8 @@ export function createWorkspace() {
     get presence() { return presence; },
     /** a counter that changes whenever catalog claims, relations or bindings change */
     get catalogSeq() { return catalogSeq; },
+    /** a counter that changes whenever a catalog proposal or a lesson changes */
+    get proposalsSeq() { return proposalsSeq; },
     /** active highlights (Claude's and the user's), expired ones already dropped */
     get highlights() { return highlights; },
     /** non-archived workspaces, as last fetched */
@@ -148,7 +151,8 @@ export function createWorkspace() {
         let dropped = false;
         stopUnsub = subscribe((e) => {
           lastSeq = Math.max(lastSeq, e.seq);
-          if (/^(catalog|relation|binding)\./.test(e.type)) catalogSeq++;
+          if (/^(catalog|relation|binding)\./.test(e.type) || e.type === "proposal.decided") catalogSeq++;
+          if (/^(proposal|lesson)\./.test(e.type)) proposalsSeq++;
           const next = applyHighlightEvent(highlights, e, Date.now());
           if (next !== highlights) {
             highlights = next;
