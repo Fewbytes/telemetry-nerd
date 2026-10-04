@@ -82,3 +82,19 @@ def test_gappy_hole_is_anchored_to_wall_clock_so_reseeding_never_fills_it():
 def test_late_series_starts_mid_range():
     start, end = 0, 6 * 3_600_000
     assert min(_gappy(start, end, "e")) >= (end - start) // 2
+
+
+def test_demo_text_origin_makes_the_series_a_function_of_time_since_origin():
+    # the e2e fixture source anchors the demo series at its start (y7hb): two anchors give the
+    # same values at the same offsets, so every run reads the same shapes relative to "now"
+    a, b = 1_000_000_215_000, 1_000_007_385_000  # arbitrary, multiples of the 15s scrape
+    six_h = 6 * 3_600_000
+
+    def shifted(origin):
+        out = []
+        for ln in demo_text(origin - six_h, origin, origin_ms=origin).splitlines():
+            head, value, ts = ln.rsplit(" ", 2)
+            out.append((head, value, int(ts) - origin))
+        return out
+
+    assert shifted(a) == shifted(b)

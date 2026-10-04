@@ -191,6 +191,8 @@ just lint         # ruff
 just ui-install   # once
 just ui-test      # UI unit tests
 just ui-check     # svelte-check
+just e2e          # Playwright UI e2e on the fixture PromQL source (no VictoriaMetrics, no podman)
+just test-integration  # -m integration: VictoriaMetrics/Prometheus containers, public sources
 just serve        # run the daemon from the checkout
 just dev-up       # local VictoriaMetrics for development (podman compose)
 just seed         # push synthetic demo series into it
@@ -199,6 +201,12 @@ just brand        # regenerate logo PNGs and favicons from assets/brand/*.svg
 
 Work is tracked with [beads](https://github.com/gastownhall/beads) (`bd ready` to see what's
 open). Design specs live in `docs/superpowers/specs/`.
+
+Unit tests and the UI e2e suite never read an external VictoriaMetrics: unit tests use fakes and
+recorded responses (`tests/fixtures`), and e2e runs the daemon against
+`src/telemetry_nerd/devtools/promfixture`, a small Prometheus-API server whose PromQL engine
+evaluates synthetic series anchored at its start (specs import their own series into it). Only
+`tests/integration` (`-m integration`) talks to real backends, for wire and client compatibility.
 
 ---
 

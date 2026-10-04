@@ -4,18 +4,32 @@ import { defineConfig } from "@playwright/test";
 // random free ports; defaults to the historical 7071.
 const port = Number(process.env.E2E_PORT ?? 7071);
 const daemon = `http://127.0.0.1:${port}`;
+// The daemon's only source is the fixture PromQL server (bead y7hb): seeded in-process with the
+// synthetic demo series anchored at its start, no VictoriaMetrics, no podman. Specs add their own
+// series through its import endpoint (helpers.FIXTURE).
+const fixturePort = Number(process.env.E2E_FIXTURE_PORT ?? port + 1);
+const fixture = `http://127.0.0.1:${fixturePort}`;
 
 export default defineConfig({
   testDir: "e2e",
   // serialize: tests share one daemon (channel claim cursors, channel state)
   // and global UI state (theme flips rebuild every plot on every page)
   workers: 1,
-  globalSetup: "./e2e/global-setup.ts",
   use: { baseURL: daemon },
-  webServer: {
-    command: `uv run --directory .. telemetry-nerd serve --port ${port} --data-dir "$(mktemp -d)" --source-url http://127.0.0.1:8428`,
-    url: `${daemon}/api/panels`,
-    reuseExistingServer: false,
-    timeout: 60_000,
-  },
+  webServer: [
+    {
+      command: `uv run --directory .. python -m telemetry_nerd.devtools.promfixture --port ${fixturePort}`,
+      url: `${fixture}/api/v1/status/buildinfo`,
+      reuseExistingServer: false,
+      timeout: 60_000,
+    },
+    {
+      command:
+        `uv run --directory .. telemetry-nerd serve --port ${port} --data-dir "$(mktemp -d)" ` +
+        `--source-url ${fixture} --source-flavor prometheus`,
+      url: `${daemon}/api/panels`,
+      reuseExistingServer: false,
+      timeout: 60_000,
+    },
+  ],
 });

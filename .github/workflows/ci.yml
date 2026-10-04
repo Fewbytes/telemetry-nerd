@@ -3,7 +3,8 @@ name: CI
 # Tests, lint and UI checks run on every push and pull request. The container image is built
 # and pushed to GHCR ONLY for version tags (v*); regular pushes never build or publish it.
 # Two variants: slim (X.Y.Z, X.Y, latest) and full with the `analysis` extra (…-full).
-# Integration tests (-m integration: Docker / public network) are excluded from CI.
+# Integration tests (-m integration: Docker / public network) are excluded from CI; the UI e2e
+# suite runs against the fixture PromQL source (no VictoriaMetrics).
 on:
   push:
     branches: ["**"]
@@ -55,10 +56,38 @@ jobs:
       - name: Type check (svelte-check)
         run: npx svelte-check --tsconfig ./tsconfig.app.json --fail-on-warnings
 
+  e2e:
+    name: UI e2e (Playwright on the fixture source)
+    # Self-contained (bead y7hb): the daemon reads the in-process fixture PromQL server that
+    # playwright.config.ts starts; no VictoriaMetrics, no containers.
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0  # no floating major tag upstream
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+        working-directory: ui
+      - run: npx playwright install --with-deps chromium
+        working-directory: ui
+      - run: npm run build
+        working-directory: ui
+      - run: npx playwright test
+        working-directory: ui
+
   image:
     name: Build and push image (version tags only)
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [python, ui]
+    needs: [python, ui, e2e]
     runs-on: ubuntu-latest
     permissions:
       contents: read

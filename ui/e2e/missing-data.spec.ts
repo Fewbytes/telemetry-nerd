@@ -12,10 +12,9 @@ test("a series with a hole shows a coverage rug and a located caveat", async ({ 
   await page.goto("/");
   const el = page.locator(`[data-panel-id="${panel.id}"]`);
   await expect(el.locator("[data-rug]")).toBeVisible();
-  // d has a wall-clock-anchored empty hole in every 6h window. e (born mid-seed) may ALSO read "no
-  // samples": the dev VM keeps earlier seeds, so once the previous seed is >~3h old e has an empty
-  // stretch before its newest seed's birth (correct labelling). Which series' note comes first is
-  // therefore not stable; pick d's note by its label instead of taking the first.
+  // d has a 15-minute hole every 3h (anchored at the fixture source's start); e is born mid-history and
+  // may ALSO read "no samples" before its birth (correct labelling). Pick d's note by its label
+  // instead of relying on which series' note comes first.
   const note = el
     .locator('[data-note^="missing_data:"]')
     .filter({ hasText: 'instance="d"' })

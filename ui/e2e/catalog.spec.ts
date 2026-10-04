@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { expect, test } from "@playwright/test";
-import { DAEMON, seedPanel } from "./helpers.js";
+import { DAEMON, FIXTURE, seedPanel } from "./helpers.js";
 
 const mcp = (tool: string, args: object) =>
   execSync(`uv run python scripts/mcp_call.py --url ${DAEMON}/mcp ${tool} '${JSON.stringify(args)}'`, {
@@ -80,7 +80,7 @@ test("catalog view: names that encode a dimension collapse into a family; confir
 from telemetry_nerd.devtools.synthetic import exposition, push
 from telemetry_nerd.model.time import now_ms
 t = now_ms() // 15000 * 15000
-push('http://127.0.0.1:8428', ''.join(exposition(f'tnfam_job_w{i}_x{i}_done', {}, [(t - 60000, 1.0), (t, 2.0)]) for i in range(40)))"`,
+push('${FIXTURE}', ''.join(exposition(f'tnfam_job_w{i}_x{i}_done', {}, [(t - 60000, 1.0), (t, 2.0)]) for i in range(40)))"`,
     { cwd: "..", encoding: "utf8" },
   );
   mcp("source_learn", { source: "default" });

@@ -60,13 +60,16 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
 ## Build & Test
 
-_Add your build and test commands here_
-
 ```bash
-# Example:
-# npm install
-# npm test
+just lint && uv run pytest tests/unit -q      # Python gates
+cd ui && npx vitest run && cd .. && just ui-check   # UI gates
+just e2e                                      # Playwright on the fixture PromQL source (no VM, no podman)
+just test-integration                         # -m integration: real VictoriaMetrics/Prometheus containers
 ```
+
+Unit tests and e2e never depend on an external VictoriaMetrics (e2e reads
+`src/telemetry_nerd/devtools/promfixture`; specs import their own series into it). Only
+`tests/integration` uses real backends.
 
 ## Architecture Overview
 

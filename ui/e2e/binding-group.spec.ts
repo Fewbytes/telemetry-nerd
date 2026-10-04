@@ -1,11 +1,10 @@
 import { expect, test, type Locator } from "@playwright/test";
 import { mkdirSync } from "node:fs";
-import { mcpTool } from "./helpers.js";
+import { FIXTURE, mcpTool } from "./helpers.js";
 
 // show_binding (bead czt.3): a RED and a USE binding drawn as linked panel groups. Synthetic data
-// under unique metric names, so the shared dev VictoriaMetrics keeps its other series untouched.
+// under unique metric names, imported into the fixture source.
 const P = `tn_e2e_czt3_${Date.now()}`;
-const VM = "http://127.0.0.1:8428";
 const SHOTS = "e2e-shots";
 const STEP = 30_000;
 
@@ -15,7 +14,7 @@ function exposition(): string {
   const start = end - (n - 1) * STEP;
   const les = ["0.05", "0.1", "0.25", "0.5", "1", "+Inf"];
   const share = [0.2, 0.5, 0.8, 0.95, 0.99, 1]; // cumulative share of requests under each le
-  // declared types: VictoriaMetrics keeps # TYPE metadata, which source_learn reads
+  // declared types: the fixture source keeps # TYPE metadata (as VictoriaMetrics does), which source_learn reads
   const lines: string[] = [
     ["http_requests_total", "counter"], ["http_request_duration_seconds", "histogram"],
     ["http_requests_in_flight", "gauge"], ["disk_utilization_ratio", "gauge"],
@@ -55,9 +54,9 @@ const xhairLeft = async (role: Locator): Promise<number> => (await role.locator(
 test("show_binding: RED and USE groups, linked crosshair and brush, gap card, both themes", async ({ page, request }) => {
   test.setTimeout(120_000);
   mkdirSync(SHOTS, { recursive: true });
-  const put = await request.post(`${VM}/api/v1/import/prometheus`, { data: exposition() });
+  const put = await request.post(`${FIXTURE}/api/v1/import/prometheus`, { data: exposition() });
   expect(put.ok()).toBeTruthy();
-  await request.get(`${VM}/internal/force_flush`);
+  await request.get(`${FIXTURE}/internal/force_flush`);
   await mcpTool(request, "source_learn", { source: "default" });
   const types: [string, string][] = [
     ["http_requests_total", "counter"], ["http_requests_in_flight", "gauge"],

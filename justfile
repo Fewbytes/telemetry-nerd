@@ -55,13 +55,18 @@ ui-check:
 ui-dev:
     cd ui && npm run dev
 
-# Fresh VictoriaMetrics data each run (dev data is synthetic, so recreating the
-# volume is safe); then build the UI and run Playwright against a throwaway daemon.
-e2e:
-    podman compose -f deploy/dev/compose.yml down -v
-    just dev-up
+# Build the UI and run Playwright against a throwaway daemon whose only source is the fixture
+# PromQL server (src/telemetry_nerd/devtools/promfixture, started by playwright.config.ts):
+# deterministic synthetic data, no VictoriaMetrics, no podman. Extra args go to playwright
+# (e.g. `just e2e e2e/fleet.spec.ts`); E2E_PORT / E2E_FIXTURE_PORT move the two servers.
+e2e *args:
     just ui-build
-    cd ui && npx playwright install chromium && npx playwright test
+    cd ui && npx playwright install chromium && npx playwright test {{args}}
+
+# Serve the e2e fixture PromQL source by hand (port 7072), e.g. to point `just serve
+# --source-url http://127.0.0.1:7072 --source-flavor prometheus` at it.
+fixture-source *args:
+    uv run python -m telemetry_nerd.devtools.promfixture {{args}}
 
 # Render brand PNGs, favicon.ico and the social card from assets/brand/*.svg into assets/brand/dist.
 brand:

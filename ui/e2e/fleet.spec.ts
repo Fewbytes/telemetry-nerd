@@ -1,10 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync } from "node:fs";
+import { FIXTURE } from "./helpers.js";
 
-// 100-member synthetic fleet, 3 planted outliers (persistent, transient, drifting), written under a
-// unique metric name so the shared dev VictoriaMetrics keeps its other data untouched.
+// 100-member synthetic fleet, 3 planted outliers (persistent, transient, drifting), imported into the
+// fixture source under a unique metric name.
 const METRIC = `tn_e2e_lkn_fleet_cpu_${Date.now()}`; // fresh per run: stale samples at shifted timestamps would add outliers
-const VM = "http://127.0.0.1:8428";
 const SHOTS = "e2e-shots";
 const PLANTED = { persistent: 7, transient: 23, drifting: 61 };
 const pod = (i: number) => `pod=api-${String(i).padStart(3, "0")}`;
@@ -51,9 +51,9 @@ const OUTLIER_RGB: [number, number, number][] = [[0xd5, 0x5e, 0x00], [0x00, 0x72
 
 test("fleet panel: band, 3 planted outliers labelled, heatmap and small multiples within budget, both themes", async ({ page, request }) => {
   mkdirSync(SHOTS, { recursive: true });
-  const put = await request.post(`${VM}/api/v1/import/prometheus`, { data: exposition() });
+  const put = await request.post(`${FIXTURE}/api/v1/import/prometheus`, { data: exposition() });
   expect(put.ok()).toBeTruthy();
-  await request.get(`${VM}/internal/force_flush`);
+  await request.get(`${FIXTURE}/internal/force_flush`);
   const q = await request.post("/api/query", {
     data: { expr: METRIC, start: "now-310m", end: "now-5m", step: "1m" },
   });
@@ -155,8 +155,8 @@ test("fleet panel with 6 members: band view screenshot", async ({ page, request 
       const v = 40 + 15 * Math.sin((2 * Math.PI * t) / T) + gauss(r) * 3 + (m === 2 && t > 150 ? 30 : 0);
       lines.push(`${metric}{core="${m}",job="cpu"} ${v.toFixed(3)} ${start + t * step}`);
     }
-  expect((await request.post(`${VM}/api/v1/import/prometheus`, { data: lines.join("\n") + "\n" })).ok()).toBeTruthy();
-  await request.get(`${VM}/internal/force_flush`);
+  expect((await request.post(`${FIXTURE}/api/v1/import/prometheus`, { data: lines.join("\n") + "\n" })).ok()).toBeTruthy();
+  await request.get(`${FIXTURE}/internal/force_flush`);
   const q = await request.post("/api/query", { data: { expr: metric, start: "now-250m", end: "now-5m", step: "1m" } });
   const { dataset } = await q.json();
   const s = await request.post("/api/show", { data: { dataset, question: "Which core is off?", mark: "fleet" } });
@@ -190,14 +190,14 @@ test("fleet split into behaviour groups: per-group bands and medians, tagged out
       lines.push(`${metric}{node="n${String(m).padStart(2, "0")}",job="db"} ${v.toFixed(3)} ${start + t * step}`);
     }
   }
-  expect((await request.post(`${VM}/api/v1/import/prometheus`, { data: lines.join("\n") + "\n" })).ok()).toBeTruthy();
-  await request.get(`${VM}/internal/force_flush`);
+  expect((await request.post(`${FIXTURE}/api/v1/import/prometheus`, { data: lines.join("\n") + "\n" })).ok()).toBeTruthy();
+  await request.get(`${FIXTURE}/internal/force_flush`);
   const q = await request.post("/api/query", { data: { expr: metric, start: "now-250m", end: "now-5m", step: "1m" } });
   const { dataset } = await q.json();
   const s = await request.post("/api/show", { data: { dataset, question: "Which db nodes are off?", mark: "fleet" } });
   expect(s.ok(), await s.text()).toBeTruthy();
   const { panel } = await s.json();
-  // a fetch failure cannot be planted in VictoriaMetrics: add a located untrusted span to the payload
+  // a fetch failure cannot be planted in the source data: add a located untrusted span to the payload
   let spanEnd = 0;
   await page.route(`**/api/panels/${panel.id}/data*`, async (route) => {
     const res = await route.fetch();

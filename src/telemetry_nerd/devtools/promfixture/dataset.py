@@ -1,0 +1,31 @@
+"""The e2e fixture source's data (bead y7hb): what the shared dev VictoriaMetrics used to hold.
+
+* the synthetic demo series (`devtools.synthetic.demo_text`: latency gauge with a spike, request
+  counters, a latency histogram, series with holes) over `hours` before the anchor, with the
+  sine phase and holes anchored there too, so values depend only on the time since the anchor;
+* `up{job="node-exporter"}` = 1 every 15s from the start of history to a day past the anchor,
+  standing in for the dev stack's scrape target (the daemon learns the 15s resolution from it,
+  and the proposals spec reads it as a continuously scraped service).
+
+Specs that need more add their own uniquely named series through the import endpoint.
+"""
+
+from __future__ import annotations
+
+from telemetry_nerd.devtools.promfixture.store import Store
+from telemetry_nerd.devtools.synthetic import demo_text
+
+SCRAPE_MS = 15_000
+HOUR_MS = 3_600_000
+
+
+def seed(store: Store, now: int, hours: int = 6) -> int:
+    """Fill `store`; returns the anchor (now rounded down to the scrape interval)."""
+    anchor = now // SCRAPE_MS * SCRAPE_MS
+    start = anchor - hours * HOUR_MS
+    store.import_text(demo_text(start, anchor, origin_ms=anchor), anchor)
+    store.add(
+        {"__name__": "up", "job": "node-exporter", "instance": "node-exporter:9100"},
+        ((t, 1.0) for t in range(start, anchor + 24 * HOUR_MS, SCRAPE_MS)),
+    )
+    return anchor

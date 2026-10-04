@@ -1,6 +1,10 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 
-export const DAEMON = `http://127.0.0.1:${process.env.E2E_PORT ?? 7071}`;
+const PORT = Number(process.env.E2E_PORT ?? 7071);
+export const DAEMON = `http://127.0.0.1:${PORT}`;
+/** The fixture PromQL source the daemon reads (playwright.config.ts); its VictoriaMetrics-style
+ * import endpoint (POST /api/v1/import/prometheus) adds a spec's own series. */
+export const FIXTURE = `http://127.0.0.1:${process.env.E2E_FIXTURE_PORT ?? PORT + 1}`;
 
 /** query + show a demo panel, as the skeleton spec does. */
 export async function seedPanel(

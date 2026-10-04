@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { expect, test } from "@playwright/test";
-import { DAEMON, seedPanel } from "./helpers.js";
+import { DAEMON, FIXTURE, seedPanel } from "./helpers.js";
 
 const mcp = (tool: string, args: object) =>
   execSync(`uv run python scripts/mcp_call.py --url ${DAEMON}/mcp ${tool} '${JSON.stringify(args)}'`, {
@@ -16,7 +16,7 @@ from telemetry_nerd.devtools.synthetic import exposition, push
 from telemetry_nerd.model.time import now_ms
 end = now_ms() // 15000 * 15000 - 7 * 86400000
 text = exposition('tn_demo_latency_seconds', {'instance': 'a'}, [(end - 4 * 3600000 + i * 15000, 0.1) for i in range(960)])
-push('http://127.0.0.1:8428', text)"`,
+push('${FIXTURE}', text)"`,
     { cwd: "..", encoding: "utf8" },
   );
 

@@ -3,7 +3,7 @@ import { mcpTool, seedPanel } from "./helpers.js";
 
 // Tier-2 code nodes in the UI (bead b98.5): panel provenance -> read-only code view, the code-run
 // list in the sidebar, failed runs with their traceback, and re-run as a new node.
-// Run: cd ui && E2E_SKIP_SEED=1 E2E_PORT=<free port> npx playwright test e2e/code-view.spec.ts
+// Run: cd ui && E2E_PORT=<free port> npx playwright test e2e/code-view.spec.ts
 
 const SHOT_DIR = process.env.E2E_SHOTS ?? "test-results/code-view";
 

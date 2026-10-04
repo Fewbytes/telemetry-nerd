@@ -1,9 +1,9 @@
 import { expect, test } from "@playwright/test";
+import { FIXTURE } from "./helpers.js";
 
 // Seasonal panel (lkn.9): overlay of now vs previous days with the band, and the ratio view.
-// Seeds its own uniquely named metric into the dev VictoriaMetrics (8 days at 5m: a daily cycle,
+// Imports its own uniquely named metric into the fixture source (8 days at 5m: a daily cycle,
 // one series boosted x2.5 over the last 3h) and deletes it afterwards.
-const VM = "http://127.0.0.1:8428";
 const METRIC = `tn_e2e_seasonal_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
 const STEP = 300_000;
 
@@ -25,13 +25,13 @@ test.beforeAll(async ({ request }) => {
     lines.push(`${METRIC}{case="normal"} ${load(t, rnd).toFixed(3)} ${t}`);
     lines.push(`${METRIC}{case="boost"} ${(load(t, rnd) * boost).toFixed(3)} ${t}`);
   }
-  const r = await request.post(`${VM}/api/v1/import/prometheus`, { data: lines.join("\n") + "\n" });
-  expect(r.ok(), "is VictoriaMetrics up on :8428? (just dev-up)").toBeTruthy();
-  expect((await request.get(`${VM}/internal/force_flush`)).ok()).toBeTruthy();
+  const r = await request.post(`${FIXTURE}/api/v1/import/prometheus`, { data: lines.join("\n") + "\n" });
+  expect(r.ok(), "fixture source import").toBeTruthy();
+  expect((await request.get(`${FIXTURE}/internal/force_flush`)).ok()).toBeTruthy();
 });
 
 test.afterAll(async ({ request }) => {
-  await request.post(`${VM}/api/v1/admin/tsdb/delete_series?match[]=${METRIC}`);
+  await request.post(`${FIXTURE}/api/v1/admin/tsdb/delete_series?match[]=${METRIC}`);
 });
 
 test("seasonal panel: verdicts, overlay and ratio views, dark mode", async ({ page, request }) => {

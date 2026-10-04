@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { expect, test } from "@playwright/test";
-import { DAEMON } from "./helpers.js";
+import { DAEMON, FIXTURE } from "./helpers.js";
 
 const mcp = (tool: string, args: object) =>
   execSync(`uv run python scripts/mcp_call.py --url ${DAEMON}/mcp ${tool} '${JSON.stringify(args)}'`, {
@@ -19,7 +19,7 @@ ts = [end - 3 * 3600000 + i * 15000 for i in range(720)]
 parts = []
 for name, v in [('node_memory_MemTotal_bytes', 16e9), ('node_memory_MemFree_bytes', 2e9), ('node_memory_MemAvailable_bytes', 9e9)]:
     parts.append(exposition(name, {'instance': 'ctx-host'}, [(t, v + (i % 7) * 1e7) for i, t in enumerate(ts)]))
-push('http://127.0.0.1:8428', ''.join(parts))"`,
+push('${FIXTURE}', ''.join(parts))"`,
     { cwd: "..", encoding: "utf8" },
   );
 
