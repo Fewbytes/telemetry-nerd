@@ -445,7 +445,7 @@ async def test_use_saturation_episode_is_at_capacity_and_annotates_the_group(tmp
     assert rv["utilization"]["status"] == "changed" and rv["utilization"]["at_capacity"]
     assert rv["utilization"]["source"] == "special_cause"  # the group card's badge reads it
     assert rv["errors"] is None  # the gap card stays a gap
-    assert g2.verdict["moved"] and g2.verdict["reference"] == "previous windows"
+    assert g2.verdict["moved"] and g2.verdict["reference"] == "previous time ranges"
     snap = svc.ws.snapshot()
     assert snap["groups"][0]["verdict"]["text"] == out["summary"]["text"]
 

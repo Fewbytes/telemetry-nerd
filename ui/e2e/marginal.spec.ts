@@ -6,7 +6,7 @@ test("marginal now vs previous, n shown, ambient event; indexed view labels 1", 
   await page.goto("/");
   const el = page.locator(`[data-panel-id="${panel.id}"]`);
   const row = el.getByRole("group", { name: "Marginal histogram" });
-  await row.getByRole("button", { name: "vs previous window" }).click();
+  await row.getByRole("button", { name: "vs previous time range" }).click();
   await expect(el.locator("[data-marginal]")).toHaveAttribute("data-marginal-basis", "samples");
   await expect(el.locator("[data-marginal-n]")).toContainText("now n=");
   await expect(el.locator('[data-note="marginal"]')).toContainText("not requests");
@@ -20,7 +20,7 @@ test("marginal now vs previous, n shown, ambient event; indexed view labels 1", 
   await y.getByRole("button", { name: "÷ own mean" }).click();
   await expect(el.locator("[data-y-badge]")).toContainText("indexed · 1 = each series' mean over");
   await expect(el.locator("[data-marginal]")).toHaveCount(0); // marginal is off in indexed view
-  await expect(row.getByRole("button", { name: "vs previous window" })).toBeDisabled();
+  await expect(row.getByRole("button", { name: "vs previous time range" })).toBeDisabled();
   await y.getByRole("button", { name: "auto" }).click();
   await expect(el.locator("[data-marginal]")).toBeVisible();
 });

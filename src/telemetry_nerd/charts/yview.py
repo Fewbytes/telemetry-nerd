@@ -115,7 +115,7 @@ def check_view(view: YView, st: ValueStats, ctx: YContext | None = None) -> list
     if view.mode == "typical" and (ctx is None or ctx.typical is None):
         raise ValueError(
             "no typical range is known for this metric; catalog_scan observes one (p1-p99 of a "
-            "short window) for a plain selector of a non-counter metric"
+            "short time range) for a plain selector of a non-counter metric"
         )
     if st.lo is None or st.hi is None:
         raise ValueError("the panel has no drawn values; only the auto view applies")

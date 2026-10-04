@@ -68,7 +68,7 @@ describe("overlayDraw", () => {
     expect(Object.keys(g)).toEqual(["ghost"]);
     expect(overlayDraw(ov({ flags: { normal: false, limit: false, ghost: true } }))).toBeUndefined(); // on but not fetched yet
     expect(overlayDraw(ov({ flags: { normal: false, limit: false, ghost: true }, ghost: { available: true, loaded: true, series: [] } }))).toBeUndefined(); // fetched, nothing there
-    expect(overlayChips(ov({ ghost: { available: true, loaded: true, series: [] } }))[2].title).toMatch(/no data in the same window one week earlier/);
+    expect(overlayChips(ov({ ghost: { available: true, loaded: true, series: [] } }))[2].title).toMatch(/no data in the same time range one week earlier/);
     expect(overlayDraw(null)).toBeUndefined();
   });
 });

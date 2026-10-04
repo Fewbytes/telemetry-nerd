@@ -615,7 +615,7 @@ class TelemetryService:
         )
         if step_ms < floor:
             raise SourceError(
-                f"step {format_duration(step_ms)} is shorter than two scrape intervals "
+                f"step {format_duration(step_ms)} is shorter than two series intervals "
                 f"({format_duration(floor)})",
                 hint=f"counts come from increase() per step; use step >= {format_duration(floor)} or auto",
             )
@@ -686,7 +686,7 @@ class TelemetryService:
             windows.append(Window(start_ms=start_ms - span, end_ms=start_ms, label="previous"))
         a, b = iso(start_ms)[11:16], iso(end_ms)[11:16]
         question = f"How are values distributed between {a}Z and {b}Z" + (
-            ", compared with the preceding window?" if len(windows) > 1 else "?"
+            ", compared with the preceding time range?" if len(windows) > 1 else "?"
         )
         unit = (panel.spec.get("y") or {}).get("unit")
         return self.show(

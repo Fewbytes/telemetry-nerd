@@ -39,7 +39,7 @@ test("quantile legend states group size, outliers drawn of found, n per step and
 
 test("outlier text says kind, direction, effect or episode; coverage gaps are shares of alive", () => {
   const t = (ms: number) => `t${ms / 1000}`;
-  expect(outlierText(d.outliers[0], t)).toBe("pod=a: consistently higher · +38% since window start");
+  expect(outlierText(d.outliers[0], t)).toBe("pod=a: consistently higher · +38% since the time range start");
   expect(outlierText(d.outliers[1], t)).toBe("pod=b: briefly lower · spike 6.1σ t600 (momentary)");
   // spec §5.4: special cause is the default reading; an undetermined source is said
   expect(outlierText({ ...d.outliers[1], source: "undetermined" }, t)).toBe("pod=b: briefly lower · spike 6.1σ t600 (momentary) (source undetermined)");
@@ -182,7 +182,7 @@ test("grouped legend, key and axis label name the groups; outliers are tagged wi
   expect(key[2].line?.style).toBe("dashed");
   expect(key[5].hatch).toBe(true);
   expect(fleetKey(false, d).map((k) => k.id)).toEqual(["minmax", "q1090", "q2575", "median", "outlier", "transient"]);
-  expect(outlierText(g.outliers[0], (ms) => `t${ms}`)).toBe("pod=a: consistently higher within group c2 · +38% since window start");
+  expect(outlierText(g.outliers[0], (ms) => `t${ms}`)).toBe("pod=a: consistently higher within group c2 · +38% since the time range start");
   expect(untrustedSpans(g)).toEqual([[0, 300_000]]); // only unknown data is hatched
   expect(groupEnds(g)).toEqual([{ j: 1, v: 10 }, { j: 2, v: 32 }]);
 });
@@ -259,7 +259,7 @@ test("both modes: a level outlier with episodes stays one coloured line; its bra
   const m = toFleetUplot({ ...spc, outliers: [both] }, "spc");
   expect(m.roles.filter((r) => ["outlier", "muted", "episode"].includes(r))).toEqual(["outlier"]);
   const t = (ms: number) => `t${ms / 1000}`;
-  expect(modeText(both, t)).toBe("+38% since window start"); // no σ, no episode text
+  expect(modeText(both, t)).toBe("+38% since the time range start"); // no σ, no episode text
   const key = fleetKey(false, { ...spc, outliers: [both] }).map((k) => k.id);
   expect(key).toContain("own-level");
   expect(key).not.toContain("transient"); // no transient member drawn
@@ -269,12 +269,12 @@ test("end-label mode text: kind + effect for level / change outliers, the strong
   const { modeText, effectText } = await import("./fleet");
   const t = (ms: number) => `t${ms / 1000}`;
   const base = spc.outliers[0];
-  expect(modeText({ ...base, since_window_start: false }, t)).toBe("+38% (window mean) since t0");
-  expect(modeText(base, t)).toBe("+38% since window start");
+  expect(modeText({ ...base, since_window_start: false }, t)).toBe("+38% (time-range mean) since t0");
+  expect(modeText(base, t)).toBe("+38% since the time range start");
   expect(modeText({ ...base, since_window_start: false, since_ms: 300_000, effect: { as: "ratio", offset: 1.5, over: "since" } }, t)).toBe("+50% since t300");
   expect(modeText({ ...base, kind: "shifted", effect: { as: "ratio", offset: 1.2, change: 1.38, at_ms: 300_000 } }, t)).toBe("shifted +38% at t300");
   expect(modeText({ ...base, kind: "drifting", effect: { as: "ratio", offset: 1.1, change: 1.5, change_per_hour: 1.021 } }, t)).toBe("drifting +2.1%/h");
-  expect(modeText({ ...base, effect: { as: "difference", offset: 12.34 } }, t, "ms")).toBe("+12.3 ms since window start");
+  expect(modeText({ ...base, effect: { as: "difference", offset: 12.34 } }, t, "ms")).toBe("+12.3 ms since the time range start");
   const two = { ...spc.outliers[1], episodes: [spc.outliers[1].episodes[0], { start_ms: 0, end_ms: 300_000, peak_z: 7.2, sustained: true, beyond_own_level: false }] };
   expect(modeText(two, t)).toBe("episode 7.2σ t0–t300 (sustained) +1 more");
   expect(effectText(2.7, "ratio")).toBe("×2.7");
@@ -292,7 +292,7 @@ test("the key carries the encoding (flag bar explained on hover); the legend onl
   const s = fleetLegend(spc, "spc");
   expect(s).toBe("100 members · 8 outliers (2 drawn) (special causes) · 2–100 reporting per step · 2 member-steps beyond 3σ unflagged (0.67%; 0.27% if normal) · 1 step where the fleet widened faster than the ±6-step σ tracks (common cause) · member measurement error not propagated");
   expect(fleetLegend({ ...spc, spc: { ...zones(1), heavy_tails: true } })).toContain("(0.67%; 0.27% if normal); heavy-tailed noise: more beyond 3σ is this fleet's shape");
-  expect(key.find((k) => k.id === "widening")!.title).toContain("Chance of any mark in this window ≈ 1%");
+  expect(key.find((k) => k.id === "widening")!.title).toContain("Chance of any mark in this time range ≈ 1%");
   expect(s).not.toMatch(/2σ\/3σ|dashed/); // no encoding twice
   expect(fleetAxisLabel(spc, "%", "spc")).toBe("% · median ± 2σ/3σ (robust, pooled ±6 steps, log scale: multiplicative) across 100 members");
   expect(fleetLegend(spc, "quantiles")).toContain("1 steps with members missing (bounds drawn) · member measurement error not propagated");

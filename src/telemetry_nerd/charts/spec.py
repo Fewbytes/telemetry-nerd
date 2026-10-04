@@ -318,7 +318,7 @@ def validate(
         if layer.mark in WINDOW_MARKS and not 1 <= len(layer.windows) <= MAX_WINDOWS:
             issues.append(ValidationIssue(
                 rule="windows", severity="error",
-                message=f"{layer.mark} needs 1 to {MAX_WINDOWS} time windows to compare",
+                message=f"{layer.mark} needs 1 to {MAX_WINDOWS} time ranges to compare",
             ))  # fmt: skip
         if layer.mark in DISTRIBUTION_MARKS and series_counts.get(layer.data, 0) > FACET_BUDGET:
             issues.append(ValidationIssue(

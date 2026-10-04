@@ -41,7 +41,7 @@ async def test_query_distribution_builds_dataset_and_summary(tmp_path):
 
 async def test_distribution_step_must_cover_two_scrapes(tmp_path):
     svc = make_service(tmp_path, FakeSource(resolution_ms=30_000))
-    with pytest.raises(SourceError, match="two scrape"):
+    with pytest.raises(SourceError, match="two series intervals"):
         await svc.query_distribution("x_bucket", start="now-2h", end="now-1h", step="30s")
     out = await svc.query_distribution("x_bucket", start="now-2h", end="now-1h")
     assert svc.datasets.meta(out["dataset"]).step_ms >= 60_000

@@ -343,7 +343,7 @@ class PromQLSource:
                 named = sorted(labels_json(labels_by_sid[sid]) for sid in dropped)
                 more = f" (+{len(named) - 3} more)" if len(named) > 3 else ""
                 notes_extra = (
-                    f"{len(dropped)} series had samples but no value anywhere in the window "
+                    f"{len(dropped)} series had samples but no value anywhere in the time range "
                     + "(or labels that match no value series) and are left out: "
                     + ", ".join(named[:3])
                     + more,
@@ -834,7 +834,7 @@ class PromQLSource:
         }
         if len(set(jobs.values())) > 1:
             info["note"] = (
-                "jobs are scraped at different intervals: the resolution is the coarsest, so "
+                "jobs are scraped at different intervals: the series interval used is the coarsest, so "
                 "every series has a sample per step; finer jobs are read at it"
             )
         self.resolution_learned = info

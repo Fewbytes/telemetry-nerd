@@ -229,9 +229,9 @@ export function modeText(o: FleetOutlier, fmtTime: (ms: number) => string, unit:
     head = `shifted${ch ? ` ${ch}` : ` ${o.direction}`}${at != null ? ` at ${fmtTime(at)}` : ""}`;
   } else {
     const off = ef ? effectText(ef.offset, ef.as, unit) : "";
-    const since = o.since_window_start ? " since window start" : o.since_ms !== null ? ` since ${fmtTime(o.since_ms)}` : "";
-    // the offset is the window's trimmed mean unless it was taken over the "since" stretch
-    const over = off && ef?.over !== "since" && !o.since_window_start ? " (window mean)" : "";
+    const since = o.since_window_start ? " since the time range start" : o.since_ms !== null ? ` since ${fmtTime(o.since_ms)}` : "";
+    // the offset is the time range's trimmed mean unless it was taken over the "since" stretch
+    const over = off && ef?.over !== "since" && !o.since_window_start ? " (time-range mean)" : "";
     head = off ? `${off}${over}${since}` : `consistently ${o.direction}${since}`;
   }
   return head;
@@ -391,7 +391,7 @@ export function fleetKey(dark: boolean, d?: FleetData, view: BandView = "spc"): 
   }
   const widened: KeyEntry[] = d && v === "spc" && wideningMarks(d).length
     ? [{ id: "widening", label: "▾ fleet widened faster than σ tracks", swatch: MUTED_LINE[m],
-        title: "More members beyond 3σ at this step than this window's own share allows (p-chart, overdispersion-corrected, family-wise over the steps): the whole fleet spread out here (common cause), not one member's fault. Chance of any mark in this window ≈ 1%." }]
+        title: "More members beyond 3σ at this step than this time range's own share allows (p-chart, overdispersion-corrected, family-wise over the steps): the whole fleet spread out here (common cause), not one member's fault. Chance of any mark in this time range ≈ 1%." }]
     : [];
   if (d && grouped(d)) {
     const spc = v === "spc";

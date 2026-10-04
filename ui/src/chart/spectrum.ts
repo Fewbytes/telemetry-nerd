@@ -37,7 +37,7 @@ export function toSpectrumUplot(d: SpectrumData): { data: uPlot.AlignedData; ser
 
 export function limitZones(limits: { shortest_s: number; longest_s: number }, xmin: number, xmax: number) {
   return [
-    { from: xmin, to: limits.shortest_s, text: "< 2×step: invisible at this step" },
+    { from: xmin, to: limits.shortest_s, text: "< 2× query step: invisible at this step" },
     { from: limits.longest_s, to: xmax, text: "> range/2: needs a longer range" },
   ].filter((z) => z.to > z.from);
 }

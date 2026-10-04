@@ -123,16 +123,16 @@ export function scopeNotice(f: Finding): ScopeNotice | null {
 
 export interface ScopeField { label: string; value: string }
 
-/** Scope as labelled fields: what series, which window, which population baseline (spec §2). */
+/** Scope as labelled fields: what series, which time range, which population baseline (spec §2). */
 export function scopeFields(scope: Scope): ScopeField[] {
   const out: ScopeField[] = [
     { label: "Series", value: scope.selector },
-    { label: "Window", value: `${fmtRange(scope.time_range.start_ms, scope.time_range.end_ms)} UTC` },
+    { label: "Time range", value: `${fmtRange(scope.time_range.start_ms, scope.time_range.end_ms)} UTC` },
   ];
   if (scope.baseline_range) {
     out.push({ label: "Baseline", value: `${fmtRange(scope.baseline_range.start_ms, scope.baseline_range.end_ms)} UTC` });
   }
-  out.push({ label: "Resolution", value: `${scope.step} step, ${scope.aggregation}` });
+  out.push({ label: "Query step", value: `${scope.step} step, ${scope.aggregation}` });
   if (scope.source) out.push({ label: "Source", value: scope.source });
   return out;
 }

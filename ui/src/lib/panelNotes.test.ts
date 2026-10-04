@@ -81,7 +81,7 @@ describe("contextNotes (2as.10)", () => {
 
 describe("describeShown", () => {
   it("names the quantile and says it is never aggregated", () => {
-    expect(describeShown({ representation: "quantile", quantile: 0.95 }, "1m")).toMatch(/^p95 per 1m window.*never aggregated/);
+    expect(describeShown({ representation: "quantile", quantile: 0.95 }, "1m")).toMatch(/^p95 at each 1m query step.*never aggregated/);
   });
   it("describes a fleet split into behaviour groups by its groups, not one band (oyi)", () => {
     const r = { representation: "bucket_agg" } as const;

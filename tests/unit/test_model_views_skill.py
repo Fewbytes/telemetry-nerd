@@ -112,7 +112,8 @@ async def test_red_example_ordered_verdict(tmp_path):
     assert verdict["group"] == "pg1" and verdict["family"]["alpha"] == 0.05
     assert verdict["family"]["roles_judged"] == 3
     assert (
-        verdict["reference"]["label"] == "previous windows" and verdict["reference"]["cycles"] == 4
+        verdict["reference"]["label"] == "previous time ranges"
+        and verdict["reference"]["cycles"] == 4
     )
     r = verdict["roles"]
     assert r["rate"]["status"] == "no_change"

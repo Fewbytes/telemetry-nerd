@@ -68,8 +68,8 @@ def cycle_shifts(
     days = PERIOD_DAYS[scheme]
     if span_ms > days * 86_400_000:
         raise ValueError(
-            f"the window ({span_ms // 3_600_000}h) is longer than the {scheme} cycle: previous "
-            "cycles would overlap it (hint: a shorter window or a longer cycle)"
+            f"the time range ({span_ms // 3_600_000}h) is longer than the {scheme} cycle: previous "
+            "cycles would overlap it (hint: a shorter time range or a longer cycle)"
         )
     local = datetime.fromtimestamp(start_ms / 1000, UTC).astimezone(zone)
     wall = local.replace(tzinfo=None)

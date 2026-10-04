@@ -78,7 +78,7 @@ describe("verdictBadge", () => {
     });
     expect(changed).toEqual({ label: "↑ burst from 12:40Z", tone: "moved", title: "errors higher (burst) from 12:40Z" });
     const cap = verdictBadge({ status: "changed", direction: "higher", pattern: "level", at_capacity: true, text: null, onset: { at: null, before: "x", basis: "before_window" } });
-    expect(cap?.label).toBe("↑ level · at capacity before the window");
+    expect(cap?.label).toBe("↑ level · at capacity before the time range");
     expect(verdictBadge({ status: "no_change", direction: null, pattern: null, at_capacity: false, text: "rate: no change" })?.tone).toBe("steady");
     expect(verdictBadge({ status: "insufficient", direction: null, pattern: null, at_capacity: false, text: null })).toEqual({ label: "insufficient", tone: "unknown", title: "insufficient" });
     expect(verdictBadge(undefined)).toBeNull();

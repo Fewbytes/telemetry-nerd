@@ -66,7 +66,7 @@ describe("labels and formats", () => {
 describe("qualityRows", () => {
   it("shows what was measured and admits what was not", () => {
     const rows = Object.fromEntries(qualityRows(card([]).quality).map((r) => [r.label, r]));
-    expect(rows["scrape interval"].value).toBe("15s");
+    expect(rows["series interval (measured)"].value).toBe("15s");
     expect(rows["empty buckets"].value).toBe("3.1%");
     expect(rows["counter resets"]).toMatchObject({ value: "not measured" });
     expect(rows["cardinality (catalog)"].value).toBe("not measured");
@@ -79,12 +79,12 @@ describe("qualityRows", () => {
     const neg = qualityRows({ ...q, resets: { ...q.resets, negatives: 3 } }).find((x) => x.label === "counter resets")!;
     expect(neg.note).toMatch(/3 negative samples/);
   });
-  it("explains an unknown scrape interval and flags one coarser than the step", () => {
+  it("explains an unknown series interval and flags one coarser than the query step", () => {
     const q = card([]).quality;
-    const unknown = qualityRows({ ...q, scrape_interval_ms: null, scrape_interval_reason: "fewer than 3 recent samples" }).find((r) => r.label === "scrape interval")!;
+    const unknown = qualityRows({ ...q, scrape_interval_ms: null, scrape_interval_reason: "fewer than 3 recent samples" }).find((r) => r.label === "series interval (measured)")!;
     expect(unknown).toMatchObject({ value: "unknown", note: "fewer than 3 recent samples" });
-    const coarse = qualityRows({ ...q, scrape_interval_ms: 120_000 }).find((r) => r.label === "scrape interval")!;
-    expect(coarse.note).toBe("coarser than the step");
+    const coarse = qualityRows({ ...q, scrape_interval_ms: 120_000 }).find((r) => r.label === "series interval (measured)")!;
+    expect(coarse.note).toBe("coarser than the query step");
     expect(qualityRows({ ...q, gap_pct: null }).find((r) => r.label === "empty buckets")!.value).toBe("unknown");
   });
 });

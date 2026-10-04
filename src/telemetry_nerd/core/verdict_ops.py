@@ -49,8 +49,8 @@ if TYPE_CHECKING:
 
 REFERENCES = ("auto", "previous", "day", "week", "profile")
 SCHEMES = {"previous": "previous", "day": "1d", "week": "1w"}
-SCHEME_LABEL = {"previous": "previous windows", "1d": "same window, previous days",
-                "1w": "same window, previous weeks"}  # fmt: skip
+SCHEME_LABEL = {"previous": "previous time ranges", "1d": "same time range, previous days",
+                "1w": "same time range, previous weeks"}  # fmt: skip
 #: forms judged per member (not additive across members); the rest on the total
 PER_MEMBER = ("utilization", "saturation", "mean", "value")
 MEMBERS_MAX = 20
@@ -129,7 +129,7 @@ class VerdictOps:
                 "and none is cached (hint: operating_profile(<a role's expr>) first, or "
                 "reference='previous' / 'day' / 'week')"
             )
-        return "previous", "no seasonal operating profile cached: the preceding windows"
+        return "previous", "no seasonal operating profile cached: the preceding time ranges"
 
     # data ----------------------------------------------------------------------------------------
     def _label_sets(self, ds: str) -> list[dict]:
@@ -541,7 +541,7 @@ class VerdictOps:
         for i, st in enumerate(live):
             st.refs = list(fetched[i * k : (i + 1) * k])
             if missing := sum(d is None for d in st.refs):
-                st.notes.append(f"{missing} of {k} reference windows could not be fetched")
+                st.notes.append(f"{missing} of {k} reference time ranges could not be fetched")
 
     def _input(
         self,
@@ -716,7 +716,7 @@ class VerdictOps:
                               [j.onset.lo_ms, j.onset.hi_ms],
                               f"onset ({j.onset.basis}): Page's change time of the CUSUM "
                               "excursion, or the single changepoint with Bai's 95% interval; "
-                              "interval reaches back one block and the rate window",
+                              "interval reaches back one block and the query window",
                               params)
                 )  # fmt: skip
                 evidence[-1]["_varies"] = True
@@ -979,7 +979,7 @@ def _role_text(role: str, d: dict) -> str:
         lo, hi = o["interval"]
         when = f"from {_hm(o['at'])} ({_hm(lo)}–{_hm(hi)})"
     else:
-        when = "already at the window's start"
+        when = "already at the time range's start"
     lv = d.get("level") or {}
     eff = next(
         (f"{k.replace('_', ' ')} {lv[k]:g}" for k in ("odds_ratio", "ratio", "level_difference")

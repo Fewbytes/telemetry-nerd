@@ -36,7 +36,7 @@
   {#if loading && !card}<p class="none">loading…</p>{/if}
   {#if card}
     {#if card.produced_by}
-      <p class="none" data-card-code>Output {card.produced_by.output} of code node {card.produced_by.node}{#if card.produced_by.parents.length}, from {card.produced_by.parents.join(", ")}{/if}: no catalog metrics, profile or scrape interval behind it.</p>
+      <p class="none" data-card-code>Output {card.produced_by.output} of code node {card.produced_by.node}{#if card.produced_by.parents.length}, from {card.produced_by.parents.join(", ")}{/if}: no catalog metrics, profile or series interval behind it.</p>
     {:else if !card.learned}
       <p class="none">This source has not been learned yet, so the catalog has nothing to show for these metrics. Ask Claude to run <code>source_learn</code>.</p>
     {/if}
@@ -47,7 +47,7 @@
       <h4>Operating profile</h4>
       {#if card.profile.available}
         <p>
-          {fmtDuration(card.profile.window_ms ?? 0)} window · {card.profile.series_total} series
+          {fmtDuration(card.profile.window_ms ?? 0)} time range · {card.profile.series_total} series
           {#if card.profile.stale}· <em>stale, a refresh is due</em>{/if}
           {#if card.profile.seasonal}· seasonal ({card.profile.seasonal.period}){/if}
           <br />typical range {fmtValue(card.profile.range?.p005)} – {fmtValue(card.profile.range?.p995)}

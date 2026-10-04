@@ -169,8 +169,8 @@ export function offeredViews(st: YStats, ctx: YContext | null = null): Offer[] {
   const idxTitle = "each series as a ratio to a common baseline; log axis, 1 centred (instead of a second y axis)";
   out.push(
     { mode: "indexed", baseline: "window", label: "÷ own mean", enabled: !!st.all && !st.quantile, suggest: false,
-      title: st.quantile ? "percentiles cannot be averaged over the window; use ÷ last week" : idxTitle },
-    { mode: "indexed", baseline: "previous", label: "÷ previous window", enabled: !!st.all, suggest: false, title: idxTitle },
+      title: st.quantile ? "percentiles cannot be averaged over the time range; use ÷ last week" : idxTitle },
+    { mode: "indexed", baseline: "previous", label: "÷ previous time range", enabled: !!st.all, suggest: false, title: idxTitle },
     { mode: "indexed", baseline: "week", label: "÷ last week", enabled: !!st.all, suggest: false, title: idxTitle },
   );
   out.push({ mode: "band", label: "band…", enabled: !!st.all, suggest: false, title: "drag vertically on the plot to pick a y band" });

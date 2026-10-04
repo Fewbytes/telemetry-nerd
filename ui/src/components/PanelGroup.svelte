@@ -44,7 +44,7 @@
     <span class="roles-list">{roles.map(roleTitle).join(" · ")}</span>
     {#if link.brush}
       <button type="button" class="zoom" data-group-zoom disabled={busy}
-        title="Show every role of this group over the selected window (a new group; this one stays)"
+        title="Show every role of this group over the selected time range (a new group; this one stays)"
         onclick={zoom}>show group over selection</button>
       <button type="button" class="zoom" onclick={() => link.clear()} aria-label="Clear the linked selection">clear</button>
     {/if}

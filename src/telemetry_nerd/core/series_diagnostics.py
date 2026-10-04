@@ -107,12 +107,12 @@ def reference_label(baseline: str, k: int, span_ms: int, tz: str) -> str:
     span = format_duration(span_ms)
     if baseline == "previous":
         if k == 1:
-            return f"the preceding {span} window (fetched separately)"
-        return f"the {k} preceding {span} windows (fetched separately)"
+            return f"the preceding {span} time range (fetched separately)"
+        return f"the {k} preceding {span} time ranges (fetched separately)"
     unit = "day" if baseline == "day" else "week"
     where = "UTC" if tz == "UTC" else f"local time {tz}"
     days = f"previous {unit}" if k == 1 else f"previous {k} {unit}s"
-    return f"the same {span} window on the {days}, aligned by {where} (fetched separately)"
+    return f"the same {span} time range on the {days}, aligned by {where} (fetched separately)"
 
 
 def absent_as_zero(prep: Prepared, sid: str, sibling: str | None) -> dict | None:
@@ -151,11 +151,11 @@ def window_hint(meta: DatasetMeta) -> str | None:
     if k < 4 or short >= w:
         return None
     return (
-        f"the expression's own [{format_duration(w)}] window spans {k} steps: each point averages "
+        f"the expression's own [{format_duration(w)}] query window spans {k} query steps: each point averages "
         f"over it, so neighbouring points share most of their data and the range holds only "
-        f"~{max(1, (meta.end_ms - meta.start_ms) // w)} independent values; a shorter window "
+        f"~{max(1, (meta.end_ms - meta.start_ms) // w)} independent values; a shorter query window "
         f"keeps more: [$__rate_interval] is {format_duration(short)} at this step and the "
-        f"source's {format_duration(meta.resolution_ms)} resolution"
+        f"source's {format_duration(meta.resolution_ms)} series interval"
     )
 
 
@@ -713,7 +713,7 @@ def _departure_wire(dep: Departure, ev: Callable[..., dict]) -> dict:
             ),
             "clusters": sig(dep.clusters, 3),
             "assumes": "events in independent clusters with the stated dispersion, "
-            "clusters shorter than the judged window",
+            "clusters shorter than the judged time range",
         },
     }
     return {

@@ -26,14 +26,14 @@ const CAVEATS: Record<string, Describe> = {
   n_unknown: () =>
     "The number of observations behind each percentile is unknown: do not cite these values as evidence.",
   settling: () => "The newest data is still settling and may change.",
-  fake_resolution: () => "The step is finer than the source's scrape interval; the extra resolution is not real.",
+  fake_resolution: () => "The query step is finer than the series interval (how often the series is sampled; for scraped metrics, the scrape interval): the extra detail is not real.",
   partial: () => "Some incomplete source cells were dropped.",
   empty: () => "The query returned no data.",
   non_finite: () => "Some values were NaN or infinite and are not drawn (their counts are kept).",
   no_value: () =>
     "Some buckets had samples but the query gave no value for them; they are not drawn (their counts are kept). The cause is unknown.",
   estimated_counts: () =>
-    "Counts are increase() estimates: Prometheus extrapolates within each step, so they are not whole numbers.",
+    "Counts are increase() estimates: Prometheus extrapolates within each query bucket, so they are not whole numbers.",
   non_monotonic: () =>
     "Some cumulative bucket counts decreased (independent extrapolation or a reset); the running maximum was used, as histogram_quantile does.",
   missing_inf: () =>
@@ -56,12 +56,12 @@ const CAVEATS: Record<string, Describe> = {
   cycles_excluded: () => "Some previous cycles were left out of the reference (missing data, excluded dates, or atypical); see the legend.",
   heavy_tails: () => "Previous cycles had excursions beyond the normal-theory threshold, so the extreme-point threshold was raised to the largest of them.",
   small_residual_pool: () => "Few previous-cycle residuals: the band edges are rough.",
-  dst_wall_clock: () => "The window or a previous cycle crosses a daylight-saving change: points are matched by local wall-clock time, so a skipped hour has no comparison and a repeated hour is compared with the same reference hour.",
+  dst_wall_clock: () => "The time range or a previous cycle crosses a daylight-saving change: points are matched by local wall-clock time, so a skipped hour has no comparison and a repeated hour is compared with the same reference hour.",
   missing_data: () => "Some series have buckets with no or too few samples (see the coverage rug).",
-  untrusted_data: () => "Part of the window could not be fetched or judged; it is hatched.",
+  untrusted_data: () => "Part of the time range could not be fetched or judged; it is hatched.",
   post_gap_spike: () => "A value right after a gap is computed from the sample before the gap (VictoriaMetrics): increase/delta include the whole gap's change, idelta returns the raw sample. Not a real spike.",
-  interval_differs: () => "Some series are sampled at a different rate than the source is configured for. Coverage is judged against each series' own rate, so loss lasting most of the window cannot show.",
-  interval_change: () => "A series' sample rate changed within the window: buckets at the other rate may read ok or partial.",
+  interval_differs: () => "Some series are sampled at a different rate than the source is configured for. Coverage is judged against each series' own rate, so loss lasting most of the time range cannot show.",
+  interval_change: () => "A series' sample rate changed within the time range: buckets at the other rate may read ok or partial.",
   unobservable_counts: () => "This expression's sample counts cannot be observed (a subquery fills gaps), so coverage is unknown, not zero. Split the expression to check coverage.",
   member_coverage_unknown: () => "Aggregated at the source: missing member series cannot be seen.",
   heavy_tailed_noise: () => "The members' noise has heavier tails than normal: spike and short-episode thresholds follow the other members' own peaks, so only excursions unusual for this fleet are named.",
@@ -149,7 +149,7 @@ export function panelNotes(
       text: `Marginal (right): ${mg.what}. Filled = now (n=${Math.round(mg.n[0])}), dashed = ${mg.ref} (n=${Math.round(mg.n[1])}).${by}`,
     });
     if (mg.n.some((n) => n < mg.nMin)) {
-      notes.push({ kind: "caveat", key: "marginal_low_n", text: `The marginal has fewer than ${mg.nMin} values in a window; its shape is noise (drawn faded).` });
+      notes.push({ kind: "caveat", key: "marginal_low_n", text: `The marginal has fewer than ${mg.nMin} values in a time range; its shape is noise (drawn faded).` });
     }
   }
   if (opts.auto?.transform === "reframe") {
@@ -251,7 +251,7 @@ export function describeShown(
   fleetGrouped = false,
 ): string {
   if (kind === "spectrum") return "Periodogram (Lomb-Scargle): the share of variance a sinusoid of each period explains, with the 1% false-alarm level; peaks carry intervals.";
-  if (kind === "spc") return "Control chart: the series against a centre line and 3σ band computed from the baseline only (shaded, or an earlier window named below); flagged points break SPC rules.";
+  if (kind === "spc") return "Control chart: the series against a centre line and 3σ band computed from the baseline only (shaded, or an earlier time range named below); flagged points break SPC rules.";
   if (kind === "fleet" && fleetView === "heat") return "Member × time: one row per member, one column per step; colour is the member's deviation from the fleet median in robust σ (orange above, purple below, capped), dots where a live member was silent.";
   if (kind === "fleet" && fleetView === "multiples") return "Small multiples: one panel per outlying member on the same y range, its line against the reference band it was judged against.";
   if (kind === "fleet" && fleetGrouped && fleetView === "quantiles") return "Fleet in behaviour groups: the whole fleet's min–max shaded, and per group (members that behave alike) its 25–75% band and median line; outliers, judged within their own group, drawn as lines.";
@@ -259,8 +259,8 @@ export function describeShown(
   if (kind === "fleet" && fleetView === "quantiles") return "Fleet spread: how the members that reported are spread at each step (descriptive), lighter where missing members could move it, and only the outlying members drawn as lines.";
   if (kind === "fleet") return "Fleet: the reference band the outlier tests judge against, and only the outlying members drawn as lines; the key above the plot gives the encoding.";
   if (kind === "littles") return "Little's law check: per window, mean concurrency L (gauge) against throughput × mean latency λ·W, each with a 95% band, and their ratio below (1 = consistent); shaded windows break the law.";
-  if (kind === "seasonal") return "Seasonal comparison: now against the same window in previous cycles (faint), their median (dashed) and a 90% band from the spread across those cycles; dots are points too extreme for any previous cycle.";
-  if (kind === "spectrogram") return "Spectrogram: how the periodicity changes over time, one window per column; the window sets the period resolution.";
+  if (kind === "seasonal") return "Seasonal comparison: now against the same time range in previous cycles (faint), their median (dashed) and a 90% band from the spread across those cycles; dots are points too extreme for any previous cycle.";
+  if (kind === "spectrogram") return "Spectrogram: how the periodicity changes over time, one analysis window (segment) per column; the segment length sets the period resolution.";
   if (mark === "percentiles") {
     return `Per ${step} column, the source bucket holding each percentile (estimator: bucket-edge bounds, never interpolated), only where the column has n ≥ 10/(1−q).`;
   }
@@ -271,7 +271,7 @@ export function describeShown(
     return "Share of observations above each value (log-log), exact at bucket edges and bounded inside a bucket; hover reads a threshold, click pins it.";
   }
   if (kind === "histogram") {
-    return `Share of observations per value bucket, summed over each selected window (whole ${step} steps); bars are the source buckets (${d.scheme?.description ?? "unknown scheme"}).`;
+    return `Share of observations per value bucket, summed over each selected time range (whole ${step} query buckets); bars are the source buckets (${d.scheme?.description ?? "unknown scheme"}).`;
   }
   if (d.producer?.kind === "binding" && d.producer.op === "error_ratio" && kind === "time" && !mark) {
     const band = intervalLegend(d);
@@ -294,7 +294,7 @@ export function describeShown(
     const est = d.histogram
       ? "estimator: histogram_quantile, linear interpolation within the bucket holding q (the source's definition)"
       : "estimator: as computed by the source (e.g. quantile_over_time or a summary's own quantile)";
-    return `${q} per ${step} window, computed at each step and never aggregated; ${est}.`;
+    return `${q} at each ${step} query step (over the query window), never aggregated; ${est}.`;
   }
   return `Average per ${step} bucket (line) with its min–max envelope (band).`;
 }

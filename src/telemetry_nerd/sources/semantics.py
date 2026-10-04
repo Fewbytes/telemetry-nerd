@@ -141,17 +141,17 @@ class MissingDataSemantics:
         fill = (
             f"fills gaps up to {g.max_ms // 1000}s"
             if g.kind == "fixed" and g.max_ms
-            else "fills gaps up to about one scrape interval"
+            else "fills gaps up to about one series interval"
         )
         edge = (
-            "rate/increase extrapolate to window edges"
+            "rate/increase extrapolate to query-window edges"
             if self.rate_edge.value == "extrapolate"
             else "increase/delta/idelta use the previous sample (post-gap spike)"
             if self.post_gap_increase_spike.value
             else "rate/increase use the previous sample"
         )
         lines = [
-            f"{self.backend}: raw selector {fill}; window aggregates (*_over_time) never fill",
+            f"{self.backend}: raw selector {fill}; range functions (*_over_time) never fill",
             edge,
             "scrape failures end series at once"
             if self.stale_marker_on_scrape_failure.value
@@ -251,10 +251,10 @@ PROMETHEUS = MissingDataSemantics(
         f"{_P}/prom-limits__limit_max_samples",
     ),
     notes=(
-        "Prometheus 3.x: window and lookback are left-open, so a gap of exactly 5 m is not filled",
+        "Prometheus 3.x: query windows and lookback are left-open, so a gap of exactly 5 m is not filled",
         (
-            "a reset between the last sample of one step window and the first of the next is "
-            "invisible to resets(x[step]); use a window wider than the step to see it"
+            "a reset between the last sample of one query bucket and the first of the next is "
+            "invisible to resets(x[step]); use a query window wider than the step to see it"
         ),
     ),
 )
@@ -431,7 +431,7 @@ VICTORIAMETRICS = MissingDataSemantics(
         f"{_V}/vm__limit_points_default",
     ),
     notes=(
-        "gap fill window is roughly one detected scrape interval (15 s series: ~22 s, 60 s: ~66 s)",
+        "gap fill window is roughly one detected series interval (15 s series: ~22 s, 60 s: ~66 s)",
         (
             "increase() inside a gap returns 0 for the first steps, then absent; the first step "
             "after the gap carries the whole gap's increase"

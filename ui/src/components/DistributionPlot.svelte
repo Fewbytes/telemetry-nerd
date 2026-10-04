@@ -132,7 +132,7 @@
   const over = (x: number): string[] =>
     exact.map((w, k) => {
       const r = fractionOver(w, x);
-      const name = w.label || `window ${k + 1}`;
+      const name = w.label || `range ${k + 1}`;
       if (r === null) return `${name}: no data`;
       if (r.exact) return `${name}: P(X > ${fmtValue(x, unit)}) = ${(100 * r.f).toPrecision(3)}% (${Number(r.count.toPrecision(4))} of ${Number(w.n.toPrecision(4))})`;
       const edge = (e: number | null, inf: string) => (e === null ? inf : fmtValue(e, unit));
@@ -144,7 +144,7 @@
   const readout = (x: number): string[] =>
     exact.map((w, k) => {
       const r = fractionOver(w, x);
-      const name = w.label || `window ${k + 1}`;
+      const name = w.label || `range ${k + 1}`;
       if (r === null) return `${name}: no data`;
       const pct = (f: number) => `${(100 * f).toPrecision(3)}%`;
       if (r.exact) return `${name} at ${fmtValue(x, unit)}: below ${pct(1 - r.f)} · above ${pct(r.f)} (edge: exact)`;
@@ -293,7 +293,7 @@
       const lines = exact.map((w, k) => {
         const { boxes } = quantileBoxes(w);
         const b = boxes.find((x) => q > x.q0 && q <= x.q1);
-        const name = w.label || `window ${k + 1}`;
+        const name = w.label || `range ${k + 1}`;
         if (!b) return `${name}: no data`;
         const edge = (x: number | null, inf: string) => (x === null ? inf : fmtValue(x, unit));
         return `${name}: ${qLabel(q)} in (${edge(b.lo, "−∞")}, ${edge(b.hi, "+∞")}]${b.faded ? ` · n ${Number(w.n.toPrecision(3))} < ${minSamples(q)}` : ""}`;
@@ -312,7 +312,7 @@
       if (idx < 0) return;
       const edge = (x: number | null, inf: string) => (x === null ? inf : fmtValue(x, unit));
       lines.push(
-        `${w.label || `window ${k + 1}`}: (${edge(s.lo, "−∞")}, ${edge(s.hi, "+∞")}] · count ${Number(w.c[idx].toPrecision(4))} · ${share(w, idx).toPrecision(3)}%`,
+        `${w.label || `range ${k + 1}`}: (${edge(s.lo, "−∞")}, ${edge(s.hi, "+∞")}] · count ${Number(w.c[idx].toPrecision(4))} · ${share(w, idx).toPrecision(3)}%`,
       );
     });
     tip = lines.length ? { x: p.x + AXIS_LEFT + 8, y: p.y + 8, text: lines.join("\n") } : null;
@@ -340,7 +340,7 @@
           type="button"
           class:on={mode === m}
           disabled={m === "count" && multi}
-          title={m === "count" && multi ? "windows have different n: counts are not comparable" : ""}
+          title={m === "count" && multi ? "time ranges have different n: counts are not comparable" : ""}
           onclick={() => (userMode = m as BarMode)}>{m}</button
         >
       {/each}
@@ -373,7 +373,7 @@
     {#each windows as w, k (k)}
       <div>
         <span class="sw" style="background: {palette[k % palette.length]}"></span>
-        {w.label || `window ${k + 1}`} {fmtRange(w.start_ms, w.end_ms)} · n = {Number(w.n.toPrecision(4))} ({w.columns} steps){#if w.n > 0 && w.n < nMin}
+        {w.label || `range ${k + 1}`} {fmtRange(w.start_ms, w.end_ms)} · n = {Number(w.n.toPrecision(4))} ({w.columns} steps){#if w.n > 0 && w.n < nMin}
           · low n{/if}
       </div>
     {/each}

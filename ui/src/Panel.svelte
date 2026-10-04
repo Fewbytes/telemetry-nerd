@@ -894,9 +894,9 @@
     <div class="legend y-views" role="group" aria-label="Marginal histogram">
       marginal:
       <button type="button" class:on={!panel.spec.marginal} onclick={() => toggleMarginal(null)}>off</button>
-      {#each [["previous", "vs previous window"], ["week", "vs last week"], ["profile", "vs normal profile"]] as [r, label] (r)}
+      {#each [["previous", "vs previous time range"], ["week", "vs last week"], ["profile", "vs normal profile"]] as [r, label] (r)}
         <button type="button" disabled={indexedOn || margBusy || fixed}
-          title={fixed ? "a code output is fixed data: no reference window to fetch" : indexedOn ? "the marginal shows values; it is off in the indexed view" : ""}
+          title={fixed ? "a code output is fixed data: no reference time range to fetch" : indexedOn ? "the marginal shows values; it is off in the indexed view" : ""}
           class:on={panel.spec.marginal?.reference === r} data-marginal-ref={r}
           onclick={() => toggleMarginal(r as "previous" | "week" | "profile")}>{label}</button>
       {/each}

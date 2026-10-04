@@ -923,7 +923,7 @@ def create_app(
         if not all(isinstance(x, int) and not isinstance(x, bool) for x in (a, b)) or a >= b:
             raise _BadRequest(
                 "start_ms and end_ms must be integers, start before end",
-                "send the selection window in epoch ms",
+                "send the selection time range in epoch ms",
             )
         g = await service.reframe_group(request.path_params["id"], a, b, "user")
         return g.model_dump()

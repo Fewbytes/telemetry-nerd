@@ -29,7 +29,7 @@ test("finding with flagged evidence; hypothesis status change by keyboard", asyn
   await expect(card).toBeVisible();
 
   // scope: labelled block
-  const scope = card.getByRole("term").filter({ hasText: "Window" });
+  const scope = card.getByRole("term").filter({ hasText: "Time range" });
   await expect(scope).toBeVisible();
   await expect(card.locator(".scope")).toContainText("tn_demo_latency_seconds");
 

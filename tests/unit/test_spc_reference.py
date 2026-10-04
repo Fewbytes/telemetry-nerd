@@ -66,7 +66,7 @@ def test_previous_window_baseline_is_fetched_stated_and_never_judged(svc):
     d = window(svc)
     out = asyncio.run(svc.analyze_reference(d, "previous"))
     b = out["baseline"]
-    assert b["kind"] == "reference" and b["basis"].startswith("the preceding 361m window")
+    assert b["kind"] == "reference" and b["basis"].startswith("the preceding 361m time range")
     (w,) = b["windows"]
     assert w["end"] == "2026-10-14T06:00:00+00:00" and w["dataset"] != d
     (s,) = out["series"]

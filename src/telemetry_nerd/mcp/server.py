@@ -58,14 +58,14 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   mode=meaningful) with a one-line reason; do not re-query to hide data.
 - To ask "is now different from before?" about a time panel, `show_marginal(panel,
   reference=previous|week)`; against the metric's learned normal, `reference=profile` (hourly
-  means vs the operating profile's same seasonal hours; plain series only); cite n for both windows and whether it is requests or per-step samples.
+  means vs the operating profile's same seasonal hours; plain series only); cite n for both time ranges and whether it is requests or per-step samples.
 - Periodicity (cron, GC, retries, scrape artefacts, diurnal): `spectrum(dataset)`. Report only
   `significant` peaks with their interval, cite `evidence`; say which periods cannot be seen
-  (shorter than `limits.shortest` = 2 x step, longer than range/2). red_noise: long periods look
+  (shorter than `limits.shortest` = 2 x query step, longer than range/2). red_noise: long periods look
   more significant than they are.
 - "Is this metric stable / drifting / shifted / periodic / in control?": `analyze(dataset)`, then
   `show(dataset, question, mark="spc")`. State the verdict with its reasons and numbers, the
-  baseline window the control limits came from, n_eff, and caveats; cite `evidence`. "Has it
+  baseline time range the control limits came from, n_eff, and caveats; cite `evidence`. "Has it
   changed since yesterday / last week?" as SPC: `analyze(dataset, baseline="day"|"week"|"previous")`.
 - "Is now unusual for this time of day / week?": `compare_seasonal(dataset)` (also when
   analyze/spectrum/show `suggest` it), then `show(dataset, question, mark="seasonal")`. State the
@@ -85,8 +85,8 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
 - Report caveats from summaries (gaps, settling, fake_resolution) when you describe data.
 - NEVER present a percentile without its sample count. A quantile over n samples is
   meaningless unless n >= ~10/(1-q) per bucket: p50 ~20, p95 ~200, p99 ~1000, p99.9 ~10000.
-  Always query the count behind it (histogram_count(increase(...[window])) or
-  increase(..._count[window])) and say where the percentile is not meaningful.
+  Always query the count behind it (histogram_count(increase(...[w])) or
+  increase(..._count[w]), w the query window) and say where the percentile is not meaningful.
 - NEVER AGGREGATE PERCENTILES — not across series (sum/avg/max of histogram_quantile or of
   summary {quantile=...} series) and not across time (avg_over_time, rollups, downsampling
   of a percentile series). Aggregate the underlying histogram first, then take the quantile
@@ -94,7 +94,7 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   only after aggregating both: histogram_sum(sum(rate(x[w]))) / histogram_count(sum(...)).
 - Histograms first: for latency, `query_distribution` the histogram (the `_bucket` metric or
   native histogram, no functions) and `show` it (heatmap). Use `show(mark="histogram",
-  windows=[spike, baseline])` to compare windows and cite n per window. Quantiles only on
+  windows=[spike, baseline])` to compare time ranges and cite n per time range. Quantiles only on
   request; distribution summaries give them as the BUCKET holding them, never a value.
   For "p95 over time" when a histogram exists, prefer `query_distribution` +
   `show(mark="percentiles", quantiles=[0.5, 0.95])` over `histogram_quantile`: each step shows
@@ -102,9 +102,9 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
 - "What fraction was slower than X?" is `fraction_over` on a distribution dataset: exact at
   bucket edges, bounded inside a bucket; cite its `evidence` statistic.
 - Write rate(x[$__rate_interval]) (quantiles too), not a fixed [1m]/[5m], before analyze, verdicts
-  or charts: it is the shortest window the source's resolution allows at this step. A window
-  spanning many steps makes neighbouring points share data, so a 10-minute range at a 5s
-  resolution under [1m] holds ~10 independent values (effective n), and analyze reports
+  or charts: it is the shortest query window the series interval allows at this query step. A query window
+  spanning many steps makes neighbouring points share data, so a 10-minute time range at a 5s
+  step under [1m] holds ~10 independent values (effective n), and analyze reports
   insufficient_data (its `hint` says so) or misses a short surge.
 - Never look at latency alone: show it with throughput, and with concurrency when relevant
   (Little's law: mean concurrency L = throughput λ x mean latency W; W from
@@ -170,7 +170,7 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   `binding_accept` or `catalog_bind`. `show_binding` draws a binding (or a suggestion) as one
   linked panel group: shared time axis, per-role form, gap cards for missing roles.
   "Is it healthy / what moved first?" is `binding_verdict(group=<pg id> | kind+key |
-  suggestion)`: per role changed / no_change against stated reference windows, its pattern and
+  suggestion)`: per role changed / no_change against stated reference time ranges, its pattern and
   onset interval, and which signal moved first (only when onset intervals do not overlap);
   one family-wise alpha over the roles. Report the reference and the alpha; cite `evidence`.
   Load the `model-views` skill before binding or judging: the workflow, how to report verdicts
@@ -178,9 +178,9 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
 - When you can read the service's repo, `catalog_context` turns its metric registrations,
   dashboards and docs into cited claims (description, type, unit): find the files with rg, read the
   few that matter, send their text. Say where a claim came from when you cite it.
-- `catalog_scan` measures a bounded set of metrics over a short window (resets, small decreases,
+- `catalog_scan` measures a bounded set of metrics over a short time range (resets, small decreases,
   negatives) and files contradictions with declared types or bounds as system findings; a short
-  window only suggests, so say so when you cite it.
+  time range only suggests, so say so when you cite it.
 - `workspace_activity` lists what the user did since a sequence number.
 - Lessons from earlier sessions: `lessons_for(source, services)` once the scope is known; a
   lesson is a prior to check, not evidence. At the end (/telemetry-nerd:wrap), propose what the
@@ -447,8 +447,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         pre-computed p90s across 24 hours overstated it by 68.5% in the canonical example —
         recompute from the merged histogram/raw data instead). Such a dataset still cannot go
         through fleet, compare_seasonal, analyze, spectrum or filter: those refuse a percentile.
-        $__rate_interval expands to max(4 x scrape interval, step + scrape interval); prefer it
-        over a fixed [1m]/[5m] for every rate (a window spanning many steps cuts the effective n).
+        $__rate_interval expands to max(4 x series interval, step + series interval) (the series
+        interval is the scrape interval for scraped metrics); prefer it over a fixed [1m]/[5m] as
+        the query window of every rate (a query window spanning many steps cuts the effective n).
         Returns {dataset, summary}. The summary is compact; raw series stay on the server.
         """
         try:
@@ -508,14 +509,14 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         trend (99% interval, autocorrelation-adjusted); level shifts (CUSUM changepoints with
         p and a 99% interval on the size); KPSS stationarity; variance change; shape (skew,
         tails, zeros, bimodality); and a control chart (SPC). Control limits come ONLY from the
-        baseline window (default: first half of the range; or baseline_start/baseline_end, e.g.
+        baseline time range (default: first half of the range; or baseline_start/baseline_end, e.g.
         a calm day before an incident), never from the data being judged; with autocorrelation
         the run rules/EWMA/CUSUM use AR(1) residuals. Intervals use the effective sample size
         n_eff, not n. Gaps are never interpolated (EWMA/CUSUM decay across a gap; a long gap
         restarts them).
         baseline: "window" (default: inside the dataset, as above) or a separately fetched
-        earlier window, judged against with every point of the dataset: "previous" (the
-        preceding window of the same length), "day" / "week" (the same window on the previous
+        earlier time range, judged against with every point of the dataset: "previous" (the
+        preceding time range of the same length), "day" / "week" (the same time range on the previous
         day / week, aligned by `tz` like compare_seasonal); baseline_cycles takes several
         (previous <= 4, day <= 7, week <= 4) for a longer baseline. When the baseline spans
         fewer than 2 daily/weekly cycles and the operating profile is seasonal, the centre line
@@ -571,11 +572,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         exclude: list[str] | None = None,
         threshold: float | None = None,
     ) -> str:
-        """Is now unusual for this time of day / week? Compares the dataset's window with the
+        """Is now unusual for this time of day / week? Compares the dataset's time range with the
         same phase of previous cycles.
 
-        cycles: which references to consider, of "previous" (the 4 preceding windows: the
-        non-seasonal baseline), "1d" (same window on the previous 7 days), "1w" (previous 4
+        cycles: which references to consider, of "previous" (the 4 preceding time ranges: the
+        non-seasonal baseline), "1d" (same time range on the previous 7 days), "1w" (previous 4
         weeks); default all. Each previous cycle is fetched (cached). The reference is chosen by
         leave-one-cycle-out error (a more specific cycle must win by 5%) and stated.
         tz: IANA timezone for alignment (default UTC): "same hour yesterday" in local time across
@@ -585,13 +586,13 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         The band is the median of the kept cycles +- quantiles of leave-one-cycle-out residuals
         (the spread ACROSS cycles, never one reference week). Verdict per series: usual |
         unusual (direction higher/lower/mixed) | insufficient_history (< 3 usable cycles), from
-        three detectors at 1% each: window level (ratio vs a t interval with k-1 df), extreme
-        points (Sidak over the window), share of points outside the band. `ratio.evidence` is
+        three detectors at 1% each: level over the time range (ratio vs a t interval with k-1
+        df), extreme points (Sidak over the time range), share of points outside the band. `ratio.evidence` is
         a statistic for finding_create. Refused on raw counters. Draw with show(dataset,
         question, mark="seasonal").
         Latency (a histogram_quantile series or a query_distribution dataset): never percentiles
         across cycles; the histogram is fetched for now and each previous cycle (same local
-        window) and compared per cycle: n and share above `threshold` per cycle (exact at a
+        time range) and compared per cycle: n and share above `threshold` per cycle (exact at a
         bucket edge: a requested threshold snaps to the nearest shared edge, stated; default the
         edge where the reference's share above is nearest 1%), band = t prediction interval of
         the cycles' logit shares; verdict on that share (1%); `shape` = CDF distance per cycle
@@ -709,12 +710,12 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         that reported at each step (descriptive; missing members reduce n, never imputed; drawn
         with missing-member bounds), n per step and missing share. Outliers are judged against the OTHER members (leave-one-out median / MAD),
         robust to the outliers themselves, by: level (consistently off), change (drifting or
-        shifted over the window) and excursions (spikes, 5- and 15-step episodes). Family-wise
+        shifted over the time range) and excursions (spikes, 5- and 15-step episodes). Family-wise
         error 1% across members, tests and steps (Bonferroni); heavy-tailed noise is detected
         and thresholds follow the fleet's own peaks. Each outlier: member labels, kind
         (persistent | drifting | shifted | transient), direction, score (>= 1 = beyond the
         threshold), since (start of the current deviation; since_window_start = at least
-        since the window began), effect (ratio or difference with 99% interval, from n_eff),
+        since the time range began), effect (ratio or difference with 99% interval, from n_eff),
         transient episodes (sustained vs momentary relative to the autocorrelation time; a
         level or change outlier may also carry episodes beyond its own level, `calibrated:
         false`: a lead, not a finding) and
@@ -778,13 +779,13 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
           VictoriaMetrics  x_bucket{...}                                      (vmrange buckets)
           native    traces_spanmetrics_latency{service="checkout"}           (no _bucket suffix)
         by: labels kept as separate series (e.g. ["cloud_region"]); all others are summed.
-        Counts are increase() over a window equal to the step (never from quantiles), so
-        they add up over time and across adjacent buckets. step: auto (~300 columns), never
-        shorter than two scrape intervals.
+        Counts are increase() over a query window equal to the query step (tiles; never from
+        quantiles), so they add up over time and across adjacent buckets. step: auto (~300
+        columns), never shorter than two series intervals.
         Returns {dataset, summary}: n per series, columns with/without data, low-n columns,
         the bucket scheme (the resolution limit) and the BUCKET holding p50/p90/p99 where n
         is large enough. Draw it with `show` (heatmap), or `show(mark="histogram",
-        windows=[...])` to compare windows.
+        windows=[...])` to compare time ranges.
         """
         try:
             return _dump(
@@ -805,7 +806,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     ) -> str:
         """What fraction of observations exceeded x? From a distribution dataset (query_distribution).
 
-        x in the metric's unit (e.g. 0.25 for 250 ms). start/end: optional window (default the
+        x in the metric's unit (e.g. 0.25 for 250 ms). start/end: optional time range (default the
         whole dataset); it snaps outward to whole steps. Counts are merged across series by
         summing (additive) unless by_series=true.
         Exact when x is a source bucket edge; otherwise `fraction` is [min, max] bounded by the
@@ -839,7 +840,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         """Connect a Prometheus-compatible source at runtime (no daemon restart).
 
         Public demo sources connect by name alone, e.g. source_connect(name="grafana-play"):
-        url, flavor, resolution and politeness come from the registry (see public_sources);
+        url, flavor, resolution (series interval) and politeness come from the registry (see public_sources);
         only `replace` applies then. Give `url` to connect anything else.
         url: API base without /api/v1, e.g. http://prometheus:9090, a VictoriaMetrics
         /select/0/prometheus path, or a Grafana datasource proxy
@@ -851,8 +852,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         victoriametrics); the given `flavor` argument is ignored. Mutually exclusive with url.
         flavor: "victoriametrics" (MetricsQL rollup) or "prometheus" (also works on VM,
         Thanos, Mimir); ignored when grafana+uid detect it.
-        resolution: "auto" (default): measured from the series' scrape spacing (median sample
-        spacing per job; the coarsest job's when they differ), re-measured by source_learn; or
+        resolution: the series interval. "auto" (default): measured from the sample spacing
+        (median spacing per job, i.e. the scrape interval for scraped metrics; the coarsest
+        job's when they differ), re-measured by source_learn; or
         a duration (e.g. 15s, 60s) that overrides the measurement. source_status shows both.
         Secrets: NEVER pass a token. Ask the user to put it in a file (auth_file, absolute
         path; picked up immediately) or an env var of the daemon (auth_env, the variable
@@ -862,7 +864,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         Politeness for shared/public servers: lower max_concurrency, set min_interval
         (e.g. 500ms), raise timeout (e.g. 60s).
         profile_source: name of another source with downsampled data of the same series (e.g. a
-        Thanos downsample-1h datasource, connected with resolution=1h); long-window operating
+        Thanos downsample-1h datasource, connected with resolution=1h); long-time-range operating
         profiles are read from it.
         timezone: IANA timezone (e.g. Europe/Berlin) the operating profile counts hour-of-day and
         hour-of-week in. Set it where load follows people (business hours, DST shifts); default UTC.
@@ -968,15 +970,16 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
     @mcp.tool()
     def source_list() -> str:
-        """Connected sources: name, url, flavor, resolution, auth reference (never the
+        """Connected sources: name, url, flavor, resolution (series interval), auth reference (never the
         secret), politeness, whether it is live or broken (e.g. its secret is missing)."""
         return _dump({"sources": service.source_list()})
 
     @mcp.tool()
     async def source_status(name: str) -> str:
         """Probe a source now: {reachable, latency_ms, application?, version?, resolution} or
-        {reachable: false, error, hint}. resolution: the step the source is read at, its origin
-        (learned from scrape spacing | configured | assumed) and the spacing measured per job."""
+        {reachable: false, error, hint}. resolution: the source's series interval (the
+        finest query step worth reading), its origin (learned from sample spacing | configured |
+        assumed) and the spacing measured per job."""
         try:
             return _dump(await service.source_status(name))
         except SourceError as e:
@@ -1277,7 +1280,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         window: str = "30m",
         refresh: bool = False,
     ) -> str:
-        """Measure what a short window of raw samples says about catalogued metrics: negatives,
+        """Measure what a short time range (`window`) of raw samples says about catalogued metrics: negatives,
         monotonic growth, counter resets, small decreases (a counter never does that). Writes
         origin=stats claims (type counter/gauge when the evidence is strong, bounds >=0 to fill a
         gap; never over a pack, Claude or user claim; typical_range = observed p1-p99 with
@@ -1286,7 +1289,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         that only grows, a counter that decreases, negative values) as system findings.
         Targets: `metrics`, else `prefix`, else the metrics this workspace already queried. Bounded:
         <= 100 queries per call, a time budget, metrics scanned in the last day skipped, metrics
-        above the source's series cap skipped. A short window only suggests: say so."""
+        above the source's series cap skipped. A short time range only suggests: say so."""
         try:
             return _dump(
                 await service.scan_metrics(source, metrics, prefix, limit, window, refresh)
@@ -1393,14 +1396,14 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         """Which services exist? (or instances, namespaces, nodes): the values of the
         identifying labels (kind=service: service_name, service, app, k8s_deployment_name, job,
         ...; instance: service_instance_id, instance, pod, host; namespace; node) in series with
-        samples in the `window` before `end`, from the source's label index (cheap: no samples
+        samples in the `window` (a time range) before `end`, from the source's label index (cheap: no samples
         read; cached a minute). Per entity: the metric families and metrics it reports,
         `active_recent` (samples in the last `recent`), and the binding_suggest ids whose metrics
         it reports (`next`: binding_suggest(kind="RED", key=<entity>)). `metric` narrows to the
         entities one metric reports; `label` searches one label of your choosing. `coverage`
         says which labels were searched and which are absent: run this before saying a service
         does not exist, and cite it; an entity not listed is "not found under these labels in
-        this window", never "absent"."""
+        this time range", never "absent"."""
         try:
             return _dump(
                 await service.entity_index.entities(
@@ -1519,16 +1522,16 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         alpha: float = 0.05,
     ) -> str:
         """Per-signal verdicts for a USE / RED / Little's law binding: did each role move
-        against reference windows, how, when, and which golden signal moved first. Pass a panel
-        group id (`group`, from show_binding: its window, step and matchers are used and its
+        against reference time ranges, how, when, and which golden signal moved first. Pass a panel
+        group id (`group`, from show_binding: its time range, step and matchers are used and its
         roles get verdict badges), or kind + key of a confirmed binding, or a binding_suggest
-        `suggestion`. reference: previous (4 preceding windows) | day (7 previous days) | week
+        `suggestion`. reference: previous (4 preceding time ranges) | day (7 previous days) | week
         (4 previous weeks) | profile (the cached operating profile's seasonality picks day or
         week) | auto (profile if cached, else previous). Per role: errors = the error share on
         effective n (Wilson / binomial); latency = the share of requests above the reference's
         ~p95 bucket edge (from histograms; never averaged percentiles); rates, concurrency,
         utilization, saturation = the per-step value; utilization near its bound is reported as
-        at_capacity. Two detectors per role (window level vs the reference spread; CUSUM
+        at_capacity. Two detectors per role (level over the time range vs the reference spread; CUSUM
         episodes for onsets), Bonferroni over roles at family-wise `alpha`. Returns {reference,
         family, roles {role: {status changed|no_change|insufficient|gap|error, direction,
         pattern level|shift|blip|burst|sustained, onset {at, interval}, level, episodes,
@@ -1575,7 +1578,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     async def operating_profile(expr: str, source: str = "default", refresh: bool = False) -> str:
         """What `expr` normally looks like: 1h buckets over 30 days (T1 operating profile).
         Computed on first use (panels you show are profiled in the background), cached, refreshed
-        daily; refresh=true recomputes now. Counters are profiled as rates; rate windows widen to
+        daily; refresh=true recomputes now. Counters are profiled as rates; rate query windows widen to
         the 1h step; quantile expressions are profiled as per-hour quantiles (never averaged).
         Returns kind, coverage, robust range over hourly values (p0.5..p99.5, median, MAD),
         envelope (robust tails of intra-hour min/max), absolute min/max, and per series the
@@ -1641,16 +1644,17 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         (e.g. "30m", state it in your answer) and takes `overlap` (default 0.5). view: for a panel
         drawn from filter(): the default view (overlay | filtered | removed | raw).
         windows (histogram/ecdf): 1-4 [{start, end, label}] compared on one chart, e.g. the
-        spike vs the preceding baseline; each window sums whole steps, n is shown per window.
+        spike vs the preceding baseline; each time range sums whole query steps, n is shown per
+        time range.
         More series than a line chart draws (5) are never dropped: members of one group (pods,
         instances... of one metric) are drawn as a fleet (mark auto); other series as the 4 that
         stand out most plus one grey "others" band (their median and min-max). `warnings` says
         which, and names every summarised series. Percentiles over the budget are refused.
         A plain selector of a counter (a running total) is drawn as its rate, from a new dataset
-        over the same window; the answer says so under `auto`. raw=true draws exactly the dataset.
+        over the same time range; the answer says so under `auto`. raw=true draws exactly the dataset.
         Code outputs (expr code:<node>/<name>) are fixed data: drawn as produced, unit as the code
         declared it, a declared interval as the band; ops that re-fetch (compare_seasonal,
-        reference windows, marginals, profiles) refuse them. A fit (estimate) is not drawn: show
+        reference time ranges, marginals, profiles) refuse them. A fit (estimate) is not drawn: show
         its _prediction dataset or cite its parameters as statistics.
         Returns {panel, url, warnings, auto?, y_range_notes?}: the y range defaults to the reference
         range (data, normal range, physical limit); y_range_notes says what was not available.
@@ -1735,7 +1739,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     async def reframe(panel: str, index: int) -> str:
         """Show a metric in a form that carries its own context: accept reframing `index` from a
         panel's `show` answer (`reframings`), e.g. available instead of free memory, or used as a % of
-        its limit. Creates a NEW panel over the same window marked "reframed from <panel>"; the original
+        its limit. Creates a NEW panel over the same time range marked "reframed from <panel>"; the original
         stays. Propose reframings to the user in your reply; call this when it helps the question."""
         try:
             res = await service.reframe(panel, index, "claude")
@@ -1773,7 +1777,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         only over buckets with n >= n_min, so a faded low-n outlier does not squash the
         real values), band (lo..hi), typical (the metric's observed p1-p99 from catalog_scan:
         descriptive, spikes beyond it are counted, never hidden), log (all values must be > 0; good when data spans
-        more than 2 decades), indexed (needs baseline: window = each series' own mean,
+        more than 2 decades), indexed (needs baseline: window = each series' own mean over the time range,
         previous/week = the same series point by point; log axis, 1 centred; THE way to compare
         series of different scales, never a dual axis). label: short button text (<=40 chars). reason: ONE line
         shown to the user, e.g. "one n=13 bucket at 34 s squashes the 0.4-1.3 s p95".
@@ -1808,7 +1812,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         """Switch reference layers on a time-series panel; only the flags you pass change.
         normal: seasonal normal band (the same hour of the week, from the operating profile);
         limit: the physical limit line (a bounded_by metric, e.g. filesystem size);
-        ghost: the same window last week as a faint dashed line (fetches it, so off by default).
+        ghost: the same time range last week as a faint dashed line (fetches it, so off by default).
         normal and limit default to on where the data exists; the UI says why one is unavailable."""
         try:
             return _dump(await service.set_overlays(panel, "claude", normal, limit, ghost))
@@ -1821,11 +1825,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     async def show_marginal(
         panel: str, reference: str = "previous", reason: str = "", off: bool = False
     ) -> str:
-        """Show a marginal histogram beside a time-series panel: the current window's value
-        distribution vs a reference window, on the panel's own y scale. reference: previous
-        (window of equal length just before), week (same window 7 days earlier) or profile (the
+        """Show a marginal histogram beside a time-series panel: the current time range's value
+        distribution vs a reference time range, on the panel's own y scale. reference: previous
+        (time range of equal length just before), week (same time range 7 days earlier) or profile (the
         metric's operating profile: its hourly values in the same hours of the day/week the
-        window covers; both sides are HOURLY means; plain series with a step of at most 1h,
+        time range covers; both sides are HOURLY means; plain series with a step of at most 1h,
         never percentiles or histograms).
         Histogram-backed panels compare OBSERVATIONS (requests); plain series compare
         per-step values (scrape samples, NOT requests): say which when you cite it, with n.
@@ -2034,7 +2038,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         label is refused; one no op gave is flagged source_unverified). hypotheses: the hypotheses this
         finding bears on, one stance each: [{"id": "h1", "stance": "for"}, {"id": "h2",
         "stance": "against"}] (one observation may back one cause and rule out another);
-        hypothesis + stance (for|against) is the one-link form. Coverage of the window is checked per evidence series that
+        hypothesis + stance (for|against) is the one-link form. Coverage of the time range is checked per evidence series that
         scope.selector's label matchers name (e.g. up{pod="x"} for a claim about one pod);
         write it as PromQL (sum by (code) (rate(x{svc="a"}[5m])) or x{svc="a"}).
         Every entity the claim names (service, pod, job... values) must be covered by the

@@ -63,7 +63,7 @@ describe("evidenceViews", () => {
 
 describe("scopeFields", () => {
   it("lists series, window and resolution; baseline when present", () => {
-    expect(scopeFields(scope as never).map((f) => f.label)).toEqual(["Series", "Window", "Resolution", "Source"]);
+    expect(scopeFields(scope as never).map((f) => f.label)).toEqual(["Series", "Time range", "Query step", "Source"]);
     const withBase = scopeFields({ ...scope, baseline_range: { start_ms: 0, end_ms: 3_600_000 } } as never);
     expect(withBase.map((f) => f.label)).toContain("Baseline");
     expect(withBase[1].value).toBe("14:00–14:30 UTC");

@@ -48,7 +48,7 @@ def check_index(
     if baseline == "window":
         if quantile:
             raise ValueError(
-                "a percentile series cannot be indexed to its mean over the window: that "
+                "a percentile series cannot be indexed to its mean over the time range: that "
                 "would average percentiles; use baseline=previous or week (pointwise, n-gated)"
             )
         b = window_baselines(cur)

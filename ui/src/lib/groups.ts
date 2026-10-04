@@ -111,7 +111,7 @@ export function verdictBadge(v: RoleVerdict | null | undefined): { label: string
   const title = v.source && !base.includes(sourceText(v.source)) ? `${sourceText(v.source)}: ${base}` : base;
   if (v.status === "changed") {
     const arrow = v.direction === "higher" ? "↑" : v.direction === "lower" ? "↓" : "";
-    const when = v.onset?.at ? ` from ${v.onset.at.slice(11, 16)}Z` : v.onset?.before ? " before the window" : "";
+    const when = v.onset?.at ? ` from ${v.onset.at.slice(11, 16)}Z` : v.onset?.before ? " before the time range" : "";
     const cap = v.at_capacity ? " · at capacity" : "";
     // spec §5.4: a change whose source cannot be told says so on the badge itself
     const und = v.source === "undetermined" ? " · source?" : "";

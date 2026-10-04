@@ -171,7 +171,12 @@ def test_an_insufficient_series_smoothed_by_its_own_window_gets_a_hint():
         start_ms=0, end_ms=720_000,
     )  # fmt: skip
     hint = window_hint(meta)
-    assert hint and "[1m] window spans 12 steps" in hint and "20s" in hint and "~12" in hint
+    assert (
+        hint
+        and "[1m] query window spans 12 query steps" in hint
+        and "20s" in hint
+        and "~12" in hint
+    )
     assert window_hint(SimpleNamespace(**{**vars(meta), "expr": "sum(rate(x[20s]))"})) is None
     assert window_hint(SimpleNamespace(**{**vars(meta), "expr": "up"})) is None
     # at 15 s the 1m window is the rate interval already: nothing shorter to suggest

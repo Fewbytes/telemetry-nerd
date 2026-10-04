@@ -61,11 +61,11 @@ export const fmtDuration = (ms: number): string => {
 };
 
 export const qualityRows = (q: MetricCard["quality"]): { label: string; value: string; note?: string }[] => [
-  { label: "step", value: fmtDuration(q.step_ms) },
-  { label: "source resolution", value: fmtDuration(q.resolution_ms) },
+  { label: "query step", value: fmtDuration(q.step_ms) },
+  { label: "series interval (source)", value: fmtDuration(q.resolution_ms) },
   q.scrape_interval_ms
-    ? { label: "scrape interval", value: fmtDuration(q.scrape_interval_ms), note: q.scrape_interval_ms > q.step_ms ? "coarser than the step" : undefined }
-    : { label: "scrape interval", value: "unknown", note: q.scrape_interval_reason ?? undefined },
+    ? { label: "series interval (measured)", value: fmtDuration(q.scrape_interval_ms), note: q.scrape_interval_ms > q.step_ms ? "coarser than the query step" : undefined }
+    : { label: "series interval (measured)", value: "unknown", note: q.scrape_interval_reason ?? undefined },
   { label: "series in this panel", value: String(q.series) },
   { label: "empty buckets", value: q.gap_pct === null ? "unknown" : `${(q.gap_pct * 100).toFixed(1)}%` },
   q.resets.measured && q.resets.resets !== undefined

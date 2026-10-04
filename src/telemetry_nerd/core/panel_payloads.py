@@ -364,7 +364,7 @@ def index_payload(datasets, spec: ChartSpec, meta, result, width_px: int) -> dic
             "refused": f"no {v.baseline} reference fetched",
         }
     series = reference_series(datasets, ref, meta, width_px)
-    when = "last week" if ref.mode == "week" else "in the previous window"
+    when = "last week" if ref.mode == "week" else "in the previous time range"
     return {
         "baseline": v.baseline,
         "label": f"1 = the same series {when} (point by point)",
