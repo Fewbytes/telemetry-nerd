@@ -197,6 +197,7 @@ describe("workspace frames in the store", () => {
   });
 
   it("drops a stale snapshot that arrives after a newer one", async () => {
+    vi.useFakeTimers(); // the dropped snapshot arms a resync timer; it must not outlive the test (afterEach restores real timers)
     vi.mocked(fetchWorkspace).mockReset();
     vi.mocked(fetchWorkspaces).mockReset();
     vi.mocked(fetchWorkspaces).mockResolvedValue({ active: "w2", workspaces: [], more: 0 });

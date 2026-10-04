@@ -10,5 +10,6 @@ export default defineConfig({
       "/ws": { target: "ws://127.0.0.1:7070", ws: true },
     },
   },
-  test: { include: ["src/**/*.test.ts"] },
+  // shuffled order surfaces order-dependent tests; the seed is printed, replay with --sequence.seed=<n>
+  test: { include: ["src/**/*.test.ts"], sequence: { shuffle: true } },
 });
