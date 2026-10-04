@@ -7,6 +7,8 @@ import json
 from telemetry_nerd.core.events import Event
 from telemetry_nerd.model.time import iso
 
+_DECIDED = {"approve": "approved", "reject": "rejected"}
+
 
 def _iso_z(ms: int) -> str:
     return iso(ms).replace("+00:00", "Z")
@@ -109,6 +111,23 @@ def describe_event(e: Event) -> str:
             if "archived" in p:
                 parts.append(f"{'archived' if p['archived'] else 'unarchived'} {e.object_id}")
             return f"{who} " + "; ".join(parts) if parts else f"{who} updated {e.object_id}"
+        case "proposal.decided":
+            what = f"{p['field']} of {p['metric']} = {json.dumps(p['value'], ensure_ascii=False)}"
+            verb = "approved (edited)" if p.get("edited") else _DECIDED[p["decision"]]
+            tail = f": {p['comment']}" if p.get("comment") else ""
+            return f"{who} {verb} catalog proposal {e.object_id} ({what}){tail}"
+        case "lesson.decided":
+            verb = "approved (edited)" if p.get("edited") else _DECIDED[p["decision"]]
+            tail = f": {p['comment']}" if p.get("comment") else ""
+            return f'{who} {verb} lesson {e.object_id} ("{p["text"]}"){tail}'
+        case "lesson.refuted":
+            by = f" citing {', '.join(p['evidence'])}" if p.get("evidence") else ""
+            return f'{who} refuted lesson {e.object_id} ("{p["text"]}"){by}: {p["reason"]}'
+        case "lesson.proposed":
+            return f'{who} proposed lesson {e.object_id}: "{p["text"]}"'
+        case "proposal.created":
+            value = json.dumps(p["value"], ensure_ascii=False)
+            return f"{who} proposed {e.object_id}: {p['field']} of {p['metric']} = {value}"
         case "focus.changed":
             return f"{who} focused {_selection(p).strip()}"
         case _:

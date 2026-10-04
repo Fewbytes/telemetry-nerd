@@ -26,6 +26,7 @@ from telemetry_nerd.mcp.shapes import EvidenceContext, ShapeError, finding_in, h
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.jsonsafe import dumps
 from telemetry_nerd.model.time import format_duration, iso, parse_duration, parse_time
+from telemetry_nerd.retro.models import LessonScope
 from telemetry_nerd.sources.base import SourceError
 from telemetry_nerd.sources.grafana import discover_datasources, probe_backend
 from telemetry_nerd.sources.public import PUBLIC_SOURCES
@@ -181,6 +182,10 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   negatives) and files contradictions with declared types or bounds as system findings; a short
   window only suggests, so say so when you cite it.
 - `workspace_activity` lists what the user did since a sequence number.
+- Lessons from earlier sessions: `lessons_for(source, services)` once the scope is known; a
+  lesson is a prior to check, not evidence. At the end (/telemetry-nerd:wrap), propose what the
+  investigation established: `catalog_propose` (catalog values, with evidence) and
+  `lesson_propose` (scope never broader than its evidence); the user decides in the UI.
 - A new, unrelated question is a new workspace: `workspace_create(title, question)`;
   `workspace_list` / `workspace_switch` go back to an earlier one. Ids are global, so `p3`
   always means the same panel. A tool call never changes the workspace except these.
@@ -1178,6 +1183,103 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             return _dump({"results": service.ws.catalog_write_claude(source, claims)})
         except ValueError as e:
             raise _fail(e) from e
+
+    @mcp.tool()
+    def catalog_propose(claims: list[dict[str, Any]], source: str = "default") -> str:
+        """End-of-session (/telemetry-nerd:wrap): PROPOSE catalog updates for the user to
+        approve in the UI, up to 50 per call. Each: {metric, field, value, confidence, basis,
+        evidence?} with the fields and values of catalog_write; evidence: finding/panel ids
+        (f3, p7) the value rests on. Nothing reaches the catalog until the user approves
+        (then a claim origin=claude verified_by=user; an edited value is the user's own claim).
+        Use catalog_write instead for what you need now, mid-investigation. Items are checked
+        one by one: unknown metric, bad value, duplicate of an open proposal, already confirmed
+        by the user. Returns {results: [{metric, field, status: proposed|rejected,
+        proposal?, reason?}]}."""
+        try:
+            return _dump({"results": service.retro.catalog_propose(source, claims)})
+        except ValueError as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
+    def lesson_propose(
+        text: str,
+        scope: dict[str, Any],
+        evidence: list[str],
+        expires: str | None = None,
+    ) -> str:
+        """PROPOSE a methodology lesson for later sessions (the user approves it in the UI).
+        text: one actionable sentence ("for checkout, split latency by region before reading
+        p95: one region carries the tail").
+        scope (required): {source, service?, metric_family?, labels?} where it applies.
+        evidence (required): the findings/panels (f3, p7) it comes from.
+        The scope is NEVER broader than the evidence: at least one cited item must cover all
+        of it (evidence about service_name="checkout" carries a checkout lesson, not a
+        source-wide one; two services are not "the source"); refused with what each item
+        covers (lesson_beyond_evidence). metric_family (a prefix or * glob) narrows it to one
+        metric family; without it the lesson applies across the scope's metrics.
+        expires: a duration (90d) or date (2027-03-01); default 180 days, at most 2 years.
+        Returns {lesson, scope_check: {covered_by, partial}}."""
+        try:
+            lesson = service.retro.lesson_propose(
+                text, LessonScope.model_validate(scope), evidence, expires
+            )
+            return _dump(
+                {"lesson": lesson.id, "status": lesson.status,
+                 "scope_check": lesson.scope_check.model_dump(),
+                 "expires": iso(lesson.expires_at_ms)}
+            )  # fmt: skip
+        except (ValidationError, NotFound, ValueError) as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
+    def lesson_refute(lesson: str, evidence: list[str], reason: str) -> str:
+        """Mark an approved lesson refuted: a finding (f…) whose scope overlaps the lesson's
+        shows it no longer holds. reason: what the finding shows. The lesson then never
+        surfaces again (the user sees why in the Proposals view)."""
+        try:
+            out = service.retro.refute_lesson(lesson, evidence, reason, "claude")
+            return _dump({"lesson": out.id, "status": out.status})
+        except (NotFound, ValueError) as e:
+            raise _fail(e) from e
+
+    @mcp.tool()
+    def lessons_for(
+        source: str,
+        services: list[str] | None = None,
+        metric_families: list[str] | None = None,
+        labels: dict[str, str] | None = None,
+    ) -> str:
+        """Approved lessons from earlier sessions that apply here: scope source equal, and its
+        service / metric_family / labels, when it names one, among those you pass. Call it once
+        the source and the services in question are known (start, investigate). `held` counts
+        approved lessons on this source scoped to other services or families (pass them to see
+        those). A lesson is a prior from past evidence, not evidence: say it applies, cite its
+        evidence ids, and still check it in the data."""
+        return _dump(service.retro.lessons_for(source, services, metric_families, labels))
+
+    @mcp.tool()
+    def proposals_list(status: str | None = None) -> str:
+        """Catalog proposals and lessons on file, newest first (status: proposed | approved |
+        rejected | refuted | expired to filter). Check it before proposing so nothing is
+        proposed twice."""
+        out = service.retro.listing(status)
+        brief = {
+            "pending": out["pending"],
+            "catalog": [
+                {k: p[k] for k in ("id", "status", "metric", "field", "value")}
+                for p in out["catalog"][:30]
+            ],
+            "lessons": [
+                {
+                    "id": x["id"],
+                    "state": x["state"],
+                    "text": x["text"][:120],
+                    "scope": LessonScope.model_validate(x["scope"]).describe(),
+                }
+                for x in out["lessons"][:30]
+            ],
+        }
+        return _dump(brief)
 
     @mcp.tool()
     async def catalog_scan(

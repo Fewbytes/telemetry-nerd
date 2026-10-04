@@ -123,6 +123,7 @@ from telemetry_nerd.core.panel_payloads import (
 )
 from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.profiles import ProfileService
+from telemetry_nerd.core.retro_ops import RetroOps
 from telemetry_nerd.core.seasonal_dist_ops import SeasonalDistOps
 from telemetry_nerd.core.seasonal_ops import SeasonalOps, seasonal_hint
 from telemetry_nerd.core.series_diagnostics import SeriesDiagnostics, resolve_baseline
@@ -298,6 +299,7 @@ class TelemetryService:
     verdicts: VerdictOps = field(init=False)
     entity_index: EntityOps = field(init=False)
     workspaces: WorkspaceOps = field(init=False)
+    retro: RetroOps = field(init=False)
 
     def __post_init__(self) -> None:
         self.ws.current = self._current_workspace
@@ -306,6 +308,7 @@ class TelemetryService:
             self.ws.open_threads,
         )  # fmt: skip
         self.bindings = BindingOps(self)
+        self.retro = RetroOps(self.ws, self.active)
         self.verdicts = VerdictOps(self)
         self.entity_index = EntityOps(
             self._source, self.clock, self.ws.binding_suggest, self.ws.workspace.record_listing

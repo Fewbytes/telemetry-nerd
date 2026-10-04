@@ -41,6 +41,10 @@ generalises from a member to the service, from one source to production, or from
   refuses a claim naming entities its evidence does not cover unless it carries `scope_note`
   (then `Finding.scope_check.status = beyond_evidence`); an unreadable `scope.selector` is
   `undetermined`, never judged silently over every series (`core/claim_scope.py`).
+  Lessons carried across sessions (bead 3fs.4): `retro/guard.py` refuses a lesson whose scope
+  is broader than every evidence item it cites (`lesson_beyond_evidence`), and approved
+  lessons surface only through a scoped `lessons_for` call
+  (`docs/superpowers/specs/2026-10-04-session-retrospective-design.md`).
 
 ## 3. Correct over conventional
 

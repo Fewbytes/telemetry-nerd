@@ -438,6 +438,41 @@ def create_app(
         return claim.model_dump()
 
     @_api
+    async def proposals_list(request: Request) -> object:
+        return service.retro.listing(request.query_params.get("status") or None)
+
+    @_api
+    async def proposals_summary(request: Request) -> object:
+        return service.retro.summary(set(service.sources))
+
+    @_api
+    async def proposal_decide(request: Request) -> object:
+        """The user's decision on a catalog proposal (cpN) or a lesson (lsN)."""
+        body = await _body(request, decision=str)
+        if body["decision"] not in ("approve", "reject"):
+            raise _BadRequest("invalid decision", "'decision' is 'approve' or 'reject'")
+        comment = _optional(body, "comment", str)
+        pid = request.path_params["id"]
+        if pid.startswith("ls"):
+            return service.retro.decide_lesson(
+                pid, body["decision"], "user",
+                text=_optional(body, "text", str), expires=_optional(body, "expires", str),
+                comment=comment,
+            ).view(service.clock())  # fmt: skip
+        if pid.startswith("cp"):
+            return service.retro.decide_proposal(
+                pid, body["decision"], "user", value=body.get("value"), comment=comment
+            ).view()
+        raise NotFound(f"no proposal {pid}")
+
+    @_api
+    async def lesson_refute(request: Request) -> object:
+        body = await _body(request, reason=str)
+        return service.retro.refute_lesson(
+            request.path_params["id"], [], body["reason"], "user"
+        ).view(service.clock())
+
+    @_api
     async def panel_overlays(request: Request) -> object:
         body = await _body(request)
         flags = {}
@@ -965,6 +1000,10 @@ def create_app(
         Route("/api/panels/{id}/overlays", panel_overlays, methods=["POST"]),
         Route("/api/panels/{id}/card", panel_card),
         Route("/api/catalog/claims", catalog_claim_create, methods=["POST"]),
+        Route("/api/proposals", proposals_list),
+        Route("/api/proposals/summary", proposals_summary),
+        Route("/api/proposals/{id}/decide", proposal_decide, methods=["POST"]),
+        Route("/api/lessons/{id}/refute", lesson_refute, methods=["POST"]),
         Route("/api/catalog", catalog_list),
         Route("/api/catalog/families", catalog_family_decide, methods=["POST"]),
         Route("/api/catalog/{source}/families/{template}/members", catalog_family_members),

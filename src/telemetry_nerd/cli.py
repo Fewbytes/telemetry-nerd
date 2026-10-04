@@ -199,6 +199,34 @@ def _cmd_ensure(settings: Settings) -> None:
         print(f"Telemetry Nerd daemon not running: {e}")
         return
     print(f"Telemetry Nerd workspace: {url}")
+    for line in _retro_lines(url):
+        print(line)
+
+
+def _retro_lines(url: str) -> list[str]:
+    """At most two lines for session context (spec 2026-10-04 R9): lesson counts per connected
+    source, never their text (lessons surface only through a scoped lessons_for call), and
+    proposals awaiting the user's review. Silent on any error: a hook never blocks a session."""
+    try:
+        r = httpx.get(f"{url}/api/proposals/summary", timeout=_HOOK_HTTP_TIMEOUT_S)
+        data = r.json() if r.status_code == 200 else {}
+    except (httpx.HTTPError, ValueError):
+        return []
+    out = []
+    counts = data.get("lessons") or {}
+    if isinstance(counts, dict) and counts:
+        per = ", ".join(f"{src} ({n})" for src, n in counts.items())
+        out.append(
+            f"Telemetry Nerd lessons on file for {per}: call lessons_for(source, services) once "
+            "the investigation's source and services are known; they apply only within their scope."
+        )
+    pending = data.get("pending")
+    if isinstance(pending, int) and pending > 0:
+        out.append(
+            f"Telemetry Nerd: {pending} retrospective proposal(s) await the user's review in the "
+            "UI (Proposals view)."
+        )
+    return out
 
 
 def _cmd_pending(settings: Settings, consumer: str) -> None:

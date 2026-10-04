@@ -33,6 +33,10 @@ INTENTIONAL_TYPES = frozenset(
         "catalog.family_confirmed",
         "catalog.family_split",
         "workspace.opened",
+        # the user's verdicts on Claude's retrospective proposals (spec 2026-10-04)
+        "proposal.decided",
+        "lesson.decided",
+        "lesson.refuted",
     }
 )
 AMBIENT_TYPES = frozenset(

@@ -187,6 +187,16 @@ CREATE TABLE IF NOT EXISTS workspaces (
     settings TEXT NOT NULL DEFAULT '{}',
     sources TEXT NOT NULL DEFAULT '{}'
 );
+CREATE TABLE IF NOT EXISTS lessons (
+    id TEXT PRIMARY KEY,
+    workspace TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS catalog_proposals (
+    id TEXT PRIMARY KEY,
+    workspace TEXT NOT NULL,
+    data TEXT NOT NULL
+);
 """
 
 _PANEL_COLUMNS = {
