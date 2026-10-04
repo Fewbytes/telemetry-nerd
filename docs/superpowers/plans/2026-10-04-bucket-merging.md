@@ -11,15 +11,19 @@ they cannot be combined (bead telemetry-nerd-7jme).
 the observed.py walker + companions' tile detection) gives each dataset a `MergeKind`, stored on
 `DatasetMeta` at query time. `rebucket`/`lod` take the kind; every caller passes the dataset's
 kind (or the unit-preserving variant for analysis coarsening). `summarize` reports per kind.
-`ratio`/`quantile`/`unknown` panels get a LOD *view* re-queried through `SeriesCache` in the
-background (`rewindow` + `fetch_values`), pushed to the UI by a socket frame.
+`ratio`/`quantile`/`unknown` panels are re-queried at the coarser step through `SeriesCache` in
+the background (`rewindow` + `fetch_values`); the result is a kept, citable dataset with lineage
+to the panel's dataset (foldable/retirable), pushed to the UI by a socket frame. Step-invariant
+expressions merge locally as a stated time mean, and the user can force a re-query.
 
 **Tech Stack:** Python (polars, pyarrow, Starlette), Svelte 5 + TypeScript, pytest, vitest,
 Playwright; VictoriaMetrics container for integration tests.
 
 **Spec:** `docs/superpowers/specs/2026-10-04-bucket-merging-design.md` (§ numbers below).
-Open questions §11 must be answered before Tasks 5, 8 and 10 (Q1 decides Task 8's scope, Q3
-Task 10's labels, Q5 the principles edit in Task 11).
+Decided 2026-10-04 (spec §11): Q1 local time mean + forced re-query, Q4 validated code
+declarations, Q5 principles 10/17 (already in `docs/principles.md`), Q6 re-queries are kept
+datasets. Still open: Q2 (sliding count windows, affects Task 2's table) and Q3 (increase label on
+zoom, affects Tasks 5 and 10); do not start those parts before they are answered.
 
 ## Global Constraints
 
@@ -30,7 +34,9 @@ Task 10's labels, Q5 the principles edit in Task 11).
 - No cache format change: `EXPR_FORMAT` stays `\0v2`.
 - `rebucket` keeps a `sample_mean` default until Task 12 removes it; every converted caller
   passes `kind` explicitly.
-- MCP payloads stay small (P6): summary growth ≤ 200 bytes at `top=5`, asserted in tests.
+- MCP payloads stay small (P6): summary growth ≤ 200 bytes at `top=5`, asserted in tests; a
+  re-query dataset is a handle, never rows.
+- Every merge says what it did (P17): basis/method text names local vs re-queried vs declared.
 - Model routing: tasks marked **[Opus]** are hard (classifier correctness, the re-query
   concurrency path, cross-cutting caller semantics); the rest are Sonnet-sized.
 
@@ -48,9 +54,13 @@ Backend:
 - `src/telemetry_nerd/analysis/resample.py`: `rebucket(..., kind)`, `lod(..., kind)`.
 - `src/telemetry_nerd/core/summary.py`: per-kind summary.
 - `src/telemetry_nerd/core/service.py`: `_fetch()` extracted from `query()`; template stored;
-  preview/rescope re-expand; `panel_data` kinds and re-query view.
+  preview/rescope re-expand; `panel_data` kinds, re-query datasets, `force_requery`.
 - `src/telemetry_nerd/core/lod_views.py` (new): `LodViews` (in-flight map, supersede, cache peek,
-  completion callback).
+  re-query dataset creation, completion callback).
+- `datasets/store.py` `Lineage` and the code-output exchange: validated per-column `merge`
+  declarations.
+- `datasets/store.py`, `core/workspace_service.py`, `mcp/server.py`, `api/app.py`: soft
+  `retired` flag, retire op, folded listing.
 - `src/telemetry_nerd/core/panel_payloads.py`, `core/signal_ops.py`, `core/fleet_ops.py`,
   `charts/indexed.py`, `analysis/profile_reference.py`: callers pass kinds.
 - `src/telemetry_nerd/api/app.py`: async panel data, `panel.view_ready` frame.
@@ -61,12 +71,14 @@ Frontend:
   tooltip, refetch on frame), `ui/src/chart/toUplot.ts` (envelope-only series).
 
 Docs: `docs/telemetry-graphing-guide.md` §5, MVP spec §6.5, `skills/charting/SKILL.md`,
-`docs/principles.md` P10 (if Q5 says so).
+`skills/tier2-code/SKILL.md` (merge declarations); `docs/principles.md` P10/P17 are already
+updated with the spec.
 
 Tests (new): `tests/unit/test_merge_kind.py`, `test_rewindow.py`, `test_lod_requery.py`;
 extended: `test_resample.py`, `test_summary.py`, `test_indexed.py`, `test_profile_reference.py`,
 `test_signal_service.py`, `test_fleet_service.py`, `test_cache.py`, `test_time_selector_service.py`; `ui/src/lib/panelNotes.test.ts`;
-`ui/e2e/bucket-merging.spec.ts`; `tests/integration/test_merge_vm.py`.
+`ui/e2e/bucket-merging.spec.ts`; `tests/integration/test_merge_vm.py`; `test_dataset_retire.py`;
+extended `test_code_outputs.py`.
 
 ---
 
@@ -223,7 +235,7 @@ CASES = [
   weigh 1; the indexed window baseline of a rate panel is the time mean.
 - [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS; commit.
 
-### Task 8: LOD re-query views **[Opus]**
+### Task 8: Re-query datasets and forced re-query **[Opus]**
 
 **Files:**
 - Create: `src/telemetry_nerd/core/lod_views.py`
@@ -232,16 +244,57 @@ CASES = [
 - Test: `tests/unit/test_lod_requery.py`, `test_cache.py`
 
 **Interfaces:**
-- Produces: `LodViews.view(meta, kind, step_s) -> View(status: "requeried" | "pending" |
-  "failed", table | None, expr_s, reason)`; one in-flight task per (dataset, panel), a newer S
-  supersedes; `quantise_step(step_ms, factor) -> S` from `_NICE_STEPS`; payload
-  `merge: {kind, how, expr, step_ms, status}`; `NATIVE_POINT_CAP`.
+- Produces: `LodViews.view(panel, meta, kind, step_s, force=False) -> View(status: "requeried" |
+  "pending" | "failed" | "local", dataset_id | None, expr_s, reason)`; a completed re-query is
+  `datasets.put(..., producer={"kind": "requery", "of", "step", "trigger"}, parents=[panel
+  dataset])` with an `internal` event, recorded in the panel's bounded `spec.views`; one
+  in-flight task per (dataset, panel), a newer S supersedes; `quantise_step(step_ms, factor) ->
+  S` from `_NICE_STEPS`; payload `merge: {kind, how, dataset, expr, step_ms, status, basis}`;
+  `NATIVE_POINT_CAP`; `force_requery` on `show`/panel data (MCP) and a POST route for the UI
+  action, disabled with the reason when `requery == "impossible"`.
 
 - [ ] **Step 1:** Tests with a fake source counting calls: pending → envelope (or native within
   the cap) → completion frame → requeried from cache with no new source call; another width
   mapping to the same S is a cache hit; a superseded S is cancelled; source error → `failed`,
-  `requery_failed`, no line; `requery == "none"` never fetches; code output never fetches; no
-  `dataset.created` event and no new dataset id from a view.
+  `requery_failed`, no line; `requery == "none"` never fetches unless forced, and its basis says
+  "local time mean, not re-queried"; forced → one fetch, a dataset, basis "re-queried"; code
+  output never fetches (control disabled with the reason); the re-query dataset has parent and
+  producer set, an internal event, and is reused from `spec.views` on reload.
+- [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS; commit.
+
+### Task 8a: Validated merge declarations for code outputs
+
+**Files:**
+- Modify: `src/telemetry_nerd/datasets/store.py` (`Lineage.merge`), the code-output exchange
+  (`src/telemetry_nerd/exchange/run.py`, the `tn` declaration), `analysis/mergekind.py`
+  (`merge_of` reads it), `core/code_outputs.py` (caveat text names the declared kind)
+- Test: `tests/unit/test_code_outputs.py`
+
+**Interfaces:**
+- Produces: `validate_declared_merge(kind, statistic, unit, has_counts, representation) ->
+  str | None` (refusal reason); allowed: `sample_mean` (with counts), `time_mean`, `sum`, `max`,
+  `min`, `histogram` (distribution outputs); refused per spec §3 (non-mergeable statistic, `sum`
+  on a ratio, `sample_mean` without counts); undeclared → `cannot_combine`.
+
+- [ ] **Step 1:** Tests: `time_mean` on a percentile column refused with the reason; `histogram`
+  on a distribution accepted; undeclared → `cannot_combine`; the caveat text names the kind.
+- [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS; commit.
+
+### Task 8b: Fold / retire datasets
+
+Nothing folds or retires datasets today (panels only have `close`, `workspace/store.py:149`);
+kept re-query datasets need it (spec §4 dependency).
+
+**Files:**
+- Modify: `src/telemetry_nerd/datasets/store.py` (`retired` in meta, `retire(id)`),
+  `core/workspace_service.py` (listing folds `producer.kind == "requery"` under the parent,
+  hides retired unless cited), `mcp/server.py` (retire op, small result), `api/app.py` and
+  `ui/src/Panel.svelte` ("fold re-query views")
+- Test: `tests/unit/test_dataset_retire.py`, UI unit test
+
+- [ ] **Step 1:** Tests: retire is soft (`datasets.get` and evidence links still work, P7); the
+  listing shows `+N re-query views` per parent; a cited dataset is never hidden; the MCP result
+  stays a handle list.
 - [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS; commit.
 
 ### Task 9: UI data layer and badges
@@ -253,7 +306,8 @@ CASES = [
 
 - [ ] **Step 1:** Tests: a payload with `merge.status: "pending"` and no `avg` draws the band and
   no line; `panel.view_ready` for the panel triggers one refetch; tooltip for `sum` shows total,
-  tiles and per tile.
+  tiles and per tile; a `local` time-mean panel shows its note and a "re-query at {S}" action
+  that calls the force route.
 - [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS; commit.
 
 ### Task 10: Labels (`describeShown`, caveat texts)
@@ -272,9 +326,9 @@ CASES = [
 
 **Files:**
 - Modify: `docs/telemetry-graphing-guide.md` §5, `docs/superpowers/specs/2026-09-30-telemetry-nerd-mvp-design.md`
-  §6.5, `skills/charting/SKILL.md`, `src/telemetry_nerd/mcp/server.py` (query/show docstrings:
-  `merge` in the summary; views are not citable, query at S to cite), `docs/principles.md` P10
-  (only if Q5 = amend; principles first).
+  §6.5, `skills/charting/SKILL.md`, `skills/tier2-code/SKILL.md` (merge declarations),
+  `src/telemetry_nerd/mcp/server.py` (query/show docstrings: `merge` in the summary,
+  `force_requery`, re-query datasets are citable and foldable). Principles 10/17 already done.
 
 - [ ] Update; `just lint`; commit `docs: bucket merge kinds in the guide, skills and MCP hints (7jme)`.
 
@@ -299,5 +353,6 @@ CASES = [
 
 ## Order and dependencies
 
-1 → 2 → (3, 4) → 5 → 6 → 7 → 8 → 9 → 10 → 11 → 12 → 13. Tasks 3 and 4 are independent of
-each other. Tasks 9-10 need 8's payload shape. Q1/Q3/Q5 (spec §11) gate Tasks 8, 10 and 11.
+1 → 2 → (3, 4) → 5 → 6 → 7 → 8 → (8a, 8b) → 9 → 10 → 11 → 12 → 13. Tasks 3/4 and 8a/8b are
+independent pairs. Tasks 9-10 need 8's payload shape and 8b's listing. Open Q2 gates Task 2's
+sliding-window rows; open Q3 gates the `sum` label in Tasks 5 and 10.

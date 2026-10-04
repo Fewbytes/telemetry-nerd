@@ -170,14 +170,16 @@ instead of asserting it.
 
 ## 10. Only mergeable statistics are aggregated; percentiles never are
 
-Counts, sums, min and max merge; means and ratios merge only with their counts (ratio of sums,
-never mean of ratios). Percentiles, medians, MAD / IQR and pre-computed quantiles are never
+Counts, sums, min and max merge; means and ratios merge only with their weights: sample counts
+for raw samples, covered time for derived (time-evaluated) values such as a rate; a ratio merges
+as the ratio of sums, never the mean of ratios. Percentiles, medians, MAD / IQR and pre-computed quantiles are never
 combined across series, members, cycles or time: aggregate the histogram (or raw data) first,
 then take the statistic once. "p99 across the fleet" from per-pod p99s is meaningless, and so is
 the median of member p99s. A percentile is never cited without its sample count (n ≥ 10/(1−q)).
 
 - Decided: 2026-09-30 (as an instance of principle 3); user decision 2026-10-03 (fleet:
-  "we can't aggregate percentiles").
+  "we can't aggregate percentiles"); 2026-10-04, user (bead 7jme): weights, not only counts
+  (`docs/superpowers/specs/2026-10-04-bucket-merging-design.md`).
 - Enforced by: `src/telemetry_nerd/analysis/exprkind.py` (percentile aggregation refused);
   `src/telemetry_nerd/catalog/mergeability.py`; percentile refusals in `fleet`, `analyze`,
   `spectrum`, `filter`, `compare_seasonal`, `check_littles_law`; the percentile `params.q` / `params.n`
@@ -299,3 +301,19 @@ history) or a stated conservative bound, and the op says which. Claude words fin
   (both p values, label on the clustered one) and `stability.departure` in
   `src/telemetry_nerd/core/series_diagnostics.py`; `skills/evidence/SKILL.md` ("Results are
   model outputs"); `skills/triage/SKILL.md` (Report); the MCP server instructions.
+
+## 17. All models are wrong, some are useful
+
+Correctness does not forbid new or unconventional models. Telemetry generation and collection,
+and many of the calculations behind a number, are already opaque, and nothing is perfect. We may
+make up a new model when it is useful, provided we are correct in implementing it and in using
+it (only within its assumptions): that is what correctness means here. Whatever model we use,
+we explain to the user what we did and why. This refines principle 3 (correct over conventional:
+an unconventional model is fine, an incorrect one is not) and principle 16 (a model's result is
+presented with its assumptions, never as a fact); it contradicts neither.
+
+- Decided: 2026-10-04, user (bead 7jme discussion).
+- Enforced by: mostly a review rule; the `method` / caveat text ops carry (e.g. `DEPARTURE_METHOD`
+  in `src/telemetry_nerd/analysis/diagnostics.py`; the `merge.basis` text of
+  `docs/superpowers/specs/2026-10-04-bucket-merging-design.md` §5); `skills/evidence/SKILL.md`
+  ("Results are model outputs").

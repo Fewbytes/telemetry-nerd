@@ -2,9 +2,10 @@
 
 Bead `telemetry-nerd-7jme`. Status: design, not implemented. Direction agreed with the user
 2026-10-04: **option 1 + option 2 for cheap cases** (bead text). Binding: `docs/principles.md`
-(P3 never erode peaks, P6 bulk data stays out of context, P10 only mergeable statistics merge,
-P11 missing is not zero, P16 results are model outputs; labels must hold under the cautious
-model).
+(P3 never erode peaks, P6 bulk data stays out of context, P10 means and ratios merge only with
+their weights, P11 missing is not zero, P16 results are model outputs, P17 a new model is fine
+when implemented and used correctly and explained; labels must hold under the cautious model).
+User decisions 2026-10-04 on §11: Q1, Q4, Q5, Q6 decided (folded in below); Q2, Q3 open.
 
 ## 1. Problem
 
@@ -131,19 +132,39 @@ Parsing reuses what exists; no second PromQL parser:
 
 Non-source datasets: a `filter()` output (`meta.derived`) inherits `time_mean` when its parent's
 kind is `sample_mean`, `time_mean` or `sum` (linear filters over equal steps), else `unknown`. A code
-output is `unknown` unless its lineage declares `merge` (Q4). A binding `error_ratio`
+output is `unknown` unless its lineage declares a merge kind that is doable for its statistic
+(decided, Q4; below). A binding `error_ratio`
 (`core/binding_ops.py:379-401`) is `ratio`; it is served at its own step today (it has an
 interval, `core/service.py:2279-2283`) and stays so; a ratio of summed parents is a follow-up.
 
+**Code output declarations (decided, Q4).** `Lineage` (and `tn` output declarations) gain an
+optional `merge` per value column: `sample_mean` (needs per-bucket counts), `time_mean`, `sum`,
+`max`, `min`, or for a distribution output `histogram` (bucket counts add). The declaration is
+validated, never trusted: refused when the column's declared or catalog statistic is
+non-mergeable (`catalog/mergeability.py`: percentile, median, MAD, IQR, truncated mean — e.g.
+`time_mean` on a p99 column is rejected), `sample_mean` without counts is refused, `sum` on a
+`unit="ratio"` column is refused. Undeclared or unsure → `cannot_combine` (P10, P17: a model is
+used only within its assumptions). The declared kind appears in the code caveat text so the
+merge is explained.
+
 ## 4. Re-query
 
-**When.** Only for `ratio`, `quantile` and `unknown` datasets with `requery == "rewrite"`, when
-the LOD factor is > 1 (more buckets than pixels). `sample_mean`, `counter_total`, `time_mean`,
-`sum`, `max`, `min` are always merged locally. `requery == "none"` (step-invariant text): no
-round trip; `time_mean` arithmetic of the plotted value is what the source would return
-(F1.1), drawn with the caveat `merged_plotted_mean` for `unknown`, and with `cannot_combine` for
-`ratio` (a mean of ratios, P10) — for those two the panel first tries native resolution up to
+**When (automatic).** Only for `ratio`, `quantile` and `unknown` datasets with
+`requery == "rewrite"`, when the LOD factor is > 1 (more buckets than pixels). `sample_mean`,
+`counter_total`, `time_mean`, `sum`, `max`, `min` are merged locally. `requery == "none"`
+(step-invariant text): no round trip (decided, Q1); the line is the local time mean of the
+fetched buckets, which is what the source would return (F1.1), and the panel says so explicitly:
+the merge `basis`/method text and a panel note "line: local time mean of the fetched {tile}
+buckets, not re-queried; [re-query at {S}]". `unknown` carries the caveat `merged_plotted_mean`;
+`ratio` carries `cannot_combine` (a mean of ratios, P10) and first tries native resolution up to
 `NATIVE_POINT_CAP` (4× width, at most 4000 points per series) before merging.
+
+**Forced re-query (decided, Q1).** The user can always ask for the source's own value at the
+displayed step, whatever the kind (except code/filter/binding outputs, `requery ==
+"impossible"`, where the control is disabled with the reason): a "re-query at {S}" action on
+the panel note (UI) and `requery: bool` on `show`/panel data (MCP, `force_requery=true`). A forced
+re-query of a step-invariant expression uses the rollup fetch at `S` (the expression as written);
+of a rewritable one, `rewindow` + `fetch_values` as below. The result is a dataset (Q6).
 
 **Rewrite** `rewindow(template, S, res)` (new in `exprkind.py`, generalising
 `core/profiles.py:79-135` `profile_target.widen`, which profiles then reuse):
@@ -169,15 +190,28 @@ fetch body is shared with `query()`: extract `_fetch(expr, rng, step)` from
 `core/service.py:497-536` (cache + `settle_unobserved` or values + counts) so both paths stay
 identical.
 
-**Lineage.** A LOD re-query is a **view**, not a dataset: no `datasets.put`, no
-`dataset.created` event, no new id (P7: the panel's evidence is still its dataset at its step).
-The payload names it: `merge: {kind, how: "requery", expr: expr_S, step_ms: S, status}`. A number
-read off it is not citable; to cite, Claude runs `query(expr_S, step=S)` (a real dataset), which
-the MCP hint says.
+**Lineage (decided, Q6).** A re-query creates a **real dataset**, kept by default: citable,
+`datasets.put` with `expr = expr_S`, `step_ms = S`, `expr_template` as the parent's, `parents =
+[panel dataset]` and `producer = {"kind": "requery", "of": <dataset>, "step": S, "trigger":
+"lod" | "user"}`; its `dataset.created` event is `internal` (as every fetch's), so Claude's feed
+does not grow per zoom. The panel keeps its own dataset; it records the re-query datasets it has
+drawn in `spec.views: {S: dataset_id}` (bounded; the newest few per panel), so a reload reuses
+them. The payload stays small: `merge: {kind, how: "requery", dataset, expr, step_ms, status}`.
+Cache hits still make a dataset (cheap: rows are already local) only on first use per (panel,
+S); later draws reuse the recorded id.
+
+**Dependency: fold / retire.** Nothing today folds or retires datasets or views: panels have only
+`close` (`workspace/store.py:149`, `core/workspace_service.py:692`), datasets are immutable and
+never hidden (P7). Re-query datasets would clutter `workspace_get`/the dataset list. Needed: a
+soft `retired` flag on datasets (never deleted; evidence links keep working), set by "fold
+re-query views" on a panel (UI) and a `retire` MCP op, and `workspace_get` listing re-query
+datasets folded under their parent (`+3 re-query views`) unless cited. Plan Task 9 builds it; until
+it lands, re-query datasets are listed folded by `producer.kind == "requery"`.
 
 **Latency and UI.** `panel_data` stays synchronous for everything else. For a re-query kind:
 
-- cached (`peek` covers the range): served in the same response, `status: "requeried"`;
+- cached (`peek` covers the range, or `spec.views` has S): served in the same response,
+  `status: "requeried"`;
 - not cached: the response carries native resolution when within `NATIVE_POINT_CAP`, else the
   envelope only (no line), `status: "pending"`; one background re-query per (dataset, `S`),
   a newer `S` for the same panel supersedes it; on completion a UI-only socket frame
@@ -223,6 +257,11 @@ stays for code outputs. The `mean` key keeps its name for `sample_mean` and `tim
 existing consumers (finding statistics, `tn` library) still read a mean where one exists, and get
 `null` where today they get a wrong number.
 
+The `basis` text always says what was done (P17): "time mean of the fetched 15 s buckets,
+computed locally, not re-queried" / "re-queried at 5 m (dataset d42)" / "declared by code node
+c3: sum". `query` and `show` accept `force_requery` (Q1); the summary of a re-query dataset is an
+ordinary summary of that dataset (its `producer` names the parent), so no payload grows.
+
 ## 6. UI labelling, increase panels on zoom
 
 The displayed bucket changes with zoom and with panel width (`lod` factor = buckets / width,
@@ -254,7 +293,8 @@ and the tooltip reads "900 in this 1 m bucket (4 × 15 s tiles); 225 per 15 s, 1
 | `time_mean` | "Time average per {step} bucket of the value (line), min–max (band)." |
 | `sum` | "Increase per {tile} (mean of the {tile} tiles in each {step} bucket; hover for the bucket total), smallest–largest tile (band)." At native zoom: "Increase per {tile} tile." |
 | `max` / `min` | "Largest / smallest value in each {step} bucket (line = band edge)." |
-| re-queried | "… re-queried from the source at {S}: {expr_S}" plus the pending/failed badge |
+| local time mean (`requery == "none"`) | "… local time mean of the fetched {tile} buckets (not re-queried)" with a "re-query at {S}" action (Q1) |
+| re-queried | "… re-queried from the source at {S} (dataset {id}): {expr_S}" plus the pending/failed badge |
 | `cannot_combine` / envelope only | "Range of the values in each {step} bucket (band); no line: {why}. Zoom in for the source's own values." |
 
 ## 7. Migration and compatibility
@@ -264,6 +304,9 @@ and the tooltip reads "900 in this 1 m bucket (4 × 15 s tiles); 225 per 15 s, 1
   `semantics_flags` is). Old datasets: `merge` is computed lazily from `meta.expr`; with no
   template, windows are read literally (tiles still detected by window = step). No schema change,
   no cache change, no salt bump.
+- `DatasetMeta.producer` gains the `requery` kind (parents = the panel dataset) and an optional
+  `retired: bool` (default false; §4 fold/retire). `Lineage` gains optional per-column `merge`
+  (Q4). All optional JSON fields: old metas load unchanged.
 - `rebucket(buckets, new_step, kind)` gains `kind`; the default stays `sample_mean` for one
   release so unconverted callers keep today's behaviour, then the default is removed (the plan's
   last task) so no caller is left on the implicit count-weighted mean.
@@ -327,7 +370,14 @@ container (`tests/integration/conftest.py`).
   calls: first `panel_data` → `pending` + envelope; background completes → socket frame →
   second call `requeried` with zero source calls (cache); a different width mapping to the same
   `S` hits the cache; a failing source → `failed` + `requery_failed`, no line; code output →
-  `cannot_combine`, no fetch.
+  `cannot_combine`, no fetch; a completed re-query is a dataset with `producer.kind == "requery"`,
+  parent = the panel dataset, an `internal` event, recorded in `spec.views` and reused on reload;
+  `force_requery` on a `time_mean` panel fetches once and labels the line re-queried.
+- **Code declarations** (`test_code_outputs.py`): `time_mean` on a percentile column refused;
+  `sample_mean` without counts refused; `histogram` on a distribution accepted; undeclared →
+  `cannot_combine`.
+- **Fold/retire** (`test_dataset_retire.py`): retiring hides from `workspace_get`'s list but keeps
+  `datasets.get` and evidence links working; folded count per parent; cited datasets never fold.
 - **Callers**: indexed baselines, `hourly_means`, `_prepare` coarsening (events scale × kind),
   fleet coarsening, references and limit lines each get one test pinning the kind they use.
 - **UI** (vitest): `describeShown` per kind; tooltip total for `sum`; pending/failed badges.
@@ -350,24 +400,33 @@ container (`tests/integration/conftest.py`).
 - **Prometheus tiles** extrapolate: `sum` is approximate there (`tiles_extrapolated`).
 - **Behaviour change**: panels and summaries that showed a (wrong) mean now show a different number
   or `null`. Findings keep their recorded numbers; the change log/skill says why.
+- **Dataset growth** from kept re-queries (Q6): one dataset per (panel, S) on first use, a bounded
+  `spec.views`, internal events only, folded listing; retire is soft.
 - **Envelope-only views** are new in the chart; they must not read as "no data" (hatching is
   reserved for gaps).
 
-## 11. Open questions for the user
+## 11. Decisions and open questions
 
-1. **F1 shortcut.** For step-invariant derived expressions (no template, no tile, nothing to
-   widen) the source's coarse value equals the local time mean. OK to compute it locally (labelled
-   "mean over each bucket of the plotted value") instead of re-querying, keeping the re-query for
-   expressions the rewrite changes? `ratio` keeps `cannot_combine` either way.
+Decided by the user 2026-10-04:
+
+1. **F1 shortcut: yes.** Step-invariant derived expressions are merged locally as a time mean,
+   stated explicitly (basis text, panel note), with a user control to force a re-query at the
+   displayed step (UI action, MCP `force_requery`) (§4, §5, §6).
+4. **Code outputs** may declare a merge kind only when it is doable for that statistic
+   (histograms merge buckets; counts, sums, min, max; means with their weights); declarations are
+   validated; unsure → `cannot_combine` (§3).
+5. **Principle 10 amended** (means and ratios merge only with their weights: sample counts for raw
+   samples, covered time for derived values; ratio of sums) and **principle 17 added** (all models
+   are wrong, some are useful: new models are allowed when implemented and used correctly within
+   their assumptions, and explained) in `docs/principles.md`.
+6. **Re-query results are kept** as real, citable datasets with lineage to the panel dataset;
+   the user can fold or retire them. Fold/retire does not exist yet (only panel close): built in
+   the plan (§4 dependency).
+
+Still open:
+
 2. **Sliding count windows.** `increase(x[5m])` at a 15 s step is classified `time_mean` (per 5 m),
    not `sum`: summing overlapping windows counts each event 20 times. Confirm the agreed
    "increase → sum" means tiles only.
 3. **Increase on zoom**: per original tile (recommended, §6) vs per second vs sum per displayed
    bucket.
-4. **Code outputs**: let `Lineage` declare `merge` (`time_mean`/`sum`/`max`/`min`/`sample_mean`),
-   or always `cannot_combine` beyond native resolution?
-5. **Principle 10 wording**: "means and ratios merge only with their counts". A time mean merges
-   with its covered time, not its sample count. Amend P10 to "with their weights (samples for a
-   sample mean, covered time for a time mean)" before implementing?
-6. **Re-query views as evidence**: keep them uncitable views (recommended), or let "keep this
-   view" materialise one as a dataset?
