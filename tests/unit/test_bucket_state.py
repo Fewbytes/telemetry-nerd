@@ -305,7 +305,7 @@ def _scrape_rows(interval_ms, step, end=HOUR, first=None):
     return [(b, "a", 1.0, c) for b, c in sorted(counts.items())]
 
 
-def _compute_rows(rows, *, step, end=HOUR, failed=(), res=None):
+def _compute_rows(rows, *, step, end=HOUR, failed=(), res=None, known=True):
     return compute(
         buckets(rows),
         ("a",),
@@ -315,6 +315,7 @@ def _compute_rows(rows, *, step, end=HOUR, failed=(), res=None):
         resolution_ms=res or step,
         mode="samples",
         failed=failed,
+        interval_known=known,
     )
 
 
@@ -1013,3 +1014,139 @@ def test_slightly_slow_cadence_fuzz(seed):
         st = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
         allowed = {State.EMPTY} if res == interval else {State.EMPTY, State.UNKNOWN}
         assert {st[b] for b in gone} <= allowed, (interval, step, res, lost)
+
+
+# --- review of bmt/e4v: consumers of a CADENCE unknown, loss-sample-loss, assumed intervals ---
+
+
+def _cadence_pair(end=6 * HOUR):
+    """16.5s scrapes ('a', interval unknown) and 15s ones ('b') at a 15s step."""
+    rows = _count_rows(_sample_ts(16_500, phase=3_669, end=end), S15, "a")
+    rows += _count_rows(_sample_ts(S15, phase=3_669, end=end), S15, "b")
+    return compute(buckets(rows), ("a", "b"), start_ms=S15, end_ms=end, step_ms=S15,
+                   resolution_ms=S15, mode="samples")  # fmt: skip
+
+
+@pytest.mark.parametrize("k", [4, 20])
+def test_coarsening_a_cadence_unknown_is_partial_not_unknown(k):
+    # "OK or one lost scrape": a coarse bucket that saw samples is PARTIAL (flag kept), not
+    # UNKNOWN for the whole 1m / 5m
+    from telemetry_nerd.model.bucket_state import coarsen
+
+    out = coarsen(_cadence_pair(), k * S15)
+    a = [(s, f) for s, f, i in zip(states(out), out["flags"].to_pylist(),
+                                   out["series_id"].to_pylist()) if i == "a"]  # fmt: skip
+    assert State.UNKNOWN not in {s for s, _ in a}
+    assert all(s == State.PARTIAL for s, f in a if f & Flag.CADENCE)
+    assert any(f & Flag.CADENCE for _, f in a)
+
+
+def test_merging_a_cadence_unknown_member_is_partial_not_unknown():
+    from telemetry_nerd.model.bucket_state import merge
+
+    out = merge(_cadence_pair(), {"a": "g", "b": "g"})
+    st, fl = out["state"].to_pylist(), out["flags"].to_pylist()
+    assert State.UNKNOWN not in st
+    assert all(s == State.PARTIAL for s, f in zip(st, fl) if f & Flag.CADENCE)
+
+
+def test_coarse_bucket_of_only_cadence_unknowns_and_failures_stays_unknown():
+    # nothing seen and a cadence unknown: still nothing known
+    from telemetry_nerd.model.bucket_state import coarsen
+
+    fine = _cadence_pair()
+    df = [r for r in fine.to_pylist() if r["series_id"] == "a"]
+    cad = next(r["ts_ms"] for r in df if r["flags"] & Flag.CADENCE)
+    one = pa.Table.from_pylist([r for r in df if r["ts_ms"] == cad], schema=fine.schema)
+    assert states(coarsen(one, 4 * S15)) == [State.UNKNOWN]
+
+
+def test_claim_over_a_cadence_unknown_series_warns_with_its_reason():
+    from telemetry_nerd.core.coverage_check import claim_coverage
+
+    out = _cadence_pair()
+    a = out.filter(pa.compute.equal(out["series_id"], "a"))
+    [c] = claim_coverage(a, HOUR, 3 * HOUR, S15)
+    assert c.severity == "warn" and c.code == "missing_data"
+    assert "cadence" in c.message and "a little slower than the query step" in c.message
+    # several series: the cadence one is not 'untrusted'
+    [c] = claim_coverage(out, HOUR, 3 * HOUR, S15)
+    assert c.severity == "warn" and "could not return" not in c.message
+
+
+def _cadence_change(fast_i, slow_i, n, lost, *, fast_first=True):
+    """`n` scrapes `fast_i` apart, then (or before) `slow_i` ones over 3 hours, mid-series (a
+    slow stretch on both sides); `lost`: indices into the fast stretch."""
+    a, end = HOUR, 3 * HOUR
+    ts, t = [], 7_000
+    while t <= end:
+        ts.append(t)
+        t += fast_i if a <= t < a + n * fast_i else slow_i
+    fast = [i for i, x in enumerate(ts) if a <= x < a + n * fast_i]
+    gone = {ts[fast[i]] for i in lost}
+    out = _compute_rows(_count_rows([x for x in ts if x not in gone], S15), step=S15, end=end,
+                        res=S15)  # fmt: skip
+    st = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
+    return st, {-(-x // S15) * S15 for x in gone}
+
+
+@pytest.mark.parametrize("pos", [2, 5, 9, 14, 20, 30, 33])
+@pytest.mark.parametrize("slow", [45_000, 60_000])
+def test_loss_sample_loss_next_to_a_slower_stretch_is_empty(pos, slow):
+    # scrapes i and i+2 lost: two long gaps in a row (30s, 30s), cut as a slower stretch, so the
+    # 16-gap sides across the change hid both (52/68 hidden, as on master)
+    st, gone = _cadence_change(S15, slow, 40, (pos, pos + 2))
+    assert {st[b] for b in gone} == {State.EMPTY}
+
+
+def test_lost_scrape_next_to_a_skip_of_a_slightly_slow_stretch_before_a_slower_one_is_empty():
+    # a 1.1x stretch (66s at a 60s step) before 180s scrapes, two lost: the one next to a
+    # skipped bucket gives two long gaps in a row; read as a slower stretch it was hidden, where
+    # master showed it (review seed 1107)
+    ts, t = [], 167
+    while t <= HOUR:
+        ts.append(t)
+        t += 66_000 if t < 1_890_000 else 180_000
+    ts = ts[1:]  # (the first one falls before the window)
+    gone = {ts[17], ts[26]}
+    out = _compute_rows(_count_rows([x for x in ts if x not in gone], 60_000), step=60_000,
+                        res=66_000)  # fmt: skip
+    st = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
+    assert st[-(-ts[17] // 60_000) * 60_000] == State.EMPTY
+
+
+def test_an_assumed_series_interval_does_not_confirm_a_cadence():
+    # the source's resolution is a default (origin "assumed"): it cannot say which, UNKNOWN
+    ts = _sample_ts(16_500, phase=3_669)
+    rows = _count_rows(ts, S15)
+    kw = {
+        "start_ms": S15,
+        "end_ms": HOUR,
+        "step_ms": S15,
+        "resolution_ms": 16_500,
+        "mode": "samples",
+    }
+    known = compute(buckets(rows), ("a",), **kw, interval_known=True)
+    assumed = compute(buckets(rows), ("a",), **kw, interval_known=False)
+    assert State.UNKNOWN not in states(known) and State.UNKNOWN in states(assumed)
+
+
+@pytest.mark.parametrize(("origin", "known"), [("configured", True), ("learned", True),
+                                               ("assumed", False), (None, False)])  # fmt: skip
+def test_only_a_configured_or_learned_interval_is_recorded_as_known(origin, known):
+    from types import SimpleNamespace
+
+    from telemetry_nerd.core.service import _semantics_flags
+    from telemetry_nerd.datasets.store import DatasetMeta
+    from telemetry_nerd.model.companions import derive_states
+    from telemetry_nerd.model.series import SERIES_SCHEMA, FetchResult
+
+    src = SimpleNamespace(semantics=None, resolution_origin=origin)
+    flags = _semantics_flags(src)
+    assert bool(flags.get("series_interval_known")) is known
+    rows = _count_rows(_sample_ts(16_500, phase=3_669), S15)
+    meta = DatasetMeta(id="d", source="s", expr="up", start_ms=S15, end_ms=HOUR, step_ms=S15,
+                       resolution_ms=16_500, semantics_flags=flags)  # fmt: skip
+    series = pa.table({"series_id": ["a"], "labels": ["{}"]}, schema=SERIES_SCHEMA)
+    st = states(derive_states(meta, FetchResult(buckets(rows), series)))
+    assert (State.UNKNOWN in st) is not known

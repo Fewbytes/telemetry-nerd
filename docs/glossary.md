@@ -51,7 +51,7 @@ Only terms that recur across specs; each points at where it is defined.
 | **representation** | `sample`, `bucket_agg`, `distribution`, `quantile`, `estimate`: what a bucket's numbers mean. | MVP spec §3.2 |
 | **envelope** (min–max band) | The band from each bucket's min to max drawn behind the line; never smoothed away. | MVP spec §6.5; principle 3 |
 | **LOD** (level of detail) | Server-side min/max-preserving merge to about one display bucket per pixel. | MVP spec §6.5; `analysis/resample.py: lod` |
-| **bucket_state** | Per series and query bucket: `ok`, `partial`, `empty`, `absent`, `unknown` (+ flags `reset`, `interval_change`, `stale_marker`, `source_filled`, `post_gap`). | series-bundles spec §5; `model/bucket_state.py` |
+| **bucket_state** | Per series and query bucket: `ok`, `partial`, `empty`, `absent`, `unknown` (+ flags `reset`, `interval_change`, `stale_marker`, `source_filled`, `post_gap`, `cadence`: an `unknown` bucket that is a skip of a series interval a little over the query step, or a scrape lost at that spacing). | series-bundles spec §5; `model/bucket_state.py` |
 | **coverage rug** | Strip under a time panel marking buckets whose bucket_state is not `ok`. | series-bundles spec §7.1 |
 | **settling** | The newest buckets, which the source may still change. | MVP spec §2.2 |
 | **operating profile** | What a signal normally looks like over a long time range (hour-of-week statistics at a 1 h step). | operating-profile spec |

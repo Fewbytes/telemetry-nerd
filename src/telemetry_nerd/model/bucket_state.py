@@ -87,6 +87,7 @@ def compute(
     failed: Sequence[FailedSpan] = (),
     source_filled: bool = False,
     post_gap_buckets: int = 0,
+    interval_known: bool = False,
 ) -> pa.Table:
     """`source_filled`: the counts are not observed samples (expression cannot tell), so every
     bucket is UNKNOWN + SOURCE_FILLED. `resolution_ms`: the source's configured scrape interval; in
@@ -95,7 +96,9 @@ def compute(
     Duplicate (series_id, ts_ms) rows in `buckets` raise ValueError: a bucket is one row, and a
     join would double its state. `post_gap_buckets`: the source's increase/delta/idelta after a gap
     reaches back over the gap, so the first n OK/PARTIAL buckets after an EMPTY/UNKNOWN one
-    (stopping at the next gap) are flagged POST_GAP (state unchanged); 0 turns it off."""
+    (stopping at the next gap) are flagged POST_GAP (state unchanged); 0 turns it off.
+    `interval_known`: `resolution_ms` is the source's configured or learned series interval, not
+    an assumed default; only then may it confirm a cadence a little slower than the step."""
     ts = grid(start_ms, end_ms, step_ms)
     if not ts or not series_ids:
         return STATE_SCHEMA.empty_table()
@@ -127,7 +130,7 @@ def compute(
     )
     df = df.join(first, on="series_id", how="left").sort("series_id", "ts_ms")
     if mode == "samples":
-        df = _cadence(df, step_ms, resolution_ms)
+        df = _cadence(df, step_ms, resolution_ms if interval_known else None)
     else:
         df = df.with_columns(
             pl.lit(1.0).alias("expected"),
@@ -216,7 +219,7 @@ def _mark_unknown(
     )
 
 
-def _cadence(df: pl.DataFrame, step_ms: int, resolution_ms: int) -> pl.DataFrame:
+def _cadence(df: pl.DataFrame, step_ms: int, resolution_ms: int | None) -> pl.DataFrame:
     """Adds `expected` (samples per bucket), `_slow` (bucket in a slower-than-step stretch) and
     `_missed` (a 0 bucket here is a miss). df is sorted by series, ts.
 
@@ -342,7 +345,7 @@ def _cadence(df: pl.DataFrame, step_ms: int, resolution_ms: int) -> pl.DataFrame
 
 
 def _lattice(
-    df: pl.DataFrame, skipped: pl.Expr, miss: pl.Expr, step_ms: int, resolution_ms: int
+    df: pl.DataFrame, skipped: pl.Expr, miss: pl.Expr, step_ms: int, resolution_ms: int | None
 ) -> pl.DataFrame:
     """A series scraped a little slower than the step (1-1.25 x, e.g. 16.5s scrapes at a 15s step)
     skips a bucket every r / (r - 1) buckets (r = interval / step): its 0 buckets keep a regular
@@ -362,7 +365,8 @@ def _lattice(
     A loss recurring at a regular spacing (every n-th scrape) looks the same: counts cannot tell
     the two apart. The source's series interval can: the bucket is cadence (OK) when the interval
     the spacing implies, step x m / (m - 1) for a mean spacing of m buckets, is within
-    LATTICE_MATCH of `resolution_ms` (slower than the step); otherwise it is undetermined
+    LATTICE_MATCH of `resolution_ms` (slower than the step; None when the source only assumed
+    it: an assumed interval says nothing, principle 15); otherwise it is undetermined
     (`_undet`: UNKNOWN, flagged CADENCE). Either way not `_missed`. In a series whose spacings
     are regular overall, a skipped 0 at most half the typical spacing from the next one is a loss
     (`_missed`; one of the two is), even where a neighbourhood slower than the step would hold it
@@ -404,7 +408,11 @@ def _lattice(
     )
     m = ((pl.col("ts_ms").max() - pl.col("ts_ms").min()) / step_ms / (pl.len() - 1)).over(_S)
     interval = step_ms * m / (m - 1)
-    matches = (resolution_ms > step_ms) & ((interval / resolution_ms - 1).abs() <= LATTICE_MATCH)
+    matches = (
+        pl.lit(False)
+        if resolution_ms is None or resolution_ms <= step_ms
+        else (interval / resolution_ms - 1).abs() <= LATTICE_MATCH
+    )
     judged = zeros.filter(pl.col("_steady")).select(
         _S,
         "ts_ms",
@@ -519,34 +527,51 @@ def _step_runs(nz: pl.DataFrame, step_ms: int) -> pl.DataFrame:
     A run is a maximal sequence of gaps, each at most two steps per sample and no two consecutive
     ones longer than the step: a lost scrape is one such long gap, next to step-length ones or to
     the longer gap that opens a slower stretch; a slower stretch has consecutive long gaps or
-    longer ones, and bounds the run. A hole (a gap over two steps per sample) between two such
-    runs lies in the stretch too. It counts with
+    longer ones, and bounds the run. A hole (one gap over two steps per sample), or two long
+    gaps in a row (a loss, a sample, a loss; a loss next to the skip of a slightly slower
+    cadence), with ordinary gaps on both sides lies in the run; the run's rate is judged without
+    its holes. It counts with
     LOCAL_MIN_GAPS gaps when it is at the step's rate even with one sample fewer
     (Σgap / (Σsamples - 1) <= SLOW_MARGIN x step: its few gaps snap to whole steps, and a short
     slightly slower stretch must keep its cadence). A run of a series slower than the step by less
     than SLOW_MARGIN is the whole series, and is not slow either way. `nz` is sorted, with `_g` and
     `_c`."""
     x = pl.col("_g") / pl.col("_c")
-    long_ = x.is_between(step_ms, 2 * step_ms, closed="right").fill_null(False)
-    near = lambda e, k: e.shift(k).over(_S).fill_null(False)
-    # (the first row has no gap)
-    cut = (x > 2 * step_ms).fill_null(True) | (long_ & (near(long_, 1) | near(long_, -1)))
-    nz = nz.with_columns(cut.alias("_cut")).with_columns(
-        pl.col("_cut").cast(pl.Int32).cum_sum().over(_S).alias("_run")
+
+    def near(name: str, k: int) -> pl.Expr:  # column `name` k rows later (k < 0: earlier)
+        same = pl.col(_S).shift(-k) == pl.col(_S)
+        return (same & pl.col(name).shift(-k)).fill_null(False)
+
+    # (materialised in steps, shifted without a window: rows are sorted by series)
+    nz = nz.with_columns(
+        x.is_between(step_ms, 2 * step_ms, closed="right").fill_null(False).alias("_long"),
+        (x > 2 * step_ms).fill_null(True).alias("_big"),  # the first row has no gap
+        x.is_null().alias("_first"),
     )
+    nz = nz.with_columns(
+        (pl.col("_big") | (pl.col("_long") & (near("_long", -1) | near("_long", 1)))).alias("_cut")
+    ).with_columns((~pl.col("_cut")).alias("_open"))
+    # a hole (one gap over two steps), or two long gaps in a row (a loss, a sample, a loss; a
+    # loss next to a skipped bucket), with ordinary gaps on both sides bridges them: the stretch
+    # goes on across it. (A slower stretch only two gaps long reads as losses: the cautious side)
+    one = ~pl.col("_first") & near("_open", -1) & near("_open", 1)
+    two = pl.col("_long") & (
+        (near("_long", 1) & near("_open", -1) & near("_open", 2))
+        | (near("_long", -1) & near("_open", 1) & near("_open", -2))
+    )
+    nz = nz.with_columns(two.alias("_two"), one.alias("_one")).with_columns(
+        (pl.col("_cut") & ~pl.col("_two")).alias("_cut"),
+        (pl.col("_cut") & ~(pl.col("_one") | pl.col("_two"))).alias("_end"),
+    )
+    nz = nz.with_columns(pl.col("_end").cast(pl.Int32).cum_sum().over(_S).alias("_run"))
+    # its rate from its gaps but holes: a hole is lost time, not cadence (two long gaps may be a
+    # slower cadence's: they count, and a 25s one at 15s stays slower than the step)
     keep = lambda e: pl.when(~pl.col("_cut")).then(e).otherwise(0.0).sum().over(_S, "_run")
     g, c, n = keep(pl.col("_g")), keep(pl.col("_c")), keep(pl.lit(1.0))
     step_rate = (n >= LOCAL_MIN_GAPS) & (c > 1) & (g / (c - 1) <= SLOW_MARGIN * step_ms)
-    nz = nz.with_columns(
-        (~pl.col("_cut") & step_rate).fill_null(False).alias("_inrun"), (g / c).alias("_Irun")
-    )
-    # a hole (several lost scrapes) with step-rate runs on both sides lies inside the stretch
-    run = pl.col("_inrun")
-    hole = pl.col("_cut") & near(run, 1) & near(run, -1)
     return nz.with_columns(
-        (run | hole).alias("_inrun"),
-        pl.when(hole).then(pl.col("_Irun").shift(1).over(_S)).otherwise(pl.col("_Irun")),
-    ).drop("_cut", "_run")
+        (~pl.col("_end") & step_rate).fill_null(False).alias("_inrun"), (g / c).alias("_Irun")
+    ).drop("_cut", "_end", "_run", "_long", "_big", "_first", "_open", "_one", "_two")
 
 
 def _spread(df: pl.DataFrame, est: pl.DataFrame, step_ms: int) -> pl.DataFrame:
@@ -753,6 +778,11 @@ GROUP_SCHEMA = pa.schema(
 )
 
 _ALIVE = pl.col("state") != int(State.ABSENT)
+# a CADENCE unknown is "OK, or one lost scrape" (§5.1): where anything else was seen it is a gap
+# (PARTIAL, the flag kept), not an unknown for the whole coarse or group bucket; alone it stays
+# unknown. Any other unknown is no information at all
+_CADENCE = (pl.col("state") == int(State.UNKNOWN)) & ((pl.col("flags") & int(Flag.CADENCE)) != 0)
+_HARD_UNKNOWN = (pl.col("state") == int(State.UNKNOWN)) & ~_CADENCE
 # UNKNOWN is neither present nor missing (no trustworthy information): `compute` gives such a bucket
 # observed = expected = 0, so the plain sums over alive buckets below leave it out of coverage
 # (and coarsening stays associative); its state still shows.
@@ -789,17 +819,23 @@ def coarsen(states: pa.Table, new_step_ms: int) -> pa.Table:
             pl.col("observed").filter(_ALIVE).sum().alias("observed"),
             pl.col("expected").filter(_ALIVE).sum().alias("expected"),
             _ALIVE.any().alias("_alive"),
-            (pl.col("state") == int(State.UNKNOWN)).any().alias("_unknown"),
-            pl.col("state").is_in([int(State.PARTIAL), int(State.EMPTY)]).any().alias("_gap"),
+            _HARD_UNKNOWN.any().alias("_unknown"),
+            _CADENCE.any().alias("_cadence"),
+            (pl.col("state").is_in([int(State.PARTIAL), int(State.EMPTY)]) | _CADENCE)
+            .any()
+            .alias("_gap"),
             # state-based, not observed == 0: a slower-than-step series' fine buckets are OK with
             # no samples inside their cadence
             pl.col("state").is_in([int(State.OK), int(State.PARTIAL)]).any().alias("_seen"),
             pl.col("flags").bitwise_or().alias("flags"),
         )
         .with_columns(
-            _classify(pl.col("_alive"), pl.col("_unknown"), ~pl.col("_seen"), pl.col("_gap")).alias(
-                "state"
-            )
+            _classify(
+                pl.col("_alive"),
+                pl.col("_unknown") | (pl.col("_cadence") & ~pl.col("_seen")),
+                ~pl.col("_seen"),
+                pl.col("_gap"),
+            ).alias("state")
         )
         .sort("series_id", "ts_ms")
         .select(STATE_SCHEMA.names)
@@ -824,14 +860,15 @@ def merge(states: pa.Table, group_of: Mapping[str, str]) -> pa.Table:
             reporting.sum().cast(pl.Int32).alias("reporting"),
             pl.col("observed").filter(_ALIVE).sum().alias("observed"),
             pl.col("expected").filter(_ALIVE).sum().alias("expected"),
-            (pl.col("state") == int(State.UNKNOWN)).any().alias("_unknown"),
+            _HARD_UNKNOWN.any().alias("_unknown"),
+            _CADENCE.any().alias("_cadence"),
             pl.col("flags").bitwise_or().alias("flags"),
             pl.col("series_id").filter(pl.col("state") == int(State.EMPTY)).sort().alias("silent"),
         )
         .with_columns(
             _classify(
                 pl.col("alive") > 0,
-                pl.col("_unknown"),
+                pl.col("_unknown") | (pl.col("_cadence") & (pl.col("reporting") == 0)),
                 pl.col("reporting") == 0,
                 pl.col("reporting") < pl.col("alive"),
             ).alias("state")

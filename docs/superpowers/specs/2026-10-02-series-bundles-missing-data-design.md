@@ -224,8 +224,11 @@ reaching across the rate change reads slow, and "slower if either side is" would
 lost within 16 gaps of the change (bmt; 9li had fixed only the edges). A run is a maximal sequence
 of gaps of at most two steps per sample with no two consecutive ones longer than the step (a lost
 scrape is one such gap, next to step-length ones or to the longer gap that opens a slower
-stretch; a slower stretch has consecutive long gaps or longer ones and bounds the run); a hole
-between two runs belongs to them. It counts with 2 gaps or more when it is at the step's rate even
+stretch; a slower stretch has consecutive long gaps or longer ones and bounds the run). A hole
+(one gap over two steps per sample), or two long gaps in a row (a loss, a sample, a loss; a loss
+next to the skip of a slightly slower cadence) with ordinary gaps on both sides, lies in the run,
+whose rate is judged without its holes; a genuinely slower stretch only two gaps long therefore
+reads as losses (the cautious side). It counts with 2 gaps or more when it is at the step's rate even
 with one sample fewer (Σgap / (Σsamples − 1) ≤ 1.25 × step), so a short marginally slower stretch
 keeps its cadence. Its gaps take the run's interval and are not slow. This only takes slowness
 away. (The run rule replaced 9li's edge CUSUM: it is cheaper, and the 200 series × 1440 bucket
@@ -245,10 +248,17 @@ half as many buckets as it has skipped ones is at the step's rate, and its 0s ar
 recurring at a regular spacing (every n-th scrape) gives the same counts: **undecidable**. The
 source's series interval decides: when the interval the mean spacing m implies (step × m /
 (m − 1)) is within 5 % of `resolution_ms` (slower than the step) the bucket is `ok`, `expected`
-step / I (floor 0.8 instead of 1); otherwise it is `unknown` with flag `cadence` (reason
+step / I (floor 0.8 instead of 1). Only a configured or learned interval counts: an assumed
+default (origin `assumed`) is no evidence (principle 15), recorded per dataset as
+`semantics_flags.series_interval_known`. Otherwise it is `unknown` with flag `cadence` (reason
 `cadence_or_loss`: "a series interval a little slower than the query step, or a scrape lost at
 that spacing"), out of coverage like any `unknown`, never `ok` (that would hide a periodic loss)
-and never `empty` (that is the false alarm). In a series whose spacings are regular overall a
+and never `empty` (that is the false alarm). Its truth is "`ok`, or one lost scrape", so
+consumers read it as such, not as a failed fetch: coarsening (§5.3) and merge (§5.2) count it as a
+gap (`partial`, flag kept) wherever anything else in the coarse or group bucket was seen, and
+`unknown` only when nothing was; a claim check counts it as a missing sample (expected = the
+series' typical count) and warns naming `cadence_or_loss`, never blocks for it as untrusted; the
+fleet keeps it out of n and alive like any `unknown`, with the `cadence_or_loss` reason. In a series whose spacings are regular overall a
 skipped bucket at most half the typical spacing from the next one is a loss (`empty`; one of the
 two is), even where a slower-than-step neighbourhood would hold it within 1.5 × I. Fewer than 5
 skipped buckets (a short window, or r near 1) cannot show a regular spacing: `empty`, the cautious

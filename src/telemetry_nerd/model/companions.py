@@ -206,6 +206,8 @@ def _states(
         post_gap_buckets=(
             post_gap_buckets(expr, step_ms) if semantics_flags.get("post_gap_increase_spike") else 0
         ),
+        # an assumed (default) resolution is no evidence of the series' interval (principle 15)
+        interval_known=bool(semantics_flags.get("series_interval_known")),
     )
 
 

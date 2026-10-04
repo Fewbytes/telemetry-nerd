@@ -5,7 +5,9 @@ Coverage is judged per series, over the evidence series the claim is about (thos
 healthy ones, and trouble on one series does not block a claim about another.
 
 One series: the whole claim window counts. Below `BLOCK_BELOW` of its expected samples, or any
-`unknown` bucket, blocks the claim; less than all of them warns. Time before its first sample and
+`unknown` bucket, blocks the claim; less than all of them warns. A `cadence` unknown (a skip of a
+series interval a little over the step, or one lost scrape) is not untrusted: it counts as a
+missing sample and the warning names it. Time before its first sample and
 after its last one is unobserved too (it may not have existed yet, may have left, or may return
 just outside the window: neither is provable from this evidence), so it counts against coverage.
 
@@ -31,6 +33,8 @@ import pyarrow as pa
 from telemetry_nerd.core.claim_scope import Matcher, claim_series
 from telemetry_nerd.model.bucket_state import Flag, State
 from telemetry_nerd.model.caveats import (
+    CADENCE_OR_LOSS,
+    CADENCE_REASON,
     MAX_WHERE_SERIES,
     UNOBSERVABLE_MESSAGE,
     Caveat,
@@ -145,6 +149,7 @@ class _Member:
     sid: str
     share: float = 0.0  # Σobserved / Σexpected over the judged buckets that are not unknown
     unknown: bool = False  # an unknown bucket anywhere in the window
+    cadence: int = 0  # judged CADENCE buckets (OK or a lost scrape: counted as missing)
     partial: bool = False  # some judged bucket short of expected
     alive: bool = False  # has a judged bucket (several-series claims: inside its own span)
     sampled: bool = False  # has a sample in the window
@@ -168,8 +173,16 @@ def _judge(g: pl.DataFrame, start_ms: int, end_ms: int, step_ms: int, own_span: 
     beats absent in bucket_state, so a failed fetch before the first sample hides whether there
     were samples, and what the series' span is."""
     m = _Member(g["series_id"][0])
+    # a CADENCE unknown is "OK, or one lost scrape" (bucket_state §5.1): not untrusted, judged as
+    # a missing sample (the cautious reading), and named
+    cad = (pl.col("state") == int(State.UNKNOWN)) & ((pl.col("flags") & int(Flag.CADENCE)) != 0)
+    typical = g.filter(pl.col("state").is_in([int(State.OK), int(State.PARTIAL)]))["expected"]
+    g = g.with_columns(
+        cad.alias("_cad"),
+        pl.when(cad).then(typical.median() or 1.0).otherwise(pl.col("expected")).alias("expected"),
+    )
     w = g.filter(_in_window(start_ms, end_ms, step_ms))
-    unknown_ts = w.filter(pl.col("state") == int(State.UNKNOWN))["ts_ms"]
+    unknown_ts = w.filter((pl.col("state") == int(State.UNKNOWN)) & ~pl.col("_cad"))["ts_ms"]
     m.unknown = unknown_ts.len() > 0
     seen = g.filter(pl.col("observed") > 0)["ts_ms"]
     if seen.len() and w.height:
@@ -201,7 +214,8 @@ def _judge(g: pl.DataFrame, start_ms: int, end_ms: int, step_ms: int, own_span: 
         w = w.filter(pl.col("state") != int(State.ABSENT))  # never sampled: all of it is silent
     m.alive = w.height > 0 or m.unknown
     m.sampled = bool((w["observed"] > 0).any())
-    known = w.filter(pl.col("state") != int(State.UNKNOWN))
+    known = w.filter((pl.col("state") != int(State.UNKNOWN)) | pl.col("_cad"))
+    m.cadence = known["_cad"].sum()
     exp = known["expected"].sum()
     m.share = min(1.0, known["observed"].sum() / exp) if exp else 0.0
     m.partial = known.filter(pl.col("state") != int(State.OK)).height > 0
@@ -235,6 +249,15 @@ def _identity(ids: Sequence[str], labels: Labels) -> str | None:
 def _names(sids: Sequence[str], name: Namer) -> str:
     shown = ", ".join(name(s) for s in sids[:MAX_NAMED])
     return shown + (f" and {len(sids) - MAX_NAMED} more" if len(sids) > MAX_NAMED else "")
+
+
+def _cadence_text(members: Sequence[_Member]) -> str:
+    """CADENCE buckets among the judged ones: what they are and how they were counted."""
+    n = sum(m.cadence for m in members)
+    if not n:
+        return ""
+    return (f" {n} bucket(s) without samples are {CADENCE_OR_LOSS} ({CADENCE_REASON}); they "
+            "count as missing.")  # fmt: skip
 
 
 def _gap_texts(members: Sequence[_Member], name: Namer) -> list[str]:
@@ -324,7 +347,7 @@ def _single(m: _Member, labels: Labels, caveat, selector: str | None) -> list[Ca
                        f"samples in the claim window.{extra}")]  # fmt: skip
     if m.partial or life:
         return [caveat("missing_data", "warn", f"{nm}: {m.share:.0%} of expected samples in the "
-                       f"claim window.{extra}")]  # fmt: skip
+                       f"claim window.{_cadence_text([m])}{extra}")]  # fmt: skip
     return []
 
 
@@ -372,7 +395,8 @@ def _several(
                           f"{n - len(lacking)}.", lacking))  # fmt: skip
     if partial:
         out.append(caveat("missing_data", "warn", f"{len(partial)} of {n} series have fewer "
-                          f"samples than expected in the claim window: {_names(partial, name)}.",
+                          f"samples than expected in the claim window: {_names(partial, name)}."
+                          f"{_cadence_text([m for m in alive if m.sid in partial])}",
                           partial))  # fmt: skip
     if gaps:
         out.append(caveat("long_gap", "warn", f"Long gaps (\u2265 {format_duration(LONG_GAP_MS)}, samples on both sides):"

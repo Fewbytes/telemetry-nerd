@@ -349,7 +349,10 @@ state means something different and must look different:
 | `unknown` | fetch failed, outside retention, source can't tell | hatch | hatch texture |
 
 Flags on top of the states: `reset` (↺ on the plot), `interval_change` (axis tick),
-`stale_marker`, and `source_filled` (the backend invented the value).
+`stale_marker`, `source_filled` (the backend invented the value), `post_gap` (a value computed
+from the sample before a gap), and `cadence` (an `unknown` 0-sample bucket at the regular spacing
+of a series interval a little over the query step, or a scrape lost there: counts cannot tell;
+a coarser or merged bucket that saw samples reads it as `partial`, a claim as missing).
 
 **Rules:**
 - **The rug appears only when something is wrong.** It is the visual form of the

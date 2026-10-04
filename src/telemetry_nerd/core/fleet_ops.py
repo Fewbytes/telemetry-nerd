@@ -55,6 +55,7 @@ from telemetry_nerd.core.wire import Memo, measurement_caveats, sig, sig_list, s
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
 from telemetry_nerd.model.bucket_state import Flag, State, coarsen, grid
 from telemetry_nerd.model.caveats import (
+    CADENCE_REASON,
     MAX_WHERE_SERIES,
     NO_REASON,
     Caveat,
@@ -91,6 +92,7 @@ class Coverage(NamedTuple):
     state: np.ndarray | None  # members x steps State codes
     stale: np.ndarray | None  # members x steps: STALE_MARKER flag
     located: list[Caveat]  # structured caveats, where = {series ids, spans}
+    cadence: np.ndarray | None = None  # members x steps: CADENCE flag (an unknown's reason)
 
 
 class FleetRun(NamedTuple):
@@ -222,7 +224,12 @@ class FleetOps:
         state[r[ok], c[ok]] = df["state"].to_numpy()[ok]
         flags = np.zeros((len(sids), len(ts)), np.uint16)
         flags[r[ok], c[ok]] = df["flags"].to_numpy()[ok]
-        return Coverage(state, (flags & int(Flag.STALE_MARKER)) > 0, list(bundle.caveats))
+        return Coverage(
+            state,
+            (flags & int(Flag.STALE_MARKER)) > 0,
+            list(bundle.caveats),
+            (flags & int(Flag.CADENCE)) > 0,
+        )
 
     @staticmethod
     def _located(meta, f: Fleet, cov: Coverage, sids, ts, step) -> list[Caveat]:
@@ -255,7 +262,13 @@ class FleetOps:
                     [(a, b, str(r)) for a, b, r in meta.failed_spans],
                     [ts[j] for j in np.flatnonzero(steps)],
                     step,
-                ) or [NO_REASON]
+                )
+                if (
+                    cov.cadence is not None
+                    and (cov.cadence[members][:, steps] & unk[members][:, steps]).any()
+                ):
+                    reasons.append(CADENCE_REASON)
+                reasons = reasons or [NO_REASON]
                 out.append(Caveat(
                     code="untrusted_data",
                     message=f"Data unknown for {total(steps)} ({'; '.join(reasons)}): those "

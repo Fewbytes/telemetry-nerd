@@ -387,6 +387,11 @@ def test_cadence_or_loss_buckets_are_unknown_with_their_reason():
     out = run(meta(end=240_000), result(rows, {"a": "a"}))
     assert "untrusted_data" in out["caveats"] and "missing_data" not in out["caveats"]
     assert out["unknown_spans"] and {s[2] for s in out["unknown_spans"]} == {"cadence_or_loss"}
-    # the source's series interval (1.1 s) says which: a cadence, all OK
-    out = run(meta(end=240_000, resolution=1100), result(rows, {"a": "a"}))
+    # the source's series interval (1.1 s, configured or learned) says which: a cadence, all OK
+    known = replace(meta(end=240_000, resolution=1100),
+                    semantics_flags={"series_interval_known": True})  # fmt: skip
+    out = run(known, result(rows, {"a": "a"}))
     assert "untrusted_data" not in out["caveats"] and out["unknown_spans"] == []
+    # an assumed default says nothing (principle 15)
+    out = run(meta(end=240_000, resolution=1100), result(rows, {"a": "a"}))
+    assert "untrusted_data" in out["caveats"]

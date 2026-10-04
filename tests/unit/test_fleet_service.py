@@ -407,3 +407,18 @@ async def test_fleet_panels_refuse_a_log_y_view(tmp_path):
     pid = svc.show(_util_fleet(svc), "q?", mark="fleet").panel.id
     with pytest.raises(ValueError, match="fleet"):
         svc.ws.select_y_view(pid, "user", mode="log")
+
+
+def test_cadence_unknown_members_name_their_reason(tmp_path):
+    """bmt/e4v review: a member whose 0-sample buckets keep a regular spacing (a series interval a
+    little over the step, or a periodic loss) is unknown there for that reason, not 'source could
+    not tell'."""
+    from telemetry_nerd.model.caveats import CADENCE_REASON
+
+    svc = make_service(tmp_path)
+    y, _ = fleet(19, m=10)
+    counts = np.ones(y.shape, dtype=int)
+    y[0, 5::11] = np.nan  # every 11th bucket skipped: 330s scrapes at a 300s step
+    out = svc.fleet(put(svc, y, counts=counts))
+    (unk,) = [c for c in out["located"] if c["code"] == "untrusted_data"]
+    assert CADENCE_REASON in unk["message"] and "could not tell" not in unk["message"]
