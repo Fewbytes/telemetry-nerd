@@ -6,7 +6,11 @@
     </a>
     <nav>
       {{ range .Site.Menus.main }}
+      {{ if eq .Name "GitHub" }}
+      <a href="{{ .URL }}" class="icon-link">{{ partial "icon-github.html" $ }}<span>{{ .Name }}</span></a>
+      {{ else }}
       <a href="{{ .URL }}">{{ .Name }}</a>
+      {{ end }}
       {{ end }}
     </nav>
   </div>

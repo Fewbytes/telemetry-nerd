@@ -40,8 +40,9 @@ a:hover { text-decoration: underline; }
   color: var(--ink);
   font-weight: 600;
 }
-.site-header nav { display: flex; gap: 1.25rem; }
+.site-header nav { display: flex; gap: 1.25rem; align-items: center; }
 .site-header nav a { color: var(--ink-soft); font-size: 0.95rem; }
+.site-header nav a.icon-link { display: flex; align-items: center; gap: 0.35rem; }
 
 main { max-width: 900px; margin: 0 auto; }
 
@@ -94,7 +95,16 @@ main { max-width: 900px; margin: 0 auto; }
   padding: 1.5rem 1.25rem; max-width: 900px;
   color: var(--ink-soft); font-size: 0.9rem;
 }
-.site-footer nav { display: flex; gap: 1rem; }
+.site-footer .made-by { display: flex; align-items: center; gap: 0.4em; flex-wrap: wrap; }
+.site-footer .fewbytes-link { display: inline-flex; align-items: center; }
+.site-footer .fewbytes-link img { display: block; filter: invert(0); }
+.site-footer nav.icon-nav { display: flex; gap: 0.9rem; align-items: center; }
+.site-footer nav.icon-nav a { color: var(--ink-soft); display: flex; }
+.site-footer nav.icon-nav a:hover { color: var(--accent); text-decoration: none; }
+
+@media (prefers-color-scheme: dark) {
+  .site-footer .fewbytes-link img { filter: invert(1); }
+}
 
 @media (prefers-color-scheme: dark) {
   :root {

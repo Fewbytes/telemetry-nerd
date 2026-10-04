@@ -1,9 +1,14 @@
 <footer class="site-footer">
   <div class="wrap">
-    <span>Made by <a href="{{ .Site.Params.twitter }}">Avishai Ish-Shalom</a> at <a href="{{ .Site.Params.github }}">Fewbytes</a>.</span>
-    <nav>
-      <a href="{{ .Site.Params.github }}">GitHub</a>
-      <a href="{{ .Site.Params.twitter }}">{{ .Site.Params.twitterHandle }}</a>
+    <span class="made-by">
+      Made by <a href="{{ .Site.Params.twitter }}">Avishai Ish-Shalom</a> at
+      <a href="https://fewbytes.com" class="fewbytes-link" aria-label="Fewbytes">
+        <img src="/img/fewbytes.svg" alt="Fewbytes" height="22">
+      </a>
+    </span>
+    <nav class="icon-nav">
+      <a href="{{ .Site.Params.github }}" aria-label="GitHub">{{ partial "icon-github.html" . }}</a>
+      <a href="{{ .Site.Params.twitter }}" aria-label="{{ .Site.Params.twitterHandle }} on X">{{ partial "icon-x.html" . }}</a>
     </nav>
   </div>
 </footer>
