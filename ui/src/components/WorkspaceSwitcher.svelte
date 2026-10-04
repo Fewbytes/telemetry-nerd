@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import {
     createWorkspace, fetchWorkspaces, openWorkspace, updateWorkspace, type Snapshot, type WorkspaceInfo,
   } from "../lib/api";
@@ -13,22 +14,38 @@
 
   let open = $state(false);
   let showArchived = $state(false);
-  let archivedList = $state.raw<WorkspaceInfo[]>([]);
+  // null until the archived fetch lands: the live list stays on screen meanwhile
+  let archivedList = $state.raw<WorkspaceInfo[] | null>(null);
   let renaming = $state<string | null>(null);
   let creating = $state(false);
   let error = $state<string | null>(null);
   let root = $state<HTMLElement>();
+  let trigger = $state<HTMLButtonElement>();
+  let now = $state(Date.now());
 
   const activeId = $derived(active?.id ?? "");
   // the list is fresher than the snapshot after a rename of the active workspace
   const title = $derived(workspaces.find((w) => w.id === activeId)?.title ?? active?.title ?? "…");
-  const rows = $derived(sortForSwitcher(showArchived ? archivedList : workspaces, activeId));
+  const rows = $derived(sortForSwitcher(showArchived && archivedList ? archivedList : workspaces, activeId));
 
-  // with "Show archived" on, refetch the full list whenever the live one changes
+  // while open with "Show archived" on, refetch the full list whenever the live one changes;
+  // a later request (or closing / switching off) supersedes any response still in flight
+  let archivedReq = 0;
   $effect(() => {
     void workspaces;
-    if (!showArchived) return;
-    fetchWorkspaces(true).then((l) => (archivedList = l.workspaces)).catch((e) => (error = String(e)));
+    const n = ++archivedReq;
+    if (!open || !showArchived) { archivedList = null; return; }
+    fetchWorkspaces(true)
+      .then((l) => { if (n === archivedReq) archivedList = l.workspaces; })
+      .catch((e) => { if (n === archivedReq) error = String(e); });
+  });
+
+  // "ago" ticks only while the popover is open
+  $effect(() => {
+    if (!open) return;
+    now = Date.now();
+    const t = setInterval(() => (now = Date.now()), 30_000);
+    return () => clearInterval(t);
   });
 
   // one request at a time: a double or held Enter must not create two workspaces
@@ -42,10 +59,19 @@
       .finally(() => (busy = false));
   };
 
-  const close = () => { open = false; renaming = null; creating = false; error = null; };
+  const close = () => {
+    open = false; renaming = null; creating = false; showArchived = false; error = null;
+    trigger?.focus();
+  };
+
+  /** an inline edit ended: put focus back on the button that opened it */
+  const refocus = async (selector: string) => {
+    await tick();
+    root?.querySelector<HTMLElement>(selector)?.focus();
+  };
 
   const ago = (ms: number): string => {
-    const s = Math.max(0, (Date.now() - ms) / 1000);
+    const s = Math.max(0, (now - ms) / 1000);
     if (s < 60) return "just now";
     if (s < 3600) return `${Math.floor(s / 60)}m ago`;
     if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
@@ -55,18 +81,21 @@
   const focusOnMount = (el: HTMLInputElement) => el.focus();
 
   const create = (e: KeyboardEvent & { currentTarget: HTMLInputElement }) => {
-    if (e.key === "Escape") { e.stopPropagation(); creating = false; return; }
+    if (e.key === "Escape") { e.stopPropagation(); creating = false; refocus(".ws-new-btn"); return; }
     if (e.key !== "Enter") return;
     const t = e.currentTarget.value.trim() || defaultTitle(new Date());
     run(() => createWorkspace(t), close);
   };
 
+  const rowSel = (id: string, sub: string) => `[data-workspace-id="${CSS.escape(id)}"] ${sub}`;
+
   const rename = (e: KeyboardEvent & { currentTarget: HTMLInputElement }, w: WorkspaceInfo) => {
-    if (e.key === "Escape") { e.stopPropagation(); renaming = null; return; }
+    if (e.key === "Escape") { e.stopPropagation(); renaming = null; refocus(rowSel(w.id, ".ws-rename")); return; }
     if (e.key !== "Enter") return;
     const t = e.currentTarget.value.trim();
-    if (!t || t === w.title) { renaming = null; return; }
-    run(() => updateWorkspace(w.id, { title: t }), () => (renaming = null));
+    const sel = rowSel(w.id, ".ws-rename");
+    if (!t || t === w.title) { renaming = null; refocus(sel); return; }
+    run(() => updateWorkspace(w.id, { title: t }), () => { renaming = null; refocus(sel); });
   };
 
   const onkeydown = (e: KeyboardEvent) => {
@@ -86,29 +115,29 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="workspace-switcher" bind:this={root} {onkeydown}>
   <button
-    type="button" class="ws-trigger" aria-haspopup="listbox" aria-expanded={open}
+    type="button" class="ws-trigger" bind:this={trigger} aria-haspopup="true" aria-expanded={open} aria-controls="ws-popover"
     onclick={() => { if (open) close(); else { open = true; onopen?.(); } }}
   >
     <span class="ws-title">{title}</span><span aria-hidden="true">▾</span>
   </button>
   {#if open}
-    <div class="ws-popover">
-      <ul role="listbox" aria-label="Investigations">
+    <div class="ws-popover" id="ws-popover">
+      <ul aria-label="Investigations">
         {#each rows as w (w.id)}
-          <li role="option" aria-selected={w.id === activeId} class="ws-row" class:archived={w.archived} data-workspace-id={w.id}>
+          <li class="ws-row" class:current={w.id === activeId} class:archived={w.archived} data-workspace-id={w.id}>
             {#if renaming === w.id}
               <input
                 class="ws-input" aria-label="Rename workspace" value={w.title} use:focusOnMount
                 onkeydown={(e) => rename(e, w)} onblur={() => (renaming = null)}
               />
             {:else}
-              <button type="button" class="ws-open" title={w.question ?? undefined} aria-label="Open {w.title}" onclick={() => run(() => openWorkspace(w.id), close)}>
+              <button type="button" class="ws-open" title={w.question ?? undefined} aria-current={w.id === activeId ? "true" : undefined} onclick={() => run(() => openWorkspace(w.id), close)}>
                 <span class="ws-name">{w.title}</span>
                 <span class="ws-meta">
                   {#if w.archived}archived · {/if}{ago(w.last_activity_ms)} · {w.counts.findings} finding{w.counts.findings === 1 ? "" : "s"}
                 </span>
               </button>
-              <button type="button" class="ws-act" aria-label="Rename {w.title}" onclick={() => (renaming = w.id)}>Rename</button>
+              <button type="button" class="ws-act ws-rename" aria-label="Rename {w.title}" onclick={() => (renaming = w.id)}>Rename</button>
               {#if w.id !== activeId && !w.archived}
                 <button type="button" class="ws-act" aria-label="Archive {w.title}" onclick={() => run(() => updateWorkspace(w.id, { archived: true }))}>Archive</button>
               {/if}
@@ -144,7 +173,7 @@
   }
   ul { list-style: none; margin: 0 0 6px; padding: 0; max-height: 50vh; overflow-y: auto; }
   .ws-row { display: flex; align-items: center; gap: 4px; padding: 2px 0; }
-  .ws-row[aria-selected="true"] .ws-name { font-weight: 600; }
+  .ws-row.current .ws-name { font-weight: 600; }
   .ws-row.archived { opacity: 0.7; }
   .ws-open {
     flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; text-align: left;

@@ -198,6 +198,8 @@ describe("workspace frames in the store", () => {
 
   it("drops a stale snapshot that arrives after a newer one", async () => {
     vi.mocked(fetchWorkspace).mockReset();
+    vi.mocked(fetchWorkspaces).mockReset();
+    vi.mocked(fetchWorkspaces).mockResolvedValue({ active: "w2", workspaces: [], more: 0 });
     const resolvers: ((s: Snapshot) => void)[] = [];
     vi.mocked(fetchWorkspace).mockImplementation(() => new Promise((r) => resolvers.push(r)));
     const ws = createWorkspace();

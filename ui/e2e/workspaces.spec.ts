@@ -10,7 +10,7 @@ test("workspace switcher: new investigation, reopen, follow, archive", async ({ 
   const board = page.locator(`[data-panel-id="${panel.id}"]`);
   await expect(board).toBeVisible();
 
-  const trigger = page.locator("[aria-haspopup=listbox]");
+  const trigger = page.locator(".ws-trigger");
   await expect(trigger).toContainText(firstTitle);
 
   // a second browser page follows the switch without reload
@@ -30,18 +30,18 @@ test("workspace switcher: new investigation, reopen, follow, archive", async ({ 
   await page.getByLabel("New investigation title").fill(secondTitle);
   await page.getByLabel("New investigation title").press("Enter");
   await page.keyboard.press("Enter");
-  const header = page.locator("[aria-haspopup=listbox]");
+  const header = page.locator(".ws-trigger");
   await expect(header).toContainText("second");
   await expect(board).toHaveCount(0);
   await expect(page.locator(".empty")).toContainText("second");
-  await expect(other.locator("[aria-haspopup=listbox]")).toContainText("second");
+  await expect(other.locator(".ws-trigger")).toContainText("second");
   await expect(other.locator(`[data-panel-id="${panel.id}"]`)).toHaveCount(0);
   const all = await (await request.get("/api/workspaces")).json();
   expect(all.workspaces.filter((w: { title: string }) => w.title === secondTitle)).toHaveLength(1);
 
   // reopen the first: its panel is back, on both pages
   await header.click();
-  await page.locator(`[data-workspace-id="${firstId}"]`).getByRole("button", { name: /open/i }).first().click();
+  await page.locator(`[data-workspace-id="${firstId}"]`).locator(".ws-open").click();
   await expect(board).toBeVisible();
   await expect(other.locator(`[data-panel-id="${panel.id}"]`)).toBeVisible();
   await expect(header).toContainText(firstTitle);
@@ -68,6 +68,57 @@ test("workspace switcher: new investigation, reopen, follow, archive", async ({ 
   await page.getByLabel("Show archived").check();
   await expect(page.locator(".ws-row", { hasText: `${secondTitle} renamed` })).toBeVisible();
   await page.keyboard.press("Escape");
-  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect(page.getByRole("list", { name: "Investigations" })).toHaveCount(0);
   await other.close();
+});
+
+test("workspace switcher: focus return, plain-list a11y, archived toggle", async ({ page, request }) => {
+  await seedPanel(request, "Is checkout latency in the switcher a11y test elevated?");
+  await page.goto("/");
+  const trigger = page.locator(".ws-trigger");
+  await expect(trigger).toHaveAttribute("aria-haspopup", "true");
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await trigger.click();
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  const popover = page.locator("#ws-popover");
+  await expect(trigger).toHaveAttribute("aria-controls", "ws-popover");
+
+  // valid pattern: a plain list, no option roles, no buttons nested in options
+  await expect(popover.getByRole("list", { name: "Investigations" })).toBeVisible();
+  await expect(popover.getByRole("option")).toHaveCount(0);
+  // the open action's name carries the activity and finding text
+  await expect(popover.locator(".ws-open").first()).toHaveAccessibleName(/ago|just now/);
+  await expect(popover.locator(".ws-open").first()).toHaveAccessibleName(/\d+ findings?/);
+
+  // Esc in the create input returns focus to New investigation; a second Esc closes and focuses the trigger
+  await page.getByRole("button", { name: "New investigation" }).click();
+  await page.getByLabel("New investigation title").press("Escape");
+  await expect(page.getByRole("button", { name: "New investigation" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(popover).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+
+  // Esc in the rename input returns focus to that row's Rename button
+  await trigger.click();
+  const row = page.locator(".ws-row").first();
+  await row.getByRole("button", { name: /^rename/i }).click();
+  await page.getByRole("textbox", { name: "Rename workspace" }).press("Escape");
+  await expect(row.getByRole("button", { name: /^rename/i })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(popover).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+
+  // outside click closes and returns focus to the trigger; "Show archived" resets on close
+  await trigger.click();
+  await page.getByLabel("Show archived").check();
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  await expect(popover).toHaveCount(0);
+  await trigger.click();
+  await expect(page.getByLabel("Show archived")).not.toBeChecked();
+  // toggling on keeps the current rows visible (no empty flash)
+  const rows = page.locator(".ws-row");
+  const before = await rows.count();
+  await page.getByLabel("Show archived").check();
+  await expect(rows).not.toHaveCount(0);
+  expect(await rows.count()).toBeGreaterThanOrEqual(before);
 });
