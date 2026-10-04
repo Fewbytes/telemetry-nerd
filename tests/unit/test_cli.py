@@ -100,13 +100,14 @@ def test_bridge_tn_daemon_url_unhealthy_exits_with_hint(monkeypatch, caplog):
 def test_ensure_with_tn_daemon_url_does_not_spawn(monkeypatch, capsys):
     from telemetry_nerd import daemon
 
-    monkeypatch.setenv("TN_DAEMON_URL", "http://127.0.0.1:7070")
+    # port 1: nothing listens there, so no live daemon can answer even if a stub is missed
+    monkeypatch.setenv("TN_DAEMON_URL", "http://127.0.0.1:1")
     monkeypatch.setattr(daemon, "healthy", lambda url, timeout=1.0: True)
     monkeypatch.setattr(daemon, "ensure_daemon", lambda s: (_ for _ in ()).throw(AssertionError))
-    # never ask a live daemon on :7070 for its proposals summary (y7hb: no live dependencies)
+    # and never ask a daemon for its proposals summary (y7hb: no live dependencies)
     monkeypatch.setattr(cli, "_retro_lines", lambda url: [])
     cli.main(["ensure"])
-    assert capsys.readouterr().out == "Telemetry Nerd workspace: http://127.0.0.1:7070\n"
+    assert capsys.readouterr().out == "Telemetry Nerd workspace: http://127.0.0.1:1\n"
     monkeypatch.setattr(daemon, "healthy", lambda url, timeout=1.0: False)
     cli.main(["ensure"])
-    assert "no healthy daemon at TN_DAEMON_URL=http://127.0.0.1:7070" in capsys.readouterr().out
+    assert "no healthy daemon at TN_DAEMON_URL=http://127.0.0.1:1" in capsys.readouterr().out

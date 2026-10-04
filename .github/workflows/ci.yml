@@ -83,6 +83,14 @@ jobs:
         working-directory: ui
       - run: npx playwright test
         working-directory: ui
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-results
+          path: |
+            ui/test-results
+            ui/playwright-report
+          if-no-files-found: ignore
 
   image:
     name: Build and push image (version tags only)

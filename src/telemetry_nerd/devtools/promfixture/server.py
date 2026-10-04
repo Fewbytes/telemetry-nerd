@@ -98,13 +98,14 @@ def _selector_matchers(text: str) -> list[Matcher]:
 
 
 def create_app(store: Store, clock=now_ms) -> Starlette:
-    engine = Engine(store)
+    engine = Engine(store, clock=clock)
 
     def matched(p: dict[str, list[str]]):
         start = _one(p, "start")
         end = _one(p, "end")
         lo = parse_time(start) if start else None
-        hi = parse_time(end) if end else None
+        # never list a series whose samples are all still in the future
+        hi = min(parse_time(end), clock()) if end else clock()
         sels = p.get("match[]") or []
         if not sels:
             return store.select([], lo, hi)
@@ -244,7 +245,7 @@ def main(argv: list[str] | None = None) -> None:
 
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=7072)
+    parser.add_argument("--port", type=int, default=7079)
     parser.add_argument("--hours", type=int, default=6, help="demo history before the anchor")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="promfixture: %(message)s")

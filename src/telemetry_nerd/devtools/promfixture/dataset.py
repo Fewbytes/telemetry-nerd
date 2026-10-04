@@ -5,7 +5,14 @@
   sine phase and holes anchored there too, so values depend only on the time since the anchor;
 * `up{job="node-exporter"}` = 1 every 15s from the start of history to a day past the anchor,
   standing in for the dev stack's scrape target (the daemon learns the 15s resolution from it,
-  and the proposals spec reads it as a continuously scraped service).
+  and the proposals spec reads it as a continuously scraped service). Its future samples are
+  invisible until the server's clock reaches them (engine.Engine.visible, server listings), so it
+  behaves as a target that keeps being scraped, and no read or listing ever sees future data.
+
+Anchor/now drift: the demo series end at the anchor (the server's start), while the specs ask
+for windows relative to the daemon's "now", which moves on as the suite runs. Specs read up to
+`now-10m` (`now-5m` for their own imported series), so the suite must finish within ~10 minutes
+of the fixture's start for those windows to stay inside the seeded data (it takes ~1.5 min).
 
 Specs that need more add their own uniquely named series through the import endpoint.
 """

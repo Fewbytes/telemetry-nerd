@@ -63,8 +63,8 @@ e2e *args:
     just ui-build
     cd ui && npx playwright install chromium && npx playwright test {{args}}
 
-# Serve the e2e fixture PromQL source by hand (port 7072), e.g. to point `just serve
-# --source-url http://127.0.0.1:7072 --source-flavor prometheus` at it.
+# Serve the e2e fixture PromQL source by hand (port 7079; --port N), e.g. to point `just serve
+# --source-url http://127.0.0.1:7079 --source-flavor prometheus` at it.
 fixture-source *args:
     uv run python -m telemetry_nerd.devtools.promfixture {{args}}
 

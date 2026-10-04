@@ -253,13 +253,16 @@ def _extrapolated(ts: list[int], vs: list[float], lo: int, hi: int, counter: boo
     dur_end = (hi - ts[-1]) / 1000
     sampled = (ts[-1] - ts[0]) / 1000
     avg = sampled / (len(ts) - 1)
-    if counter and result > 0 and vs[0] >= 0:
-        to_zero = sampled * (vs[0] / result)
-        dur_start = min(dur_start, to_zero)
+    # Prometheus 3 order: a gap >= 1.1 average spacings means the series starts/ends inside the
+    # range (extrapolate half a spacing); then a counter is never extrapolated below zero
     threshold = avg * 1.1
-    interval = sampled
-    interval += dur_start if dur_start < threshold else avg / 2
-    interval += dur_end if dur_end < threshold else avg / 2
+    if dur_start >= threshold:
+        dur_start = avg / 2
+    if counter and result > 0 and vs[0] >= 0:
+        dur_start = min(dur_start, sampled * (vs[0] / result))
+    if dur_end >= threshold:
+        dur_end = avg / 2
+    interval = sampled + dur_start + dur_end
     factor = interval / sampled
     if rate:
         factor /= (hi - lo) / 1000
@@ -476,9 +479,19 @@ Value = float | str | Vector | _M
 
 
 class Engine:
-    def __init__(self, store: Store, lookback_ms: int = LOOKBACK_MS) -> None:
+    def __init__(
+        self,
+        store: Store,
+        lookback_ms: int = LOOKBACK_MS,
+        clock: Callable[[], int] | None = None,
+    ) -> None:
         self.store = store
         self.lookback_ms = lookback_ms
+        #: samples after clock() are not visible yet (a live TSDB has no future data); None: all
+        self.clock = clock
+
+    def visible(self, t: int) -> int:
+        return t if self.clock is None else min(t, self.clock())
 
     # public API -------------------------------------------------------------------------------
 
@@ -550,14 +563,15 @@ class _Ctx:
             te = self._time(t, n.at, n.offset_ms)
             out: Vector = []
             for s in n.series(self.e.store):
-                _, vs = s.window(te - self.e.lookback_ms, te)
+                _, vs = s.window(te - self.e.lookback_ms, self.e.visible(te))
                 if vs:
                     out.append((s.labels, vs[-1]))
             return out
         if isinstance(n, MSel):
             te = self._time(t, n.sel.at, n.sel.offset_ms)
             lo = te - n.range_ms
-            series = [(s.labels, *s.window(lo, te)) for s in n.sel.series(self.e.store)]
+            hi = self.e.visible(te)
+            series = [(s.labels, *s.window(lo, hi)) for s in n.sel.series(self.e.store)]
             return _M([s for s in series if s[1]], lo, te)
         if isinstance(n, Sub):
             return self._subquery(n, t)
@@ -660,7 +674,7 @@ class _Ctx:
             te = self._time(t, arg.at, arg.offset_ms)
             out = []
             for s in arg.series(self.e.store):
-                ts, _ = s.window(te - self.e.lookback_ms, te)
+                ts, _ = s.window(te - self.e.lookback_ms, self.e.visible(te))
                 if ts:
                     out.append((_drop_name(s.labels), ts[-1] / 1000))
             return out

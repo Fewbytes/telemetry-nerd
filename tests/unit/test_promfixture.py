@@ -196,3 +196,31 @@ def test_seeded_data_is_a_function_of_time_since_the_anchor():
     b = relative(T0 + 5 * 3_600_000 + 47 * S)
     assert a == b
     assert all(not math.isnan(v) for _, _, vs in a for v in vs)
+
+
+def test_extrapolation_threshold_applies_before_the_counter_zero_cap():
+    # Prometheus 3 extrapolatedRate: a start gap >= 1.1 average spacings is first cut to half a
+    # spacing, and only then capped by the counter's zero point. Here the gap is 60s (avg 15s ->
+    # 7.5s) and the zero point is 10s back: 7.5s wins. (Prometheus 2 capped first: 10s.)
+    text = "".join(f"c {v} {T0 + i * S}\n" for i, v in enumerate([10, 25, 40, 55, 70]))
+    _, vec = Engine(_store(a=text)).instant("increase(c[2m])", T0 + 4 * S)
+    assert vec[0][1] == pytest.approx(60 * 67.5 / 60)
+
+
+async def test_samples_after_now_are_not_visible_yet(source):
+    # `up` is generated past the anchor so it keeps "arriving" while the suite runs; a sample is
+    # visible only once the server's clock has reached it (no future data in reads or listings)
+    src, anchor = source
+    client = src._client
+    await client.post(
+        "http://fx/api/v1/import/prometheus", content=f"tn_e2e_future 1 {anchor + 60_000}\n"
+    )
+    names = (await client.get("http://fx/api/v1/label/__name__/values")).json()["data"]
+    assert "tn_e2e_future" not in names and "up" in names
+    series = (
+        await client.get("http://fx/api/v1/series", params={"match[]": "tn_e2e_future"})
+    ).json()
+    assert series["data"] == []
+    later = {"query": "up[10m]", "time": f"{(anchor + 60_000) / 1000}"}
+    (row,) = (await client.get("http://fx/api/v1/query", params=later)).json()["data"]["result"]
+    assert float(row["values"][-1][0]) * 1000 == anchor  # the samples after it are not in yet

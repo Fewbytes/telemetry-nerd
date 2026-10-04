@@ -40,6 +40,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/telemetry_nerd"]
+# test-only: the e2e fixture PromQL source needs the dev-only promql-parser (bead y7hb)
+exclude = ["src/telemetry_nerd/devtools/promfixture"]
 
 # Bundles ui/dist as telemetry_nerd/ui_dist (see hatch_build.py).
 [tool.hatch.build.targets.wheel.hooks.custom]

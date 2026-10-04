@@ -28,7 +28,6 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import cramjam
 import httpx
 
 PROM = "http://127.0.0.1:19090"
@@ -86,6 +85,8 @@ def write_request(series: list[tuple[dict[str, str], list[tuple[int, float]]]]) 
         ts = b"".join(_label(k, labels[k]) for k in sorted(labels))
         ts += b"".join(_sample(v, t) for t, v in samples)
         body += _ld(1, ts)
+    import cramjam  # script-only dependency; lazy so tests can import seed_series (y7hb)
+
     return bytes(cramjam.snappy.compress_raw(body))
 
 
