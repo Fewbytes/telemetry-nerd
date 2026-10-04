@@ -247,5 +247,7 @@ tests, threshold fractions and the rest) are coming. Until then:
   of these design choices is deliberate.
 - The [architecture](/architecture/) page explains how the plugin, the MCP bridge and the daemon
   fit together, and how to point Telemetry Nerd at a daemon running on another machine.
+- The [glossary](/glossary/) covers the vocabulary a panel uses — envelope, coverage rug,
+  operating profile and the rest — if a term above wasn't obvious.
 - The [GitHub repository](https://github.com/Fewbytes/telemetry-nerd) has the install docs, the
   design principles, and the graphing guide the panels are built on.

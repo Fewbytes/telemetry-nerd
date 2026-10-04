@@ -37,7 +37,9 @@ Telemetry Nerd draws telemetry the way a careful scientist would:
   so you can check what Claude concluded and why.
 
 The full set of design principles, with the decisions behind them, is in
-[`docs/principles.md`](docs/principles.md).
+[`docs/principles.md`](docs/principles.md). The precise vocabulary behind terms like "query
+step", "series interval" and "envelope" — the one used consistently in specs, skills and panel
+text — is in [`docs/glossary.md`](docs/glossary.md).
 
 ## It knows what your metrics mean
 
