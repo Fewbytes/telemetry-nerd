@@ -8,6 +8,7 @@ from telemetry_nerd.model.series import BUCKET_SCHEMA, SERIES_SCHEMA, FetchResul
 from telemetry_nerd.model.time import TimeRange
 from telemetry_nerd.workspace.models import StatisticRef
 from tests.unit.fakes import make_service
+from tests.unit.test_autocorr import ar1_series
 
 M = 60_000
 N = 1440
@@ -193,3 +194,20 @@ def test_signals_before_a_small_shift_are_source_undetermined(tmp_path):
     assert s["spc"]["in_control"] is False
     und = [v for v in s["variation"] if v["source"] == "undetermined"]
     assert und and "run rules" in und[0]["finding"]
+
+
+def test_a_shift_only_the_point_model_sees_is_listed_undetermined(tmp_path):
+    # nbz: a step significant under the bias-corrected AR(1) point model but not the cautious one
+    # is context (principle 16): listed apart with both p values, no level_shifted label
+    svc = make_service(tmp_path)
+    t = np.arange(64)
+    y = ar1_series(64, 0.6, 1) + 10 + np.where(t >= 32, 2.5, 0.0)
+    d = svc.datasets.put(
+        source="default", expr="queue_depth", rng=TimeRange(0, 63 * M), step_ms=M,
+        resolution_ms=15_000, result=buckets(y), representation="bucket_agg",
+    ).id  # fmt: skip
+    (s,) = svc.analyze(d)["series"]
+    assert "level_shifted" not in (s["verdict"], *s["also"]) and s["stability"]["shifts"] == []
+    (u,) = s["stability"]["shifts_undetermined"]
+    assert u["source"] == "undetermined" and u["at"].startswith("1970-01-01T00:32")
+    assert u["p_point"] < 0.01 <= u["p"]

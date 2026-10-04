@@ -83,6 +83,9 @@ class Diagnosis:
     departure: Departure | None = None  # events after an all-zero baseline (event counts only)
     #: judged points against the baseline when no control chart judges them or n_eff < 10
     excursion: Excursion | None = None
+    #: level shifts significant only under the changepoint test's point model, not the cautious
+    #: one the label rests on (principle 16): context, never a label or the step model
+    shifts_undetermined: list[Shift] = field(default_factory=list)
 
     @property
     def shifted_from(self) -> int | None:
@@ -113,13 +116,21 @@ class Structure:
     shifts: list[Shift]
     fitted: np.ndarray
     resid: np.ndarray
+    undetermined: list[Shift]  # significant under the point model only (changepoints)
 
 
 def structure(pos, ts_ms, t_s, y, span_ms) -> Structure:
-    """Best of constant / linear trend / significant level shifts, by BIC."""
+    """Best of constant / linear trend / significant level shifts, by BIC. The step model takes
+    the shifts that hold under the changepoint test's cautious model; those only its point model
+    sees are kept as undetermined (none within MIN_SEGMENT of a labelled one)."""
     n = y.size
     tr = trend(pos, ts_ms, y, span_ms)
     shifts = changepoints(pos, ts_ms, y)
+    undetermined = [
+        u
+        for u in changepoints(pos, ts_ms, y, cautious=False)
+        if all(abs(u.index - s.index) >= MIN_SEGMENT for s in shifts)
+    ]
     fits = {"none": np.full(n, y.mean())}
     t = t_s - t_s.mean()
     fits["trend"] = y.mean() + (t @ (y - y.mean())) / (t @ t) * t
@@ -129,7 +140,7 @@ def structure(pos, ts_ms, t_s, y, span_ms) -> Structure:
     k = {"none": 1, "trend": 2, "step": 2 * len(shifts) + 1}
     bics = {m: _bic(float(np.sum((y - f) ** 2)), n, k[m]) for m, f in fits.items()}
     model = min(bics, key=bics.__getitem__)
-    return Structure(model, tr, shifts, fits[model], y - fits[model])
+    return Structure(model, tr, shifts, fits[model], y - fits[model], undetermined)
 
 
 def _chart(ts_ms, y, step_ms, pos, t_s, baseline, harm, reference, profile) -> ControlChart:
@@ -611,4 +622,5 @@ def diagnose(
     return Diagnosis(
         order[0], order[1:], reasons, n, tau, ne, peaks, confirmed, cands, harm if peaks else None, tr, shifts,
         sigma_within, stationarity, vr, sh, chart, model, caveats, var, dep, exc,
+        final.undetermined,
     )  # fmt: skip

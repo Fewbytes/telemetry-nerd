@@ -107,6 +107,16 @@ def test_a_short_series_is_judged_without_a_period_search():
     assert not d.peaks and d.shifts[0].ts_ms == 16 * M
 
 
+def test_a_shift_only_the_point_model_sees_is_undetermined_not_level_shifted():
+    """Principle 16 (nbz): a step significant under the bias-corrected AR(1) phi but not under
+    the cautious one (phi + 1 SE) is reported as undetermined context, never the step model."""
+    t = np.arange(64)
+    d = run(ar1_series(64, 0.6, 1) + np.where(t >= 32, 2.5, 0.0))
+    assert "level_shifted" not in (d.verdict, *d.also) and not d.shifts, d.reasons
+    (u,) = d.shifts_undetermined
+    assert u.index == 32 and u.p_point < 0.01 <= u.p
+
+
 # --- departure from an all-zero baseline (event counts) ---------------------------------------
 
 BURST = np.r_[np.zeros(14), [9.0, 14, 12, 13, 13], np.zeros(3)]  # round 4 payment: 61 errors

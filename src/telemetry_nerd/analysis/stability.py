@@ -29,6 +29,20 @@ ALPHA = 0.01
 MIN_SEGMENT = 8
 MAX_CHANGEPOINTS = 3
 PHI_CAP = 0.99  # long-run variance sigma_e / (1 - phi) explodes near a random walk
+PHI_SE_CAUTIOUS = 1.0  # the cautious level-shift model: phi this many SEs above its estimate
+# fitted mean-model parameters behind a changepoint test's residuals (the AR(1) bias count):
+# a step = 2 segment means + its selected boundary; a pulse = 3 means + 2 selected boundaries
+K_STEP, K_PULSE = 3, 5
+SHIFT_METHOD = (
+    "CUSUM changepoint, binary segmentation; step (Kolmogorov null) or pulse (Kuiper null), "
+    "Bonferroni over both. Scale: AR(1) long-run sigma sigma_e / (1 - phi) of the split "
+    "model's residuals, phi corrected for its short-sample bias (Kendall / Marriott-Pope, "
+    "one parameter per segment mean and per selected boundary), two models: (a) point, the "
+    "corrected phi (p_point, context); (b) cautious, phi one standard error higher (p; the "
+    "label rests on it, shifts only (a) finds are listed as undetermined). 99% interval on "
+    "the delta under (b). Assumes AR(1) noise around piecewise-constant means; on ~3 "
+    "effective samples (phi 0.9, 64 points) the simulated false-alarm rate is ~2%, not 1%"
+)
 KPSS_LEVEL = ((0.10, 0.347), (0.05, 0.463), (0.025, 0.574), (0.01, 0.739))
 BIMODAL_BC = 5 / 9
 HOUR_MS = 3_600_000
@@ -111,6 +125,7 @@ class Shift:
     stat: float
     n_before: int
     n_after: int
+    p_point: float  # the same test under the point model (bias-corrected phi): optimistic context
 
 
 def _split_cusum(y: np.ndarray) -> tuple[int, float]:
@@ -120,25 +135,36 @@ def _split_cusum(y: np.ndarray) -> tuple[int, float]:
     return k + 1, float(abs(s[k]))
 
 
-def _long_run_sigma(pos: np.ndarray, resid: np.ndarray, segments: int = 0) -> float:
-    """sigma_e / (1 - phi) of AR(1) residuals. `segments` > 0: phi is first corrected for the
-    downward bias of fitting it to that many separately demeaned segments (Kendall 1954:
-    E[phi_hat] - phi ~ -(1 + 3 phi) / n per segment mean, n samples in all)."""
+def ar1_phi_unbiased(phi_hat: float, n: int, k: int) -> float:
+    """AR(1) phi corrected for the downward bias of fitting it to the residuals of a mean model
+    with k parameters over n samples (k separately demeaned segments, a boundary chosen from the
+    data counting as one more). Kendall (1954), Marriott & Pope (1954): E[phi_hat] ~ phi -
+    k (1 + 3 phi) / n, solved for phi. Undefined when n <= 4k: PHI_CAP (cautious)."""
+    if n <= 4 * k:
+        return PHI_CAP
+    return min((n * phi_hat + k) / (n - 3 * k), PHI_CAP)
+
+
+def _long_run_sigma(pos: np.ndarray, resid: np.ndarray, k: int) -> tuple[float, float]:
+    """sigma_e / (1 - phi) of AR(1) residuals of a k-parameter mean model, under two models:
+    point (phi bias-corrected, ar1_phi_unbiased) and cautious (phi PHI_SE_CAUTIOUS standard
+    errors higher: on short series phi_hat is noisy and 1 / (1 - phi) convex, so the point
+    sigma is still too small too often). (point, cautious); phi <= 0 counts as 0."""
     fit = ar1(pos, resid)
-    phi = fit.phi
-    if segments and phi > 0:
-        phi += segments * (1 + 3 * phi) / max(resid.size, 1)
-    phi = min(phi, PHI_CAP)
-    return fit.sigma_e / (1 - phi) if phi > 0 else fit.sigma_e
+    n = resid.size
+    phi = ar1_phi_unbiased(fit.phi, n, k)
+    lo = max(phi, 0.0)
+    up = min(lo + PHI_SE_CAUTIOUS * math.sqrt((1 - lo * lo) / max(n, 1)), PHI_CAP)
+    return fit.sigma_e / (1 - lo), fit.sigma_e / (1 - up)
 
 
-def _delta(pos, before, after) -> tuple[float, tuple[float, float], float]:
-    """Mean after - mean before of adjacent segments, its 1 - ALPHA interval, and the long-run
-    sigma of the two-segment residuals it rests on."""
-    slr = _long_run_sigma(pos, np.r_[before - before.mean(), after - after.mean()])
+def _delta(pos, before, after) -> tuple[float, tuple[float, float], float, float]:
+    """Mean after - mean before of adjacent segments, its 1 - ALPHA interval (cautious model),
+    and the (point, cautious) long-run sigma of the two-segment residuals it rests on."""
+    slr, slr_c = _long_run_sigma(pos, np.r_[before - before.mean(), after - after.mean()], K_STEP)
     delta = float(after.mean() - before.mean())
-    half = z_of(1 - ALPHA / 2) * slr * math.sqrt(1 / before.size + 1 / after.size)
-    return delta, (delta - half, delta + half), slr
+    half = z_of(1 - ALPHA / 2) * slr_c * math.sqrt(1 / before.size + 1 / after.size)
+    return delta, (delta - half, delta + half), slr, slr_c
 
 
 def _split_epidemic(y: np.ndarray) -> tuple[int, int, float] | None:
@@ -160,49 +186,63 @@ def _split_epidemic(y: np.ndarray) -> tuple[int, int, float] | None:
     return a, b, float(max(up[j], down[j]))
 
 
-def _one_split(pos, ts_ms, y) -> Shift | None:
+def _one_split(pos, ts_ms, y, cautious: bool = True) -> Shift | None:
     """The most significant change of `y` against two alternatives, Bonferroni over both (each
     tested at ALPHA / 2, the reported p is 2 x the smaller): one step (CUSUM, Kolmogorov null)
     or a segment that departs and returns, a pulse (largest CUSUM range, Kuiper null). A single
     split misses a pulse in the middle: the unmodelled return inflates the long-run sigma of the
     two-segment residuals. A pulse is reported at whichever of its edges is the stronger single
-    change; binary segmentation then finds the other edge."""
+    change; binary segmentation then finds the other edge. `cautious`: the alternatives are
+    ranked by p (the cautious model), else by p_point."""
     n = y.size
     if n < 2 * MIN_SEGMENT:
         return None
     k, s = _split_cusum(y)
     a, b = y[:k], y[k:]
-    delta, interval, slr = _delta(pos, a, b)
+    delta, interval, slr, slr_c = _delta(pos, a, b)
     best: Shift | None = None
-    if slr > 0:
-        stat = s / (slr * math.sqrt(n))
-        best = Shift(k, int(ts_ms[k]), delta, interval, kolmogorov_sf(stat), stat, int(a.size), int(b.size))  # fmt: skip
+    if slr_c > 0:
+        stat = s / (slr_c * math.sqrt(n))
+        p_point = kolmogorov_sf(s / (slr * math.sqrt(n)))
+        best = Shift(k, int(ts_ms[k]), delta, interval, kolmogorov_sf(stat), stat, int(a.size), int(b.size), p_point)  # fmt: skip
     epi = _split_epidemic(y)
     if epi is not None:
         lo, hi, v = epi
         parts = (y[:lo], y[lo:hi], y[hi:])
-        slr3 = _long_run_sigma(pos, np.concatenate([p - p.mean() for p in parts]), len(parts))
-        if slr3 > 0:
-            stat = v / (slr3 * math.sqrt(n))
+        slr3, slr3_c = _long_run_sigma(pos, np.concatenate([p - p.mean() for p in parts]), K_PULSE)
+        if slr3_c > 0:
+            stat = v / (slr3_c * math.sqrt(n))
             p = kuiper_sf(stat)
-            if best is None or p < best.p:
+            p_point = kuiper_sf(v / (slr3 * math.sqrt(n)))
+            if best is None or (
+                (p, p_point) < (best.p, best.p_point)
+                if cautious
+                else (p_point, p) < (best.p_point, best.p)
+            ):
                 edge = lo if abs(parts[1].mean() - parts[0].mean()) >= abs(parts[2].mean() - parts[1].mean()) else hi  # fmt: skip
-                d, iv, _ = _delta(pos, y[:edge], y[edge:])
-                best = Shift(edge, int(ts_ms[edge]), d, iv, p, stat, edge, n - edge)
+                d, iv, *_ = _delta(pos, y[:edge], y[edge:])
+                best = Shift(edge, int(ts_ms[edge]), d, iv, p, stat, edge, n - edge, p_point)
     if best is None:
         return None
-    return replace(best, p=min(1.0, 2 * best.p))
+    return replace(best, p=min(1.0, 2 * best.p), p_point=min(1.0, 2 * best.p_point))
 
 
-def changepoints(pos: np.ndarray, ts_ms: np.ndarray, y: np.ndarray) -> list[Shift]:
+def changepoints(
+    pos: np.ndarray, ts_ms: np.ndarray, y: np.ndarray, cautious: bool = True
+) -> list[Shift]:
     """Binary segmentation with the CUSUM test (Kolmogorov null, long-run sigma from AR(1)
-    residuals of the split model). At most MAX_CHANGEPOINTS, segments >= MIN_SEGMENT."""
+    residuals of the split model). At most MAX_CHANGEPOINTS, segments >= MIN_SEGMENT. A shift
+    is kept when significant under the cautious long-run sigma (_long_run_sigma): a label rests
+    on it; its p_point (the bias-corrected point model) is context. `cautious=False` keeps the
+    shifts significant under the point model instead: for locating a change another test has
+    already established, or reporting the undetermined ones, never for a label. On ~3 effective samples (phi 0.9 at n 64) the
+    false-alarm rate is still ~2%, not the nominal 1% (simulated, bead nbz)."""
     found: list[Shift] = []
     todo = [(0, y.size)]
     while todo and len(found) < MAX_CHANGEPOINTS:
         a, b = todo.pop(0)
-        sh = _one_split(pos[a:b], ts_ms[a:b], y[a:b])
-        if sh is None or sh.p >= ALPHA:
+        sh = _one_split(pos[a:b], ts_ms[a:b], y[a:b], cautious)
+        if sh is None or (sh.p if cautious else sh.p_point) >= ALPHA:
             continue
         k = a + sh.index
         found.append(replace(sh, index=k))
@@ -213,7 +253,7 @@ def changepoints(pos: np.ndarray, ts_ms: np.ndarray, y: np.ndarray) -> list[Shif
     bounds = [0, *[s.index for s in found], y.size]
     for i, sh in enumerate(found):
         before, after = y[bounds[i] : bounds[i + 1]], y[bounds[i + 1] : bounds[i + 2]]
-        delta, interval, _ = _delta(pos[bounds[i] : bounds[i + 2]], before, after)
+        delta, interval, *_ = _delta(pos[bounds[i] : bounds[i + 2]], before, after)
         out.append(replace(sh, delta=delta, interval=interval, n_before=int(before.size), n_after=int(after.size)))  # fmt: skip
     return out
 

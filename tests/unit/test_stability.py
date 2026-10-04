@@ -56,6 +56,48 @@ def test_short_white_noise_keeps_the_false_alarm_rate():
     assert found <= 9  # 4 expected at 1%; P(> 9) < 1%
 
 
+def _far(n, phi, runs, seed):
+    pos, ts = grid(n)
+    return sum(
+        bool(changepoints(pos, ts, ar1_series(n, phi, seed * 10_000 + i))) for i in range(runs)
+    )
+
+
+@pytest.mark.parametrize("n", [64, 128])
+@pytest.mark.parametrize("phi", [0.0, 0.6])
+def test_short_autocorrelated_noise_keeps_the_false_alarm_rate(n, phi):
+    # nbz: AR(1) phi fitted to short, separately demeaned split residuals is biased low (Kendall
+    # -(1 + 3 phi) / n per segment, more for a selected boundary), so the long-run sigma was too
+    # small: 21 of 400 at n 64, phi 0.6 (5%; nominal 1%). Bound 9 of 400: P(> 9 | 1%) = 0.8%
+    # (Binomial(400, p)); a true FAR of 5% passes with P = 0.4%. Now 1-5 of 400.
+    assert _far(n, phi, 400, seed=n) <= 9
+
+
+@pytest.mark.parametrize("n", [64, 128])
+def test_near_unit_root_short_noise_false_alarm_rate_is_bounded(n):
+    # phi 0.9 at n 64 is ~3 effective samples: the cautious phi still runs low often enough for
+    # a simulated FAR of ~2% (1000 runs; SHIFT_METHOD states it); was 25%. Bound 16 of 400:
+    # P(> 16 | 2%) = 0.3%, a true 8% passes with P = 0.1%. Was 107 / 62 of 400, now 2 / 8.
+    assert _far(n, 0.9, 400, seed=n + 1) <= 16
+
+
+def test_a_shift_only_the_point_model_sees_is_kept_apart():
+    # AR(1) phi 0.6 plus a 2.5-unit step at 32 of 64: significant under the bias-corrected point
+    # phi, not under the cautious one (phi + 1 SE): no labelled shift, the point model finds it
+    pos, ts = grid(64)
+    y = ar1_series(64, 0.6, 1) + np.where(pos >= 32, 2.5, 0.0)
+    assert changepoints(pos, ts, y) == []
+    (sh,) = changepoints(pos, ts, y, cautious=False)
+    assert sh.index == 32 and sh.p_point < 0.01 <= sh.p
+
+
+def test_point_p_is_never_above_the_cautious_p():
+    pos, ts = grid(128)
+    for s in range(20):
+        y = ar1_series(128, 0.7, s) + np.where(pos >= 50, 3.0, 0.0)
+        assert all(sh.p_point <= sh.p for sh in changepoints(pos, ts, y, cautious=False))
+
+
 def test_trend_interval_covers_truth_under_ar1():
     pos, ts = grid(600)
     hits = 0

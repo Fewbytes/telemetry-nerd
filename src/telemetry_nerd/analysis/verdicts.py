@@ -340,11 +340,15 @@ class Judgement:
 
 def _shift(cp_y: np.ndarray, side: int | None) -> tuple[int, int, object] | None:
     """The first significant single changepoint (stability.changepoints) in direction `side`
-    (any when None): (block, Bai 95% half-width in blocks, the shift)."""
+    (any when None): (block, Bai 95% half-width in blocks, the shift). Significant under the
+    changepoint test's point model (p_point): it only dates a change the level / episode tests
+    already established (the label rests on them), and the cautious long-run sigma would miss
+    the onset of a clear step on a short, autocorrelated window. Its interval (hence Bai's)
+    is still the cautious one."""
     pos = np.flatnonzero(~np.isnan(cp_y))
     if pos.size == 0:
         return None
-    for sh in changepoints(pos.astype(np.int64), pos.astype(np.int64), cp_y[pos]):
+    for sh in changepoints(pos.astype(np.int64), pos.astype(np.int64), cp_y[pos], cautious=False):
         if sh.delta == 0 or (side is not None and (sh.delta > 0) != (side > 0)):
             continue
         half = (sh.interval[1] - sh.interval[0]) / 2

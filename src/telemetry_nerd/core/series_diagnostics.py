@@ -27,9 +27,10 @@ from telemetry_nerd.analysis.excursion import Excursion
 from telemetry_nerd.analysis.exprkind import events_per_step, range_windows_ms, rate_interval_ms
 from telemetry_nerd.analysis.profile import seasonal_shape
 from telemetry_nerd.analysis.seasonal import DEFAULT_K, cycle_shifts
-from telemetry_nerd.analysis.sources import COMMON, SPECIAL
+from telemetry_nerd.analysis.sources import COMMON, SPECIAL, UNDETERMINED
 from telemetry_nerd.analysis.spc import CUSUM_H, CUSUM_K, EWMA_L, EWMA_LAMBDA
 from telemetry_nerd.analysis.spectrum import MIN_POINTS, spectrum
+from telemetry_nerd.analysis.stability import SHIFT_METHOD
 from telemetry_nerd.core.profiles import SeasonalShapes
 from telemetry_nerd.core.signal_ops import (
     SPECTRUM_CAP,
@@ -526,16 +527,30 @@ class SeriesDiagnostics:
             item = {
                 "at": iso(s.ts_ms), "delta": sig(s.delta), "interval": sig_pair(s.interval),
                 "sigma_units": sig(abs(s.delta) / d.sigma_within, 3), "p": sig(s.p, 2),
+                "p_point": sig(s.p_point, 2), "label_rests_on": "cautious",
                 "n_before": s.n_before, "n_after": s.n_after, "source": SPECIAL,
             }  # fmt: skip
             if d.model == "step":
                 item["evidence"] = ev(
                     "level_shift", s.delta, s.interval,
-                    "CUSUM changepoint (Kolmogorov null, AR(1) long-run sigma), 99% interval",
-                    source=SPECIAL, at=iso(s.ts_ms), p=s.p,
+                    SHIFT_METHOD,
+                    source=SPECIAL, at=iso(s.ts_ms), p=s.p, p_point=sig(s.p_point, 2),
                 )  # fmt: skip
             shifts.append(item)
         stability = {"trend": trend, "shifts": shifts, "sigma_within": sig(d.sigma_within)}
+        if d.shifts_undetermined:
+            # significant under the point model only: "a shift under the point AR(1) model
+            # (p_point), not under the cautious one (p)", never a special cause
+            stability["shifts_undetermined"] = [
+                {
+                    "at": iso(s.ts_ms),
+                    "delta": sig(s.delta),
+                    "p_point": sig(s.p_point, 2),
+                    "p": sig(s.p, 2),
+                    "source": UNDETERMINED,
+                }
+                for s in d.shifts_undetermined
+            ]
         if d.departure is not None:
             stability["departure"] = _departure_wire(d.departure, ev)
         if d.excursion is not None:
