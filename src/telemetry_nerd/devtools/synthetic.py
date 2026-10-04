@@ -127,6 +127,43 @@ def demo_text(
     return "".join(parts)
 
 
+SPC_DEMO_STEPS = 240
+SPC_DEMO_SPIKE = 170  # index of the planted spike (judged half)
+SPC_DEMO_SHIFT = (200, 216)  # [lo, hi): a sustained shift (supplementary run rules)
+
+
+def spc_demo_values(phi: float = 0.0, seed: int = 11) -> list[float]:
+    """A stationary gauge (level 100, marginal sd 2, AR(1) with `phi`) with two special causes
+    in its second half, clear of any control limit the first half can produce (bead ax1s):
+    a +15 sd spike at SPC_DEMO_SPIKE, and a +2.5 sd shift over SPC_DEMO_SHIFT. Values depend
+    only on the index, never on wall-clock time."""
+    rng = random.Random(seed)
+    sd = 2.0
+    innov = sd * math.sqrt(1 - phi * phi)
+    e = rng.gauss(0, sd)
+    out = []
+    for i in range(SPC_DEMO_STEPS):
+        if i:
+            e = phi * e + rng.gauss(0, innov)
+        v = 100 + e
+        if i == SPC_DEMO_SPIKE:
+            v += 15 * sd
+        if SPC_DEMO_SHIFT[0] <= i < SPC_DEMO_SHIFT[1]:
+            v += 2.5 * sd
+        out.append(round(v, 4))
+    return out
+
+
+def spc_demo_text(metric: str, end_ms: int, step_ms: int = 60_000, phi: float = 0.0) -> str:
+    """`spc_demo_values` as exposition text on a whole-step grid ending at `end_ms`, so a
+    query over exactly [first, last] at `step_ms` buckets one sample per step, every run."""
+    if end_ms % step_ms:
+        raise ValueError(f"end_ms {end_ms} must be a whole step multiple ({step_ms} ms)")
+    start = end_ms - (SPC_DEMO_STEPS - 1) * step_ms
+    vals = spc_demo_values(phi)
+    return exposition(metric, {}, [(start + i * step_ms, v) for i, v in enumerate(vals)])
+
+
 def periodic_buckets(
     start_ms,
     end_ms,

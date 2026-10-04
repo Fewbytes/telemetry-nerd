@@ -1,4 +1,17 @@
-from telemetry_nerd.devtools.synthetic import demo_text, exposition, periodic_buckets
+import numpy as np
+import pytest
+
+from telemetry_nerd.analysis.spc import DECIDING, control_chart
+from telemetry_nerd.devtools.synthetic import (
+    SPC_DEMO_SHIFT,
+    SPC_DEMO_SPIKE,
+    SPC_DEMO_STEPS,
+    demo_text,
+    exposition,
+    periodic_buckets,
+    spc_demo_text,
+    spc_demo_values,
+)
 
 
 def test_exposition_format():
@@ -98,3 +111,48 @@ def test_demo_text_origin_makes_the_series_a_function_of_time_since_origin():
         return out
 
     assert shifted(a) == shifted(b)
+
+
+# --- the e2e SPC series (bead ax1s) -----------------------------------------------------------
+
+
+def _spc(y: np.ndarray):
+    pos = np.arange(y.size)
+    return control_chart(pos, pos * 60.0, y, pos < y.size // 2)  # the panel's default baseline
+
+
+@pytest.mark.parametrize(("phi", "mode"), [(0.0, "individuals"), (0.7, "ar1_residuals")])
+def test_spc_demo_has_an_unambiguous_special_cause_in_either_mode(phi, mode):
+    """The spc spec asserts a flagged point: it must not depend on noise sitting near a limit."""
+    y = np.array(spc_demo_values(phi=phi))
+    c = _spc(y)
+    assert c.mode == mode
+    # flagged by a deciding rule (on the residuals in ar1 mode) and outside the drawn band
+    assert SPC_DEMO_SPIKE in c.detectors["beyond_3sigma"].indices
+    assert SPC_DEMO_SPIKE in c.outside.indices
+    # twice the 3-sigma distance even at the pessimistic ends of the limits' 99% intervals
+    assert (y[SPC_DEMO_SPIKE] - c.centre_interval[1]) / c.sigma_interval[1] > 6
+
+
+def test_spc_demo_has_supplementary_only_flags_for_the_toggle():
+    """The spec unchecks 'supplementary rules' and expects fewer marks: some flagged points must
+    be flagged by run rules only."""
+    c = _spc(np.array(spc_demo_values()))
+    deciding = {
+        i for i, rules in c.violations().items() if set(rules) & {*DECIDING, "outside_limits"}
+    }
+    supplementary_only = set(c.violations()) - deciding
+    lo, hi = SPC_DEMO_SHIFT
+    assert any(lo <= i < hi for i in supplementary_only)
+
+
+def test_spc_demo_text_is_the_same_series_on_any_step_grid():
+    a = spc_demo_text("m", end_ms=1_800_000_000_000)
+    b = spc_demo_text("m", end_ms=1_800_000_000_000 + 37 * 60_000)
+    va = [ln.split()[1] for ln in a.splitlines()]
+    vb = [ln.split()[1] for ln in b.splitlines()]
+    assert va == vb and len(va) == SPC_DEMO_STEPS
+    ts = [int(ln.split()[2]) for ln in b.splitlines()]
+    assert ts[-1] == 1_800_000_000_000 + 37 * 60_000 and all(t % 60_000 == 0 for t in ts)
+    with pytest.raises(ValueError, match="whole step"):
+        spc_demo_text("m", end_ms=1_800_000_000_000 + 1)

@@ -9,10 +9,14 @@
   invisible until the server's clock reaches them (engine.Engine.visible, server listings), so it
   behaves as a target that keeps being scraped, and no read or listing ever sees future data.
 
-Anchor/now drift: the demo series end at the anchor (the server's start), while the specs ask
-for windows relative to the daemon's "now", which moves on as the suite runs. Specs read up to
-`now-10m` (`now-5m` for their own imported series), so the suite must finish within ~10 minutes
-of the fixture's start for those windows to stay inside the seeded data (it takes ~1.5 min).
+Anchor/now drift: the demo series end at the anchor (the server's start, rounded down to a
+whole minute), while the specs ask for windows relative to the daemon's "now", which moves on
+as the suite runs: a now-relative window slides over the data by whole steps as time passes, so
+specs whose assertions are statistical import their own series on a fixed step grid and query
+exactly that range (spc, fleet, seasonal; bead ax1s). Specs read up to
+`now-10m` (`now-5m` for their own imported series), so the suite must finish within ~9 minutes
+of the fixture's start (10, less up to a minute of anchor rounding) for those windows to stay
+inside the seeded data (it takes ~1.5 min).
 
 Specs that need more add their own uniquely named series through the import endpoint.
 """
@@ -24,11 +28,16 @@ from telemetry_nerd.devtools.synthetic import demo_text
 
 SCRAPE_MS = 15_000
 HOUR_MS = 3_600_000
+#: the anchor is a whole minute (bead ax1s): the daemon aligns query ranges to whole steps of
+#: absolute time, so with the anchor on that grid a 1m (or 15s/30s) bucket covers the same
+#: samples, relative to the anchor, in every run. Off the minute, which 15s samples share a
+#: bucket depended on the second the fixture started, and so did every statistic on them.
+ANCHOR_MS = 60_000
 
 
 def seed(store: Store, now: int, hours: int = 6) -> int:
-    """Fill `store`; returns the anchor (now rounded down to the scrape interval)."""
-    anchor = now // SCRAPE_MS * SCRAPE_MS
+    """Fill `store`; returns the anchor (now rounded down to a whole minute)."""
+    anchor = now // ANCHOR_MS * ANCHOR_MS
     start = anchor - hours * HOUR_MS
     store.import_text(demo_text(start, anchor, origin_ms=anchor), anchor)
     store.add(

@@ -3,12 +3,15 @@ import { FIXTURE } from "./helpers.js";
 
 // Seasonal panel (lkn.9): overlay of now vs previous days with the band, and the ratio view.
 // Imports its own uniquely named metric into the fixture source (8 days at 5m: a daily cycle,
-// one series boosted x2.5 over the last 3h) and deletes it afterwards.
-const METRIC = `tn_e2e_seasonal_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+// one series boosted x2.5 over the last 3h) and deletes it afterwards. Deterministic (bead ax1s):
+// seeded noise, the daily cycle placed relative to the series' end (not to the wall-clock hour),
+// and the query asks for exactly the imported grid, so every run judges the same numbers.
+const METRIC = `tn_e2e_seasonal_${Date.now()}`;
 const STEP = 300_000;
+const END = Math.floor((Date.now() - 10 * 60_000) / STEP) * STEP;
 
 function load(t: number, rnd: () => number): number {
-  const hour = (t % 86_400_000) / 3_600_000;
+  const hour = (((t - END) % 86_400_000) + 86_400_000) % 86_400_000 / 3_600_000;
   const daily = 1 + 2 * Math.exp(-(((hour - 14) / 3.5) ** 2));
   const u = Math.max(1e-9, rnd()), v = rnd();
   const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); // Box-Muller
@@ -18,10 +21,9 @@ function load(t: number, rnd: () => number): number {
 test.beforeAll(async ({ request }) => {
   let seed = 12345;
   const rnd = () => ((seed = (seed * 1103515245 + 12345) % 2 ** 31) / 2 ** 31);
-  const end = Math.floor(Date.now() / STEP) * STEP;
   const lines: string[] = [];
-  for (let t = end - 8 * 86_400_000; t <= end; t += STEP) {
-    const boost = t > end - 3 * 3_600_000 ? 2.5 : 1;
+  for (let t = END - 8 * 86_400_000; t <= END; t += STEP) {
+    const boost = t > END - 3 * 3_600_000 ? 2.5 : 1;
     lines.push(`${METRIC}{case="normal"} ${load(t, rnd).toFixed(3)} ${t}`);
     lines.push(`${METRIC}{case="boost"} ${(load(t, rnd) * boost).toFixed(3)} ${t}`);
   }
@@ -36,7 +38,7 @@ test.afterAll(async ({ request }) => {
 
 test("seasonal panel: verdicts, overlay and ratio views, dark mode", async ({ page, request }) => {
   const q = await request.post("/api/query", {
-    data: { expr: `sum by (case) (${METRIC})`, start: "now-12h", end: "now-5m", step: "5m" },
+    data: { expr: `sum by (case) (${METRIC})`, start: String(END - 12 * 3_600_000), end: String(END), step: "5m" },
   });
   expect(q.ok(), await q.text()).toBeTruthy();
   const { dataset } = await q.json();

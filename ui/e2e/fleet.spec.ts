@@ -15,9 +15,11 @@ function rng(seed: number) {
 }
 const gauss = (r: () => number) => Math.sqrt(-2 * Math.log(r() + 1e-12)) * Math.cos(2 * Math.PI * r());
 
-function exposition(): string {
+// Each test queries exactly the grid it imported (absolute start/end, bead ax1s): the same
+// buckets every run, whatever minute the suite reaches the test in.
+function exposition(start: number): string {
   const r = rng(42);
-  const T = 300, step = 60_000, end = Math.floor((Date.now() - 6 * 60_000) / step) * step, start = end - (T - 1) * step;
+  const T = 300, step = 60_000;
   const lines: string[] = [];
   for (let m = 0; m < 100; m++) {
     const level = gauss(r) * 0.05;
@@ -51,11 +53,12 @@ const OUTLIER_RGB: [number, number, number][] = [[0xd5, 0x5e, 0x00], [0x00, 0x72
 
 test("fleet panel: band, 3 planted outliers labelled, heatmap and small multiples within budget, both themes", async ({ page, request }) => {
   mkdirSync(SHOTS, { recursive: true });
-  const put = await request.post(`${FIXTURE}/api/v1/import/prometheus`, { data: exposition() });
+  const end = Math.floor((Date.now() - 6 * 60_000) / 60_000) * 60_000, start = end - 299 * 60_000;
+  const put = await request.post(`${FIXTURE}/api/v1/import/prometheus`, { data: exposition(start) });
   expect(put.ok()).toBeTruthy();
   await request.get(`${FIXTURE}/internal/force_flush`);
   const q = await request.post("/api/query", {
-    data: { expr: METRIC, start: "now-310m", end: "now-5m", step: "1m" },
+    data: { expr: METRIC, start: String(start), end: String(end), step: "1m" },
   });
   expect(q.ok()).toBeTruthy();
   const { dataset } = await q.json();
@@ -146,7 +149,7 @@ test("fleet panel: band, 3 planted outliers labelled, heatmap and small multiple
 
 test("fleet panel with 6 members: band view screenshot", async ({ page, request }) => {
   mkdirSync(SHOTS, { recursive: true });
-  const metric = "tn_e2e_2ju_fleet6";
+  const metric = `tn_e2e_2ju_fleet6_${Date.now()}`;
   const r = rng(7);
   const T = 240, step = 60_000, end = Math.floor((Date.now() - 6 * 60_000) / step) * step, start = end - (T - 1) * step;
   const lines: string[] = [];
@@ -157,7 +160,7 @@ test("fleet panel with 6 members: band view screenshot", async ({ page, request 
     }
   expect((await request.post(`${FIXTURE}/api/v1/import/prometheus`, { data: lines.join("\n") + "\n" })).ok()).toBeTruthy();
   await request.get(`${FIXTURE}/internal/force_flush`);
-  const q = await request.post("/api/query", { data: { expr: metric, start: "now-250m", end: "now-5m", step: "1m" } });
+  const q = await request.post("/api/query", { data: { expr: metric, start: String(start), end: String(end), step: "1m" } });
   const { dataset } = await q.json();
   const s = await request.post("/api/show", { data: { dataset, question: "Which core is off?", mark: "fleet" } });
   expect(s.ok(), await s.text()).toBeTruthy();
@@ -192,7 +195,7 @@ test("fleet split into behaviour groups: per-group bands and medians, tagged out
   }
   expect((await request.post(`${FIXTURE}/api/v1/import/prometheus`, { data: lines.join("\n") + "\n" })).ok()).toBeTruthy();
   await request.get(`${FIXTURE}/internal/force_flush`);
-  const q = await request.post("/api/query", { data: { expr: metric, start: "now-250m", end: "now-5m", step: "1m" } });
+  const q = await request.post("/api/query", { data: { expr: metric, start: String(start), end: String(end), step: "1m" } });
   const { dataset } = await q.json();
   const s = await request.post("/api/show", { data: { dataset, question: "Which db nodes are off?", mark: "fleet" } });
   expect(s.ok(), await s.text()).toBeTruthy();

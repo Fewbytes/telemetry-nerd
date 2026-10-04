@@ -224,3 +224,12 @@ async def test_samples_after_now_are_not_visible_yet(source):
     later = {"query": "up[10m]", "time": f"{(anchor + 60_000) / 1000}"}
     (row,) = (await client.get("http://fx/api/v1/query", params=later)).json()["data"]["result"]
     assert float(row["values"][-1][0]) * 1000 == anchor  # the samples after it are not in yet
+
+
+def test_anchor_is_a_whole_minute_so_one_minute_buckets_cut_the_data_the_same_way_every_run():
+    """bead ax1s: the daemon aligns ranges to whole steps of absolute time; an anchor on the 15s
+    grid but off the minute put the 1m buckets over different samples depending on the second
+    the fixture started (the spc spec saw 0 or 7 violations by that alone)."""
+    for offset in (0, 7_000, 15_000, 31_000, 59_999):
+        st = Store()
+        assert seed(st, T0 + offset) == T0
