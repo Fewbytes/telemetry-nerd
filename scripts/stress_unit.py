@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Run the unit suite K times with different PYTHONHASHSEED values (bead zek0.1).
+"""Run the unit suite K times with different PYTHONHASHSEED and pytest-randomly seeds (bead zek0.1).
 
 Every run must pass: a failure that depends on hash order is a flake and a P0 bug. Runs all K
 even after a failure and lists which seeds failed, so the failing seed can be replayed with
-`PYTHONHASHSEED=<seed> uv run pytest tests/unit`.
+`PYTHONHASHSEED=<seed> uv run pytest tests/unit --randomly-seed=<seed>`.
 """
 
 import os
@@ -21,7 +21,16 @@ def main() -> int:
         print(f"=== unit run {i + 1}/{n} PYTHONHASHSEED={seed}", flush=True)
         env = {**os.environ, "PYTHONHASHSEED": str(seed)}
         rc = subprocess.run(
-            ["uv", "run", "pytest", "tests/unit", "-q", "-p", "no:cacheprovider"],
+            [
+                "uv",
+                "run",
+                "pytest",
+                "tests/unit",
+                "-q",
+                "-p",
+                "no:cacheprovider",
+                f"--randomly-seed={seed}",
+            ],
             env=env,
             check=False,
         ).returncode

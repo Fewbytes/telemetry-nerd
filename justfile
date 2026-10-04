@@ -74,10 +74,11 @@ e2e-stress n="5":
     just ui-build
     cd ui && npx playwright install chromium && E2E_CPU_THROTTLE=4 npx playwright test --repeat-each {{n}}
 
-# Unit suite x n under different PYTHONHASHSEEDs, then vitest x n with shuffled test order.
+# Unit suite x n under different PYTHONHASHSEEDs and pytest-randomly seeds, then vitest x n with
+# different shuffle seeds (random order is on by default; this pins and varies the seeds).
 test-stress n="3":
     uv run python scripts/stress_unit.py {{n}}
-    cd ui && for i in $(seq {{n}}); do npx vitest run --sequence.shuffle || exit 1; done
+    cd ui && for i in $(seq {{n}}); do npx vitest run --sequence.seed=$i || exit 1; done
 
 # Serve the e2e fixture PromQL source by hand (port 7079; --port N), e.g. to point `just serve
 # --source-url http://127.0.0.1:7079 --source-flavor prometheus` at it.

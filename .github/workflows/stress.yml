@@ -6,8 +6,8 @@ name: Stress
 #
 #   e2e        Playwright full suite x repeat-each N, failOnFlakyTests (pass-on-retry = red)
 #   e2e-throttled   same, with CDP CPU throttling 4x (E2E_CPU_THROTTLE, ui/playwright.config.ts)
-#   unit       tests/unit x K with different PYTHONHASHSEEDs (scripts/stress_unit.py)
-#   vitest     vitest x K with shuffled test order
+#   unit       tests/unit x K with different PYTHONHASHSEED + pytest-randomly seeds (scripts/stress_unit.py)
+#   vitest     vitest x K, shuffle on by default, seeds 1..K
 on:
   schedule:
     - cron: "17 3 * * *"
@@ -90,7 +90,7 @@ jobs:
           if-no-files-found: ignore
 
   unit:
-    name: unit x K (PYTHONHASHSEED)
+    name: unit x K (hash + randomly seeds)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -130,10 +130,10 @@ jobs:
           cache: npm
           cache-dependency-path: ui/package-lock.json
       - run: npm ci
-      - name: vitest --sequence.shuffle x ${{ env.REPEAT }}
+      - name: vitest (shuffled, seeds 1..K) x ${{ env.REPEAT }}
         run: |
           for i in $(seq "$REPEAT"); do
-            npx vitest run --sequence.shuffle --reporter=verbose | tee "vitest-stress-$i.log"
+            npx vitest run --sequence.seed="$i" --reporter=verbose | tee "vitest-stress-$i.log"
             [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
           done
       - uses: actions/upload-artifact@v7
