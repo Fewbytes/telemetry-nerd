@@ -4,6 +4,8 @@ import httpx
 import pytest
 from testcontainers.core.container import DockerContainer
 
+# CI pulls this from Docker Hub, which rate-limits anonymous pulls per IP (shared runner IPs can
+# hit it). If that flakes the required gate, mirror the image to GHCR and point VM_IMAGE there.
 VM_IMAGE = "victoriametrics/victoria-metrics:v1.137.0"
 
 

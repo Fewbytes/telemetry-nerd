@@ -35,11 +35,9 @@ WARMUP_S = 20
 
 
 @pytest.fixture(scope="module")
-def vm(request):
-    try:
-        return request.getfixturevalue("vm_url")
-    except Exception as e:  # noqa: BLE001 - no container runtime
-        pytest.skip(f"VictoriaMetrics container unavailable: {e}")
+def vm(vm_url):
+    # No skip when Docker is missing: integration is a required CI gate and must fail loudly.
+    return vm_url
 
 
 def seed_vm(vm_url: str, name: str, t0_ms: int, counter: str | None = None) -> dict:

@@ -12,14 +12,17 @@ tags by hand: a tag must imply that everything passed.
    Or: `gh workflow run release.yml -f version=X.Y.Z`.
 3. The workflow runs, in order:
    - `prepare`: refuses unless run on `master`, the version is `X.Y.Z`, the tag does not exist and
-     `check_version.py vX.Y.Z` passes; records the master HEAD sha.
-   - `ci` (reusable `ci.yml`): `python` (lint, unit tests), `ui`, `e2e` (Playwright on the fixture
+     `check_version.py vX.Y.Z` passes; records the dispatch commit (`github.sha`) as the release commit.
+   - `ci` (reusable `ci.yml`, checking out exactly that commit): `python` (lint, unit tests), `ui`, `e2e` (Playwright on the fixture
      source) and `integration` (`pytest -m integration`, VictoriaMetrics testcontainers) must all be
-     green. The `network` job (`-m network`, public internet) runs with one retry but never blocks.
+     green. The `network` job is disabled for releases (it only runs on push/PR, non-blocking).
    - `tag`: only after all of the above, creates the annotated tag `vX.Y.Z` on the tested sha and
      pushes it.
    - `image`: builds and pushes the slim and `-full` images (`image.yml`) for that tag.
 4. If a gate fails nothing is tagged or published; fix and run the workflow again.
+5. If `image` fails after the tag exists, use "Re-run failed jobs" on that Release run. Never
+   delete and re-tag. Tagged commit = tested commit, even if master moved on meanwhile.
+6. If you add a tag ruleset for `v*`, it must allow `github-actions[bot]` to create tags.
 
 ## Why the image is built inside the workflow
 
