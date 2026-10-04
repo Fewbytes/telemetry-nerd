@@ -136,7 +136,9 @@ jobs:
   network:
     name: Public-network tests (non-blocking)
     # Skipped when a caller (release.yml) passes network: false; push/PR runs keep it.
-    if: inputs.network != false
+    # `inputs` is null on push/PR, and Actions coerces null == false, so `inputs.network != false`
+    # was false there and the job never ran. Stringify: null -> '' (runs), false -> 'false' (skips).
+    if: format('{0}', inputs.network) != 'false'
     # Hits real public endpoints, so it can fail for reasons outside this repo. It retries once
     # (only the failed tests) and is continue-on-error: it reports, never gates a release.
     runs-on: ubuntu-latest

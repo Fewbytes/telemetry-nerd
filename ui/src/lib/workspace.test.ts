@@ -305,6 +305,24 @@ describe("workspace frames in the store", () => {
     stop();
   });
 
+  it("a list fetched before a rename cannot overwrite the one fetched after it", async () => {
+    const { ws, stop, send } = await started(snap("w1", 1));
+    const lists = vi.mocked(fetchWorkspaces);
+    lists.mockReset();
+    const resolvers: ((l: Awaited<ReturnType<typeof fetchWorkspaces>>) => void)[] = [];
+    lists.mockImplementation(() => new Promise((r) => resolvers.push(r)));
+    const list = (title: string) => ({ active: "w1", more: 0, workspaces: [{ id: "w2", title } as WorkspaceInfo] });
+    ws.refreshWorkspaces(); // the popover opened: a slow request, answered before the rename
+    send(frame("w1")); // the rename's frame: a newer request
+    expect(resolvers.length).toBe(2);
+    resolvers[1](list("renamed"));
+    await vi.waitFor(() => expect(ws.workspaces[0]?.title).toBe("renamed"));
+    resolvers[0](list("old")); // the stale response lands last
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ws.workspaces[0].title).toBe("renamed");
+    stop();
+  });
+
   it("fetches the workspace list with the first snapshot, even one that landed after a retry", async () => {
     vi.useFakeTimers();
     const load = vi.mocked(fetchWorkspace);

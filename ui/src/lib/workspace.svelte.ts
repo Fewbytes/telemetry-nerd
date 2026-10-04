@@ -46,8 +46,13 @@ export function createWorkspace() {
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let failures = 0;
 
-  const refreshList = () =>
-    fetchWorkspaces().then((l) => { workspaces = l.workspaces; }).catch(() => { /* the list is a convenience; the next switch refetches */ });
+  // Requests overlap (the popover opening, a switch, a rename's frame) and may be answered out of
+  // order: only the latest one applies, or a slow earlier response would revert a rename.
+  let listReq = 0;
+  const refreshList = () => {
+    const n = ++listReq;
+    return fetchWorkspaces().then((l) => { if (n === listReq) workspaces = l.workspaces; }).catch(() => { /* the list is a convenience; the next switch refetches */ });
+  };
 
   // a switch invalidates everything the board shows: highlights belong to the old workspace
   const clearHighlights = () => {

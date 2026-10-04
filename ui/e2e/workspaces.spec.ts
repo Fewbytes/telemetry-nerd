@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { seedPanel } from "./helpers.js";
 
-test("workspace switcher: new investigation, reopen, follow, archive", async ({ page, request }) => {
+test("workspace switcher: new investigation, reopen, follow, archive", async ({ page, request }, testInfo) => {
   const panel = await seedPanel(request, "Is checkout latency in the workspace switcher test elevated?");
   await page.goto("/");
   const first = await (await request.get("/api/workspace")).json();
@@ -25,7 +25,9 @@ test("workspace switcher: new investigation, reopen, follow, archive", async ({ 
 
   // New investigation "second": the board empties and the header shows the title.
   // A double Enter creates one workspace, not two.
-  const secondTitle = `second ${Date.now()}`;
+  // unique per attempt: the daemon is shared across retries, so a failed attempt leaves its rows behind
+  const nonce = `${testInfo.retry}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const secondTitle = `second ${nonce}`;
   await page.getByRole("button", { name: "New investigation" }).click();
   await page.getByLabel("New investigation title").fill(secondTitle);
   await page.getByLabel("New investigation title").press("Enter");
@@ -37,7 +39,9 @@ test("workspace switcher: new investigation, reopen, follow, archive", async ({ 
   await expect(other.locator(".ws-trigger")).toContainText("second");
   await expect(other.locator(`[data-panel-id="${panel.id}"]`)).toHaveCount(0);
   const all = await (await request.get("/api/workspaces")).json();
-  expect(all.workspaces.filter((w: { title: string }) => w.title === secondTitle)).toHaveLength(1);
+  const mine = all.workspaces.filter((w: { title: string }) => w.title === secondTitle);
+  expect(mine).toHaveLength(1);
+  const secondId: string = mine[0].id;
 
   // reopen the first: its panel is back, on both pages
   await header.click();
@@ -48,25 +52,25 @@ test("workspace switcher: new investigation, reopen, follow, archive", async ({ 
 
   // rename inline: Esc cancels, Enter saves (the row of the inactive workspace)
   await header.click();
-  const row2 = page.locator(".ws-row", { hasText: secondTitle });
+  const row2 = page.locator(`[data-workspace-id="${secondId}"]`);
   await row2.getByRole("button", { name: /^rename/i }).click();
   await page.getByRole("textbox", { name: "Rename workspace" }).fill("discarded");
   await page.getByRole("textbox", { name: "Rename workspace" }).press("Escape");
-  await expect(page.locator(".ws-row", { hasText: secondTitle })).toBeVisible();
+  await expect(row2).toBeVisible();
   await row2.getByRole("button", { name: /^rename/i }).click();
   await page.getByRole("textbox", { name: "Rename workspace" }).fill(`${secondTitle} renamed`);
   await page.getByRole("textbox", { name: "Rename workspace" }).press("Enter");
-  const renamed = page.locator(".ws-row", { hasText: `${secondTitle} renamed` });
-  await expect(renamed).toBeVisible();
+  const renamed = page.locator(`[data-workspace-id="${secondId}"]`);
+  await expect(renamed).toContainText(`${secondTitle} renamed`);
   // renaming an inactive workspace leaves the board alone
   await expect(board).toBeVisible();
 
   // archive it: gone until "Show archived"; the active row has no Archive
   await expect(page.locator(`[data-workspace-id="${firstId}"]`).getByRole("button", { name: /^archive/i })).toHaveCount(0);
   await renamed.getByRole("button", { name: /^archive/i }).click();
-  await expect(page.locator(".ws-row", { hasText: `${secondTitle} renamed` })).toHaveCount(0);
+  await expect(renamed).toHaveCount(0);
   await page.getByLabel("Show archived").check();
-  await expect(page.locator(".ws-row", { hasText: `${secondTitle} renamed` })).toBeVisible();
+  await expect(renamed).toContainText(`${secondTitle} renamed`);
   await page.keyboard.press("Escape");
   await expect(page.getByRole("list", { name: "Investigations" })).toHaveCount(0);
   await other.close();
@@ -122,4 +126,42 @@ test("workspace switcher: focus return, plain-list a11y, archived toggle", async
   await page.getByLabel("Show archived").check();
   await expect(rows).not.toHaveCount(0);
   expect(await rows.count()).toBeGreaterThanOrEqual(before);
+});
+
+test("workspace switcher: a slow list response from before a rename cannot revert it (8ubh)", async ({ page, request }, testInfo) => {
+  await seedPanel(request, "Is checkout latency in the stale-list test elevated?");
+  const title = `stale ${testInfo.retry}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const created = await request.post("/api/workspaces", { data: { title } });
+  expect(created.ok()).toBeTruthy();
+  const otherId: string = (await created.json()).workspace.id;
+  // switch back so the created workspace is inactive
+  const list = await (await request.get("/api/workspaces")).json();
+  const activeId: string = list.workspaces.find((w: { id: string }) => w.id !== otherId).id;
+  expect((await request.post(`/api/workspaces/${activeId}/open`, { data: {} })).ok()).toBeTruthy();
+  await page.goto("/");
+  await expect(page.locator(".ws-trigger")).toBeVisible();
+
+  // hold the popover's list refetch (the pre-rename state) until the rename has landed
+  let release!: () => void;
+  const released = new Promise<void>((r) => (release = r));
+  let held = false;
+  await page.route((u) => u.pathname === "/api/workspaces" && !u.search, async (route) => {
+    if (held) return route.continue();
+    held = true;
+    const stale = await route.fetch();
+    await released;
+    await route.fulfill({ response: stale });
+  });
+  await page.locator(".ws-trigger").click();
+  await expect.poll(() => held).toBe(true);
+
+  const row = page.locator(`[data-workspace-id="${otherId}"]`);
+  await row.getByRole("button", { name: /^rename/i }).click();
+  await page.getByRole("textbox", { name: "Rename workspace" }).fill(`${title} renamed`);
+  await page.getByRole("textbox", { name: "Rename workspace" }).press("Enter");
+  await expect(row).toContainText(`${title} renamed`);
+  release();
+  // the stale response lands now; the renamed row must stay
+  await page.waitForTimeout(500);
+  await expect(row).toContainText(`${title} renamed`);
 });
