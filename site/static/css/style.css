@@ -96,8 +96,9 @@ main { max-width: 900px; margin: 0 auto; }
   color: var(--ink-soft); font-size: 0.9rem;
 }
 .site-footer .made-by { display: flex; align-items: center; gap: 0.4em; flex-wrap: wrap; }
-.site-footer .fewbytes-link { display: inline-flex; align-items: center; }
+.site-footer .fewbytes-link { display: inline-flex; align-items: center; margin-left: 0.15em; }
 .site-footer .fewbytes-link img { display: block; filter: invert(0); }
+.site-footer .made-by { line-height: 32px; }
 .site-footer nav.icon-nav { display: flex; gap: 0.9rem; align-items: center; }
 .site-footer nav.icon-nav a { color: var(--ink-soft); display: flex; }
 .site-footer nav.icon-nav a:hover { color: var(--accent); text-decoration: none; }
