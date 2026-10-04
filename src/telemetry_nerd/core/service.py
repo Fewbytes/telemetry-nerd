@@ -481,7 +481,6 @@ class TelemetryService:
         end = end or "now"
         src = self._source(source)
         await self.ensure_resolution(source)
-        self.workspaces.note_source(source)
         expr = self._expand_families(expr, source, src)
         now = self.clock()
         rng = TimeRange(parse_time(start, now), parse_time(end, now))
@@ -558,6 +557,7 @@ class TelemetryService:
                 "uses": [f"{v.op}({v.metric})" for v in violations],
                 "explanation": nonmergeable_caveats[0],
             }
+        self.workspaces.note_source(source)  # only once the query succeeded
         self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
         return {"dataset": meta.id, "summary": summary}
 
@@ -598,7 +598,6 @@ class TelemetryService:
     ) -> dict:
         src = self._source(source)
         await self.ensure_resolution(source)
-        self.workspaces.note_source(source)
         now = self.clock()
         rng = TimeRange(parse_time(start, now), parse_time(end, now))
         floor = 2 * src.resolution_ms  # increase() needs two samples per window
@@ -618,6 +617,7 @@ class TelemetryService:
             dist=dist, histogram={"selector": selector.strip(), "by": list(by)}, n_min=DIST_N_MIN,
         )  # fmt: skip
         summary = summarize_distribution(meta, dist, now_ms=now, settle_ms=self.cache.settle_ms)
+        self.workspaces.note_source(source)  # only once the query succeeded
         self.log.append(actor, "dataset.created", meta.id, {"expr": meta.expr})
         return {"dataset": meta.id, "summary": summary}
 
@@ -1835,7 +1835,11 @@ class TelemetryService:
         except SourceError:
             await self._close(source)
             raise
-        old = self.sources.add(spec, source, replace=replace)
+        try:  # a concurrent connect may have taken the name while this one probed
+            old = self.sources.add(spec, source, replace=replace)
+        except BaseException:
+            await self._close(source)
+            raise
         if old is not None:
             await self._close(old)
         self._resolution_tried.pop(spec.name, None)

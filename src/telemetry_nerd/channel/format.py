@@ -101,7 +101,11 @@ def describe_event(e: Event) -> str:
             if "title" in p:
                 parts.append(f'renamed {e.object_id} to "{p["title"]}"')
             if "question" in p:
-                parts.append(f'changed the question of {e.object_id} to "{p["question"]}"')
+                parts.append(
+                    f'changed the question of {e.object_id} to "{p["question"]}"'
+                    if p["question"]
+                    else f"cleared the question of {e.object_id}"
+                )
             if "archived" in p:
                 parts.append(f"{'archived' if p['archived'] else 'unarchived'} {e.object_id}")
             return f"{who} " + "; ".join(parts) if parts else f"{who} updated {e.object_id}"

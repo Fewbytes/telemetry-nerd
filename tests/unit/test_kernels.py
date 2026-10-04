@@ -194,6 +194,21 @@ async def test_idle_kernels_are_reaped(tmp_path):
         assert (await m.execute("a", "3")).result == "3"  # lazily started again
 
 
+async def test_live_kernels_are_capped_least_recently_used_first(tmp_path):
+    now = [0.0]
+    async with KernelManager(KernelConfig(root=tmp_path, max_live=2), clock=lambda: now[0]) as m:
+        for ws in ("a", "b"):
+            now[0] += 1
+            await m.execute(ws, "1")
+        now[0] += 1
+        await m.execute("a", "x = 1")  # a is now the most recently used
+        pid_b = m.kernel_pid("b")
+        now[0] += 1
+        await m.execute("c", "1")
+        assert sorted(m.workspaces) == ["a", "c"] and _wait_gone(pid_b)
+        assert (await m.execute("a", "x")).result == "1"  # the survivor kept its state
+
+
 async def test_aclose_kills_kernels_and_their_subprocesses(tmp_path):
     m = KernelManager(KernelConfig(root=tmp_path))
     r = await m.execute(
@@ -289,9 +304,11 @@ def test_preamble_round_trips_env_and_cwd(tmp_path, monkeypatch):
 def test_settings_from_env(monkeypatch):
     monkeypatch.setenv("TN_KERNEL_IDLE_TIMEOUT_S", "90")
     monkeypatch.setenv("TN_KERNEL_MEMORY_LIMIT_MB", "0")
+    monkeypatch.setenv("TN_KERNEL_MAX_LIVE", "3")
     s = Settings.from_env()
     cfg = KernelConfig.from_settings(s)
     assert (cfg.idle_timeout_s, cfg.memory_limit_mb, cfg.root) == (90, 0, s.data_dir / "kernels")
+    assert cfg.max_live == 3 and KernelConfig(root=s.data_dir).max_live == 2
 
 
 def test_app_shutdown_closes_kernels(tmp_path):

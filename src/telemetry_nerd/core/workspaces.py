@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -36,7 +37,8 @@ class WorkspaceOps:
         self._sources = sources
         self._connect = connect  # TelemetryService.source_connect
         self._open_threads = open_threads  # in the current workspace scope
-        self._noted: set[tuple[str, str]] = set()
+        # one restore per source name at a time: concurrent switches would probe it twice
+        self._restoring: dict[str, asyncio.Lock] = {}
 
     async def create(self, title: str, question: str | None, actor: Actor) -> dict:
         info = self._registry.create(title, question)
@@ -46,7 +48,7 @@ class WorkspaceOps:
         info = self._registry.get(wid)  # NotFound
         previous = self._active.active
         if wid == previous and not created:
-            return await self._result(info, previous)
+            return await self._result(info, previous, restore=False)
         if info.archived:
             info = self._registry.update(wid, archived=False)
         with self._active.using(wid):
@@ -103,24 +105,31 @@ class WorkspaceOps:
 
     # sources (D8) -------------------------------------------------------
     def note_source(self, name: str) -> None:
-        """Record that the current workspace queried `name`. Sources without a runtime spec
-        (settings-owned, e.g. default) are not recorded."""
-        wid = self._active()
-        if (wid, name) in self._noted:
-            return
+        """Record that the current workspace queried `name` with its current spec (last
+        write wins: a reconfigured source updates the record). Sources without a runtime
+        spec (settings-owned, e.g. default) are not recorded."""
         spec = self._sources.spec(name)
         if spec is None or name == "default":
             return
-        self._registry.note_source(wid, name, json.loads(spec.model_dump_json()))
-        self._noted.add((wid, name))
+        self._registry.note_source(self._active(), name, json.loads(spec.model_dump_json()))
 
     async def restore_sources(self, wid: str) -> list[dict]:
         out = []
         for name, raw in self._registry.sources(wid).items():
-            out.append(await self._restore(name, raw))
+            lock = self._restoring.setdefault(name, asyncio.Lock())
+            async with lock:
+                out.append(await self._restore(name, raw))
         return out
 
-    async def _restore(self, name: str, raw: dict) -> dict:
+    def source_states(self, wid: str) -> list[dict]:
+        """The recorded sources' state, without connecting anything (no network)."""
+        return [
+            self._state(name, raw) or {"name": name, "status": "disconnected"}
+            for name, raw in self._registry.sources(wid).items()
+        ]
+
+    def _state(self, name: str, raw: dict) -> dict | None:
+        """`name`'s status against its recorded spec; None when it is free to (re)connect."""
         try:
             wanted = SourceSpec.model_validate(raw)
         except ValueError as e:
@@ -136,6 +145,13 @@ class WorkspaceOps:
                 "hint": f"{name!r} is attached with a different configuration; "
                 "source_connect the recorded one under another name",
             }
+        return None
+
+    async def _restore(self, name: str, raw: dict) -> dict:
+        if (state := self._state(name, raw)) is not None:
+            return state
+        wanted = SourceSpec.model_validate(raw)
+        have = self._sources.spec(name)
         try:
             await self._connect(wanted, replace=have is not None, actor="system")
         except Exception as e:  # noqa: BLE001 - a dead source must not block the switch
@@ -144,10 +160,13 @@ class WorkspaceOps:
         return {"name": name, "status": "restored"}
 
     # internals ----------------------------------------------------------
-    async def _result(self, info: WorkspaceInfo, previous: str) -> dict:
+    async def _result(self, info: WorkspaceInfo, previous: str, restore: bool = True) -> dict:
         with self._active.using(info.id):
             threads = self._open_threads()[:OPEN_THREADS_SHOWN]
-            sources = await self.restore_sources(info.id)
+            # a no-op switch reports the sources as they are: no reconnects, no probes
+            sources = (
+                await self.restore_sources(info.id) if restore else self.source_states(info.id)
+            )
         return {
             "workspace": info.to_dict(),
             "previous": previous,

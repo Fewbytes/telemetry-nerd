@@ -2095,13 +2095,14 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         )
 
     @mcp.tool()
-    async def workspace_update(  # async: the frame fan-out (ActiveWorkspace.notify) needs the loop
+    async def workspace_update(
         id: str,
         title: str | None = None,
         question: str | None = None,
         archived: bool | None = None,
     ) -> str:
-        """Rename workspace `id`, change its question, or (un)archive it (not the active one)."""
+        """Rename workspace `id`, change its question ("" clears it), or (un)archive it (not
+        the active one). Titles are capped at 120 characters, questions at 500."""
         try:
             info = service.workspaces.update(
                 id, title=title, question=question, archived=archived, actor="claude"

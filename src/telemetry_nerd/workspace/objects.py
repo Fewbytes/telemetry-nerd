@@ -27,7 +27,7 @@ from telemetry_nerd.workspace.models import (
     TimeSpan,
     Verdict,
 )
-from telemetry_nerd.workspace.registry import wrong_workspace
+from telemetry_nerd.workspace.registry import open_thread_ids, wrong_workspace
 
 M = TypeVar("M", bound=BaseModel)
 
@@ -262,6 +262,10 @@ class ObjectStore:
 
     def list_threads(self, anchor: str | None = None) -> list[Thread]:
         return [self.get_thread(t.id) for t in self._list("thread", Thread, anchor)]
+
+    def open_threads(self) -> list[Thread]:
+        """Live threads whose last message is the user's, newest first (open_thread_ids)."""
+        return [self.get_thread(tid) for tid in open_thread_ids(self._db, self._scope())]
 
     # code nodes (tier-2 runs) ------------------------------------------
     def create_code(

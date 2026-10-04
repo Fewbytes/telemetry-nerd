@@ -12,6 +12,45 @@ from telemetry_nerd.model.errors import NotFound, WrongWorkspace
 
 _COLS = "id, title, question, created_at_ms, opened_at_ms, archived"
 
+#: stored lengths; switch results and channel lines quote them in full
+TITLE_MAX = 120
+QUESTION_MAX = 500
+
+# Open threads: live threads whose last message is the user's, newest first. The one
+# definition behind the registry counts and WorkspaceService.open_threads.
+_OPEN_THREADS = (
+    "SELECT t.id FROM objects t WHERE t.workspace = ? AND t.kind = 'thread' AND t.deleted = 0"
+    " AND (SELECT json_extract(m.data, '$.author') FROM objects m"
+    " WHERE m.kind = 'message' AND m.anchor = t.id AND m.deleted = 0"
+    " ORDER BY m.created_at_ms DESC, CAST(substr(m.id, 2) AS INTEGER) DESC, m.rowid DESC"
+    " LIMIT 1) = 'user'"
+    " ORDER BY t.created_at_ms DESC, CAST(substr(t.id, 2) AS INTEGER) DESC, t.rowid DESC"
+)
+
+
+def open_thread_ids(con: sqlite3.Connection, wid: str) -> list[str]:
+    """Workspace `wid`'s open threads (live, the user spoke last), newest first."""
+    return [r[0] for r in con.execute(_OPEN_THREADS, (wid,))]
+
+
+def _title(title: str) -> str:
+    title = title.strip()
+    if not title:
+        raise ValueError("workspace title must not be blank")
+    if len(title) > TITLE_MAX:
+        raise ValueError(f"workspace title is {len(title)} characters; the limit is {TITLE_MAX}")
+    return title
+
+
+def _question(question: str | None) -> str | None:
+    """None or blank: no question."""
+    question = (question or "").strip()
+    if len(question) > QUESTION_MAX:
+        raise ValueError(
+            f"workspace question is {len(question)} characters; the limit is {QUESTION_MAX}"
+        )
+    return question or None
+
 
 @dataclass(frozen=True)
 class WorkspaceInfo:
@@ -43,9 +82,7 @@ class WorkspaceRegistry:
         self._clock = clock
 
     def create(self, title: str, question: str | None = None) -> WorkspaceInfo:
-        title = title.strip()
-        if not title:
-            raise ValueError("workspace title must not be blank")
+        title, question = _title(title), _question(question)
         wid = self._new_id("w")
         now = self._clock()
         self._con.execute(
@@ -79,14 +116,15 @@ class WorkspaceRegistry:
         question: str | None = None,
         archived: bool | None = None,
     ) -> WorkspaceInfo:
+        """None leaves a field as it is; a blank question clears it."""
         self.get(wid)
+        fields: dict = {}
         if title is not None:
-            title = title.strip()
-            if not title:
-                raise ValueError("workspace title must not be blank")
-            self._con.execute("UPDATE workspaces SET title = ? WHERE id = ?", (title, wid))
+            fields["title"] = _title(title)
         if question is not None:
-            self._con.execute("UPDATE workspaces SET question = ? WHERE id = ?", (question, wid))
+            fields["question"] = _question(question)
+        for column, value in fields.items():  # validated first: all or nothing
+            self._con.execute(f"UPDATE workspaces SET {column} = ? WHERE id = ?", (value, wid))
         if archived is not None:
             self._con.execute(
                 "UPDATE workspaces SET archived = ? WHERE id = ?", (int(archived), wid)
@@ -126,9 +164,9 @@ class WorkspaceRegistry:
         if name == "default":  # daemon-owned, never recorded
             return
         sources = self._json(wid, "sources")
-        if name in sources:
+        if sources.get(name) == spec:
             return
-        sources[name] = spec
+        sources[name] = spec  # last write wins: a reconfigured source updates the record
         self._write_json(wid, "sources", sources)
 
     # internals ----------------------------------------------------------
@@ -146,8 +184,7 @@ class WorkspaceRegistry:
     def _info(self, row: tuple) -> WorkspaceInfo:
         wid = row[0]
         # Derived, never stored (spec): open panels, live hypotheses/findings, and open
-        # threads (the last message is the user's: WorkspaceService.open_threads, in SQL so
-        # every workspace counts without a scope switch).
+        # threads (open_thread_ids, in SQL so every workspace counts without a scope switch).
         (panels,) = self._con.execute(
             "SELECT COUNT(*) FROM panels WHERE workspace = ? AND closed = 0", (wid,)
         ).fetchone()
@@ -157,14 +194,7 @@ class WorkspaceRegistry:
                 "SELECT COUNT(*) FROM objects WHERE workspace = ? AND kind = ? AND deleted = 0",
                 (wid, kind),
             ).fetchone()
-        (counts["open_threads"],) = self._con.execute(
-            "SELECT COUNT(*) FROM objects t WHERE t.workspace = ? AND t.kind = 'thread'"
-            " AND t.deleted = 0 AND (SELECT json_extract(m.data, '$.author') FROM objects m"
-            " WHERE m.kind = 'message' AND m.anchor = t.id"
-            " ORDER BY m.created_at_ms DESC, CAST(substr(m.id, 2) AS INTEGER) DESC,"
-            " m.rowid DESC LIMIT 1) = 'user'",
-            (wid,),
-        ).fetchone()
+        counts["open_threads"] = len(open_thread_ids(self._con, wid))
         (last,) = self._con.execute(
             "SELECT MAX(ts_ms) FROM events WHERE workspace = ?", (wid,)
         ).fetchone()

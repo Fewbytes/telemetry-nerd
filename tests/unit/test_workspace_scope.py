@@ -1,4 +1,5 @@
 import asyncio
+import threading
 
 from telemetry_nerd.workspace.scope import ActiveWorkspace
 
@@ -56,3 +57,14 @@ async def test_to_thread_inherits_the_pin():
     a = ActiveWorkspace("w1")
     with a.using("w4"):
         assert await asyncio.to_thread(a) == "w4"
+
+
+async def test_notify_from_a_worker_thread_runs_on_the_loop():
+    from tests.unit.test_event_log import _record_threads
+
+    a = ActiveWorkspace("w1")
+    q = a.subscribe()
+    seen = _record_threads(q)
+    await asyncio.to_thread(a.notify, {"kind": "workspace"})
+    assert await asyncio.wait_for(q.get(), 1) == {"kind": "workspace"}
+    assert seen == [threading.get_ident()]

@@ -13,6 +13,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
+from telemetry_nerd.model.fanout import Fanout
+
 log = logging.getLogger(__name__)
 
 
@@ -21,7 +23,9 @@ class ActiveWorkspace:
         self._active = initial
         self._lock = threading.Lock()
         self._pin: ContextVar[str | None] = ContextVar("workspace_pin", default=None)
-        self._subscribers: set[asyncio.Queue] = set()
+        self._subscribers: Fanout[dict] = Fanout(
+            100, lambda f: log.warning("workspace subscriber queue full; dropping frame %s", f)
+        )
 
     @property
     def active(self) -> str:
@@ -50,18 +54,11 @@ class ActiveWorkspace:
 
     # change fan-out -----------------------------------------------------
     def subscribe(self) -> asyncio.Queue:
-        queue: asyncio.Queue = asyncio.Queue(maxsize=100)
-        self._subscribers.add(queue)
-        return queue
+        return self._subscribers.subscribe()
 
     def unsubscribe(self, queue: asyncio.Queue) -> None:
-        self._subscribers.discard(queue)
+        self._subscribers.unsubscribe(queue)
 
     def notify(self, frame: dict) -> None:
-        """Fan a frame out to subscribers. asyncio.Queue is not thread-safe: call this on
-        the event-loop thread only."""
-        for queue in list(self._subscribers):
-            try:
-                queue.put_nowait(frame)
-            except asyncio.QueueFull:
-                log.warning("workspace subscriber queue full; dropping frame %s", frame)
+        """Fan a frame out to subscribers, from any thread (each queue is fed on its loop)."""
+        self._subscribers.publish(frame)

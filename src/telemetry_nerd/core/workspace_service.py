@@ -2057,8 +2057,7 @@ class WorkspaceService:
         """Threads whose last message is the user's, newest first."""
         return [
             {"id": t.id, "anchor": t.anchor, "last": t.messages[-1].text[:200]}
-            for t in reversed(self.objects.list_threads())
-            if t.messages and t.messages[-1].author == "user"
+            for t in self.objects.open_threads()
         ]
 
     def brief(self) -> dict:

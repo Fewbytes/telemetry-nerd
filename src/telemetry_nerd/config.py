@@ -50,6 +50,8 @@ class Settings:
     kernel_idle_timeout_s: float = 30 * 60
     kernel_run_timeout_s: float = 120.0
     kernel_memory_limit_mb: int = 4096
+    #: live kernels kept (most recently used); 0: no cap
+    kernel_max_live: int = 2
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -67,6 +69,7 @@ class Settings:
         s.kernel_memory_limit_mb = int(
             _env_num("TN_KERNEL_MEMORY_LIMIT_MB", s.kernel_memory_limit_mb)
         )
+        s.kernel_max_live = int(_env_num("TN_KERNEL_MAX_LIVE", s.kernel_max_live))
         raw_port = os.environ.get("TN_PORT")
         if raw_port is not None:
             try:

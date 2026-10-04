@@ -1,10 +1,11 @@
 import asyncio
+from typing import ClassVar
 
 import pytest
 
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.sources.spec import SourceSpec
-from tests.unit.fakes import make_service
+from tests.unit.fakes import FakeSource, make_service
 
 FINDING_SCOPE = {
     "source": "default",
@@ -263,3 +264,123 @@ async def test_switch_to_archived_unarchives_without_an_update_event(tmp_path):
     assert out["workspace"]["archived"] is False and not svc.registry.get(w1).archived
     assert len(_events(svc, w1, "workspace.updated")) == before
     assert len(_events(svc, w1, "workspace.opened")) == 1
+
+
+# po6r hardening ----------------------------------------------------------
+
+
+async def test_reconfigured_source_is_recorded_last_write_wins(tmp_path):
+    svc = make_service(tmp_path)
+    w1 = svc.active.active
+    await _connect_vm(svc)
+    await svc.query("up", source="vm")
+    await svc.source_connect(SourceSpec(name="vm", url="http://moved:8428"), replace=True)
+    await svc.query("up", source="vm")
+    assert svc.registry.sources(w1)["vm"]["url"] == "http://moved:8428"
+    await svc.workspaces.create("two", None, "claude")
+    (res,) = (await svc.workspaces.switch(w1, "claude"))["sources"]
+    assert res == {"name": "vm", "status": "connected"}  # not a stale 'conflict'
+
+
+async def test_failed_query_does_not_record_its_source(tmp_path):
+    svc = make_service(tmp_path)
+    await _connect_vm(svc)
+    with pytest.raises(Exception, match="step must be positive"):
+        await svc.query("up", step="0s", source="vm")
+    assert svc.registry.sources(svc.active.active) == {}
+    await svc.query("up", source="vm")
+    assert list(svc.registry.sources(svc.active.active)) == ["vm"]
+
+
+async def test_noop_switch_does_not_restore_sources(tmp_path, monkeypatch):
+    svc = make_service(tmp_path)
+    w1 = svc.active.active
+    await _connect_vm(svc)
+    await svc.query("up", source="vm")
+    await svc.source_disconnect("vm")
+    calls = []
+
+    async def spy(spec, **kw):
+        calls.append(spec.name)
+
+    monkeypatch.setattr(svc.workspaces, "_connect", spy)
+    out = await svc.workspaces.switch(w1, "claude")
+    assert calls == []  # no network probe on a no-op
+    assert out["sources"] == [{"name": "vm", "status": "disconnected"}]
+
+
+class _Yielding(FakeSource):
+    """A source whose probe yields, so concurrent connects interleave; records closes."""
+
+    closed: ClassVar[list] = []
+
+    async def probe(self):
+        await asyncio.sleep(0)
+        return await super().probe()
+
+    async def aclose(self):
+        self.closed.append(self)
+
+
+def _yielding_service(tmp_path, monkeypatch):
+    monkeypatch.setattr(_Yielding, "closed", [])
+    built = []
+
+    def factory(spec):
+        built.append(_Yielding(name=spec.name, identity=f"fake|{spec.url}"))
+        return built[-1]
+
+    return make_service(tmp_path, factory=factory), built
+
+
+async def test_concurrent_switches_restore_a_source_once(tmp_path, monkeypatch):
+    svc, built = _yielding_service(tmp_path, monkeypatch)
+    w1 = svc.active.active
+    await _connect_vm(svc)
+    await svc.query("up", source="vm")
+    await svc.workspaces.create("two", None, "claude")
+    await svc.source_disconnect("vm")
+    built.clear()
+    a, b = await asyncio.gather(
+        svc.workspaces.restore_sources(w1), svc.workspaces.restore_sources(w1)
+    )
+    assert sorted(r["status"] for r in a + b) == ["connected", "restored"]
+    assert len(built) == 1
+
+
+async def test_concurrent_source_connect_closes_the_losers_source(tmp_path, monkeypatch):
+    svc, _ = _yielding_service(tmp_path, monkeypatch)
+    spec = SourceSpec(name="vm", url="http://vm:8428")
+    results = await asyncio.gather(
+        svc.source_connect(spec), svc.source_connect(spec), return_exceptions=True
+    )
+    errors = [r for r in results if isinstance(r, Exception)]
+    assert len(errors) == 1 and "already exists" in str(errors[0])
+    assert len(_Yielding.closed) == 1 and _Yielding.closed[0] is not svc.sources.get("vm")
+
+
+async def test_question_can_be_cleared(tmp_path):
+    from telemetry_nerd.channel.format import describe_event
+
+    svc = make_service(tmp_path)
+    w1 = svc.active.active
+    svc.workspaces.update(w1, question="why?", actor="user")
+    info = svc.workspaces.update(w1, question="", actor="user")
+    assert info.question is None and svc.registry.get(w1).question is None
+    e = _events(svc, w1, "workspace.updated")[-1]
+    assert e.payload == {"question": None}
+    assert describe_event(e) == "user cleared the question of w1"
+    svc.workspaces.update(w1, title="still", actor="user")  # None leaves the question alone
+    assert svc.registry.get(w1).question is None
+
+
+async def test_open_threads_exclude_deleted_threads_like_the_counts(tmp_path):
+    svc = make_service(tmp_path)
+    w1 = svc.active.active
+    keep = svc.ws.objects.create_thread(None, None, "user")
+    svc.ws.post_message(keep.id, "open?", "user")
+    gone = svc.ws.objects.create_thread(None, None, "user")
+    svc.ws.post_message(gone.id, "deleted", "user")
+    svc.registry._con.execute("UPDATE objects SET deleted = 1 WHERE id = ?", (gone.id,))
+    assert [t["id"] for t in svc.ws.open_threads()] == [keep.id]
+    assert svc.registry.get(w1).counts["open_threads"] == 1

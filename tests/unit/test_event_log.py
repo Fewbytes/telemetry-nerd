@@ -1,4 +1,5 @@
 import asyncio
+import threading
 
 import pytest
 
@@ -181,3 +182,25 @@ def test_classify_user_highlight_depends_on_note():
     assert classify("user", "object.highlighted") == "ambient"
     assert classify("claude", "object.highlighted", {"note": "x"}) == "internal"
     assert classify("user", "object.unhighlighted") == "internal"
+
+
+def _record_threads(queue):
+    """Record the thread every put_nowait on `queue` runs in."""
+    seen, put = [], queue.put_nowait
+
+    def recording(item):
+        seen.append(threading.get_ident())
+        put(item)
+
+    queue.put_nowait = recording
+    return seen
+
+
+async def test_fan_out_from_a_worker_thread_runs_on_the_loop(log):
+    """Sync MCP tools append from worker threads; asyncio.Queue is only touched on its loop."""
+    q = log.subscribe()
+    seen = _record_threads(q)
+    await asyncio.to_thread(log.append, "user", "panel.created", "p1")
+    event = await asyncio.wait_for(q.get(), 1)
+    assert event["type"] == "panel.created"
+    assert seen == [threading.get_ident()]

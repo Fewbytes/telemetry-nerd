@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from typing import Literal, get_args
 
+from telemetry_nerd.model.fanout import Fanout
 from telemetry_nerd.model.jsonsafe import finite
 from telemetry_nerd.model.time import now_ms
 
@@ -103,7 +104,9 @@ class EventLog:
         self._db = con
         self._clock = clock
         self._scope = scope
-        self._subscribers: set[asyncio.Queue] = set()
+        self._subscribers: Fanout[dict] = Fanout(
+            1000, lambda e: log.warning("event subscriber queue full; dropping seq %s", e["seq"])
+        )
         self._depth = 0
         self._pending: list[dict] = []
 
@@ -190,19 +193,15 @@ class EventLog:
         return len(self._subscribers)
 
     def subscribe(self) -> asyncio.Queue:
-        queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
-        self._subscribers.add(queue)
-        return queue
+        """A queue of live events, fed on the loop it was subscribed on (appends may come
+        from worker threads)."""
+        return self._subscribers.subscribe()
 
     def unsubscribe(self, queue: asyncio.Queue) -> None:
-        self._subscribers.discard(queue)
+        self._subscribers.unsubscribe(queue)
 
     def _fan_out(self, event: dict) -> None:
-        for queue in list(self._subscribers):
-            try:
-                queue.put_nowait(event)
-            except asyncio.QueueFull:
-                log.warning("event subscriber queue full; dropping seq %s", event["seq"])
+        self._subscribers.publish(event)
 
     # channel delivery ---------------------------------------------------
     def cursor(self, consumer: str) -> int:

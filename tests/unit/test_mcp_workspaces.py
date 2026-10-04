@@ -87,10 +87,24 @@ async def test_switch_result_stays_small_with_many_long_open_threads(tmp_path):
     out = await call(mcp, "workspace_switch", {"id": "w1"})
     assert len(out) < 2048
     assert "more_open_threads" not in json.loads(out)
-    await call(mcp, "workspace_update", {"id": "w1", "title": "t" * 1300})
+    await call(mcp, "workspace_update", {"id": "w1", "title": "t" * 120, "question": "q" * 500})
     await call(mcp, "workspace_create", {"title": "fourth"})
     out = await call(mcp, "workspace_switch", {"id": "w1"})
     assert len(out) < 2048
     data = json.loads(out)
     assert data["more_open_threads"] > 0
     assert len(data["open_threads"]) + data["more_open_threads"] == 10  # WorkspaceOps caps at 10
+
+
+async def test_overlong_title_is_a_tool_error(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    async with Client(mcp) as c:
+        r = await c.call_tool("workspace_create", {"title": "t" * 121})
+    assert r.is_error and "120" in r.content[0].text  # type: ignore[union-attr]
+
+
+async def test_update_with_empty_question_clears_it(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    await call(mcp, "workspace_update", {"id": "w1", "question": "why?"})
+    out = json.loads(await call(mcp, "workspace_update", {"id": "w1", "question": ""}))
+    assert out["workspace"]["question"] is None

@@ -145,13 +145,21 @@ update(wid, title?, question?, archived?, actor) -> meta
 list(include_archived=False, limit=20) -> {active, workspaces, more}
 ```
 
-`switch` to the already-active id is a no-op that returns the same result (no event).
-Kernels are untouched: each workspace keeps its kernel until the idle reaper stops it.
+`switch` to the already-active id is a no-op that returns the same result (no event); its
+`sources` report state only (`connected`, `conflict`, `failed`, or `disconnected`), with no
+reconnect or probe. Concurrent restores of one source name are serialized.
+Kernels are untouched by a switch: each workspace keeps its kernel until the idle reaper stops
+it, but at most `kernel_max_live` (default 2, `TN_KERNEL_MAX_LIVE`) stay live: starting one
+shuts down the least recently used idle ones.
+
+Titles are capped at 120 characters and questions at 500 (`ValueError` → HTTP 400 / tool
+error); a blank question clears it (`update(question="")`).
 
 ### Sources on reopen (D8)
 
-- `service.query` / `query_distribution` call `workspaces.note_source(name)` (in-memory set per
-  workspace, so the row is written once per source).
+- `service.query` / `query_distribution` call `workspaces.note_source(name)` once the query
+  succeeded; the recorded spec is last-write-wins (a reconfigured source updates it, so a
+  reopen does not report a stale `conflict`).
 - `restore_sources(wid)` returns `[{name, status}]`: `connected`; `restored` (the name was free,
   re-attached from the recorded spec via the `source_connect` path, actor `system`);
   `conflict` (the name is attached to another spec: left alone, `hint` says to reconnect

@@ -175,3 +175,18 @@ def test_ui_socket_replays_since_through_the_active_workspace(client, service):
             replay.append(frame)
     # replay may span a switch; the queued workspace control frame then makes the UI reload
     assert replay and {f["workspace"] for f in replay} == {w2}
+
+
+def test_overlong_title_or_question_is_400(client, service):
+    assert client.post("/api/workspaces", json={"title": "t" * 121}).status_code == 400
+    resp = client.post(
+        f"/api/workspaces/{service.active.active}/update", json={"question": "q" * 501}
+    )
+    assert resp.status_code == 400 and "500" in resp.json()["error"]
+
+
+def test_empty_question_clears_it(client, service):
+    w1 = service.active.active
+    client.post(f"/api/workspaces/{w1}/update", json={"question": "why?"})
+    resp = client.post(f"/api/workspaces/{w1}/update", json={"question": ""})
+    assert resp.status_code == 200 and resp.json()["question"] is None

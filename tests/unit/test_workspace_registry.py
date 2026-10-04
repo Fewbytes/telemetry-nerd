@@ -59,12 +59,12 @@ def test_settings_are_per_workspace(tmp_path):
     assert reg.get_setting("w2", "default_range", "dflt") == "dflt"
 
 
-def test_note_source_records_once_and_never_default(tmp_path):
+def test_note_source_is_last_write_wins_and_never_default(tmp_path):
     reg, _ = make(tmp_path)
     assert reg.sources("w1") == {}
     reg.note_source("w1", "prom", {"kind": "promql", "url": "a"})
     reg.note_source("w1", "prom", {"kind": "promql", "url": "b"})
-    assert reg.sources("w1") == {"prom": {"kind": "promql", "url": "a"}}
+    assert reg.sources("w1") == {"prom": {"kind": "promql", "url": "b"}}
     reg.note_source("w1", "default", {"kind": "promql", "url": "d"})
     assert "default" not in reg.sources("w1")
 
@@ -127,3 +127,23 @@ def test_last_activity_is_the_newest_event_only(tmp_path):
     )
     assert reg.get("w2").last_activity_ms == 9000
     assert reg.list()[0].id == "w2"  # 9000 beats w1's opened_at_ms of 1
+
+
+def test_title_and_question_lengths_are_capped(tmp_path):
+    reg, _ = make(tmp_path)
+    with pytest.raises(ValueError, match="120"):
+        reg.create("t" * 121)
+    with pytest.raises(ValueError, match="500"):
+        reg.create("ok", "q" * 501)
+    with pytest.raises(ValueError, match="120"):
+        reg.update("w1", title="t" * 121)
+    with pytest.raises(ValueError, match="500"):
+        reg.update("w1", question="q" * 501)
+    assert reg.create("t" * 120, "q" * 500).title == "t" * 120
+
+
+def test_blank_question_is_stored_as_none(tmp_path):
+    reg, _ = make(tmp_path)
+    assert reg.create("two", "  ").question is None
+    reg.update("w1", question="why?")
+    assert reg.update("w1", question=" ").question is None

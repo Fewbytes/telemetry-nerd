@@ -13,8 +13,10 @@ Guarantees:
   `restarted=False`); otherwise the kernel is killed and restarted (`restarted=True`).
 - Crash (os._exit, segfault, OOM kill): `status="crashed"`, kernel restarted, daemon unaffected.
 - Memory: RLIMIT_AS on Linux (`MemoryError` inside the cell); not enforced on macOS.
-- Idle kernels are shut down after `idle_timeout_s`; `aclose()` kills all kernels (process
-  groups, so user subprocesses too). Parent-death handling: see `kernels.launch`.
+- Idle kernels are shut down after `idle_timeout_s`, and starting a kernel shuts down the
+  least recently used idle ones beyond `max_live` (hopping workspaces does not pile up
+  kernels); `aclose()` kills all kernels (process groups, so user subprocesses too).
+  Parent-death handling: see `kernels.launch`.
 - stdout/stderr are bounded (head + tail kept, `truncated=True`).
 """
 
@@ -92,6 +94,8 @@ class KernelConfig:
     #: kernel-<ws>.log.1 (one generation kept), so disk use per workspace is bounded by about
     #: two caps plus what one kernel lifetime writes
     log_max_bytes: int = 1_000_000
+    #: live kernels kept, most recently used first (a running one is never stopped); 0: no cap
+    max_live: int = 2
 
     @classmethod
     def from_settings(cls, settings: Settings) -> KernelConfig:
@@ -100,6 +104,7 @@ class KernelConfig:
             idle_timeout_s=settings.kernel_idle_timeout_s,
             run_timeout_s=settings.kernel_run_timeout_s,
             memory_limit_mb=settings.kernel_memory_limit_mb,
+            max_live=settings.kernel_max_live,
         )
 
 
@@ -231,6 +236,7 @@ class KernelManager:
                         duration_s=self._clock() - t0,
                         restarted=restarted,
                     )
+                await self._evict(keep=workspace_id)
             deadline = time.monotonic() + timeout
             pre = preamble(dict(env or {}), None if cwd is None else os.fspath(cwd))
             try:
@@ -263,6 +269,28 @@ class KernelManager:
         if reaped:
             log.info("kernels: shut down idle kernels for %s", ", ".join(reaped))
         return reaped
+
+    async def _evict(self, keep: str) -> None:
+        """Shut down the least recently used idle kernels beyond `max_live`."""
+        cap = self.config.max_live
+        if cap <= 0:
+            return
+        idle = sorted(
+            (k for ws, k in self._kernels.items() if ws != keep), key=lambda k: k.last_used
+        )
+        evicted = []
+        for k in idle:
+            if len(self._kernels) <= cap:
+                break
+            lock = self._lock(k.workspace_id)
+            if lock.locked():  # running or queued: it stays
+                continue
+            async with lock:
+                if self._kernels.get(k.workspace_id) is k:
+                    await self._stop(k.workspace_id)
+                    evicted.append(k.workspace_id)
+        if evicted:
+            log.info("kernels: over %d live kernels; shut down %s", cap, ", ".join(evicted))
 
     def kernel_pid(self, workspace_id: str) -> int | None:
         k = self._kernels.get(workspace_id)
