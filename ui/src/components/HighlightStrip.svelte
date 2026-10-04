@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext } from "svelte";
-  import { postJSON } from "../lib/api";
+  import { clearHighlight } from "../lib/api";
   import type { Highlights } from "../lib/highlights";
   import { flash, hoverOff, hoverOn } from "../lib/refHighlight";
   import type { RefTarget } from "../lib/refs";
@@ -9,7 +9,7 @@
   const targets = getContext<(() => Map<string, RefTarget>) | undefined>("refs") ?? (() => new Map());
   const entries = $derived([...highlights.values()]);
 
-  const clear = (id: string) => postJSON(`/api/highlights/${id}/clear`).catch(() => {});
+  const clear = (id: string) => clearHighlight(id).catch(() => {});
 </script>
 
 {#if entries.length > 0}

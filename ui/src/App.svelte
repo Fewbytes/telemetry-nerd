@@ -53,8 +53,11 @@
   // three views in one page: panels (default), the catalog and the retrospective proposals;
   // evidence links (#/panel/p3, #/finding/f2) go back to the panels
   type Route = "panels" | "catalog" | "proposals";
-  const routeOf = (h: string): Route =>
-    h.startsWith("#/catalog") ? "catalog" : h.startsWith("#/proposals") ? "proposals" : "panels";
+  const routeOf = (h: string): Route => {
+    if (h.startsWith("#/catalog")) return "catalog";
+    if (h.startsWith("#/proposals")) return "proposals";
+    return "panels";
+  };
   let route = $state<Route>(routeOf(location.hash));
   $effect(() => {
     const sync = () => (route = routeOf(location.hash));

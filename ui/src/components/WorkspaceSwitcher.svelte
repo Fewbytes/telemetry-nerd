@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { tick } from "svelte";
   import {
     createWorkspace, fetchWorkspaces, openWorkspace, updateWorkspace, type Snapshot, type WorkspaceInfo,
   } from "../lib/api";
+  import { focusAfterRender } from "../lib/focus";
   import { defaultTitle, sortForSwitcher } from "../lib/workspaces";
 
   let { active, workspaces, onopen }: {
@@ -65,10 +65,7 @@
   };
 
   /** an inline edit ended: put focus back on the button that opened it */
-  const refocus = async (selector: string) => {
-    await tick();
-    root?.querySelector<HTMLElement>(selector)?.focus();
-  };
+  const refocus = (selector: string) => focusAfterRender(() => root?.querySelector<HTMLElement>(selector));
 
   const ago = (ms: number): string => {
     const s = Math.max(0, (now - ms) / 1000);

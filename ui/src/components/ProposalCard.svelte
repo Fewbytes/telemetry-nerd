@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { tick } from "svelte";
   import { decideProposal, refuteLesson, type CatalogProposalItem, type Decision, type LessonItem } from "../lib/api";
+  import { focusAfterRender } from "../lib/focus";
   import { STATE_TEXT, evidenceRefs, expiresText, parseEdit, scopeText, valueText } from "../lib/proposals";
 
   let {
@@ -49,20 +49,19 @@
     send(() => decideProposal(id, body));
   };
 
-  const startEdit = async () => {
+  const startEdit = () => {
     draftText = lesson?.text ?? "";
     draftExpires = "";
     draftValue = proposal ? valueText(proposal.value) : "";
     mode = "edit";
-    await tick();
-    firstField?.focus();
+    return focusAfterRender(() => firstField);
   };
-  const cancel = async () => {
+  const cancel = () => {
     const wasRefute = mode === "refute";
     mode = "view";
     error = null;
-    await tick(); // the buttons re-render on leaving the form: read the bindings after
-    (wasRefute ? refuteButton : editButton)?.focus();
+    // the buttons re-render on leaving the form: read the bindings after
+    return focusAfterRender(() => (wasRefute ? refuteButton : editButton));
   };
   const saveEdit = (e: SubmitEvent) => {
     e.preventDefault();
@@ -77,11 +76,10 @@
       error = err instanceof Error ? err.message : String(err);
     }
   };
-  const startRefute = async () => {
+  const startRefute = () => {
     reason = "";
     mode = "refute";
-    await tick();
-    firstField?.focus();
+    return focusAfterRender(() => firstField);
   };
   const saveRefute = (e: SubmitEvent) => {
     e.preventDefault();
@@ -98,6 +96,13 @@
     }
   };
 </script>
+
+{#snippet formActions(submitLabel: string)}
+  <div class="proposal-actions">
+    <button type="submit" disabled={busy}>{submitLabel}</button>
+    <button type="button" onclick={cancel}>Cancel</button>
+  </div>
+{/snippet}
 
 <article class="proposal" id="proposal-{id}" data-proposal={id} data-state={phase} aria-labelledby="proposal-title-{id}">
   <h4 class="proposal-title" id="proposal-title-{id}" tabindex="-1">
@@ -143,20 +148,14 @@
           <input type="text" bind:this={firstField} bind:value={draftValue} onkeydown={onFieldKey} />
         </label>
       {/if}
-      <div class="proposal-actions">
-        <button type="submit" disabled={busy}>Save and approve</button>
-        <button type="button" onclick={cancel}>Cancel</button>
-      </div>
+      {@render formActions("Save and approve")}
     </form>
   {:else if mode === "refute"}
     <form class="proposal-form" aria-label="Refute {id}" onsubmit={saveRefute}>
       <label>Why it no longer holds
         <input type="text" bind:this={firstField} bind:value={reason} onkeydown={onFieldKey} />
       </label>
-      <div class="proposal-actions">
-        <button type="submit" disabled={busy}>Refute</button>
-        <button type="button" onclick={cancel}>Cancel</button>
-      </div>
+      {@render formActions("Refute")}
     </form>
   {:else if pending}
     <div class="proposal-actions" role="group" aria-label="Decision on {id}">

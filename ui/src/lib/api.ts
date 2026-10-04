@@ -368,6 +368,9 @@ export const openWorkspace = (id: string) =>
 export const updateWorkspace = (id: string, patch: { title?: string; question?: string; archived?: boolean }) =>
   postJSON<WorkspaceInfo>(`/api/workspaces/${encodeURIComponent(id)}/update`, patch);
 
+export const pinHighlight = (object: string, note?: string) =>
+  postJSON<unknown>("/api/highlights", note ? { object, note } : { object });
+export const clearHighlight = (object: string) => postJSON<unknown>(`/api/highlights/${object}/clear`);
 export const closePanel = (id: string) => postJSON<unknown>(`/api/panels/${id}/close`);
 export const closeGroup = (id: string) => postJSON<PanelGroup>(`/api/groups/${id}/close`);
 /** The same group over a selected window: a new group, this one stays. */

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { tick } from "svelte";
   import type { Proposals } from "../lib/api";
+  import { focusAfterRender } from "../lib/focus";
   import { lessonPending, nextFocus, proposalPending } from "../lib/proposals";
   import ProposalCard from "./ProposalCard.svelte";
 
@@ -17,13 +17,15 @@
   let heading = $state<HTMLElement>();
   let now = $state(Date.now());
 
-  const items = $derived([
-    ...(data?.lessons ?? []).map((lesson) => ({ kind: "lesson" as const, lesson, id: lesson.id, pending: lessonPending(lesson) })),
-    ...(data?.catalog ?? []).map((proposal) => ({ kind: "catalog" as const, proposal, id: proposal.id, pending: proposalPending(proposal) })),
-  ]);
-  const pendingLessons = $derived(items.filter((i) => i.kind === "lesson" && i.pending));
-  const pendingCatalog = $derived(items.filter((i) => i.kind === "catalog" && i.pending));
-  const decided = $derived(items.filter((i) => !i.pending));
+  const lessons = $derived(
+    (data?.lessons ?? []).map((lesson) => ({ kind: "lesson" as const, lesson, id: lesson.id, pending: lessonPending(lesson) })),
+  );
+  const catalog = $derived(
+    (data?.catalog ?? []).map((proposal) => ({ kind: "catalog" as const, proposal, id: proposal.id, pending: proposalPending(proposal) })),
+  );
+  const pendingLessons = $derived(lessons.filter((i) => i.pending));
+  const pendingCatalog = $derived(catalog.filter((i) => i.pending));
+  const decided = $derived([...lessons, ...catalog].filter((i) => !i.pending));
 
   // a decided item leaves the pending list: keep the keyboard user's place
   const decidedOne = async (id: string) => {
@@ -32,9 +34,7 @@
     await onreload();
     now = Date.now();
     status = `${id} saved`;
-    await tick();
-    const target = next ? document.getElementById(`proposal-title-${next}`) : heading;
-    target?.focus();
+    await focusAfterRender(() => (next ? document.getElementById(`proposal-title-${next}`) : heading));
   };
 </script>
 

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getContext } from "svelte";
-  import { postJSON } from "../lib/api";
+  import { clearHighlight, pinHighlight } from "../lib/api";
   import type { Highlights } from "../lib/highlights";
   import { isSendKey, sendHint } from "../lib/keys";
 
@@ -14,15 +14,14 @@
 
   const pin = () => {
     error = null;
-    postJSON("/api/highlights", { object, ...(note.trim() ? { note: note.trim() } : {}) })
+    pinHighlight(object, note.trim())
       .then(() => {
         open = false;
         note = "";
       })
       .catch((e) => (error = String(e)));
   };
-  const clear = () =>
-    postJSON(`/api/highlights/${object}/clear`).catch((e) => (error = String(e)));
+  const clear = () => clearHighlight(object).catch((e) => (error = String(e)));
 </script>
 
 <span class="pin">
