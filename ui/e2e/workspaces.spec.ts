@@ -1,4 +1,5 @@
-import { expect, test, type APIResponse, type Route } from "@playwright/test";
+import type { APIResponse, Route } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { seedPanel } from "./helpers.js";
 
 test("workspace switcher: new investigation, reopen, follow, archive", async ({ page, request }, testInfo) => {
@@ -128,16 +129,14 @@ test("workspace switcher: focus return, plain-list a11y, archived toggle", async
   expect(await rows.count()).toBeGreaterThanOrEqual(before);
 });
 
-test("workspace switcher: a slow list response from before a rename cannot revert it (8ubh)", async ({ page, request }, testInfo) => {
+test("workspace switcher: a slow list response from before a rename cannot revert it (8ubh)", async ({ page, request, workspace }, testInfo) => {
   await seedPanel(request, "Is checkout latency in the stale-list test elevated?");
   const title = `stale ${testInfo.retry}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const created = await request.post("/api/workspaces", { data: { title } });
   expect(created.ok()).toBeTruthy();
   const otherId: string = (await created.json()).workspace.id;
-  // switch back so the created workspace is inactive
-  const list = await (await request.get("/api/workspaces")).json();
-  const activeId: string = list.workspaces.find((w: { id: string }) => w.id !== otherId).id;
-  expect((await request.post(`/api/workspaces/${activeId}/open`, { data: {} })).ok()).toBeTruthy();
+  // switch back to this test's workspace so the created one is inactive
+  expect((await request.post(`/api/workspaces/${workspace.id}/open`, { data: {} })).ok()).toBeTruthy();
   await page.goto("/");
   await expect(page.locator(".ws-trigger")).toBeVisible();
 
@@ -166,15 +165,13 @@ test("workspace switcher: a slow list response from before a rename cannot rever
   await expect(row).toContainText(`${title} renamed`);
 });
 
-test("workspace switcher: a rename and an archive show once saved, whatever the list refetches do (rhe2)", async ({ page, request }, testInfo) => {
+test("workspace switcher: a rename and an archive show once saved, whatever the list refetches do (rhe2)", async ({ page, request, workspace }, testInfo) => {
   await seedPanel(request, "Is checkout latency in the saved-mutation test elevated?");
   const title = `saved ${testInfo.retry}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const created = await request.post("/api/workspaces", { data: { title } });
   expect(created.ok()).toBeTruthy();
   const otherId: string = (await created.json()).workspace.id;
-  const list = await (await request.get("/api/workspaces")).json();
-  const activeId: string = list.workspaces.find((w: { id: string }) => w.id !== otherId).id;
-  expect((await request.post(`/api/workspaces/${activeId}/open`, { data: {} })).ok()).toBeTruthy();
+  expect((await request.post(`/api/workspaces/${workspace.id}/open`, { data: {} })).ok()).toBeTruthy();
   await page.goto("/");
   await expect(page.locator(".ws-trigger")).toBeVisible();
 

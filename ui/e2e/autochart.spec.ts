@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 
 test("a raw counter is charted as its rate, and the panel says so", async ({ page, request }) => {
   const q = await request.post("/api/query", {

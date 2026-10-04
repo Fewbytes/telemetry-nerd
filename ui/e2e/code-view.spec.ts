@@ -1,4 +1,5 @@
-import { expect, test, type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { mcpTool, seedPanel } from "./helpers.js";
 
 // Tier-2 code nodes in the UI (bead b98.5): panel provenance -> read-only code view, the code-run

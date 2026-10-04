@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 
 test("a series with a hole shows a coverage rug and a located caveat", async ({ page, request }) => {
   const q = await request.post("/api/query", {

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 
 // Spectrum, spectrogram and filtered/raw data views. Needs `just dev-up && just seed 8` and the daemon.
 test("spectrum finds the hourly period; filtered panel switches views and persists", async ({ page, request }) => {

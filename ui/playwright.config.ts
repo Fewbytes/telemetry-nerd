@@ -15,8 +15,9 @@ const fixture = `http://127.0.0.1:${fixturePort}`;
 
 export default defineConfig({
   testDir: "e2e",
-  // serialize: tests share one daemon (channel claim cursors, channel state)
-  // and global UI state (theme flips rebuild every plot on every page)
+  // serialize: tests share one daemon, and it has one active workspace. Each test runs in a fresh
+  // workspace of its own (e2e/fixtures.ts) and writes global state (catalog, lessons, channel
+  // cursors) only under its own names, so any order and any --repeat-each pass (zek0.2).
   workers: 1,
   retries: process.env.CI ? 1 : 0,
   use: { baseURL: daemon },

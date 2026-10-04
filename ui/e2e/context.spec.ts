@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "@playwright/test";
+import { expect, importDemo, showExpr, test } from "./fixtures.js";
 import { DAEMON } from "./helpers.js";
 
 // the tool arguments go through a file: file contents are full of quotes and newlines
@@ -12,23 +12,24 @@ const mcp = (tool: string, args: object) => {
   return execSync(`uv run python scripts/mcp_call.py --url ${DAEMON}/mcp ${tool} @${file}`, { cwd: "..", encoding: "utf8" });
 };
 
-const CODE = `from prometheus_client import Counter
+// The registration names this test's own counter: context claims land in the global catalog,
+// so a repeat on the shared demo counter would change nothing (zek0.2).
+const code = (counter: string) => `from prometheus_client import Counter
 
-REQS = Counter("tn_demo_requests", "Requests handled by the e2e demo service.", ["code"])
+REQS = Counter("${counter}", "Requests handled by the e2e demo service.", ["code"])
 OTHER = Counter("tn_not_in_this_source", "A metric this source does not have.")
 `;
 
-test("repo context: code registrations become cited catalog claims, shown on the card and in the catalog", async ({ page, request }) => {
+test("repo context: code registrations become cited catalog claims, shown on the card and in the catalog", async ({ page, request, uniq }) => {
+  const P = `tn_e2e_ctx${uniq}`;
+  await importDemo(request, P);
   mcp("source_learn", { source: "default" });
-  const out = JSON.parse(mcp("catalog_context", { source: "default", files: [{ path: "demo/metrics.py", text: CODE }] }));
+  const out = JSON.parse(mcp("catalog_context", { source: "default", files: [{ path: "demo/metrics.py", text: code(`${P}_requests`) }] }));
   expect(out.definitions).toBe(2);
   expect(out.unmatched.map((u: { name: string }) => u.name)).toEqual(["tn_not_in_this_source"]);
   expect(out.claims_changed).toBeGreaterThan(0);
 
-  const q = await request.post("/api/query", { data: { expr: "tn_demo_requests_total", start: "now-3h", end: "now-10m", step: "1m" } });
-  const { dataset } = await q.json();
-  const shown = await request.post("/api/show", { data: { dataset, question: "Counter context?", raw: true } });
-  const p2 = (await shown.json()).panel;
+  const p2 = await showExpr(request, `${P}_requests_total`, "Counter context?", { raw: true });
   await page.goto("/");
   const card2 = page.locator(`[data-panel-id="${p2.id}"] [data-metric-card]`);
   await card2.locator("summary").click();
@@ -41,6 +42,6 @@ test("repo context: code registrations become cited catalog claims, shown on the
   await page.goto("/#/catalog");
   const view = page.locator("[data-catalog-view]");
   await view.getByLabel("Winning origin").selectOption("context");
-  await view.getByLabel("Search").fill("tn_demo_requests");
-  await expect(view.locator('[data-catalog-row="tn_demo_requests_total"]')).toBeVisible();
+  await view.getByLabel("Search").fill(`${P}_requests`);
+  await expect(view.locator(`[data-catalog-row="${P}_requests_total"]`)).toBeVisible();
 });

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { brushMiddleThird, seedPanel } from "./helpers.js";
 
 // Theme toggle: explicit choice applies immediately, survives reload

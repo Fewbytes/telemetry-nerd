@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
-import { expect, test } from "@playwright/test";
-import { DAEMON, FIXTURE, seedPanel } from "./helpers.js";
+import { expect, importDemo, showExpr, test } from "./fixtures.js";
+import { DAEMON, FIXTURE } from "./helpers.js";
 
 const mcp = (tool: string, args: object) =>
   execSync(`uv run python scripts/mcp_call.py --url ${DAEMON}/mcp ${tool} '${JSON.stringify(args)}'`, {
@@ -9,28 +9,31 @@ const mcp = (tool: string, args: object) =>
   });
 
 // samples for the same series one week back, so last week's window is not empty
-const seedLastWeek = () =>
+const seedLastWeek = (metric: string) =>
   execSync(
     `uv run python -c "
 from telemetry_nerd.devtools.synthetic import exposition, push
 from telemetry_nerd.model.time import now_ms
 end = now_ms() // 15000 * 15000 - 7 * 86400000
-text = exposition('tn_demo_latency_seconds', {'instance': 'a'}, [(end - 4 * 3600000 + i * 15000, 0.1) for i in range(960)])
+text = exposition('${metric}', {'instance': 'a'}, [(end - 4 * 3600000 + i * 15000, 0.1) for i in range(960)])
 push('${FIXTURE}', text)"`,
     { cwd: "..", encoding: "utf8" },
   );
 
-test("reference layers: limit line and normal band on by default, last week on demand, persisted", async ({ page, request }) => {
+test("reference layers: limit line and normal band on by default, last week on demand, persisted", async ({ page, request, uniq }) => {
+  // its own metrics: the relation and last week's samples are global state (zek0.2)
+  const P = `tn_e2e_ovl${uniq}`;
+  await importDemo(request, P);
   mcp("source_learn", { source: "default" });
   mcp("catalog_relate", {
     source: "default",
     claims: [{
-      subject: "tn_demo_latency_seconds", kind: "bounded_by", object: "tn_demo_requests_total",
+      subject: `${P}_latency_seconds`, kind: "bounded_by", object: `${P}_requests_total`,
       confidence: 0.8, basis: "e2e: stand-in for a physical limit",
     }],
   });
-  seedLastWeek();
-  const panel = await seedPanel(request, "Does latency stay inside its normal band?");
+  seedLastWeek(`${P}_latency_seconds`);
+  const panel = await showExpr(request, `${P}_latency_seconds`, "Does latency stay inside its normal band?");
   await page.goto("/");
   const el = page.locator(`[data-panel-id="${panel.id}"]`);
   const layers = el.getByRole("group", { name: "Reference layers" });

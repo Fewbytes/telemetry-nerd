@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { mcpTool, seedPanel } from "./helpers.js";
 
 const SHOTS = "test-results/m6-ux";

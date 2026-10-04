@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { eventsSince, lastSeq, seedPanel } from "./helpers.js";
 
 test("marginal now vs previous, n shown, ambient event; indexed view labels 1", async ({ page, request }) => {

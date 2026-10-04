@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { brushMiddleThird, DAEMON, seedPanel } from "./helpers.js";
 
 test("brush-select → Ask Claude → thread visible and claimable exactly once", async ({

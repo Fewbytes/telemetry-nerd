@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 
 test("query → show → panel renders envelope within budget, peak preserved", async ({ page, request }) => {
   const q = await request.post("/api/query", {

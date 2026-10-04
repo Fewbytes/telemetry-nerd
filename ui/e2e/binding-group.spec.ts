@@ -1,14 +1,15 @@
-import { expect, test, type Locator } from "@playwright/test";
+import type { Locator } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { mkdirSync } from "node:fs";
 import { FIXTURE, mcpTool } from "./helpers.js";
 
 // show_binding (bead czt.3): a RED and a USE binding drawn as linked panel groups. Synthetic data
-// under unique metric names, imported into the fixture source.
-const P = `tn_e2e_czt3_${Date.now()}`;
+// under unique metric names (per test attempt: the catalog bindings are global), imported into the
+// fixture source.
 const SHOTS = "e2e-shots";
 const STEP = 30_000;
 
-function exposition(): string {
+function exposition(P: string): string {
   const end = Math.floor((Date.now() - 5 * 60_000) / STEP) * STEP;
   const n = (3 * 3600_000) / STEP;
   const start = end - (n - 1) * STEP;
@@ -51,10 +52,11 @@ function exposition(): string {
 
 const xhairLeft = async (role: Locator): Promise<number> => (await role.locator("[data-xhair]").first().boundingBox())!.x;
 
-test("show_binding: RED and USE groups, linked crosshair and brush, gap card, both themes", async ({ page, request }) => {
+test("show_binding: RED and USE groups, linked crosshair and brush, gap card, both themes", async ({ page, request, uniq }) => {
+  const P = `tn_e2e_czt3${uniq}`;
   test.setTimeout(120_000);
   mkdirSync(SHOTS, { recursive: true });
-  const put = await request.post(`${FIXTURE}/api/v1/import/prometheus`, { data: exposition() });
+  const put = await request.post(`${FIXTURE}/api/v1/import/prometheus`, { data: exposition(P) });
   expect(put.ok()).toBeTruthy();
   await request.get(`${FIXTURE}/internal/force_flush`);
   await mcpTool(request, "source_learn", { source: "default" });

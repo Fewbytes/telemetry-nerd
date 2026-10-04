@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { seedPanel } from "./helpers.js";
 
 test("preset range change previews, then keep-this-range creates a new panel", async ({ page, request }) => {

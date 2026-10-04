@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { seedPanel } from "./helpers";
 
 test("sidebar chat: first message creates an anchor-less thread; panel refs highlight on hover", async ({

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { DAEMON, seedPanel } from "./helpers.js";
 
 /** A stand-in for the stdio bridge: holds /ws/bridge like `telemetry-nerd bridge` does. */

@@ -1,10 +1,11 @@
-import { expect, test, type Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { mkdirSync } from "node:fs";
 import { FIXTURE } from "./helpers.js";
 
 // 100-member synthetic fleet, 3 planted outliers (persistent, transient, drifting), imported into the
-// fixture source under a unique metric name.
-const METRIC = `tn_e2e_lkn_fleet_cpu_${Date.now()}`; // fresh per run: stale samples at shifted timestamps would add outliers
+// fixture source under a unique metric name per test attempt: stale samples at shifted timestamps
+// would add outliers.
 const SHOTS = "e2e-shots";
 const PLANTED = { persistent: 7, transient: 23, drifting: 61 };
 const pod = (i: number) => `pod=api-${String(i).padStart(3, "0")}`;
@@ -17,7 +18,7 @@ const gauss = (r: () => number) => Math.sqrt(-2 * Math.log(r() + 1e-12)) * Math.
 
 // Each test queries exactly the grid it imported (absolute start/end, bead ax1s): the same
 // buckets every run, whatever minute the suite reaches the test in.
-function exposition(start: number): string {
+function exposition(metric: string, start: number): string {
   const r = rng(42);
   const T = 300, step = 60_000;
   const lines: string[] = [];
@@ -32,7 +33,7 @@ function exposition(start: number): string {
       if (m === PLANTED.drifting) lv += (0.8 * t) / (T - 1);
       if (m === 40 && t >= 100 && t < 130) continue; // a real hole: silent while alive
       const v = (50 + 20 * Math.sin((2 * Math.PI * t) / T)) * Math.exp(lv);
-      lines.push(`${METRIC}{pod="api-${String(m).padStart(3, "0")}",job="api"} ${v.toFixed(4)} ${start + t * step}`);
+      lines.push(`${metric}{pod="api-${String(m).padStart(3, "0")}",job="api"} ${v.toFixed(4)} ${start + t * step}`);
     }
   }
   return lines.join("\n") + "\n";
@@ -51,14 +52,15 @@ async function pixels(page: Page, sel: string, rgb: [number, number, number]): P
 
 const OUTLIER_RGB: [number, number, number][] = [[0xd5, 0x5e, 0x00], [0x00, 0x72, 0xb2], [0xcc, 0x79, 0xa7]];
 
-test("fleet panel: band, 3 planted outliers labelled, heatmap and small multiples within budget, both themes", async ({ page, request }) => {
+test("fleet panel: band, 3 planted outliers labelled, heatmap and small multiples within budget, both themes", async ({ page, request, uniq }) => {
+  const metric = `tn_e2e_lkn_fleet_cpu_${uniq}`;
   mkdirSync(SHOTS, { recursive: true });
   const end = Math.floor((Date.now() - 6 * 60_000) / 60_000) * 60_000, start = end - 299 * 60_000;
-  const put = await request.post(`${FIXTURE}/api/v1/import/prometheus`, { data: exposition(start) });
+  const put = await request.post(`${FIXTURE}/api/v1/import/prometheus`, { data: exposition(metric, start) });
   expect(put.ok()).toBeTruthy();
   await request.get(`${FIXTURE}/internal/force_flush`);
   const q = await request.post("/api/query", {
-    data: { expr: METRIC, start: String(start), end: String(end), step: "1m" },
+    data: { expr: metric, start: String(start), end: String(end), step: "1m" },
   });
   expect(q.ok()).toBeTruthy();
   const { dataset } = await q.json();
@@ -147,9 +149,9 @@ test("fleet panel: band, 3 planted outliers labelled, heatmap and small multiple
   for (const v of Object.values(timings)) expect(Number(v)).toBeLessThan(100);
 });
 
-test("fleet panel with 6 members: band view screenshot", async ({ page, request }) => {
+test("fleet panel with 6 members: band view screenshot", async ({ page, request, uniq }) => {
   mkdirSync(SHOTS, { recursive: true });
-  const metric = `tn_e2e_2ju_fleet6_${Date.now()}`;
+  const metric = `tn_e2e_2ju_fleet6_${uniq}`;
   const r = rng(7);
   const T = 240, step = 60_000, end = Math.floor((Date.now() - 6 * 60_000) / step) * step, start = end - (T - 1) * step;
   const lines: string[] = [];
@@ -177,9 +179,9 @@ test("fleet panel with 6 members: band view screenshot", async ({ page, request 
   }
 });
 
-test("fleet split into behaviour groups: per-group bands and medians, tagged outliers, hatched unknown data (oyi)", async ({ page, request }) => {
+test("fleet split into behaviour groups: per-group bands and medians, tagged outliers, hatched unknown data (oyi)", async ({ page, request, uniq }) => {
   mkdirSync(SHOTS, { recursive: true });
-  const metric = `tn_e2e_oyi_fleet_groups_${Date.now()}`;
+  const metric = `tn_e2e_oyi_fleet_groups_${uniq}`;
   const r = rng(11);
   const T = 240, step = 60_000, end = Math.floor((Date.now() - 6 * 60_000) / step) * step, start = end - (T - 1) * step;
   const lines: string[] = [];

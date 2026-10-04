@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { FIXTURE } from "./helpers.js";
 
 // Seasonal panel (lkn.9): overlay of now vs previous days with the band, and the ratio view.
