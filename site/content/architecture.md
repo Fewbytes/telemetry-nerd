@@ -26,10 +26,18 @@ single port (`127.0.0.1:7070` by default):
   kernel subprocess with the query results handed in and the result (never raw rows) handed
   back.
 
-Everything the daemon writes — the series cache, workspace objects, the metric catalog, the
-event log — lives under one data directory (`TN_DATA_DIR`), as a couple of SQLite/DuckDB files.
-There is no separate database server and no separate worker process; one daemon, one data
-directory, one writer.
+Everything the daemon writes lives under one data directory (`TN_DATA_DIR`), as a few files, no
+separate database server:
+
+- `series.duckdb` — the series cache and dataset store: every series pulled from your source and
+  every dataset a tool or `run_code` has produced, so a panel or a finding can be re-opened
+  without re-querying the source.
+- `workspace.db` — workspaces, panels, hypotheses, findings, the metric catalog and the event
+  log, in SQLite.
+- `daemon.json` — daemon-level settings (connected sources, etc).
+
+One daemon, one data directory, one writer; the databases are single-writer, so two daemons never
+share a directory.
 
 ## The plugin and the bridge
 
@@ -86,8 +94,17 @@ The bridge then talks to the remote daemon over HTTP/WebSocket instead of starti
 if it's unreachable, calls fail with an actionable error instead of silently falling back. The
 bridge itself still runs locally and still needs the `telemetry-nerd` CLI installed, even though
 it never starts a daemon of its own — only the heavy state and the metrics connection move to
-the remote box. You'd do this to keep the series cache and catalog next to your metrics source,
-or to share one workspace across a team instead of each person running their own daemon.
+the remote box.
+
+The main reason to do this is proximity to the data, not convenience. The daemon is the thing
+that queries your Prometheus/Thanos/VictoriaMetrics source, caches the results and runs analysis
+over them; if that source is itself on a server (production, a VPC, a datacenter), running the
+daemon next to it means every query is a local hop instead of a round trip from your laptop over
+a VPN, and large pulls (a wide fleet query, a long seasonal window) don't cross the WAN twice —
+once to the daemon, once again from the daemon to you, since the browser workspace only ever
+receives the daemon's compact chart data, never the raw series. The other reason is sharing: one
+daemon, one workspace, one catalog that a team investigates together instead of everyone caching
+their own copy of the same metrics.
 
 **Claude Code itself remote** (say, on a devbox or CI runner) is a variant of the same
 arrangement: wherever Claude Code runs, that's where the bridge runs, and `TN_DAEMON_URL` points
@@ -103,6 +120,15 @@ that authenticates — a reverse proxy, a tunnel, an SSH port-forward back to lo
 than exposing `7070` directly. This is unchanged by anything above: Telemetry Nerd only reads
 metrics, but the workspace itself (your investigation, your findings) has no access control of
 its own yet.
+
+There's a second thing to weigh, specific to this project: `run_code` means Claude can send it
+arbitrary Python. That code runs in the daemon's IPython kernel subprocess, and the kernel is
+**not sandboxed** — running code there is equivalent to running Python in Bash, on whichever
+machine the daemon is on. Locally that's your own laptop, which you already trust with a shell.
+Point `TN_DAEMON_URL` at a shared remote daemon and the same is true of that machine: anyone whose
+Claude session is wired to it can run arbitrary code as the daemon's user. Treat the choice of
+where the daemon runs as the choice of where you're letting Claude execute code, not just where
+the metrics cache lives.
 
 ### A deployment skill, not yet built
 
