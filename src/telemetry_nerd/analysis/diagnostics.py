@@ -122,15 +122,11 @@ class Structure:
 def structure(pos, ts_ms, t_s, y, span_ms) -> Structure:
     """Best of constant / linear trend / significant level shifts, by BIC. The step model takes
     the shifts that hold under the changepoint test's cautious model; those only its point model
-    sees are kept as undetermined (none within MIN_SEGMENT of a labelled one)."""
+    sees are kept as undetermined when material against the chosen model's residual sigma
+    (none within MIN_SEGMENT of a labelled one)."""
     n = y.size
     tr = trend(pos, ts_ms, y, span_ms)
     shifts = changepoints(pos, ts_ms, y)
-    undetermined = [
-        u
-        for u in changepoints(pos, ts_ms, y, cautious=False)
-        if all(abs(u.index - s.index) >= MIN_SEGMENT for s in shifts)
-    ]
     fits = {"none": np.full(n, y.mean())}
     t = t_s - t_s.mean()
     fits["trend"] = y.mean() + (t @ (y - y.mean())) / (t @ t) * t
@@ -140,7 +136,15 @@ def structure(pos, ts_ms, t_s, y, span_ms) -> Structure:
     k = {"none": 1, "trend": 2, "step": 2 * len(shifts) + 1}
     bics = {m: _bic(float(np.sum((y - f) ** 2)), n, k[m]) for m, f in fits.items()}
     model = min(bics, key=bics.__getitem__)
-    return Structure(model, tr, shifts, fits[model], y - fits[model], undetermined)
+    resid = y - fits[model]
+    sw = robust_sigma(resid) or float(np.std(resid))
+    undetermined = [
+        u
+        for u in changepoints(pos, ts_ms, y, cautious=False)
+        if abs(u.delta) >= MATERIAL * sw
+        and all(abs(u.index - s.index) >= MIN_SEGMENT for s in shifts)
+    ]
+    return Structure(model, tr, shifts, fits[model], resid, undetermined)
 
 
 def _chart(ts_ms, y, step_ms, pos, t_s, baseline, harm, reference, profile) -> ControlChart:
@@ -498,16 +502,26 @@ def diagnose(
             reasons.append(
                 f"level shift {fmt(s.delta)} [{fmt(s.interval[0])}, {fmt(s.interval[1])}] at "
                 f"{fmt_ts(s.ts_ms)} ({abs(s.delta) / sigma_within:.1f} sigma"
-                f"{', small' if abs(s.delta) < SMALL * sigma_within else ''}, p={s.p:.1g})"
+                f"{', small' if abs(s.delta) < SMALL * sigma_within else ''}, p={s.p_cautious:.1g})"
             )
             var.append(item(SPECIAL, reasons[-1]))
     for s in shifts:
         if s not in material:
             reasons.append(
-                f"minor shift {fmt(s.delta)} at {fmt_ts(s.ts_ms)} (p={s.p:.1g}, "
+                f"minor shift {fmt(s.delta)} at {fmt_ts(s.ts_ms)} (p={s.p_cautious:.1g}, "
                 f"{abs(s.delta) / sigma_within:.1f} sigma < {MATERIAL:g})"
             )
             var.append(item(SPECIAL, reasons[-1]))
+    # seen by the point model only (principle 16): reported, the source not decided
+    undet = [s for s in final.undetermined if abs(s.delta) >= MATERIAL * sigma_within]
+    for s in undet:
+        _two_model_reason(UNDETERMINED, reasons, var, {UNDETERMINED: (
+            f"level shift {fmt(s.delta)} [{fmt(s.interval[0])}, {fmt(s.interval[1])}] at "
+            f"{fmt_ts(s.ts_ms)} ({abs(s.delta) / sigma_within:.1f} sigma) under the point AR(1) "
+            f"model only (p_point={s.p:.1g}, p_cautious={s.p_cautious:.1g}); on this effective "
+            f"sample size (n_eff {ne:.0f}) the source is not decided (a longer range would "
+            "decide it)"
+        )})  # fmt: skip
     drift_material = abs(tr.change) >= MATERIAL * tr.sigma_resid
     if tr.significant and drift_material and model == "trend":
         labels.append("drifting")
@@ -572,6 +586,7 @@ def diagnose(
     structured = (
         dep_tested
         or exc_tested
+        or bool(undet)
         or bool({"level_shifted", "drifting"} & set(labels))
         or ((model == "step" and bool(shifts)) or (model == "trend" and tr.significant))
     )
@@ -598,7 +613,10 @@ def diagnose(
         reasons += [r for _, r in noisy]
         var += [item(src, r) for src, r in noisy]
     changed = {"insufficient_data", "level_shifted", "transient", "drifting"}
-    undecided = UNDETERMINED in (dep.status if dep else None, exc.status if exc else None)
+    undecided = bool(undet) or UNDETERMINED in (
+        dep.status if dep else None,
+        exc.status if exc else None,
+    )
     if undecided and not changed & set(labels):
         labels.append("undetermined")  # tested, the models disagree: not "stable"
     if not labels:
@@ -622,5 +640,5 @@ def diagnose(
     return Diagnosis(
         order[0], order[1:], reasons, n, tau, ne, peaks, confirmed, cands, harm if peaks else None, tr, shifts,
         sigma_within, stationarity, vr, sh, chart, model, caveats, var, dep, exc,
-        final.undetermined,
+        undet,
     )  # fmt: skip

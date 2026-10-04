@@ -207,7 +207,11 @@ def test_a_shift_only_the_point_model_sees_is_listed_undetermined(tmp_path):
         resolution_ms=15_000, result=buckets(y), representation="bucket_agg",
     ).id  # fmt: skip
     (s,) = svc.analyze(d)["series"]
-    assert "level_shifted" not in (s["verdict"], *s["also"]) and s["stability"]["shifts"] == []
+    assert s["verdict"] == "undetermined" and s["stability"]["shifts"] == []
     (u,) = s["stability"]["shifts_undetermined"]
     assert u["source"] == "undetermined" and u["at"].startswith("1970-01-01T00:32")
-    assert u["p_point"] < 0.01 <= u["p"]
+    assert u["p"] < 0.01 <= u["p_cautious"] and u["label_rests_on"] == "cautious"
+    assert u["interval"][0] < u["delta"] < u["interval"][1] and u["n_before"] == 32
+    e = StatisticRef.model_validate(u["evidence"])  # citable as-is
+    assert u["evidence"]["source"] == "undetermined" and "cautious" in u["evidence"]["method"]
+    assert e is not None

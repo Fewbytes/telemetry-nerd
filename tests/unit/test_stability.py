@@ -2,6 +2,8 @@ import numpy as np
 import pytest
 
 from telemetry_nerd.analysis.stability import (
+    PHI_CAP,
+    ar1_phi_unbiased,
     changepoints,
     fit_harmonics,
     kpss,
@@ -44,7 +46,7 @@ def test_a_pulse_is_found_at_both_edges(base):
     # base 0: exactly zero outside the burst (a counter born on its first event, read as 0)
     y = np.where(burst, base + 2.0 + noise, base + (noise if base else 0.0))
     found = changepoints(pos, ts, y)
-    assert [s.index for s in found] == [20, 40] and all(s.p < 1e-6 for s in found)
+    assert [s.index for s in found] == [20, 40] and all(s.p_cautious < 1e-6 for s in found)
     assert found[0].delta > 1.5 and found[1].delta < -1.5
 
 
@@ -88,14 +90,42 @@ def test_a_shift_only_the_point_model_sees_is_kept_apart():
     y = ar1_series(64, 0.6, 1) + np.where(pos >= 32, 2.5, 0.0)
     assert changepoints(pos, ts, y) == []
     (sh,) = changepoints(pos, ts, y, cautious=False)
-    assert sh.index == 32 and sh.p_point < 0.01 <= sh.p
+    assert sh.index == 32 and sh.p < 0.01 <= sh.p_cautious
+
+
+@pytest.mark.parametrize(("n", "k"), [(16, 3), (20, 5), (24, 3), (40, 5), (200, 3)])
+def test_the_phi_correction_stays_bounded_on_short_segments(n, k):
+    # nbz review: (n phi + k) / (n - 3k) blows up near n = 3k; its gain is capped at 8/5 (n < 8k),
+    # continuous at n = 8k, so a short sub-segment is not pushed to PHI_CAP
+    for phi in (-0.2, 0.0, 0.2, 0.5):
+        c = ar1_phi_unbiased(phi, n, k)
+        lin = phi + k / n  # the gain (1 .. 8/5) multiplies this
+        assert phi < c <= min(max(1.6 * lin, lin), PHI_CAP) + 1e-12
+    assert ar1_phi_unbiased(0.2, 16, 3) < 0.65 and ar1_phi_unbiased(0.0, 20, 5) < 0.45
+    assert ar1_phi_unbiased(0.3, 8 * k, k) == pytest.approx((8 * k * 0.3 + k) / (5 * k))
+
+
+@pytest.mark.parametrize("seed", range(5))
+def test_a_second_clear_step_in_a_short_segment_is_found(seed):
+    # steps at 24 and 44 of 64: binary segmentation tests the second one inside a 40- then a
+    # 20-point segment; a 4-sigma step there must survive the small-sample phi correction
+    pos, ts = grid(64)
+    y = np.random.default_rng(seed).normal(size=64) + np.where(pos >= 24, 4.0, 0.0)
+    y += np.where(pos >= 44, -4.0, 0.0)
+    found = [s.index for s in changepoints(pos, ts, y)]
+    assert len(found) == 2 and abs(found[0] - 24) <= 1 and abs(found[1] - 44) <= 1, found
+    for n in (16, 20, 28, 35):  # one clear step inside a short segment
+        p2, t2 = grid(n)
+        z = np.random.default_rng(seed).normal(size=n) + np.where(p2 >= n // 2, 5.0, 0.0)
+        (sh,) = changepoints(p2, t2, z)
+        assert abs(sh.index - n // 2) <= 1, n
 
 
 def test_point_p_is_never_above_the_cautious_p():
     pos, ts = grid(128)
     for s in range(20):
         y = ar1_series(128, 0.7, s) + np.where(pos >= 50, 3.0, 0.0)
-        assert all(sh.p_point <= sh.p for sh in changepoints(pos, ts, y, cautious=False))
+        assert all(sh.p <= sh.p_cautious for sh in changepoints(pos, ts, y, cautious=False))
 
 
 def test_trend_interval_covers_truth_under_ar1():
@@ -118,7 +148,7 @@ def test_changepoint_found_at_the_step_with_interval():
     pos, ts = grid(400)
     y = np.random.default_rng(1).normal(size=400) + np.where(pos >= 250, 2.0, 0.0)
     (sh,) = changepoints(pos, ts, y)
-    assert abs(sh.index - 250) <= 3 and sh.p < 1e-6
+    assert abs(sh.index - 250) <= 3 and sh.p_cautious < 1e-6
     assert sh.interval[0] <= 2.0 <= sh.interval[1] and sh.n_before + sh.n_after == 400
 
 

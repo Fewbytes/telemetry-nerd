@@ -60,6 +60,11 @@ in the chart — it's what you asked for.
 
 - **Little's law window** — the sub-range Claude averages over when checking L = λW for a service
   (concurrency, throughput, latency); shorter than the full time range by default.
+- **Point model** / **cautious model** — a test run under two sets of assumptions: the point
+  model is the plain estimate (optimistic, shown as context), the cautious model allows for what
+  could make the result look stronger than it is (autocorrelation, clustered events, heavy
+  tails). A label such as "special cause" rests on the cautious model; when only the point model
+  sees something, it is reported as **undetermined** (principle 16).
 
 See the [rationale](/rationale/) page for why a model-view verdict always ships with the measured
 discrepancy, not just a label, and the [architecture](/architecture/) page for how the pieces that

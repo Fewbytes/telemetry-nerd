@@ -341,7 +341,7 @@ class Judgement:
 def _shift(cp_y: np.ndarray, side: int | None) -> tuple[int, int, object] | None:
     """The first significant single changepoint (stability.changepoints) in direction `side`
     (any when None): (block, Bai 95% half-width in blocks, the shift). Significant under the
-    changepoint test's point model (p_point): it only dates a change the level / episode tests
+    changepoint test's point model (p): it only dates a change the level / episode tests
     already established (the label rests on them), and the cautious long-run sigma would miss
     the onset of a clear step on a short, autocorrelated window. Its interval (hence Bai's)
     is still the cautious one."""

@@ -33,15 +33,13 @@ PHI_SE_CAUTIOUS = 1.0  # the cautious level-shift model: phi this many SEs above
 # fitted mean-model parameters behind a changepoint test's residuals (the AR(1) bias count):
 # a step = 2 segment means + its selected boundary; a pulse = 3 means + 2 selected boundaries
 K_STEP, K_PULSE = 3, 5
+MIN_N_PER_PARAM = 8  # ar1_phi_unbiased solves the bias exactly from n = 8k; below, gain held
 SHIFT_METHOD = (
-    "CUSUM changepoint, binary segmentation; step (Kolmogorov null) or pulse (Kuiper null), "
-    "Bonferroni over both. Scale: AR(1) long-run sigma sigma_e / (1 - phi) of the split "
-    "model's residuals, phi corrected for its short-sample bias (Kendall / Marriott-Pope, "
-    "one parameter per segment mean and per selected boundary), two models: (a) point, the "
-    "corrected phi (p_point, context); (b) cautious, phi one standard error higher (p; the "
-    "label rests on it, shifts only (a) finds are listed as undetermined). 99% interval on "
-    "the delta under (b). Assumes AR(1) noise around piecewise-constant means; on ~3 "
-    "effective samples (phi 0.9, 64 points) the simulated false-alarm rate is ~2%, not 1%"
+    "CUSUM changepoint (Kolmogorov step / Kuiper pulse null, Bonferroni), AR(1) long-run sigma "
+    "of the split residuals; phi bias-corrected (Kendall / Marriott-Pope form, k by simulation: "
+    "a mean or a selected boundary each 1; gain held at 8/5 under 8k points). Point model p; "
+    "cautious p_cautious: phi + 1 asymptotic SE of raw phi; label and 99% interval rest on it. "
+    "Simulated FAR <= 1% at phi <= 0.8, n >= 64; ~2% at phi 0.9, n 64; up to 2-3% under 40 points"
 )
 KPSS_LEVEL = ((0.10, 0.347), (0.05, 0.463), (0.025, 0.574), (0.01, 0.739))
 BIMODAL_BC = 5 / 9
@@ -121,11 +119,11 @@ class Shift:
     ts_ms: int
     delta: float  # mean after - mean before (adjacent segments)
     interval: tuple[float, float]  # 1 - ALPHA
-    p: float
-    stat: float
+    p: float  # point model (bias-corrected phi): optimistic, context
+    stat: float  # under the cautious model
     n_before: int
     n_after: int
-    p_point: float  # the same test under the point model (bias-corrected phi): optimistic context
+    p_cautious: float  # cautious model (phi + 1 SE): the label rests on it
 
 
 def _split_cusum(y: np.ndarray) -> tuple[int, float]:
@@ -137,19 +135,23 @@ def _split_cusum(y: np.ndarray) -> tuple[int, float]:
 
 def ar1_phi_unbiased(phi_hat: float, n: int, k: int) -> float:
     """AR(1) phi corrected for the downward bias of fitting it to the residuals of a mean model
-    with k parameters over n samples (k separately demeaned segments, a boundary chosen from the
-    data counting as one more). Kendall (1954), Marriott & Pope (1954): E[phi_hat] ~ phi -
-    k (1 + 3 phi) / n, solved for phi. Undefined when n <= 4k: PHI_CAP (cautious)."""
-    if n <= 4 * k:
-        return PHI_CAP
-    return min((n * phi_hat + k) / (n - 3 * k), PHI_CAP)
+    with k parameters over n samples. The Kendall (1954) / Marriott & Pope (1954) form,
+    E[phi_hat] ~ phi - k (1 + 3 phi) / n, solved for phi: (n phi_hat + k) / (n - 3k); k counts
+    the demeaned segments, and a boundary chosen from the data counts as one more (calibrated
+    by simulation, bead nbz). The solution's gain n / (n - 3k) blows up as n nears 3k, where
+    the first-order form no longer holds: below n = 8k (MIN_N_PER_PARAM) the gain is held at
+    its value there, 8/5, so a short sub-segment is corrected, not pushed to PHI_CAP."""
+    gain = n / max(n - 3 * k, n * (1 - 3 / MIN_N_PER_PARAM))
+    return min(gain * (phi_hat + k / n), PHI_CAP)
 
 
 def _long_run_sigma(pos: np.ndarray, resid: np.ndarray, k: int) -> tuple[float, float]:
     """sigma_e / (1 - phi) of AR(1) residuals of a k-parameter mean model, under two models:
-    point (phi bias-corrected, ar1_phi_unbiased) and cautious (phi PHI_SE_CAUTIOUS standard
-    errors higher: on short series phi_hat is noisy and 1 / (1 - phi) convex, so the point
-    sigma is still too small too often). (point, cautious); phi <= 0 counts as 0."""
+    point (phi bias-corrected, ar1_phi_unbiased) and cautious (that phi plus PHI_SE_CAUTIOUS x
+    sqrt((1 - phi^2) / n), the asymptotic SE of a raw phi_hat; the corrected estimate's own SE
+    is larger by the gain, so this is a calibrated margin, not a confidence bound: on short
+    series phi_hat is noisy and 1 / (1 - phi) convex, so the point sigma is still too small
+    too often). (point, cautious); phi <= 0 counts as 0."""
     fit = ar1(pos, resid)
     n = resid.size
     phi = ar1_phi_unbiased(fit.phi, n, k)
@@ -193,7 +195,7 @@ def _one_split(pos, ts_ms, y, cautious: bool = True) -> Shift | None:
     split misses a pulse in the middle: the unmodelled return inflates the long-run sigma of the
     two-segment residuals. A pulse is reported at whichever of its edges is the stronger single
     change; binary segmentation then finds the other edge. `cautious`: the alternatives are
-    ranked by p (the cautious model), else by p_point."""
+    ranked by p_cautious, else by p (the point model)."""
     n = y.size
     if n < 2 * MIN_SEGMENT:
         return None
@@ -204,7 +206,7 @@ def _one_split(pos, ts_ms, y, cautious: bool = True) -> Shift | None:
     if slr_c > 0:
         stat = s / (slr_c * math.sqrt(n))
         p_point = kolmogorov_sf(s / (slr * math.sqrt(n)))
-        best = Shift(k, int(ts_ms[k]), delta, interval, kolmogorov_sf(stat), stat, int(a.size), int(b.size), p_point)  # fmt: skip
+        best = Shift(k, int(ts_ms[k]), delta, interval, p_point, stat, int(a.size), int(b.size), kolmogorov_sf(stat))  # fmt: skip
     epi = _split_epidemic(y)
     if epi is not None:
         lo, hi, v = epi
@@ -212,19 +214,19 @@ def _one_split(pos, ts_ms, y, cautious: bool = True) -> Shift | None:
         slr3, slr3_c = _long_run_sigma(pos, np.concatenate([p - p.mean() for p in parts]), K_PULSE)
         if slr3_c > 0:
             stat = v / (slr3_c * math.sqrt(n))
-            p = kuiper_sf(stat)
+            p_c = kuiper_sf(stat)
             p_point = kuiper_sf(v / (slr3 * math.sqrt(n)))
             if best is None or (
-                (p, p_point) < (best.p, best.p_point)
+                (p_c, p_point) < (best.p_cautious, best.p)
                 if cautious
-                else (p_point, p) < (best.p_point, best.p)
+                else (p_point, p_c) < (best.p, best.p_cautious)
             ):
                 edge = lo if abs(parts[1].mean() - parts[0].mean()) >= abs(parts[2].mean() - parts[1].mean()) else hi  # fmt: skip
                 d, iv, *_ = _delta(pos, y[:edge], y[edge:])
-                best = Shift(edge, int(ts_ms[edge]), d, iv, p, stat, edge, n - edge, p_point)
+                best = Shift(edge, int(ts_ms[edge]), d, iv, p_point, stat, edge, n - edge, p_c)
     if best is None:
         return None
-    return replace(best, p=min(1.0, 2 * best.p), p_point=min(1.0, 2 * best.p_point))
+    return replace(best, p=min(1.0, 2 * best.p), p_cautious=min(1.0, 2 * best.p_cautious))
 
 
 def changepoints(
@@ -233,7 +235,7 @@ def changepoints(
     """Binary segmentation with the CUSUM test (Kolmogorov null, long-run sigma from AR(1)
     residuals of the split model). At most MAX_CHANGEPOINTS, segments >= MIN_SEGMENT. A shift
     is kept when significant under the cautious long-run sigma (_long_run_sigma): a label rests
-    on it; its p_point (the bias-corrected point model) is context. `cautious=False` keeps the
+    on it (p_cautious); its p (the bias-corrected point model) is context. `cautious=False` keeps the
     shifts significant under the point model instead: for locating a change another test has
     already established, or reporting the undetermined ones, never for a label. On ~3 effective samples (phi 0.9 at n 64) the
     false-alarm rate is still ~2%, not the nominal 1% (simulated, bead nbz)."""
@@ -242,7 +244,7 @@ def changepoints(
     while todo and len(found) < MAX_CHANGEPOINTS:
         a, b = todo.pop(0)
         sh = _one_split(pos[a:b], ts_ms[a:b], y[a:b], cautious)
-        if sh is None or (sh.p if cautious else sh.p_point) >= ALPHA:
+        if sh is None or (sh.p_cautious if cautious else sh.p) >= ALPHA:
             continue
         k = a + sh.index
         found.append(replace(sh, index=k))

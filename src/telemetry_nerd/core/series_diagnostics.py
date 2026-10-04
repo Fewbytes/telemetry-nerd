@@ -522,33 +522,34 @@ class SeriesDiagnostics:
                 "OLS slope x range, SE inflated by sqrt(tau) of residuals, 99% t interval",
                 source=SPECIAL,
             )  # fmt: skip
-        shifts = []
-        for s in d.shifts:
-            item = {
+
+        def shift_wire(s, source: str) -> dict:
+            # both models (principle 16): p the point model, p_cautious the label's
+            return {
                 "at": iso(s.ts_ms), "delta": sig(s.delta), "interval": sig_pair(s.interval),
                 "sigma_units": sig(abs(s.delta) / d.sigma_within, 3), "p": sig(s.p, 2),
-                "p_point": sig(s.p_point, 2), "label_rests_on": "cautious",
-                "n_before": s.n_before, "n_after": s.n_after, "source": SPECIAL,
+                "p_cautious": sig(s.p_cautious, 2), "label_rests_on": "cautious",
+                "n_before": s.n_before, "n_after": s.n_after, "source": source,
             }  # fmt: skip
+
+        def shift_evidence(s, source: str) -> dict:
+            return ev(
+                "level_shift", s.delta, s.interval, SHIFT_METHOD, source=source,
+                at=iso(s.ts_ms), p=sig(s.p_cautious, 2), p_point_model=sig(s.p, 2),
+            )  # fmt: skip
+
+        shifts = []
+        for s in d.shifts:
+            item = shift_wire(s, SPECIAL)
             if d.model == "step":
-                item["evidence"] = ev(
-                    "level_shift", s.delta, s.interval,
-                    SHIFT_METHOD,
-                    source=SPECIAL, at=iso(s.ts_ms), p=s.p, p_point=sig(s.p_point, 2),
-                )  # fmt: skip
+                item["evidence"] = shift_evidence(s, SPECIAL)
             shifts.append(item)
         stability = {"trend": trend, "shifts": shifts, "sigma_within": sig(d.sigma_within)}
         if d.shifts_undetermined:
-            # significant under the point model only: "a shift under the point AR(1) model
-            # (p_point), not under the cautious one (p)", never a special cause
+            # material, significant under the point model only: "a shift under the point AR(1)
+            # model (p), not under the cautious one (p_cautious)", never a special cause
             stability["shifts_undetermined"] = [
-                {
-                    "at": iso(s.ts_ms),
-                    "delta": sig(s.delta),
-                    "p_point": sig(s.p_point, 2),
-                    "p": sig(s.p, 2),
-                    "source": UNDETERMINED,
-                }
+                shift_wire(s, UNDETERMINED) | {"evidence": shift_evidence(s, UNDETERMINED)}
                 for s in d.shifts_undetermined
             ]
         if d.departure is not None:

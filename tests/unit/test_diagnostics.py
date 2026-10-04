@@ -112,9 +112,12 @@ def test_a_shift_only_the_point_model_sees_is_undetermined_not_level_shifted():
     the cautious one (phi + 1 SE) is reported as undetermined context, never the step model."""
     t = np.arange(64)
     d = run(ar1_series(64, 0.6, 1) + np.where(t >= 32, 2.5, 0.0))
-    assert "level_shifted" not in (d.verdict, *d.also) and not d.shifts, d.reasons
+    assert d.verdict == "undetermined" and "level_shifted" not in d.also and not d.shifts
+    assert "noisy" not in d.also, d.reasons  # the shift explains the chart: not noise
     (u,) = d.shifts_undetermined
-    assert u.index == 32 and u.p_point < 0.01 <= u.p
+    assert u.index == 32 and u.p < 0.01 <= u.p_cautious
+    (r,) = [r for r in d.reasons if "point AR(1) model only" in r]
+    assert any(v["source"] == "undetermined" and v["finding"] == r for v in d.variation)
 
 
 # --- departure from an all-zero baseline (event counts) ---------------------------------------

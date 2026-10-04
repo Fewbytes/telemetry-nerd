@@ -59,6 +59,8 @@ Only terms that recur across specs; each points at where it is defined.
 | **ghost** | The same time range one week earlier, faint and dashed. | reference-overlays spec |
 | **indexed view** / **baseline** | Y view as a ratio to a baseline (`window` = the series' own mean over the time range, `previous`, `week`) on a log axis. | `ui/src/chart/yview.ts`; graphing guide §2 |
 | **reference time range** | The earlier time range a verdict or comparison judges against (`previous`, `day`, `week`). Payloads may say "reference window". | principle 14; binding-verdicts spec |
+| **point model** | The plain (or bias-corrected) estimate a two-model test reports as context; optimistic. Its p is `p` (or `p_poisson`, `p_baseline_model`, `p_point_model` in evidence). A result only it supports is **undetermined**. | principle 16; e.g. `stability.shifts[].p` (`analysis/stability.py: SHIFT_METHOD`) |
+| **cautious model** | The more conservative alternative of a two-model test (autocorrelation, clustering, overdispersion, heavier tails, a parameter at the edge of its uncertainty); a label rests on it (`label_rests_on: cautious`). | principle 16; `p_cautious`, `p_clustered` |
 | **Little's law window** | The sub-range of the time range over which L and λW are averaged (`window`, default ~range/12). | Little's law spec |
 
 ## Words we don't use

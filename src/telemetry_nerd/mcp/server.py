@@ -507,9 +507,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
         Runs: periods (Lomb-Scargle, confirmed against AR(1) red noise, not just white noise);
         trend (99% interval, autocorrelation-adjusted); level shifts (CUSUM changepoints with
-        p and a 99% interval on the size, both under the cautious AR(1) model; p_point the
-        bias-corrected point model, context only; shifts_undetermined: seen by the point model
-        only, never a special cause); KPSS stationarity; variance change; shape (skew,
+        p (the bias-corrected point AR(1) model) and p_cautious, the label and the 99% interval
+        on the size resting on the cautious one; shifts_undetermined: material shifts the point
+        model alone sees, verdict undetermined, never a special cause); KPSS stationarity; variance change; shape (skew,
         tails, zeros, bimodality); and a control chart (SPC). Control limits come ONLY from the
         baseline time range (default: first half of the range; or baseline_start/baseline_end, e.g.
         a calm day before an incident), never from the data being judged; with autocorrelation
