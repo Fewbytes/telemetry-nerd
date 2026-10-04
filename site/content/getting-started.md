@@ -73,42 +73,110 @@ to evidence.
 
 ## The workspace basics
 
-A new workspace has only a few kinds of objects, and they all point at each other.
+A workspace has a handful of kinds of objects, and they all point at each other. This section
+walks through a real panel from an actual workspace, screenshot by screenshot, so the names below
+match what you'll actually click.
 
 ### Panels
 
 Each panel answers **one explicit question**, written in its header. Below the graph is a
 provenance footer that tells you what was queried, at what resolution, and how it was aggregated,
 plus any caveats (missing data, low sample counts, and so on). A clean panel has no caveat
-clutter. Caveats only appear when there is something to say.
+clutter — caveats only appear when there is something to say.
+
+![Panel anatomy, numbered](/img/getting-started-anatomy.png)
+
+1. **Panels / Catalog** — switch between the panel feed and the metric catalog.
+2. **Panel header** — the panel id, its question, an "open" status, the Highlight pin, and a
+   close button (closing is soft: the panel can still be reopened and linked from findings).
+3. **Chart: line + min–max envelope.** The line is the mean per bucket; the shaded band behind it
+   keeps every bucket's min and max, so a spike survives even after zooming out.
+4. **Coverage rug.** The strip right under the chart marks, bucket by bucket, where data is
+   missing, partial or untrusted — color-coded per series. Here it shows a long stretch where one
+   node stopped reporting.
+5. **Legend.** One entry per series, color-matched to the chart.
+6. **View controls** — `layers` (normal band, limit line, last week overlays), `y` (axis mode:
+   auto, from zero, log, ratio-to-baseline, ...) and `marginal` (a secondary comparison strip).
+7. **Caveats** — what's wrong or worth knowing about this specific data (missing samples, settling
+   data, low counts). Never silent.
+8. **Notes** — context that isn't a problem, just useful: what the reference range includes, where
+   a physical limit comes from.
+9. **Query** and **metric card** — collapsed by default; expand for the raw expression or the full
+   metric card (next screenshot).
+
+Click **Highlight** (the pin icon next to "open") on any panel, hypothesis, finding or gap to
+attach an optional note and flag it — to yourself, or to Claude on its next turn:
+
+![Highlighting a panel and the expanded metric card](/img/getting-started-metriccard.png)
+
+1. **Highlight** — click the pin to turn it into a note field. Anything you write here reaches
+   Claude as context, without you having to re-explain which panel or object you mean.
+2. **Metric card**, expanded — type, unit, bounds, additivity and role, each with its origin (a
+   naming rule, a curated pack, your own confirmation) and a confidence.
+3. **Claims and confidence** — every fact the catalog knows is a claim, not a bare truth. You can
+   `Confirm` or `Edit` any of them, and your word outranks everything else, including Claude's.
+
+Selecting a region of the chart itself (click-drag) opens a different menu: **Ask Claude…** about
+that selection, **Mark region** / **Mark event** to annotate it, **Focus** to zoom the
+investigation onto that window, or **Distribution here** on latency-type data to see the full
+distribution for the selected span.
 
 ### Hypotheses and findings
 
 A **hypothesis** is something Claude (or you) thinks might explain what you're seeing, such as
-"payment errors are driving checkout failures". A hypothesis can be supported, refuted or
-inconclusive, and refuted ones move to a "ruled out" list instead of disappearing.
+"payment errors are driving checkout failures."
 
-A **finding** is a scoped claim with **evidence links**: the panel and the statistic it rests on,
-plus the exact source, selector, time range and aggregation it applies to. When Claude says
-something, you can click through to see exactly why.
+![A hypothesis card](/img/getting-started-hypothesis.png)
+
+1. **Statement** — the concrete explanation being tested, with a pin to highlight it.
+2. **Status** — proposed, supported, refuted or inconclusive.
+3. **Origin** — who's making the claim (`claude`, or you).
+4. **For / against** — findings linked as evidence for or against this hypothesis. Refuted
+   hypotheses move to a "ruled out" list instead of disappearing — ruling something out is a
+   result, not a dead end.
+5. **Your verdict** — you can mark any hypothesis yourself. Claude sees it and works from it.
+
+A **finding** is a scoped claim with **evidence links** attached.
+
+![A finding card](/img/getting-started-finding.png)
+
+1. **Claim** — worded to be true only inside its scope.
+2. **Scope** — the exact series, time window, resolution and source the claim covers. A claim
+   can't quietly generalise beyond this.
+3. **Evidence** — the panel(s) behind the claim.
+4. **Statistic** — the actual number, with its interval and what it was computed from, so you can
+   check the arithmetic, not just trust the sentence.
+5. **Your verdict** — Accept, Reject or ask for more. This is what "the human concludes" means
+   in practice: Claude proposes the claim and the evidence, you decide if it holds.
+
+### Gaps
+
+A **gap** is Claude flagging a signal it needed but doesn't have — not a silent blind spot.
+
+![Two gap cards](/img/getting-started-gaps.png)
+
+Each one names the missing signal, what it was needed for, and a concrete metric that would fill
+it, so a gap becomes something you can actually go instrument rather than an unexplained dead end
+in the investigation.
 
 ### Annotations
 
 Annotations mark events and regions on the shared time axis (a deploy, the start of an
 incident, a window you want to compare), so every panel lines up against "what else happened then?".
 
-### Talking back to Claude from a graph
+### The metric catalog
 
-Select any part of a graph and you get a small menu:
+The **Catalog** tab lists every metric the source exposes, with what Telemetry Nerd knows about
+each one and where that knowledge came from.
 
-- **Ask Claude…** about that selection ("why does this bump start here?"). The question arrives
-  with the panel and time range attached, so you don't need to describe it.
-- **Mark region** or **Mark event** to annotate it.
-- **Focus** to zoom the investigation onto that window.
-- **Distribution here**, on latency-type data, to see the full distribution for the selected span.
+![The catalog table](/img/getting-started-catalog.png)
 
-You can also mark any hypothesis supported or refuted yourself. Your verdict counts. Claude sees
-it and works from it.
+1. **Source and summary** — which source you're browsing, and how many of its metrics are
+   reviewed, conflicting, or have findings attached.
+2. **Search and filters** — by name, prefix, origin, or review status.
+3. **Per-metric facts** — type, unit, role and bounds, each tagged with its origin (here, a naming
+   `rule`, or `source` metadata). Run `/telemetry-nerd:learn` to have Claude work through a
+   source's metrics with you and fill in the gaps.
 
 ## What you'd see that a dashboard wouldn't show you
 
