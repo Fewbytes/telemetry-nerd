@@ -89,6 +89,24 @@ main { max-width: 900px; margin: 0 auto; }
 .prose table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
 .prose th, .prose td { border: 1px solid var(--line); padding: 0.4rem 0.6rem; text-align: left; }
 
+.diagram { margin: 1.5rem 0 2rem; }
+.diagram svg {
+  width: 100%;
+  height: auto;
+  display: block;
+  font-family: inherit;
+}
+.diagram .box { fill: var(--code-bg); stroke: var(--line); stroke-width: 1.5; }
+.diagram .box.dashed { stroke-dasharray: 6 4; fill: none; }
+.diagram .box.db { fill: var(--paper); stroke: var(--accent); }
+.diagram .group { fill: none; stroke: var(--accent); stroke-width: 1.75; }
+.diagram .edge { stroke: var(--ink-soft); stroke-width: 1.5; fill: none; }
+.diagram .t { fill: var(--ink); font-size: 13px; font-weight: 600; }
+.diagram .st { fill: var(--ink-soft); font-size: 10.5px; }
+.diagram .lbl { fill: var(--ink-soft); font-size: 10.5px; font-style: italic; }
+.diagram .lblbg { fill: var(--paper); }
+.diagram-caption { color: var(--ink-soft); font-size: 0.85rem; margin-top: 0.5rem; }
+
 .site-footer { border-top: 1px solid var(--line); margin-top: 2rem; }
 .site-footer .wrap {
   display: flex; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
