@@ -12,9 +12,16 @@ test("a series with a hole shows a coverage rug and a located caveat", async ({ 
   await page.goto("/");
   const el = page.locator(`[data-panel-id="${panel.id}"]`);
   await expect(el.locator("[data-rug]")).toBeVisible();
-  // instance d has the empty hole; instance e (late born) only has a partial first bucket
-  const note = el.locator('[data-note^="missing_data:"]').filter({ hasText: "no samples" }).first();
-  await expect(note).toContainText('instance="d"');
+  // d has a wall-clock-anchored empty hole in every 6h window. e (born mid-seed) may ALSO read "no
+  // samples": the dev VM keeps earlier seeds, so once the previous seed is >~3h old e has an empty
+  // stretch before its newest seed's birth (correct labelling). Which series' note comes first is
+  // therefore not stable; pick d's note by its label instead of taking the first.
+  const note = el
+    .locator('[data-note^="missing_data:"]')
+    .filter({ hasText: 'instance="d"' })
+    .filter({ hasText: "no samples" })
+    .first();
+  await expect(note).toBeVisible();
   await note.hover();
   const box = await el.locator("[data-rug]").boundingBox();
   if (!box) throw new Error("rug not laid out");
