@@ -4,14 +4,15 @@
 
 **Goal:** Buckets are combined across time by the rule their expression needs (sample mean,
 time mean, sum of tiles, max/min), never by an implicit count-weighted mean; expressions that
-cannot be merged locally are re-queried at the coarser step with windows matched to it, or say
+cannot be merged locally are re-queried with the display bucket as query step and query windows
+matched to it, or say
 they cannot be combined (bead telemetry-nerd-7jme).
 
 **Architecture:** One classifier `merge_kind()` over the existing PromQL helpers (exprkind +
-the observed.py walker + companions' tile detection) gives each dataset a `MergeKind`, stored on
+the observed.py walker + companions' query-window detection) gives each dataset a `MergeKind`, stored on
 `DatasetMeta` at query time. `rebucket`/`lod` take the kind; every caller passes the dataset's
 kind (or the unit-preserving variant for analysis coarsening). `summarize` reports per kind.
-`ratio`/`quantile`/`unknown` panels are re-queried at the coarser step through `SeriesCache` in
+`ratio`/`quantile`/`unknown` panels are re-queried with the display bucket as query step through `SeriesCache` in
 the background (`rewindow` + `fetch_values`); the result is a kept, citable dataset with lineage
 to the panel's dataset (foldable/retirable), pushed to the UI by a socket frame. Step-invariant
 expressions merge locally as a stated time mean, and the user can force a re-query.
@@ -22,8 +23,13 @@ Playwright; VictoriaMetrics container for integration tests.
 **Spec:** `docs/superpowers/specs/2026-10-04-bucket-merging-design.md` (§ numbers below).
 Decided 2026-10-04 (spec §11): Q1 local time mean + forced re-query, Q4 validated code
 declarations, Q5 principles 10/17 (already in `docs/principles.md`), Q6 re-queries are kept
-datasets. Still open: Q2 (sliding count windows, affects Task 2's table) and Q3 (increase label on
-zoom, affects Tasks 5 and 10); do not start those parts before they are answered.
+datasets; Q2 values sum only for tiles (query window = query step and one evaluation per query
+bucket), we prefer tiles when choosing query windows, every panel states its effective time
+resolution. Still open: Q3 (increase label on zoom, affects Tasks 5 and 10); do not start those
+parts before it is answered.
+
+Terms follow `docs/glossary.md`: series interval, query window, query resolution, query step,
+display bucket, time range, tile, effective time resolution.
 
 ## Global Constraints
 
@@ -36,7 +42,8 @@ zoom, affects Tasks 5 and 10); do not start those parts before they are answered
   passes `kind` explicitly.
 - MCP payloads stay small (P6): summary growth ≤ 200 bytes at `top=5`, asserted in tests; a
   re-query dataset is a handle, never rows.
-- Every merge says what it did (P17): basis/method text names local vs re-queried vs declared.
+- Every merge says what it did (P17): basis/method text names local vs re-queried vs declared,
+  and every panel states its effective time resolution.
 - Model routing: tasks marked **[Opus]** are hard (classifier correctness, the re-query
   concurrency path, cross-cutting caller semantics); the rest are Sonnet-sized.
 
@@ -46,7 +53,7 @@ zoom, affects Tasks 5 and 10); do not start those parts before they are answered
 
 Backend:
 - `src/telemetry_nerd/analysis/exprkind.py`: walker primitives moved from `sources/observed.py`;
-  `window_of_call`; `rewindow()`.
+  `window_of_call`; `choose_window()`; `rewindow()`.
 - `src/telemetry_nerd/analysis/mergekind.py` (new): `MergeKind`, `merge_kind()`.
 - `src/telemetry_nerd/sources/observed.py`, `model/companions.py`, `core/profiles.py`: import the
   moved helpers (no behaviour change).
@@ -108,33 +115,38 @@ extended `test_code_outputs.py`.
 
 **Interfaces:**
 - Produces: `Kind = Literal["sample_mean", "counter_total", "time_mean", "sum", "max", "min",
-  "ratio", "quantile", "unknown"]`; `@dataclass(frozen=True) MergeKind(kind, window_ms: int |
-  None, tile: bool, requery: Literal["rewrite", "none", "impossible"])` with `to_dict`/`from_dict`;
-  `merge_kind(expr: str, step_ms: int, resolution_ms: int, lookup: Callable[[str], Facts]) ->
-  MergeKind`.
+  "ratio", "quantile", "unknown"]`; `@dataclass(frozen=True) MergeKind(kind, query_window_ms: int |
+  None, tile: bool, requery: Literal["rewrite", "none", "impossible"], effective_ms: int)` with
+  `to_dict`/`from_dict`; `merge_kind(expr: str, query_step_ms: int, query_resolution_ms: int,
+  fetch: Literal["rollup", "values"], series_interval_ms: int, lookup: Callable[[str], Facts]) ->
+  MergeKind`. A tile needs query window = query step **and** (query resolution = query step or
+  `fetch == "values"`).
 
 - [ ] **Step 1: Write the failing tests**: one parametrised table covering every row of spec §3
   (leaves and composition), e.g.
 
 ```python
+# (expr, query step, query resolution, fetch, kind)
 CASES = [
-    ("http_inflight", 15_000, "sample_mean"),
-    ("http_requests_total", 15_000, "counter_total"),          # catalog type counter
-    ("rate(x[1m])", 15_000, "time_mean"),
-    ("sum by (job) (rate(x[1m]))", 15_000, "time_mean"),
-    ("rate(x[1m]) * 60", 15_000, "time_mean"),
-    ("increase(x[15s])", 15_000, "sum"),
-    ("increase(x[5m])", 15_000, "time_mean"),                  # sliding: never summed
-    ("sum(increase(x[1m])) / 1e3", 60_000, "sum"),
-    ("max_over_time(x[5m])", 15_000, "max"),
-    ("-max_over_time(x[5m])", 15_000, "min"),
-    ("sum(max_over_time(x[5m]))", 15_000, "unknown"),
-    ("rate(a[1m]) / rate(b[1m])", 15_000, "ratio"),
-    ("histogram_quantile(0.99, sum by (le) (rate(x_bucket[5m])))", 15_000, "quantile"),
-    ("x > 5", 15_000, "unknown"),
-    ("max_over_time(rate(x[1m])[1h:])", 15_000, "unknown"),
-    ('rate(x{path="/a/b"}[1m])', 15_000, "time_mean"),         # '/' inside a label value
-    ("x offset 1h", 15_000, "time_mean"),
+    ("http_inflight", 15_000, 15_000, "rollup", "sample_mean"),
+    ("http_requests_total", 15_000, 15_000, "rollup", "counter_total"),   # catalog type counter
+    ("rate(x[1m])", 15_000, 15_000, "rollup", "time_mean"),
+    ("sum by (job) (rate(x[1m]))", 15_000, 15_000, "rollup", "time_mean"),
+    ("rate(x[1m]) * 60", 15_000, 15_000, "rollup", "time_mean"),
+    ("increase(x[15s])", 15_000, 15_000, "rollup", "sum"),                # tile
+    ("increase(x[1m])", 60_000, 15_000, "rollup", "time_mean"),           # 4 overlapping windows: not a tile
+    ("increase(x[1m])", 60_000, 15_000, "values", "sum"),                 # one evaluation per bucket: tile
+    ("increase(x[5m])", 15_000, 15_000, "rollup", "time_mean"),           # sliding: never summed
+    ("sum(increase(x[1m])) / 1e3", 60_000, 60_000, "rollup", "sum"),
+    ("max_over_time(x[5m])", 15_000, 15_000, "rollup", "max"),
+    ("-max_over_time(x[5m])", 15_000, 15_000, "rollup", "min"),
+    ("sum(max_over_time(x[5m]))", 15_000, 15_000, "rollup", "unknown"),
+    ("rate(a[1m]) / rate(b[1m])", 15_000, 15_000, "rollup", "ratio"),
+    ("histogram_quantile(0.99, sum by (le) (rate(x_bucket[5m])))", 15_000, 15_000, "values", "quantile"),
+    ("x > 5", 15_000, 15_000, "rollup", "unknown"),
+    ("max_over_time(rate(x[1m])[1h:])", 15_000, 15_000, "rollup", "unknown"),
+    ('rate(x{path="/a/b"}[1m])', 15_000, 15_000, "rollup", "time_mean"),  # '/' inside a label value
+    ("x offset 1h", 15_000, 15_000, "rollup", "time_mean"),
 ]
 ```
 
@@ -145,19 +157,27 @@ CASES = [
   fallback for anything not proven.
 - [ ] **Step 4:** PASS; commit `feat(mergekind): classify expressions by how their buckets merge (7jme)`.
 
-### Task 3: `rewindow` (template expansion, tiles, widening)
+### Task 3: `choose_window` and `rewindow` (prefer tiles, widen only when needed) **[Opus]**
 
 **Files:**
-- Modify: `src/telemetry_nerd/analysis/exprkind.py`, `src/telemetry_nerd/core/profiles.py`
-- Test: `tests/unit/test_rewindow.py`, existing `test_profiles.py`
+- Modify: `src/telemetry_nerd/analysis/exprkind.py` (`expand` uses `choose_window`),
+  `src/telemetry_nerd/core/profiles.py`, `src/telemetry_nerd/sources/promql.py` (`_window` takes
+  the query resolution, so a chosen tile is fetched as `rollup((expr)[step:step])`)
+- Test: `tests/unit/test_rewindow.py`, existing `test_profiles.py`, `test_exprkind.py`,
+  `test_promql*.py`
 
 **Interfaces:**
-- Produces: `rewindow(template: str, base_step_ms: int, new_step_ms: int, resolution_ms: int)
-  -> str` (spec §4 steps 1-4); `profile_target` uses it for its rate widening.
+- Produces: `choose_window(query_step_ms, series_interval_ms) -> (query_window_ms, tile: bool)`
+  (tile when query step ≥ 2 × series interval, else `rate_interval_ms`); `rewindow(template,
+  base_query_step_ms, new_query_step_ms, series_interval_ms) -> (expr, tile: bool)` (spec §4 steps
+  1-4); `expand` and `profile_target` use them.
 
-- [ ] **Step 1:** Golden-string tests: `$__rate_interval` at S; tile `increase(x[15s])` → `[5m]`;
-  `rate(x[1m])` at S = 5m → `rate_interval_ms(5m, res)`; `rate(x[1h])` unchanged; `offset`/`@`
-  kept; subquery ranges kept; quoted brackets untouched. Profile tests unchanged.
+- [ ] **Step 1:** Golden-string tests: `$__rate_interval` at a 1 m query step with 15 s series
+  interval → `[1m]` tile; at a 15 s query step with 15 s series interval → widened (< 2 samples
+  per tile); tile `increase(x[15s])` → `[5m]`; `rate(x[1m])` at S = 5 m → `[5m]` tile; `rate(x[1h])`
+  unchanged; `offset`/`@` kept; subquery ranges kept; quoted brackets untouched; a chosen tile is
+  fetched with query resolution = query step. Profile tests unchanged except where the tile rule
+  now applies (pin them).
 - [ ] **Step 2:** FAIL. **Step 3:** Implement; switch `profile_target.widen` to it.
 - [ ] **Step 4:** PASS; commit.
 
@@ -174,8 +194,8 @@ CASES = [
   `query()` stores both; preview/rescope query `expr_template or expr`.
 
 - [ ] **Step 1:** Tests: an old JSON meta without the fields loads; a fresh query stores the
-  template pre-`expand` and the kind; a preview of a `$__rate_interval` quantile at a coarser
-  step re-expands the window (the bug in spec §4).
+  template pre-`expand` and the kind; a preview of a `$__rate_interval` quantile over a longer
+  time range re-expands its query window at the new query step (the bug in spec §4).
 - [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS; commit.
 
 ### Task 5: `rebucket` / `lod` by kind **[Opus]**
@@ -185,9 +205,9 @@ CASES = [
 - Test: `tests/unit/test_resample.py`
 
 **Interfaces:**
-- Produces: `rebucket(buckets, new_step_ms, kind: Kind = "sample_mean") -> pa.Table`;
+- Produces: `rebucket(buckets, display_bucket_ms, kind: Kind = "sample_mean") -> pa.Table`;
   `lod(buckets, step_ms, rng, width_px, kind="sample_mean")`; for `sum` the output has extra
-  columns `total` (Σ avg) and `tiles` (fine buckets with a value) (`TOTAL_SCHEMA`);
+  columns `total` (Σ avg) and `tiles` (query buckets with a value) (`TOTAL_SCHEMA`);
   `ratio`/`quantile`/`unknown` → `avg` null, envelope kept.
 
 - [ ] **Step 1:** Tests with the spec §1 numbers: `time_mean` 10/10/30/10 counts 3/3/1/1 → 15
@@ -204,7 +224,7 @@ CASES = [
 - Test: `tests/unit/test_summary.py`
 
 **Interfaces:**
-- Produces: top-level `merge: {kind, tile?, basis}`; per series `mean`/`last`/`total`/`per_s`/
+- Produces: top-level `merge: {kind, tile?, basis, effective_time_resolution, query_window?}`; per series `mean`/`last`/`total`/`per_s`/
   `total_lower_bound`/`mean_unavailable` per spec §5; caveats `raw_counter`,
   `tiles_extrapolated`, `time_mean_partial`.
 
@@ -226,12 +246,12 @@ CASES = [
 - Consumes: `merge_of(meta, lookup)`.
 - Produces: `unit_preserving(kind) -> Kind` (`sum` → mean per tile, i.e. `time_mean` arithmetic;
   others unchanged) used by analysis coarsening, indexed baselines and `hourly_means`;
-  `_prepare`/fleet refuse to coarsen `ratio`/`quantile`/`unknown` with the hint "query at a
-  coarser step".
+  `_prepare`/fleet refuse to coarsen `ratio`/`quantile`/`unknown` with the hint "query with a
+  longer query step".
 
 - [ ] **Step 1:** One test per site pinning the kind it uses (spec §8 table), including:
-  coarsened tiles keep `events_scale` correct (events per coarse step = per-tile mean ×
-  step/w); `hourly_means` of a rate panel equals the time mean, and null counts no longer
+  tiles merged into display buckets keep `events_scale` correct (events per display bucket =
+  per-tile mean × display bucket / query window); `hourly_means` of a rate panel equals the time mean, and null counts no longer
   weigh 1; the indexed window baseline of a rate panel is the time mean.
 - [ ] **Step 2:** FAIL. **Step 3:** Implement. **Step 4:** PASS; commit.
 
@@ -316,7 +336,9 @@ kept re-query datasets need it (spec §4 dependency).
 - Modify: `ui/src/lib/panelNotes.ts`
 - Test: `ui/src/lib/panelNotes.test.ts`, `ui/e2e/bucket-merging.spec.ts`
 
-- [ ] **Step 1:** Tests: the spec §6 sentence per kind; texts for `raw_counter`,
+- [ ] **Step 1:** Tests: the spec §6 sentence per kind, each with the effective time resolution
+  ("detail shorter than 5 m is smoothed"; the query window named when it exceeds the query
+  step); texts for `raw_counter`,
   `tiles_extrapolated`, `time_mean_partial`, `merged_plotted_mean`, `cannot_combine`,
   `requery_failed`. E2E on the fixture source: resizing an increase panel keeps its y-values and
   its "per 15 s" label; a ratio panel shows "re-querying" then the line.
@@ -338,8 +360,9 @@ kept re-query datasets need it (spec §4 dependency).
 - Create: `tests/integration/test_merge_vm.py`
 - Modify: `src/telemetry_nerd/analysis/resample.py` (`kind` required)
 
-- [ ] **Step 1:** VM container: jittered counter; local `sum` of 15 s tiles = `increase(x[1m])`
-  at 1 m; local `time_mean` of `rate(x[1m])` = VM rollup at 1 m (fully evaluated buckets); a
+- [ ] **Step 1:** VM container: jittered counter; local `sum` of 15 s tiles (15 s query
+  resolution) = `increase(x[1m])` fetched as values at a 1 m query step, and ≠ its rollup fetch
+  with 15 s query resolution (sliding); local `time_mean` of `rate(x[1m])` = VM rollup at 1 m (fully evaluated buckets); a
   ratio re-query = ratio of summed tiles.
 - [ ] **Step 2:** Make `kind` required; fix any caller the type checker finds.
 - [ ] **Step 3:** All gates plus `uv run pytest tests/integration -q -k merge`; commit.
@@ -354,5 +377,5 @@ kept re-query datasets need it (spec §4 dependency).
 ## Order and dependencies
 
 1 → 2 → (3, 4) → 5 → 6 → 7 → 8 → (8a, 8b) → 9 → 10 → 11 → 12 → 13. Tasks 3/4 and 8a/8b are
-independent pairs. Tasks 9-10 need 8's payload shape and 8b's listing. Open Q2 gates Task 2's
-sliding-window rows; open Q3 gates the `sum` label in Tasks 5 and 10.
+independent pairs. Tasks 9-10 need 8's payload shape and 8b's listing. Open Q3 gates the
+`sum` label in Tasks 5 and 10.
