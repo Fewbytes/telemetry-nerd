@@ -10,6 +10,15 @@ from telemetry_nerd.model.time import iso
 _DECIDED = {"approve": "approved", "reject": "rejected"}
 
 
+def _decided(p: dict) -> str:
+    """The verb of a retrospective decision: approved, approved (edited) or rejected."""
+    return "approved (edited)" if p.get("edited") else _DECIDED[p["decision"]]
+
+
+def _comment(p: dict) -> str:
+    return f": {p['comment']}" if p.get("comment") else ""
+
+
 def _iso_z(ms: int) -> str:
     return iso(ms).replace("+00:00", "Z")
 
@@ -28,8 +37,7 @@ def describe_event(e: Event) -> str:
             where = f" about {p['anchor']}" if p.get("anchor") else ""
             return f'{who} asked in {p["thread"]}{where}{_selection(p.get("selection"))}: "{p["text"]}"'
         case "finding.verdict":
-            tail = f": {p['comment']}" if p.get("comment") else ""
-            return f'{who} {p["verdict"]} {e.object_id} ("{p.get("claim", "")}"){tail}'
+            return f'{who} {p["verdict"]} {e.object_id} ("{p.get("claim", "")}"){_comment(p)}'
         case "hypothesis.status_changed":
             return (
                 f"{who} set {e.object_id} {p['from']} → {p['to']}"
@@ -113,13 +121,9 @@ def describe_event(e: Event) -> str:
             return f"{who} " + "; ".join(parts) if parts else f"{who} updated {e.object_id}"
         case "proposal.decided":
             what = f"{p['field']} of {p['metric']} = {json.dumps(p['value'], ensure_ascii=False)}"
-            verb = "approved (edited)" if p.get("edited") else _DECIDED[p["decision"]]
-            tail = f": {p['comment']}" if p.get("comment") else ""
-            return f"{who} {verb} catalog proposal {e.object_id} ({what}){tail}"
+            return f"{who} {_decided(p)} catalog proposal {e.object_id} ({what}){_comment(p)}"
         case "lesson.decided":
-            verb = "approved (edited)" if p.get("edited") else _DECIDED[p["decision"]]
-            tail = f": {p['comment']}" if p.get("comment") else ""
-            return f'{who} {verb} lesson {e.object_id} ("{p["text"]}"){tail}'
+            return f'{who} {_decided(p)} lesson {e.object_id} ("{p["text"]}"){_comment(p)}'
         case "lesson.refuted":
             by = f" citing {', '.join(p['evidence'])}" if p.get("evidence") else ""
             return f'{who} refuted lesson {e.object_id} ("{p["text"]}"){by}: {p["reason"]}'

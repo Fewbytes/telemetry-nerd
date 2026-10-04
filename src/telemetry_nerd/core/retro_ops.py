@@ -16,7 +16,13 @@ from telemetry_nerd.core.workspace_service import (
     _readable,
 )
 from telemetry_nerd.model.errors import NotFound
-from telemetry_nerd.retro.guard import EvidenceScope, check, evidence_from_exprs, overlaps
+from telemetry_nerd.retro.guard import (
+    EvidenceScope,
+    check,
+    evidence_from_exprs,
+    overlaps,
+    why_each,
+)
 from telemetry_nerd.retro.models import (
     CatalogProposal,
     Lesson,
@@ -32,6 +38,21 @@ Decision = Literal["approve", "reject"]
 
 def _scope_key(scope: LessonScope) -> tuple:
     return (scope.source, scope.service, scope.metric_family, tuple(sorted(scope.labels.items())))
+
+
+def _check_decider(actor: Actor, kind: str) -> None:
+    check_actor(actor)
+    if actor != "user":
+        raise ValueError(f"only the user decides {kind}")
+
+
+def _check_undecided(obj: Lesson | CatalogProposal) -> None:
+    if obj.status != "proposed":
+        raise ValueError(f"{obj.id} is already {obj.status}")
+
+
+def _comment(comment: str | None) -> str | None:
+    return (comment or "").strip() or None
 
 
 class RetroOps:
@@ -139,12 +160,9 @@ class RetroOps:
     ) -> CatalogProposal:
         """The user approves (optionally with an edited value) or rejects a proposal. Approval
         writes the claim: origin claude verified_by user, or origin user when edited."""
-        check_actor(actor)
-        if actor != "user":
-            raise ValueError("only the user decides proposals")
+        _check_decider(actor, "proposals")
         p = self.store.proposal(proposal_id)
-        if p.status != "proposed":
-            raise ValueError(f"{p.id} is already {p.status}")
+        _check_undecided(p)
         edited = decision == "approve" and value is not None and value != p.value
         with self.ws.log.transaction():
             if decision == "approve":
@@ -157,7 +175,7 @@ class RetroOps:
                     "decided_at_ms": self._now,
                     "decided_value": value if edited else None,
                     "edited": edited,
-                    "comment": (comment or "").strip() or None,
+                    "comment": _comment(comment),
                 }
             )
             self.store.put_proposal(updated)
@@ -242,16 +260,13 @@ class RetroOps:
         comment: str | None = None,
     ) -> Lesson:
         """The user approves (optionally editing text or expiry) or rejects a proposed lesson."""
-        check_actor(actor)
-        if actor != "user":
-            raise ValueError("only the user decides lessons")
+        _check_decider(actor, "lessons")
         lesson = self.store.lesson(lesson_id)
-        if lesson.status != "proposed":
-            raise ValueError(f"{lesson.id} is already {lesson.status}")
+        _check_undecided(lesson)
         update: dict[str, Any] = {
             "status": "approved" if decision == "approve" else "rejected",
             "decided_at_ms": self._now,
-            "comment": (comment or "").strip() or None,
+            "comment": _comment(comment),
         }
         if decision == "approve" and text is not None and text.strip() != lesson.text:
             if not text.strip():
@@ -293,10 +308,9 @@ class RetroOps:
                 raise ValueError("cite the finding (f…) that contradicts the lesson")
             whys = {i: overlaps(lesson.scope, self.evidence_scope(i)) for i in ids}
             if all(w is not None for w in whys.values()):
-                detail = "; ".join(f"{i} {w}" for i, w in whys.items())
                 raise ValueError(
                     f"no cited finding is about the lesson's scope ({lesson.scope.describe()}): "
-                    f"{detail}"
+                    f"{why_each(whys)}"
                 )
         updated = lesson.model_copy(
             update={"status": "refuted", "refuted_by": ids, "refute_reason": reason.strip()}

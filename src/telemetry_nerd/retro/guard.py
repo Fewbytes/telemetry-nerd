@@ -75,18 +75,25 @@ def in_family(metric: str, family: str) -> bool:
     return fnmatchcase(metric, family) if "*" in family else metric.startswith(family)
 
 
+def _restricting(alt: list[Matcher]) -> tuple[list[Matcher], list[Matcher]]:
+    """The alternative's matchers that narrow the population: (on service labels, on the
+    other entity labels)."""
+    restricting = [m for m in alt if _restricts(m)]
+    return (
+        [m for m in restricting if m.label in SERVICE_LABELS],
+        [m for m in restricting if m.label not in SERVICE_LABELS],
+    )
+
+
 def _covers_alt(scope: LessonScope, alt: list[Matcher]) -> str | None:
     """None when the alternative's series include everything the scope names; else why not."""
-    restricting = [m for m in alt if _restricts(m)]
-    services = [m for m in restricting if m.label in SERVICE_LABELS]
+    services, others = _restricting(alt)
     if services:
         if scope.service is None:
             return f"is about {', '.join(map(str, services))} only, not the whole source"
         if not any(m.matches(scope.service) for m in services):
             return f"is about {', '.join(map(str, services))}, not service {scope.service}"
-    for m in restricting:
-        if m.label in SERVICE_LABELS:
-            continue
+    for m in others:
         pinned = scope.labels.get(m.label)
         if pinned is None:
             return f"is about {m} only: add {m.label} to the lesson's scope labels"
@@ -95,12 +102,24 @@ def _covers_alt(scope: LessonScope, alt: list[Matcher]) -> str | None:
     return None
 
 
-def covers(scope: LessonScope, ev: EvidenceScope) -> str | None:
-    """None when `ev` carries the whole lesson scope; else why not (for the refusal)."""
+def _unrelated(scope: LessonScope, ev: EvidenceScope) -> str | None:
+    """Why `ev` says nothing about the scope at all (unreadable, another source); else None."""
     if ev.why is not None:
         return ev.why
     if ev.source != scope.source:
         return f"is on source {ev.source!r}, the lesson on {scope.source!r}"
+    return None
+
+
+def why_each(whys: dict[str, str | None]) -> str:
+    """`{id: why}` as one refusal detail: "f1 is about ...; p2 is on source ..."."""
+    return "; ".join(f"{i} {w}" for i, w in whys.items())
+
+
+def covers(scope: LessonScope, ev: EvidenceScope) -> str | None:
+    """None when `ev` carries the whole lesson scope; else why not (for the refusal)."""
+    if (why := _unrelated(scope, ev)) is not None:
+        return why
     assert ev.alternatives is not None
     if scope.metric_family and not any(in_family(m, scope.metric_family) for m in ev.metrics):
         named = ", ".join(sorted(ev.metrics)) or "no metric name it can read"
@@ -117,10 +136,9 @@ def check(scope: LessonScope, items: list[EvidenceScope]) -> ScopeCheck:
     whys = {ev.id: covers(scope, ev) for ev in items}
     covered = [i for i, w in whys.items() if w is None]
     if not covered:
-        detail = "; ".join(f"{i} {w}" for i, w in whys.items())
         raise ValueError(
             f"lesson_beyond_evidence: no evidence covers the scope ({scope.describe()}): "
-            f"{detail}. Narrow the scope to what the evidence is about (scope.service, "
+            f"{why_each(whys)}. Narrow the scope to what the evidence is about (scope.service, "
             "scope.labels), or cite evidence that covers it"
         )
     return ScopeCheck(
@@ -131,10 +149,8 @@ def check(scope: LessonScope, items: list[EvidenceScope]) -> ScopeCheck:
 
 def overlaps(scope: LessonScope, ev: EvidenceScope) -> str | None:
     """None when `ev` is about part of the lesson's scope (so it can refute it); else why not."""
-    if ev.why is not None:
-        return ev.why
-    if ev.source != scope.source:
-        return f"is on source {ev.source!r}, the lesson on {scope.source!r}"
+    if (why := _unrelated(scope, ev)) is not None:
+        return why
     assert ev.alternatives is not None
     if (
         scope.metric_family
@@ -143,14 +159,9 @@ def overlaps(scope: LessonScope, ev: EvidenceScope) -> str | None:
     ):
         return f"is not about metric family {scope.metric_family!r}"
     for alt in ev.alternatives:
-        restricting = [m for m in alt if _restricts(m)]
-        services = [m for m in restricting if m.label in SERVICE_LABELS]
+        services, others = _restricting(alt)
         if scope.service and services and not any(m.matches(scope.service) for m in services):
             continue
-        if all(
-            m.matches(scope.labels[m.label])
-            for m in restricting
-            if m.label not in SERVICE_LABELS and m.label in scope.labels
-        ):
+        if all(m.matches(scope.labels[m.label]) for m in others if m.label in scope.labels):
             return None
     return f"is about other entities than the lesson's ({scope.describe()})"
