@@ -236,9 +236,8 @@ def summarize(
             pl.col("min").min().alias("min"),
             pl.col("max").max().alias("max"),
             pl.when(known.all()).then(weighted).otherwise(pl.col("avg").mean()).alias("mean"),
-            ((pl.col("count") > 0) | (~known & pl.col("avg").is_not_null()))
-            .sum()
-            .alias("with_data"),
+            # a bucket kept with count 0 holds a spilled scrape's own value (uup): data, no gap
+            ((pl.col("count") > 0) | pl.col("avg").is_not_null()).sum().alias("with_data"),
         )
         .with_columns(
             pl.max_horizontal(pl.lit(expected) - pl.col("with_data"), pl.lit(0)).alias("gaps")

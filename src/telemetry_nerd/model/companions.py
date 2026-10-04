@@ -210,29 +210,112 @@ def _states(
 
 
 _TILE_FUNCS = re.compile(r"\b(" + "|".join(_WINDOW_WIDE) + r")\s*\(", re.IGNORECASE)
+_LABEL_LISTS = re.compile(
+    r"\b(?:by|without|on|ignoring|group_left|group_right)\s*\([^()]*\)", re.IGNORECASE
+)
+_OFFSET = re.compile(r"\boffset\s+-?[0-9a-z]+", re.IGNORECASE)
+_NOT_SELECTORS = frozenset(
+    [
+        "by",
+        "without",
+        "on",
+        "ignoring",
+        "group_left",
+        "group_right",
+        "bool",
+        "and",
+        "or",
+        "unless",
+        "offset",
+        "inf",
+        "nan",
+    ]
+)
+
+
+def _instant_operand(expr: str) -> bool:
+    """Whether a selector of the expression is read without a range window (an instant reading:
+    lookback fills it in a bucket without samples)."""
+    text = re.sub(r"\{[^{}]*\}", "{}", _mask_strings(_strip_comments(expr)))
+    text = _OFFSET.sub(" ", _LABEL_LISTS.sub(" ", text))
+    text = re.sub(r"\[[^\]]*\]", "[]", text)
+    for m in re.finditer(r"[a-zA-Z_:][\w:]*|\{\}", text):
+        before = text[: m.start()].rstrip()
+        if m.start() and (text[m.start() - 1].isalnum() or text[m.start() - 1] in "_:."):
+            continue  # inside a number or a longer name
+        rest = text[m.end() :].lstrip()
+        if m.group() == "{}":
+            if before and (before[-1].isalnum() or before[-1] in "_:"):
+                continue  # the matchers of a named selector, judged with its name
+        elif m.group().lower() in _NOT_SELECTORS or rest.startswith("("):
+            continue
+        elif rest.startswith("{}"):
+            rest = rest[2:].lstrip()
+        if not rest.startswith("["):
+            return True
+    return False
+
+
+def _unobserved_rule(expr: str, step_ms: int) -> tuple[int | None, bool] | None:
+    """(shortest range window longer than the step, whether it reads increase() tiles), or None
+    when a value without a sample is never the expression's own; see unobserved_values_hold."""
+    windows = range_windows_ms(expr)
+    if not windows or _instant_operand(expr):
+        return None
+    short = [w for w in windows if w <= step_ms]
+    wide = [w for w in windows if w > step_ms]
+    if short:
+        if any(w != step_ms for w in short):
+            return None
+        text = _mask_strings(_strip_comments(expr))
+        tiles = 0
+        for call in _TILE_FUNCS.finditer(text):
+            end = _safe_close(text, call.end() - 1)
+            bracket = _top_level_bracket(text, call.end(), end)
+            own = _bracket_duration(text, bracket) if bracket is not None else None
+            tiles += own == step_ms
+        if tiles != len(short):
+            return None
+    return (min(wide) if wide else None), bool(short)
 
 
 def unobserved_values_hold(expr: str, step_ms: int) -> bool:
-    """Whether the value an expression has in a bucket that observed no sample of its own is the
-    expression's real value there, not a fill (uup). True when every range window reaches past
-    the bucket (rate(x[1m]) at a 15 s step: computed from the samples inside the window), or the
-    windows no longer than the step are increase/increase_pure/delta: a tile without a sample
-    increased by 0 (from the last sample before it to the last one in it), the next tile carries
-    the change, and the tiles partition the counter exactly. False for an instant reading (a
-    lookback fill) and for any other function over a window holding no sample (VictoriaMetrics
-    returns rate() 0 there, which no sample supports)."""
-    windows = range_windows_ms(expr)
-    short = sum(1 for w in windows if w <= step_ms)
-    if not windows or not short:
-        return bool(windows)
-    text = _mask_strings(_strip_comments(expr))
-    tiles = 0
-    for call in _TILE_FUNCS.finditer(text):
-        end = _safe_close(text, call.end() - 1)
-        bracket = _top_level_bracket(text, call.end(), end)
-        own = _bracket_duration(text, bracket) if bracket is not None else None
-        tiles += own is not None and own <= step_ms
-    return tiles == short
+    """Whether the value an expression has in a bucket that observed no sample of its own can be
+    the expression's real value there, not a fill (uup). True when no selector is read without a
+    range window and each window either reaches past the bucket (rate(x[1m]) at a 15 s step:
+    computed from the samples inside it, when it holds one) or is an increase/increase_pure/delta
+    tile exactly one step long (a tile without a sample increased by 0, from the last sample
+    before it to the last one in it, and a later tile carries the change: the tiles partition
+    the counter). False for an instant reading (a lookback fill), a window shorter than the step
+    and any other function over a window that can hold no sample (VictoriaMetrics returns rate()
+    0 there, which no sample supports). settle_unobserved checks the samples behind each value."""
+    return _unobserved_rule(expr, step_ms) is not None
+
+
+def _supported(df: pl.DataFrame, wide_ms: int | None, tiles: bool, step_ms: int) -> pl.Series:
+    """Per row: whether a count-0 row's value rests on samples. A wide window needs a sample in a
+    bucket wholly inside the shortest one (the floor(w / step) - 1 buckets before); a tile needs
+    a later sample carrying its change, or the bucket before it holding 2 (its scrape came early
+    into that one)."""
+    seen: dict[str, dict[int, int]] = {}
+    for sid, ts, c in df.select("series_id", "ts_ms", "count").iter_rows():
+        if c:
+            seen.setdefault(sid, {})[ts] = c
+    last = {sid: max(t) for sid, t in seen.items()}
+    back = (wide_ms // step_ms - 1) if wide_ms is not None else 0
+    out = []
+    for sid, ts, c in df.select("series_id", "ts_ms", "count").iter_rows():
+        if c != 0:
+            out.append(True)
+            continue
+        s = seen.get(sid, {})
+        ok = True
+        if wide_ms is not None:
+            ok = any(ts - k * step_ms in s for k in range(1, back + 1))
+        if tiles:
+            ok = ok and (ts < last.get(sid, ts) or s.get(ts - step_ms, 0) >= 2)
+        out.append(ok)
+    return pl.Series(out, dtype=pl.Boolean)
 
 
 def settle_unobserved(
@@ -247,12 +330,14 @@ def settle_unobserved(
 ) -> FetchResult:
     """Decide the fetched buckets that carry a value but observed no sample (count 0; the source
     adapter keeps them, sources/promql.py). At about one sample per bucket a scrape near a bucket
-    edge lands in the neighbouring bucket: bucket_state reads that bucket OK (spilled, spec §5.1).
-    There the value stays when it is the expression's own (`unobserved_values_hold`), marked by
-    its count of 0: dropping it would leave the neighbour, which holds two scrapes' worth of an
-    increase, against one bucket fewer (Little's law's lambda read 1.4-1.6x high that way,
-    9178611). Elsewhere (a gap: EMPTY / ABSENT / UNKNOWN, or a fill such as lookback) it is
-    missing data and is dropped: never a fabricated value or zero."""
+    edge lands in the neighbouring bucket: bucket_state reads that bucket OK (spilled, spec §5.1);
+    so it reads the buckets between a slower series' samples. There the value stays when it is
+    the expression's own (`unobserved_values_hold`) and samples support it (`_supported`), marked
+    by its count of 0: dropping it would leave the neighbour, which holds two scrapes' worth of
+    an increase, against one bucket fewer (Little's law's lambda read 1.4-1.6x high that way,
+    9178611). Elsewhere (a gap: EMPTY / ABSENT / UNKNOWN, a fill such as lookback, a window
+    holding no sample, a tile no later sample carries) it is missing data and is dropped: never
+    a fabricated value or zero."""
     buckets = result.buckets
     if buckets.num_rows == 0:
         return result
@@ -261,7 +346,8 @@ def settle_unobserved(
     unobserved = pl.col("count") == 0
     if not df.select(unobserved.any()).item():
         return result
-    if unobserved_values_hold(expr, step_ms) and counts_are_observed(expr):
+    rule = _unobserved_rule(expr, step_ms)
+    if rule is not None and counts_are_observed(expr):
         states = pl.from_arrow(
             _states(
                 result, expr=expr, start_ms=start_ms, end_ms=end_ms, step_ms=step_ms,
@@ -270,11 +356,13 @@ def settle_unobserved(
             )
         )  # fmt: skip
         assert isinstance(states, pl.DataFrame)
-        spilled = states.filter(pl.col("state") == int(State.OK)).select(
-            "series_id", "ts_ms", pl.lit(True).alias("_spilled")
+        ok = states.filter(pl.col("state") == int(State.OK)).select(
+            "series_id", "ts_ms", pl.lit(True).alias("_ok")
         )
-        df = df.join(spilled, on=["series_id", "ts_ms"], how="left")
-        df = df.filter(~unobserved | pl.col("_spilled").fill_null(False)).drop("_spilled")
+        df = df.join(ok, on=["series_id", "ts_ms"], how="left").sort("series_id", "ts_ms")
+        df = df.with_columns(_supported(df, *rule, step_ms).alias("_supported"))
+        keep = ~unobserved | (pl.col("_ok").fill_null(False) & pl.col("_supported"))
+        df = df.filter(keep).drop("_ok", "_supported")
     else:
         df = df.filter(~unobserved)
     kept = df.select(buckets.schema.names).to_arrow().cast(buckets.schema)

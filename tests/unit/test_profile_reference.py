@@ -46,6 +46,19 @@ def test_hourly_means_are_count_weighted_and_whole_hours_only():
     assert df["avg"][0] == pytest.approx((22 * 6 + 10 * 5 + 20 * 6) / 17)
 
 
+def test_a_bucket_kept_without_samples_completes_its_hour_but_weighs_nothing():
+    # uup: a spilled scrape's bucket is kept with count 0; like every count-weighted mean it
+    # weighs 0, and it no longer leaves its hour incomplete
+    rows = [(MONDAY + (i + 1) * M5, "a", 10.0, 1) for i in range(12)]
+    rows[3] = (rows[3][0], "a", 1000.0, 0)
+    df, dropped = hourly_means(table(rows), M5)
+    assert df.height == 1 and dropped == 0
+    assert df["avg"][0] == pytest.approx(10.0)
+    # an hour of nothing but such buckets has no mean
+    df, _ = hourly_means(table([(r[0], "a", 5.0, 0) for r in rows]), M5)
+    assert df.height == 0
+
+
 def test_a_step_that_cannot_roll_up_to_hours_is_refused():
     with pytest.raises(ProfileReferenceRefused, match="coarser than the profile's hour"):
         hourly_means(table([(MONDAY, "a", 1.0, 1)]), 2 * HOUR_MS)

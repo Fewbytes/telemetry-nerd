@@ -104,6 +104,10 @@ def test_rate_over_a_wider_window_is_not_read_as_gappy_where_scrapes_spilled(tmp
     assert all(v > 0 for _, v in got.values())
     out = svc.spectrum(ds)
     assert "gaps" not in out["caveats"]
+    # the query summary does not count them as gaps either
+    summary = asyncio.run(svc.query("sum(rate(x[1m]))", start="now-40m", end="now", step="15s"))
+    assert [s["gaps"] for s in summary["summary"]["series"]] == [0]
+    assert "gaps" not in summary["summary"]["caveats"]
 
 
 @respx.mock

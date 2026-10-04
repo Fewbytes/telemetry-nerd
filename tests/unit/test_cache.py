@@ -126,6 +126,22 @@ def test_query_key_is_exact_modulo_outer_whitespace():
     assert key("s", '{a="x  y"}', 60_000) != key("s", '{a="x y"}', 60_000)
 
 
+def test_expression_chunks_from_before_marked_buckets_are_not_mixed_in():
+    """uup: an expression's fetch now keeps buckets with a value but no sample (count 0). Chunks
+    cached before that lack them: mixed with new ones the per-bucket mean would step at the
+    chunk boundary (a level shift to analyze or fleet), so expression keys carry a version."""
+    import hashlib
+
+    def legacy(e: str) -> str:
+        return hashlib.sha256(f"s\x00{e}\x0060000".encode()).hexdigest()[:16]
+
+    key = SeriesCache.query_key
+    assert key("s", "sum(rate(x[1m]))", 60_000) != legacy("sum(rate(x[1m]))")
+    # a selector's fetch did not change: its chunks stay valid
+    assert key("s", "up", 60_000) == legacy("up")
+    assert key("s", "values|sum(x)", 60_000) == legacy("values|sum(x)")
+
+
 async def test_same_name_different_identity_are_separate_entries(cache):
     f = FakeFetcher()
     rng = TimeRange(1_200_000, 1_380_000)

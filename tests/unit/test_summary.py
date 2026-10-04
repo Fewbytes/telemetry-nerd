@@ -42,15 +42,18 @@ def test_empty_result():
 
 def test_gaps_from_missing_buckets_and_zero_counts():
     rows = [(t, "a", 1.0, 1.0, 1.0, 1) for t in (0, 1000, 2000, 3000, 4000)]
-    # b: missing 1000 and 3000; count==0 at 2000
+    # b: missing 1000 and 3000; count==0 and no value at 2000
     rows += [
         (0, "b", 1.0, 1.0, 1.0, 1),
-        (2000, "b", 0.0, 0.0, 0.0, 0),
+        (2000, "b", None, None, None, 0),
         (4000, "b", 1.0, 1.0, 1.0, 1),
     ]
-    out = run(meta(), result(rows, {"a": "a", "b": "b"}))
+    # c: count==0 with a value at 2000: a spilled scrape's bucket kept with the expression's own
+    # value (companions.settle_unobserved, uup) is data, not a gap
+    rows += [(t, "c", 1.0, 1.0, 1.0, 0 if t == 2000 else 1) for t in (0, 1000, 2000, 3000, 4000)]
+    out = run(meta(), result(rows, {"a": "a", "b": "b", "c": "c"}))
     gaps = {s["labels"]["n"]: s["gaps"] for s in out["series"]}
-    assert gaps == {"a": 0, "b": 3}
+    assert gaps == {"a": 0, "b": 3, "c": 0}
     assert out["caveats"][0] == "gaps"
 
 
@@ -68,8 +71,8 @@ def test_count_weighted_mean():
 def test_mean_null_when_all_counts_zero():
     rows = [(0, "a", 0.0, 0.0, 0.0, 0)]
     out = run(meta(end=0), result(rows, {"a": "a"}))
-    assert out["series"][0]["mean"] is None
-    assert out["series"][0]["gaps"] == 1
+    assert out["series"][0]["mean"] is None  # count-weighted: a bucket without samples weighs 0
+    assert out["series"][0]["gaps"] == 0  # its value is kept data (uup), not a gap
 
 
 def test_top_ordering_and_more_series():

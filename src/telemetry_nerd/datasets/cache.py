@@ -13,8 +13,10 @@ from telemetry_nerd.datasets.db import fetch_arrow, upsert_series
 from telemetry_nerd.model.series import BUCKET_SCHEMA, SERIES_SCHEMA, FetchResult
 from telemetry_nerd.model.time import TimeRange, now_ms
 from telemetry_nerd.sources.base import LimitExceeded, SourceError
+from telemetry_nerd.sources.promql import is_selector
 
 MAX_CONCURRENT_FETCHES = 8
+EXPR_FORMAT = "\0v2"  # bump when PromQLSource.fetch changes what an expression's chunk holds
 
 Fetcher = Callable[[TimeRange], Awaitable[FetchResult]]
 
@@ -44,9 +46,13 @@ class SeriesCache:
     @staticmethod
     def query_key(source_identity: str, expr: str, step_ms: int) -> str:
         # Exact expression text: whitespace inside quoted label values is significant.
-        return hashlib.sha256(f"{source_identity}\0{expr.strip()}\0{step_ms}".encode()).hexdigest()[
-            :16
-        ]
+        key = f"{source_identity}\0{expr.strip()}\0{step_ms}"
+        if not is_selector(expr) and not expr.startswith("values|"):
+            # an expression's fetch keeps buckets with a value but no sample since uup (count 0):
+            # older chunks lack them, and mixing the two would step the per-bucket mean at a
+            # chunk boundary
+            key += EXPR_FORMAT
+        return hashlib.sha256(key.encode()).hexdigest()[:16]
 
     def chunk_starts(self, rng: TimeRange, step_ms: int) -> list[int]:
         span = step_ms * self.chunk_buckets

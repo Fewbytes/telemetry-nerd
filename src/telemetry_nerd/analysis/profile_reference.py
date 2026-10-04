@@ -40,12 +40,16 @@ def hourly_means(buckets: pa.Table, step_ms: int) -> tuple[pl.DataFrame, int]:
         ), 0
     df = df.with_columns(
         ((pl.col("ts_ms") - step_ms) // HOUR_MS * HOUR_MS).alias("hour_ms"),
-        pl.col("count").fill_null(1).clip(lower_bound=1).alias("w"),
+        # an unknown count weighs like one sample; a bucket kept without samples (a spilled
+        # scrape's, count 0, uup) weighs nothing, as in every count-weighted mean, yet is no gap
+        pl.col("count").fill_null(1).alias("w"),
     )
     g = df.group_by("series_id", "hour_ms").agg(
         pl.len().alias("n"),
-        ((pl.col("avg") * pl.col("w")).sum() / pl.col("w").sum()).alias("avg"),
+        pl.col("w").sum().alias("_w"),
+        (pl.col("avg") * pl.col("w")).sum().alias("_s"),
     )
+    g = g.filter(pl.col("_w") > 0).with_columns((pl.col("_s") / pl.col("_w")).alias("avg"))
     full = g.filter(pl.col("n") >= per_hour)
     dropped = int(g.filter(pl.col("n") < per_hour)["n"].sum() or 0)
     return full.select("series_id", "hour_ms", "avg").sort("series_id", "hour_ms"), dropped

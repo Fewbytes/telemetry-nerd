@@ -158,7 +158,8 @@ def test_carry_without_a_source_state_drops_the_companion_with_a_caveat(tmp_path
     [
         # increase() of a tile: 0 where no sample landed, the next tile carries the change
         ("sum(increase(x[15s]))", True),
-        ("sum by (i) (increase(x[5s]))", True),
+        # a window shorter than the step is not one tile per bucket: several, none of them seen
+        ("sum by (i) (increase(x[5s]))", False),
         ("delta(x[15s])", True),
         # a window reaching past the bucket: computed from the samples inside it
         ("sum(rate(x[1m]))", True),
@@ -170,6 +171,11 @@ def test_carry_without_a_source_state_drops_the_companion_with_a_caveat(tmp_path
         # an instant reading is lookback fill
         ("sum(x)", False),
         ("x", False),
+        # an instant operand next to a window is a lookback fill in that bucket
+        ("rate(x[1m]) / y", False),
+        ("sum(x) + increase(y[15s])", False),
+        ('sum by (job) (rate(x{job="a"}[1m])) / on(job) group_left sum by (job) (up)', False),
+        ('sum by (job) (rate(x{job="a"}[1m]) offset 5m) * 2', True),
     ],
 )
 def test_which_values_without_a_sample_are_the_expressions_own(expr, holds):
@@ -194,13 +200,15 @@ def _tiles(counts: list[int], fill: float) -> tuple:
     return FetchResult(pa.Table.from_pylist(rows, schema=BUCKET_SCHEMA), series), len(counts)
 
 
-def _settle(expr: str, counts: list[int], fill: float = 0.0) -> dict[int, tuple]:
+def _settle(
+    expr: str, counts: list[int], fill: float = 0.0, resolution_ms: int = 15_000
+) -> dict[int, tuple]:
     from telemetry_nerd.model.companions import settle_unobserved
 
     res, n = _tiles(counts, fill)
     out = settle_unobserved(
         res, expr=expr, start_ms=0, end_ms=(n - 1) * 15_000, step_ms=15_000,
-        resolution_ms=15_000,
+        resolution_ms=resolution_ms,
     )  # fmt: skip
     return {r["ts_ms"] // 15_000: (r["count"], r["avg"]) for r in out.buckets.to_pylist()}
 
@@ -226,3 +234,36 @@ def test_values_that_are_not_the_expressions_own_are_dropped_even_in_spilled_til
     got = _settle("sum(rate(x[15s]))", _SPILLED)
     assert not any(c == 0 for c, _ in got.values())
     assert len(got) == sum(1 for c in _SPILLED if c)
+
+
+# a job scraped every 60 s, read at a 15 s step: bucket_state reads its 0 buckets OK (cadence held)
+_SLOW = [1, 0, 0, 0] * 20
+
+
+@pytest.mark.parametrize("res", [15_000, 60_000])
+def test_a_window_holding_no_sample_gives_no_value_on_a_slow_series(res):
+    # VM's rate over a window with no sample in it is 0: no sample supports it. A 16 s window
+    # never wholly holds a bucket before; a 30 s one holds the bucket right before (a sample
+    # there gives the window a real rate, from the sample before it)
+    got = _settle("sum(rate(x[16s]))", _SLOW, resolution_ms=res)
+    assert all(c > 0 for c, _ in got.values())
+    got = _settle("sum(rate(x[30s]))", _SLOW, resolution_ms=res)
+    kept = [i for i, (c, _) in got.items() if c == 0]
+    assert kept == [i for i in range(1, len(_SLOW)) if _SLOW[i] == 0 and _SLOW[i - 1] == 1]
+    # a 2 min window always holds one of the 60 s scrapes: the value is computed from it
+    got = _settle("sum(rate(x[2m]))", _SLOW, fill=5.0, resolution_ms=res)
+    assert sum(1 for c, _ in got.values() if c == 0) == _SLOW.count(0)
+
+
+def test_a_tile_after_the_last_sample_has_no_tile_carrying_its_change():
+    base = [1, 1, 1, 0, 2, 1] * 6
+    # a last lone 0 (live edge, a target that just stopped): nothing after it carries the change
+    got = _settle("sum(increase(x[15s]))", [*base, 1, 1, 0])
+    assert len(base) + 2 not in got
+    # a 0 right after a 2: its scrape came early into the 2, which carries the change
+    got = _settle("sum(increase(x[15s]))", [*base, 1, 2, 0])
+    assert got[len(base) + 2] == (0, 0.0)
+    # a slow series: zeros between its samples are tiles of no change, those after the last are not
+    got = _settle("sum(increase(x[15s]))", [*_SLOW, 1, 0, 0], resolution_ms=60_000)
+    assert all(i in got for i in range(len(_SLOW)))
+    assert len(_SLOW) + 1 not in got and len(_SLOW) + 2 not in got
