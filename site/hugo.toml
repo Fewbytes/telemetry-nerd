@@ -1,4 +1,4 @@
-baseURL = "https://telemetry-nerd.dev/"
+baseURL = "https://telemetry-nerd.fewbytes.com/"
 locale = "en-us"
 title = "Telemetry Nerd"
 disableKinds = ["taxonomy", "term"]
