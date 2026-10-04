@@ -292,7 +292,11 @@ as context for what your metrics mean. When a graph looks wrong and you need to 
 sure you can be, and what would change your mind, that is the job Telemetry Nerd was built for —
 and it's the job your dashboard was quietly getting wrong.
 
-[^rc]: "The root cause" is itself mostly industry folklore. Ask five engineers what caused an
-    outage and get six answers involving a deploy, a config, a traffic spike, a timeout tuned
-    wrong five years ago and someone's retry loop — a chain of conditions, not a root. We don't
-    use the term seriously anywhere else in this document, and neither should your postmortem.
+[^rc]: "The root cause" doesn't exist, strictly speaking. Causation is a linear story laid over a
+    nonlinear system: you pick an arbitrary moment where "the incident universe began," follow one
+    chain of dominoes back from it, and ignore the feedback loops and the rest of the world that
+    was also acting on the system the whole time. It's a useful story, sometimes, the way "I did
+    it because I'm an introvert" is a useful story — but try answering "what's the root cause of
+    your personality?" and notice how fast the chain either stops being a chain or stops being
+    useful. We don't use the term seriously anywhere else in this document, and neither should
+    your postmortem.
