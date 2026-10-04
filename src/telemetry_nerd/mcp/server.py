@@ -1112,7 +1112,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             if not basis or not basis.strip():
                 raise ValueError("basis is required: one line saying what you checked")
             if template not in names:
-                near = [t for t in names if template.strip("*_") in t]
+                near = sorted(t for t in names if template.strip("*_") in t)
                 if not near and service.ws.catalog_name_group(source, template)["metrics"]:
                     raise ValueError(
                         f"{template!r} is a name group (a shared prefix), not a name-template "
