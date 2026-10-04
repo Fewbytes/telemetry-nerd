@@ -115,8 +115,8 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="workspace-switcher" bind:this={root} {onkeydown}>
   <button
-    type="button" class="ws-trigger" bind:this={trigger} aria-haspopup="true" aria-expanded={open} aria-controls="ws-popover"
-    onclick={() => { if (open) close(); else { open = true; onopen?.(); } }}
+    type="button" class="ws-trigger" bind:this={trigger} aria-expanded={open} aria-controls="ws-popover"
+    onclick={() => { if (open) close(); else { now = Date.now(); open = true; onopen?.(); } }}
   >
     <span class="ws-title">{title}</span><span aria-hidden="true">▾</span>
   </button>

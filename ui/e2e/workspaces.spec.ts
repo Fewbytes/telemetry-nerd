@@ -76,7 +76,6 @@ test("workspace switcher: focus return, plain-list a11y, archived toggle", async
   await seedPanel(request, "Is checkout latency in the switcher a11y test elevated?");
   await page.goto("/");
   const trigger = page.locator(".ws-trigger");
-  await expect(trigger).toHaveAttribute("aria-haspopup", "true");
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await trigger.click();
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
