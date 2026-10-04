@@ -592,7 +592,9 @@ class LittlesOps:
             "detail": (
                 "trend test per window on L and lambda (n_eff-adjusted, 1%): "
                 + (f"material drift (> 10%) in {len(ns)} window(s); Little's law still holds over "
-                   "a window up to the edge term, which the interval carries" if ns
+                   "a window up to the edge term, which the interval carries, but that term is "
+                   "then the process (a backlog building or draining), not the instruments: "
+                   "these windows are left out of the systematic level" if ns
                    else "no material drift")
             ),
             **({"windows": ns[:10]} if ns else {}),
@@ -831,8 +833,8 @@ METHOD = (
     "L and lambda W describe the same requests; it is the common-cause scale (a small system's "
     "per-window fluctuation), reported apart. Systematic offset (measurement system: "
     "instrumentation / model mismatch): the level of the windows that are not transient and "
-    "in steady state (L and lambda not drifting inside the window, when most are), equal "
-    "weights, its error the larger of measurement and window spread, at 2.5%. Transient windows: "
+    "in steady state (L and lambda not drifting materially inside the window: significant and "
+    "more than 10%; when most are, else all), equal weights, its error the larger of measurement and window spread, at 2.5%. Transient windows: "
     "off that level (or 1) beyond the measurement interval, Bonferroni over windows and groups "
     "at 2.5%; special cause when also beyond the common-cause envelope (small-system scale or "
     "3 robust sigma of the windows' own variation), else common cause. With fewer than 5 "
@@ -1046,7 +1048,7 @@ def _systematic_wire(g: GroupResult) -> dict | None:
         "direction": s.verdict, "ratio": sig(s.ratio), "ci95": sig_pair(s.ci95) if s.ci95 else None,
         "relative": sig(s.ratio - 1), "relative_ci95": _rel(s.ci95),
         "difference": sig(s.diff), "difference_ci95": sig_pair(s.diff_ci) if s.diff_ci else None,
-        "windows": [len(g.core), judged],
+        "windows": [len(g.basis), judged],  # the windows the level rests on
         "drifting": bool(g.growing and g.growing["significant"]),
         "source": MEASUREMENT,
         "meaning": (
@@ -1322,8 +1324,8 @@ def _group(cfg: dict, L_ds: str, labels: dict, g: GroupResult) -> dict:
         if sysw and g.systematic is not None:
             ev.append(statistic(
                 L_ds, "littles_law_systematic_offset", sysw["ratio"], sysw["ci95"],
-                "L / (lambda W) shared by the non-transient windows (equal weights; error the "
-                "larger of measurement and window spread); source: measurement system",
+                "L / (lambda W) shared by the non-transient steady windows (equal weights; error "
+                "the larger of measurement and window spread); source: measurement system",
                 {**params, "window": _span(g.systematic), "windows": sysw["windows"],
                  "drifting": sysw["drifting"]}, source=MEASUREMENT,
             ))  # fmt: skip

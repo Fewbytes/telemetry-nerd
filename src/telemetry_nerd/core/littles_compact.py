@@ -38,7 +38,7 @@ SHORT_METHODS = {
     "littles_law_discrepancy": "L / (lambda W) - 1 over the range, measurement interval",
     "mean_concurrency_L": "time average of the in-flight gauge, sampling interval",
     "lambda_times_W": "throughput x mean latency (rate(_sum)/rate(_count)), timing interval",
-    "littles_law_systematic_offset": "L / (lambda W) shared by the non-transient windows",
+    "littles_law_systematic_offset": "L / (lambda W) shared by the non-transient steady windows",
     "littles_law_transient": "L / (lambda W) - 1 of a transient window, measurement interval",
     "littles_law_backlog_growth": "backlog change over a promoted load-peak window",
     "littles_law_latency_rise": "mean latency rise into a promoted load peak",

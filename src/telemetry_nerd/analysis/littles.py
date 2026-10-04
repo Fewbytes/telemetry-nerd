@@ -133,8 +133,11 @@ class GroupResult:
     growing: dict | None = None  # trend of L - lambda W over windows (leak / backlog)
     reference: float = 1.0  # the level windows are compared with: 1, or the systematic offset
     references: dict[int, float] = field(default_factory=dict)  # per window (a drifting offset)
-    systematic: Block | None = None  # pooled over the non-transient windows, when it excludes 1
-    core: list[int] = field(default_factory=list)  # the windows of that pool
+    # pooled over the non-transient steady windows (or, when most windows are off 1 on one side
+    # or not steady, all of them), when it excludes 1
+    systematic: Block | None = None
+    basis: list[int] = field(default_factory=list)  # the windows behind `systematic`
+    core: list[int] = field(default_factory=list)  # the windows not transient
     transient: list[dict] = field(default_factory=list)
     common_cause: dict = field(default_factory=dict)
     phases: dict[int, dict] = field(default_factory=dict)  # load context of every judged window
@@ -417,7 +420,7 @@ def check(
     """Windows of k sub-steps and the pooled span after `skip` sub-steps of warm-up.
 
     alpha is split: alpha/2 for the systematic offset (pooled over the windows that are not
-    transient), alpha/2 family-wise (Bonferroni over `tests`, default this group's windows) for
+    transient and are in steady state, see _classify), alpha/2 family-wise (Bonferroni over `tests`, default this group's windows) for
     the window tests (against 1 and against the systematic level). Promotion of load-peak
     windows has its own family-wise budget, PROMOTE_ALPHA (see _promote). `arrivals`: what the
     counter counts (arrivals | completions | unknown): with arrivals, arrivals - completions is a
@@ -580,10 +583,13 @@ def _classify(
     the reference is 1. When L - lambda W trends over the windows (a leak, a backlog building
     over the range), the reference is the offset's linear trend, not a constant. Repeat until
     the transient set is stable. A systematic offset needs most windows: with half or more of
-    them transient there is none. Little's law over a window holds only in steady state, so the
-    level is taken over the windows not flagged `not_steady` (L or lambda drifting materially
-    inside the window) when they are most: such a window's own R is the process leaving steady
-    state, not the instruments, and must not make a measurement-system offset (1i26)."""
+    them transient there is none. The level is taken over the windows not flagged `not_steady`
+    (L or lambda drifting significantly and materially inside the window) when they are most:
+    L T = lambda W T holds over any window up to the edge term (requests in flight at its
+    edges), and a backlog building or draining inside the window makes that term a real
+    discrepancy of the process, not of the instruments, so such a window's R must not make a
+    measurement-system offset (1i26). Otherwise (a leak, a long overload: not steady anywhere)
+    all non-transient windows, and the trend takes the drift."""
     ws = out.windows
     ratio = {i: float(ws[i].ratio) for i in judged}  # type: ignore[arg-type]
     side = {v: sum(ws[i].verdict == v for i in judged) for v in ("L_high", "L_low")}
@@ -598,6 +604,7 @@ def _classify(
     ref_sd = ref_bias = 0.0
     trans: list[int] | None = None
     sysb: Block | None = None
+    basis: list[int] = []
     for _ in range(MAX_ITER):
         new = [i for i in judged if _off(ws[i], refs[i], ref_sd, ref_bias, q)]
         core = [i for i in judged if i not in new and i in pool]
@@ -627,6 +634,7 @@ def _classify(
     out.reference = float(np.median(list(refs.values())))
     out.references = refs
     out.systematic = sysb
+    out.basis = list(basis) if sysb is not None else []
     out.core = [i for i in judged if i not in final]
     # common-cause envelope: the small-system (Poisson) scale, or the process's own window-to-
     # window variation around the reference (SPC: 3 robust sigma of the windows, less what the

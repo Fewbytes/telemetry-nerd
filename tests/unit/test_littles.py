@@ -476,3 +476,37 @@ def test_a_load_peak_window_does_not_make_a_systematic_offset():
     # every window's measurement interval still holds the exact R
     for w, exact in zip(r.windows, rec["exact_R"], strict=True):
         assert w.ci95[0] <= exact <= w.ci95[1]
+
+
+@pytest.mark.parametrize("k", [12, 24])
+def test_the_recorded_spike_makes_no_systematic_offset_on_any_grid(k):
+    """1i26: the same recorded data on every grid offset (skip 0..k) at 1- and 2-minute windows:
+    the episode moves between windows, its not-steady windows never make a measurement-system
+    offset (before the fix: k=24 skip=1 and k=12 skip=7 read L_high)."""
+    sub, call, _ = _recorded("overload_spike_arrivals_1i26")
+    for skip in range(k + 1):
+        r = check(sub, k=k, skip=skip, tests=call["tests"], arrivals=call["arrivals"])
+        assert r.systematic is None and not r.basis, (skip, r.verdict)
+        assert r.verdict in ("inconsistent_in_windows", "consistent"), (skip, r.verdict)
+
+
+def test_the_systematic_offset_names_the_windows_it_rests_on():
+    """1i26: `basis` is the windows behind the level (wired as `systematic.windows`): the steady
+    non-transient ones. Queueing the timer misses at rho 0.95 (seed 7): windows 7 and 9 are not
+    steady and not transient: in `core`, not in the level."""
+    r = check(substeps(simulate(7, rates=[(0.0, 9.5)], c=10, timer="service_start")), k=20)
+    assert r.systematic is not None and r.systematic.verdict == "L_high"
+    ns = {i for i, w in enumerate(r.windows) if "not_steady" in w.flags}
+    assert ns == {7, 9} and ns <= set(r.core)
+    assert r.basis == [i for i in r.core if i not in ns]
+    assert r.systematic.n == sum(r.windows[i].n for i in r.basis)
+
+
+def test_the_wired_offset_counts_the_windows_behind_the_level():
+    """1i26: "in N of M windows" names the level's windows (not every non-transient one)."""
+    from telemetry_nerd.core.littles_ops import _systematic_wire
+
+    r = check(substeps(simulate(7, rates=[(0.0, 9.5)], c=10, timer="service_start")), k=20)
+    w = _systematic_wire(r)
+    assert w is not None and w["windows"] == [len(r.basis), len(r.windows)]
+    assert len(r.basis) < len(r.core)

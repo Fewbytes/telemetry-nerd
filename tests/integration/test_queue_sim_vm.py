@@ -8,11 +8,11 @@ lambda and W of the simulation (queue_sim.exact_windows). The real-time scrape p
 scraped by VictoriaMetrics over HTTP) is scripts/validate_queue_sim.py.
 """
 
+import math
 import random
 import re
 from dataclasses import replace
 from datetime import datetime
-from itertools import product
 
 import pytest
 
@@ -86,9 +86,20 @@ def _ms(text: str) -> int:
     return int(datetime.fromisoformat(text).timestamp() * 1000)
 
 
+def allowed_misses(n: int, p: float = 0.05, tail: float = 0.01) -> int:
+    """The smallest k with P(Binomial(n, p) > k) < tail."""
+    cdf, k = 0.0, 0
+    while True:
+        cdf += math.comb(n, k) * p**k * (1 - p) ** (n - k)
+        if 1 - cdf < tail:
+            return k
+        k += 1
+
+
 def assert_covers_exact(out: dict, truth: dict) -> None:
     """Each judged window's 95% measurement interval holds the exact R of the simulation (the
-    estimand: the realised path); at most one pointwise miss."""
+    estimand: the realised path), up to the misses a calibrated 95% interval makes by chance:
+    at most k of n, with P(Binomial(n, 0.05) > k) < 1% (n = 14: k = 3)."""
     t0 = truth["started_unix_ms"]
     rows = [w for w in out["total"]["windows"] if w[2] is not None]
     cols = out["total"]["window_columns"]
@@ -101,7 +112,7 @@ def assert_covers_exact(out: dict, truth: dict) -> None:
         (w[0], e["R"], w[lo], w[hi]) for w, e in zip(rows, exact, strict=True)
         if not w[lo] <= e["R"] <= w[hi]
     ]  # fmt: skip
-    assert len(misses) <= 1, misses
+    assert len(misses) <= allowed_misses(len(rows)), misses
 
 
 @pytest.mark.parametrize(
@@ -133,13 +144,10 @@ async def test_check_matches_ground_truth(vm, tmp_path, name, window):
     assert_covers_exact(out, truth)  # exact L: the exported gauges (missing_instance: 2 of 3)
 
 
-@pytest.mark.parametrize(
-    ("offset_s", "window", "counter", "phase_ms"),
-    [
-        *product([0, 20, 40], ["1m", "auto"], ["completions", "arrivals"], [2_500]),
-        (0, "auto", "arrivals", 60),  # 1i26: the CI placement
-    ],
-)
+@pytest.mark.parametrize("counter", ["completions", "arrivals"])
+@pytest.mark.parametrize("window", ["1m", "auto"])
+@pytest.mark.parametrize("offset_s", [0, 20, 40])
+@pytest.mark.parametrize("phase_ms", [60, 2_500])  # 60: 1i26's CI placement (0-auto-arrivals)
 async def test_overload_spike_is_special_cause_wherever_it_falls(
     vm, tmp_path, counter, window, offset_s, phase_ms
 ):
@@ -149,9 +157,10 @@ async def test_overload_spike_is_special_cause_wherever_it_falls(
     overlapping the load and `drain` only after it began; every window's interval holds the
     exact R (the rate() lookback that smeared the spike into its neighbours is gone).
 
-    The scrapes sit mid-tile (2.5 s past an edge). 1i26: 60 ms past an edge (the jitter moves a
-    few scrapes across it), the CI placement where the load-peak window, not steady, sat in the
-    systematic level and read `L_high` (measurement system) on instruments that agree."""
+    The scrapes sit 60 ms past a tile edge (the jitter moves a few scrapes across it) or
+    mid-tile (2.5 s). 1i26: at 60 ms, 0-auto-arrivals is the CI placement where the load-peak
+    window, not steady, sat in the systematic level and read `L_high` (measurement system) on
+    instruments that agree."""
     t0 = placed_t0(1_400_000, phase_ms)
     truth = seed_vm(vm, "overload_spike", t0, counter)
     # windows are anchored at the requested start: moving it moves the grid over the spike

@@ -170,7 +170,10 @@ differences smaller than that are not distinguishable from small-system behaviou
   (below). `ci95` is the pointwise 95% measurement interval.
 - **Reference and systematic offset**: start from the median window ratio; windows off it beyond
   their measurement interval (combined with the level's) are transient; the level of the rest is
-  their equal-weight mean ratio (one heavy window cannot make an offset persistent), its standard
+  their equal-weight mean ratio (one heavy window cannot make an offset persistent) over the
+  ones in steady state (1i26: not `not_steady`, see Assumptions) when those are most, else over
+  all of them (a leak or a long overload is not steady anywhere; the trend below takes the
+  drift); `systematic.windows` = [windows behind the level, judged windows]. Its standard
   error the larger of the measurement one and the windows' spread (t with the windows' or the
   sub-steps' df accordingly), tested at α/2. If it excludes 1 — or most windows are flagged on one
   side of 1 — it is the systematic offset and the reference; else the reference is 1. Iterate
@@ -214,9 +217,13 @@ binding without concurrency shows a `check` card with the gauge to add, and `bin
 `model_check` is `not_possible`. L is never derived from λ·W.
 
 ## Assumptions, checked and stated
-- **Steady state**: per window a trend test (stability.trend, n_eff) on L and λ; drift is
-  `not_steady` with its size. Little's law holds over any window up to the edge term, which the
-  bias bound carries, so drift widens rather than invalidates.
+- **Steady state**: per window a trend test (stability.trend, n_eff) on L and λ; drift that is
+  significant and more than 10% is `not_steady`, with its size. L·T = λW·T holds over any window
+  up to the edge term (requests in flight at its edges), which the interval carries, so drift
+  does not invalidate the window's own test. But a backlog building or draining inside the
+  window makes that edge term a real discrepancy of the process, not instrument error: such
+  windows are left out of the systematic (measurement-system) level when the steady windows
+  are most (1i26).
 - **Arrivals vs completions**: which one λ counts (`arrivals` argument; auto = completions when the
   counter is the histogram's `_count`, else "unknown, most middleware counts at completion") and a
   flow-balance check of the counter rate against the histogram count rate per window
@@ -358,9 +365,25 @@ spike at 5m (on the 900 s ranges) stays `consistent`: its whole episode (≈2 mi
 one 5-minute window of both grids and balances there (exact R 0.98) — a resolution limit,
 stated in `window_alignment`. In the seeded VM integration test
 (tests/integration/test_queue_sim_vm.py) the spike is placed at three grid phases × 1m/auto ×
-both counters, plus scrapes on the tile edges: with a completions counter it is special cause at
+both counters × two scrape phases on the 5 s tiles (60 ms past an edge and mid-tile; t0 pinned to
+the tile grid, 1i26: a wall-clock t0 left the verdict to the millisecond the test ran), plus
+scrapes on the tile edges: with a completions counter it is special cause at
 every placement; with an
 arrivals counter one placement (2m) stays `consistent` with nothing promoted — there the exact R
 of the episode's windows is within the intervals and close to 1 (the counter compensates) and
 the backlog growth falls just under the distribution-free promotion threshold, so the check is
 truthful but silent.
+
+Systematic level from steady windows only (1i26, 2026-10-04): on a real VM (queue-sim
+overload_spike, arrivals counter, 2-minute windows, scrapes 60 ms past a 5 s tile edge) the
+load-peak window (`not_steady`, exact R 1.075) sat in the level with five steady windows whose
+gauge sampling read 0–9% high, and the level read `L_high` 1.06 [1.01, 1.11] ("measurement
+system") on instruments that agree. Seeded littles_sim (`littles_sim.py`; seeds as listed):
+
+| scenario (seeds) | before | after |
+|---|---|---|
+| consistent λ=2 c=4 (0-149): FAR | 3/150 | 3/150 |
+| hidden queueing at constant ρ 0.95 (0-49): systematic | 50/50 | 50/50 |
+| gauge ×1.05 at λ=9.5 c=10 (1000-1149): systematic | 36/150 | 31/150 |
+| ρ 1.25 spike 5 min, arrivals and completions counter (600-674 each): systematic (should be none) | 0/150 | 0/150 |
+| recorded VM overload_spike Substeps, grid skip 0..k for k = 12, 24: systematic (should be none) | at k=24 skip=1, k=12 skip=7 | none |
