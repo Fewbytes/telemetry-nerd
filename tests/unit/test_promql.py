@@ -571,7 +571,7 @@ async def test_mixed_le_layouts_in_a_group_are_refused_with_a_hint():
 
 
 @respx.mock
-async def test_expression_fetch_keeps_samples_without_a_value_and_drops_filled_buckets():
+async def test_expression_fetch_keeps_samples_without_a_value_and_marks_unobserved_buckets():
     # values from the subquery at 100/160 (160 lookback-filled); samples observed at 40/100;
     # series b has samples but no value anywhere (rate needs two samples)
     def responder(request):
@@ -602,11 +602,17 @@ async def test_expression_fetch_keeps_samples_without_a_value_and_drops_filled_b
     res = await src.fetch("rate(x[5m])", RNG, 60_000)
     sa = series_id("p", {"i": "a"})
     got = {(r["series_id"], r["ts_ms"]): (r["count"], r["avg"]) for r in res.buckets.to_pylist()}
-    # a@100: value and samples. a@160: lookback-filled value, no samples: dropped.
-    # a@40: samples arrived but the expression has no value: kept with its count and a null
-    # value, not read as empty (1h9.16). b has samples and no value anywhere (or labels that
-    # match no value series): no all-null series is invented; disclosed once.
-    assert got == {(sa, 1_700_000_040_000): (4, None), (sa, 1_700_000_100_000): (3, 1.0)}
+    # a@100: value and samples. a@160: a value but no sample in the bucket: kept with count 0,
+    # so the dataset layer can tell a scrape that spilled into the next bucket (bucket_state OK)
+    # from a filled gap (dropped there: companions.settle_unobserved; uup). a@40: samples
+    # arrived but the expression has no value: kept with its count and a null value, not read
+    # as empty (1h9.16). b has samples and no value anywhere (or labels that match no value
+    # series): no all-null series is invented; disclosed once.
+    assert got == {
+        (sa, 1_700_000_040_000): (4, None),
+        (sa, 1_700_000_100_000): (3, 1.0),
+        (sa, 1_700_000_160_000): (0, 1.0),
+    }
     assert [r["series_id"] for r in res.series.to_pylist()] == [sa]
     assert res.partial == 0
     assert len(res.notes) == 1 and "1 series had samples but no value" in res.notes[0]

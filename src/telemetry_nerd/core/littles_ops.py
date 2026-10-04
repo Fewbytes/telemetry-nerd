@@ -206,13 +206,15 @@ def _exprs(
 
 
 def _fill_empty_tiles(v: np.ndarray, n: np.ndarray, gauge: bool) -> tuple[np.ndarray, np.ndarray]:
-    """A sub-step of one tile in which no scrape landed (jitter around the tile edge: the scrape
-    before it was a little late, the one after a little early) comes back without a value: the
-    source drops buckets without an observed sample. Its tile's increase is 0 — the next tile,
+    """A sub-step of one tile in which no scrape landed. Its tile's increase is 0 — the next tile,
     which holds two scrapes, carries it — and the gauge still reads its last sample there. Left
     out, the next tile's two intervals of counts would be set against one gauge reading (lambda
-    inflated: measured 1.4-1.6x with scrapes on the tile edges). Isolated gaps only (observed on
-    both sides); a longer gap is missing data and stays out of all four signals."""
+    inflated: measured 1.4-1.6x with scrapes on the tile edges). Where the scrape spilled into
+    the next tile (jitter around the tile edge) the counters' 0 arrives from the dataset layer
+    (companions.settle_unobserved, uup); the gauge is an instant reading, which that layer
+    never fills, and a lost scrape (bucket_state EMPTY) arrives without either: both are filled
+    here, for this check's window means only. Isolated gaps only (observed on both sides); a
+    longer gap is missing data and stays out of all four signals."""
     gap = np.zeros(v.size, bool)
     gap[1:-1] = np.isnan(v[1:-1]) & np.isfinite(v[:-2]) & np.isfinite(v[2:])
     if not gap.any():

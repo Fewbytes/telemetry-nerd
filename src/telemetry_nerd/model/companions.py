@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 import polars as pl
 import pyarrow as pa
+import pyarrow.compute as pc
 
-from telemetry_nerd.analysis.exprkind import _close, _mask_strings, _strip_comments
+from telemetry_nerd.analysis.exprkind import (
+    _close,
+    _mask_strings,
+    _strip_comments,
+    range_windows_ms,
+)
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
-from telemetry_nerd.model.bucket_state import STATE_SCHEMA, compute
+from telemetry_nerd.model.bucket_state import STATE_SCHEMA, State, compute
 from telemetry_nerd.model.caveats import Caveat
 from telemetry_nerd.model.series import FetchResult
 from telemetry_nerd.model.time import parse_duration
@@ -161,25 +167,120 @@ class Bundle:
 def derive_states(meta: DatasetMeta, result: FetchResult) -> pa.Table:
     """bucket_state of a stored dataset: pure function of its buckets, failed spans, expression
     and the semantics hints recorded at query time."""
-    mode = "presence" if meta.representation == "quantile" else "samples"
-    failed = [(a, b, str(reason)) for a, b, reason in meta.failed_spans]
-    return compute(
-        result.buckets,
-        result.series["series_id"].to_pylist(),
+    return _states(
+        result,
+        expr=meta.expr,
         start_ms=meta.start_ms,
         end_ms=meta.end_ms,
         step_ms=meta.step_ms,
         resolution_ms=meta.resolution_ms,
+        failed=[(a, b, str(reason)) for a, b, reason in meta.failed_spans],
+        semantics_flags=meta.semantics_flags,
+        mode="presence" if meta.representation == "quantile" else "samples",
+    )
+
+
+def _states(
+    result: FetchResult,
+    *,
+    expr: str,
+    start_ms: int,
+    end_ms: int,
+    step_ms: int,
+    resolution_ms: int,
+    failed: list[tuple[int, int, str]],
+    semantics_flags: dict,
+    mode: Literal["samples", "presence"] = "samples",
+) -> pa.Table:
+    return compute(
+        result.buckets,
+        result.series["series_id"].to_pylist(),
+        start_ms=start_ms,
+        end_ms=end_ms,
+        step_ms=step_ms,
+        resolution_ms=resolution_ms,
         mode=mode,
         failed=failed,
         # counts that are subquery evaluations (lookback-filled) cannot show coverage
-        source_filled=not counts_are_observed(meta.expr),
+        source_filled=not counts_are_observed(expr),
         post_gap_buckets=(
-            post_gap_buckets(meta.expr, meta.step_ms)
-            if meta.semantics_flags.get("post_gap_increase_spike")
-            else 0
+            post_gap_buckets(expr, step_ms) if semantics_flags.get("post_gap_increase_spike") else 0
         ),
     )
+
+
+_TILE_FUNCS = re.compile(r"\b(" + "|".join(_WINDOW_WIDE) + r")\s*\(", re.IGNORECASE)
+
+
+def unobserved_values_hold(expr: str, step_ms: int) -> bool:
+    """Whether the value an expression has in a bucket that observed no sample of its own is the
+    expression's real value there, not a fill (uup). True when every range window reaches past
+    the bucket (rate(x[1m]) at a 15 s step: computed from the samples inside the window), or the
+    windows no longer than the step are increase/increase_pure/delta: a tile without a sample
+    increased by 0 (from the last sample before it to the last one in it), the next tile carries
+    the change, and the tiles partition the counter exactly. False for an instant reading (a
+    lookback fill) and for any other function over a window holding no sample (VictoriaMetrics
+    returns rate() 0 there, which no sample supports)."""
+    windows = range_windows_ms(expr)
+    short = sum(1 for w in windows if w <= step_ms)
+    if not windows or not short:
+        return bool(windows)
+    text = _mask_strings(_strip_comments(expr))
+    tiles = 0
+    for call in _TILE_FUNCS.finditer(text):
+        end = _safe_close(text, call.end() - 1)
+        bracket = _top_level_bracket(text, call.end(), end)
+        own = _bracket_duration(text, bracket) if bracket is not None else None
+        tiles += own is not None and own <= step_ms
+    return tiles == short
+
+
+def settle_unobserved(
+    result: FetchResult,
+    *,
+    expr: str,
+    start_ms: int,
+    end_ms: int,
+    step_ms: int,
+    resolution_ms: int,
+    semantics_flags: dict | None = None,
+) -> FetchResult:
+    """Decide the fetched buckets that carry a value but observed no sample (count 0; the source
+    adapter keeps them, sources/promql.py). At about one sample per bucket a scrape near a bucket
+    edge lands in the neighbouring bucket: bucket_state reads that bucket OK (spilled, spec §5.1).
+    There the value stays when it is the expression's own (`unobserved_values_hold`), marked by
+    its count of 0: dropping it would leave the neighbour, which holds two scrapes' worth of an
+    increase, against one bucket fewer (Little's law's lambda read 1.4-1.6x high that way,
+    9178611). Elsewhere (a gap: EMPTY / ABSENT / UNKNOWN, or a fill such as lookback) it is
+    missing data and is dropped: never a fabricated value or zero."""
+    buckets = result.buckets
+    if buckets.num_rows == 0:
+        return result
+    df = pl.from_arrow(buckets)
+    assert isinstance(df, pl.DataFrame)
+    unobserved = pl.col("count") == 0
+    if not df.select(unobserved.any()).item():
+        return result
+    if unobserved_values_hold(expr, step_ms) and counts_are_observed(expr):
+        states = pl.from_arrow(
+            _states(
+                result, expr=expr, start_ms=start_ms, end_ms=end_ms, step_ms=step_ms,
+                resolution_ms=resolution_ms, failed=list(result.failed),
+                semantics_flags=semantics_flags or {},
+            )
+        )  # fmt: skip
+        assert isinstance(states, pl.DataFrame)
+        spilled = states.filter(pl.col("state") == int(State.OK)).select(
+            "series_id", "ts_ms", pl.lit(True).alias("_spilled")
+        )
+        df = df.join(spilled, on=["series_id", "ts_ms"], how="left")
+        df = df.filter(~unobserved | pl.col("_spilled").fill_null(False)).drop("_spilled")
+    else:
+        df = df.filter(~unobserved)
+    kept = df.select(buckets.schema.names).to_arrow().cast(buckets.schema)
+    ids = pa.array(df["series_id"].unique().to_list(), pa.string())
+    series = result.series.filter(pc.is_in(result.series["series_id"], value_set=ids))
+    return replace(result, buckets=kept, series=series)
 
 
 def dataset_bundle(store: DatasetStore, meta: DatasetMeta, result: FetchResult) -> Bundle:

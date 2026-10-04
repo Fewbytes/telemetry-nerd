@@ -373,8 +373,15 @@ fills (`subquery_fills_gaps`, verified on Prometheus and VictoriaMetrics), so it
   leaf inside and outside an aggregation counts twice: a safe over-count), and the final query
   length. `histogram_quantile(q, a/b)` is likewise observed, as
   `sum without (le, vmrange) (<fold>)`.
-  A value in a bucket with no observed sample is filled and dropped
-  (bucket `empty`); samples without a value (e.g. `rate` with one sample) are dropped too, never
+  A value in a bucket with no observed sample comes back with count 0 and is settled when the
+  dataset is made (`companions.settle_unobserved`, `uup`): it is kept only where bucket_state
+  reads the bucket `ok` (a scrape spilled into the neighbouring bucket) and the value is the
+  expression's own (every range window longer than the step, or `increase`/`increase_pure`/
+  `delta` of a tile: 0, the neighbour carrying the change); elsewhere it is a fill and dropped
+  (bucket `empty`), as are instant readings and other functions over a window holding no sample
+  (VictoriaMetrics `rate` gives 0 there). Dropping a spilled tile's 0 left its neighbour's two
+  scrapes' worth of increase against one bucket fewer (Little's law read lambda 1.4-1.6x high,
+  9178611); samples without a value (e.g. `rate` with one sample) are dropped too, never
   counted `partial`. Cost: `fetch` runs the same number of queries, but the count query is no
   cheaper for a ratio: the fold repeats its operands (up to 2^(n-1) `count_over_time` calls for
   the first of n distinct operands), hence the cap below. `fetch_values` (quantile path) adds one

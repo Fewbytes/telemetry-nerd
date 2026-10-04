@@ -308,15 +308,25 @@ class PromQLSource:
             )
         notes_extra: tuple[str, ...] = ()
         if derived:
-            # Values and count come from different queries here. Values without a count are
-            # filled (lookback / range carried past the last sample): no sample arrived in the
-            # bucket, so it is empty and dropped. A count without values is samples the
-            # expression has no value for (cause unknown): kept with null values (null = no
-            # value, NaN = non-finite), so bucket_state reads the samples that arrived (not
-            # EMPTY) and summaries flag `no_value` (1h9.16).
+            # Values and count come from different queries here. Values without a count: no
+            # sample arrived in the bucket. Either a scrape near the bucket edge spilled into
+            # the next bucket (the expression's value there is real: a window reaching past the
+            # bucket, or increase() of a tile, 0 while the next tile carries the change), or
+            # the bucket is a gap that lookback / a long range filled. Telling them apart needs
+            # the series' cadence, which bucket_state reads: kept here with count 0 and settled
+            # when the dataset is made (companions.settle_unobserved; uup), not dropped unseen.
+            # A count without values is samples the expression has no value for (cause
+            # unknown): kept with null values (null = no value, NaN = non-finite), so
+            # bucket_state reads the samples that arrived (not EMPTY) and summaries flag
+            # `no_value` (1h9.16).
             def no_value(c: dict) -> bool:
                 return not (c.keys() & _VALUES)
 
+            unobserved = {
+                k: {**{f: c[f] for f in _VALUES}, "count": 0}
+                for k, c in cells.items()
+                if c.get("count") is None and _VALUES <= c.keys()
+            }
             complete = {
                 k: {f: c.get(f) for f in _FIELDS}
                 for k, c in cells.items()
@@ -339,6 +349,8 @@ class PromQLSource:
                     + more,
                 )
             labels_by_sid = {sid: labels_by_sid[sid] for sid, _ in complete}
+            # only series that observed samples somewhere: one never observed is no evidence
+            complete |= {k: c for k, c in unobserved.items() if k[0] in valued}
         else:
             # A bucket needs all of avg/min/max/count from the source; a half-returned cell
             # would otherwise become a bucket with data but no mean. Drop it, count it.

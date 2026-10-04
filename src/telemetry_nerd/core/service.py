@@ -146,7 +146,7 @@ from telemetry_nerd.model.caveats import (
     runs,
     series_name,
 )
-from telemetry_nerd.model.companions import dataset_bundle
+from telemetry_nerd.model.companions import dataset_bundle, settle_unobserved
 from telemetry_nerd.model.distribution import DIST_N_MIN
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.series import BUCKET_SCHEMA, FetchResult
@@ -515,6 +515,12 @@ class TelemetryService:
             result = await self.cache.get(
                 src.identity, expr, rng, step_ms, lambda r: src.fetch(expr, r, step_ms)
             )
+            # buckets with a value but no sample: a scrape that spilled into the next bucket
+            # keeps the expression's own value; a gap's fill is dropped (uup)
+            result = settle_unobserved(
+                result, expr=expr, start_ms=rng.start_ms, end_ms=rng.end_ms, step_ms=step_ms,
+                resolution_ms=src.resolution_ms, semantics_flags=_semantics_flags(src),
+            )  # fmt: skip
         else:
             qx = info.quantile
             representation, q = "quantile", qx.q

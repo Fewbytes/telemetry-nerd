@@ -14,6 +14,7 @@ import math
 import httpx
 import pytest
 
+from telemetry_nerd.model.companions import settle_unobserved
 from telemetry_nerd.model.time import TimeRange
 from telemetry_nerd.sources.observed import counts_are_observed
 from telemetry_nerd.sources.promql import PromQLSource
@@ -170,9 +171,17 @@ async def test_subquery_windows_fill_gaps_but_the_adapter_reports_only_observed_
     )
     rng = _window_of(backend, src, "count_selector_w60")
     res = await source.fetch(expr, rng, 60_000)
-    got = [(r["ts_ms"] / 1000, r["count"]) for r in res.buckets.to_pylist()]
+    got = [(r["ts_ms"] / 1000, r["count"]) for r in res.buckets.to_pylist() if r["count"]]
     assert got == [(t, round(v)) for t, v in selector]  # exactly the observed samples
-    assert inside(got) == []  # nothing inside the hole: bucket_state sees `empty`, not `ok`
+    # filled values come back marked with count 0 (uup), and the dataset layer drops them: an
+    # instant reading in a bucket without samples is lookback fill, spilled scrape or not
+    assert inside(got) == []  # nothing observed inside the hole: bucket_state sees `empty`
+    settled = settle_unobserved(
+        res, expr=expr, start_ms=rng.start_ms, end_ms=rng.end_ms, step_ms=60_000,
+        resolution_ms=60_000,
+    )  # fmt: skip
+    kept = [(r["ts_ms"] / 1000, r["count"]) for r in settled.buckets.to_pylist()]
+    assert kept == got
     assert res.partial == 0  # filled cells are not "half-returned"
     assert counts_are_observed(expr)
 
