@@ -280,7 +280,8 @@ class KernelManager:
         reaped = []
         for ws, k in list(self._kernels.items()):
             lock = self._lock(ws)
-            if lock.locked() or self._clock() - k.last_used < self.config.idle_timeout_s:
+            busy = lock.locked() or self._pending.get(ws)
+            if busy or self._clock() - k.last_used < self.config.idle_timeout_s:
                 continue
             async with lock:
                 if self._kernels.get(ws) is k:
