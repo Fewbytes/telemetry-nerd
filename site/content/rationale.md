@@ -22,7 +22,7 @@ it. You look at the same graphs, ask about any part of them, and decide which hy
 It is deliberately **not** three things:
 
 - **Not an "AI SRE".** This isn't about permissions — it doesn't need write access to your
-  infrastructure to oversell itself. It's that we don't sell automated root-cause analysis.
+  infrastructure to oversell itself. It's that we don't sell automated root-cause analysis[^rc].
   Root-causing a real incident takes judgment about your specific system, your specific failure
   mode, and the context that never made it into a metric; a tool that claims to do that for you
   is selling snake oil, however confident it sounds. Telemetry Nerd proposes explanations and goes
@@ -291,3 +291,8 @@ datasource proxies, and it can read the code, docs and dashboard definitions in 
 as context for what your metrics mean. When a graph looks wrong and you need to know why, how
 sure you can be, and what would change your mind, that is the job Telemetry Nerd was built for —
 and it's the job your dashboard was quietly getting wrong.
+
+[^rc]: "The root cause" is itself mostly industry folklore. Ask five engineers what caused an
+    outage and get six answers involving a deploy, a config, a traffic spike, a timeout tuned
+    wrong five years ago and someone's retry loop — a chain of conditions, not a root. We don't
+    use the term seriously anywhere else in this document, and neither should your postmortem.
