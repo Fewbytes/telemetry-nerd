@@ -65,6 +65,11 @@ def series_name(labels: Mapping[str, str]) -> str:
 
 
 SUBQUERY_FILLS_GAPS = "subquery_fills_gaps"
+CADENCE_OR_LOSS = "cadence_or_loss"
+CADENCE_REASON = (
+    "0-sample buckets at a regular spacing: a series interval a little slower than the query "
+    "step, or a scrape lost at that spacing; counts cannot tell"
+)
 UNOBSERVABLE_MESSAGE = (
     "Coverage unknown: this expression's sample counts cannot be observed (subquery fills gaps)."
 )
@@ -225,6 +230,8 @@ def _untrusted(df: pl.DataFrame, step_ms: int, failed: Sequence[FailedSpan]) -> 
     for spans, sids in groups.items():
         rows = unknown.filter(pl.col("series_id").is_in(sids))
         reasons = failure_reasons(failed, rows["ts_ms"].unique().to_list(), step_ms)
+        if ((rows["flags"] & int(Flag.CADENCE)) != 0).any():
+            reasons.append(CADENCE_REASON)
         message = f"Data unknown for {_total(list(spans))} ({'; '.join(reasons or [NO_REASON])})."
         if ((rows["flags"] & int(Flag.SOURCE_FILLED)) != 0).any():
             # the expression itself hides coverage: one dataset-level reason, not per bucket

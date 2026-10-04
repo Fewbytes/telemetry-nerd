@@ -375,3 +375,18 @@ def test_nan_buckets_flag_non_finite_not_no_value():
     nan = float("nan")
     out = run(meta(end=0), result([(0, "a", nan, nan, nan, 4)], {"a": "a"}))
     assert "non_finite" in out["caveats"] and "no_value" not in out["caveats"]
+
+
+def test_cadence_or_loss_buckets_are_unknown_with_their_reason():
+    # 1.1 s samples at a 1 s step skip every 11th bucket at a regular spacing: a cadence or a
+    # loss recurring there, counts cannot tell (bucket_state e4v)
+    from collections import Counter
+
+    c = Counter(-(-t // STEP) * STEP for t in range(370, 240_000, 1100))
+    rows = [(t, "a", 1.0, 1.0, 1.0, n) for t, n in sorted(c.items())]
+    out = run(meta(end=240_000), result(rows, {"a": "a"}))
+    assert "untrusted_data" in out["caveats"] and "missing_data" not in out["caveats"]
+    assert out["unknown_spans"] and {s[2] for s in out["unknown_spans"]} == {"cadence_or_loss"}
+    # the source's series interval (1.1 s) says which: a cadence, all OK
+    out = run(meta(end=240_000, resolution=1100), result(rows, {"a": "a"}))
+    assert "untrusted_data" not in out["caveats"] and out["unknown_spans"] == []

@@ -194,7 +194,7 @@ accepts both shapes during migration.
 | `observed` | samples in the bucket (today's `count`) |
 | `expected` | step / series' own sample interval (see below) |
 | `state` | `ok` · `partial` (observed/expected < 0.9) · `empty` (alive, 0 samples; also after the last sample, which cannot tell a series that left from one that will return) · `absent` (before the first sample in the time range: not alive yet; trailing silence is `empty`, principle 9) · `unknown` (fetch failed, outside retention, source can't tell) |
-| `flags` | bitmask: `reset`, `interval_change`, `stale_marker`, `source_filled` |
+| `flags` | bitmask: `reset`, `interval_change`, `stale_marker`, `source_filled`, `post_gap`, `cadence` (an `unknown` skipped bucket: cadence or periodic loss) |
 | `reason` | for `unknown`/`source_filled`: short code from the source profile or error |
 
 Series interval `I` (samples mode) is judged **locally**, from the gaps between the series'
@@ -218,14 +218,44 @@ step, slower than the step once k > n / 4. A 16-gap neighbourhood needs 5 before
 shorter one fewer (3 within 11 gaps), so slowness resting on fewer than 16 gaps must not be granted
 more easily than that, at the cost of a marginally slower stretch shorter than about 16 gaps at the
 edge (20 s scrapes at a 15 s step) reading `empty` in its 0 buckets: a hidden loss is worse than a
-false `empty`. A stretch at the edge scraped at the step's rate (`I` ≤ 1.25 × step even with one sample fewer) and
-`CHANGE_RATIO` (2 ×) faster than the rest of the 32 gaps there (the prefix, or suffix, whose time
-falls furthest behind the span's Σgap / Σsamples, by more than a bucket boundary's snap and one
-spilled sample, ending at its last gap within the step) is not slower than the step: the
-neighbourhood past it reaches across the rate change and would hide a scrape lost inside it. That
-rule only takes slowness away, and never in a series with a bucket of 2 or more samples, where which
-0 a spilled 2 pairs with depends on slowness (taking it away could unpair one 0 and pair a lost
-one). In a slower stretch a bucket with samples
+false `empty`. A **step-rate run** is not slower than the step, wherever it lies (window edge or
+mid-series, e.g. 15 s scrapes before or between 60 s ones at a 15 s step): the neighbourhood
+reaching across the rate change reads slow, and "slower if either side is" would hide a scrape
+lost within 16 gaps of the change (bmt; 9li had fixed only the edges). A run is a maximal sequence
+of gaps of at most two steps per sample with no two consecutive ones longer than the step (a lost
+scrape is one such gap, next to step-length ones or to the longer gap that opens a slower
+stretch; a slower stretch has consecutive long gaps or longer ones and bounds the run); a hole
+between two runs belongs to them. It counts with 2 gaps or more when it is at the step's rate even
+with one sample fewer (Σgap / (Σsamples − 1) ≤ 1.25 × step), so a short marginally slower stretch
+keeps its cadence. Its gaps take the run's interval and are not slow. This only takes slowness
+away. (The run rule replaced 9li's edge CUSUM: it is cheaper, and the 200 series × 1440 bucket
+benchmark went from ≈ 0.17–0.19 s back to ≈ 0.14 s, the level before 9li.)
+
+A **cadence a little slower than the step** (1–1.25 ×, e.g. 16.5 s scrapes at 15 s, e4v) skips one
+bucket every r / (r − 1) buckets (r = interval / step): read as losses those were periodic
+`empty` everywhere (22 of 240 buckets, coverage 0.908). Its skipped buckets (0s that are not a
+paired spill) keep a regular spacing; a step-rate series losing scrapes at random has them at
+geometric, irregular spacings, and a lost scrape breaks the spacing around it. So a 0 bucket that
+would be `empty` keeps a cadence when its spacings to the neighbouring skipped buckets lie in a run
+of 4 consecutive regular spacings and the series' spacings are regular overall (quartiles);
+regular: the smallest at least 4 buckets, the largest within max(2, 25 %) of it (jitter moves a
+skipped bucket by one). Such a cadence puts 2 samples in a bucket only when jitter exceeds half of
+interval − step, which would blur the spacing too: a series with 2-sample buckets in more than
+half as many buckets as it has skipped ones is at the step's rate, and its 0s are losses. A loss
+recurring at a regular spacing (every n-th scrape) gives the same counts: **undecidable**. The
+source's series interval decides: when the interval the mean spacing m implies (step × m /
+(m − 1)) is within 5 % of `resolution_ms` (slower than the step) the bucket is `ok`, `expected`
+step / I (floor 0.8 instead of 1); otherwise it is `unknown` with flag `cadence` (reason
+`cadence_or_loss`: "a series interval a little slower than the query step, or a scrape lost at
+that spacing"), out of coverage like any `unknown`, never `ok` (that would hide a periodic loss)
+and never `empty` (that is the false alarm). In a series whose spacings are regular overall a
+skipped bucket at most half the typical spacing from the next one is a loss (`empty`; one of the
+two is), even where a slower-than-step neighbourhood would hold it within 1.5 × I. Fewer than 5
+skipped buckets (a short window, or r near 1) cannot show a regular spacing: `empty`, the cautious
+reading. Model and assumption: random losses are not regular over 4 spacings (simulated: a lost
+scrape of a step-rate series losing 2.5–25 % at random is read as cadence in ≤ 0.06 % of cases).
+
+In a slower stretch a bucket with samples
 is `ok` (never `partial`), `expected` = step / I < 1, and a bucket without is `empty` only once the
 time since the series' last sample exceeds max(1.5 × I, I + step) (cadence missed; trailing
 silence likewise), else `ok`. Elsewhere every 0 bucket is `empty`, except at about one sample per
@@ -259,10 +289,12 @@ separation rule). The caveat gives each side's interval as its time over its sam
 `ok` or `partial`, never from observed = 0, so a slower-than-step series' within-cadence buckets
 stay `ok`.
 
-Limits: a series scraped between 1 and 1.25 × the step reads as a step-rate one that loses a sample
-now and then (its skipped buckets `empty`), and a step-rate series losing more than about a fifth of
-its samples (or a slower one showing fewer than 2 gaps over the step) reads the other way; bucket counts cannot
-tell the two apart. Sustained heavy loss (more than about a fifth of the samples over a stretch)
+Limits: a series scraped between 1 and 1.25 × the step reads as above (regular skips `unknown`
+or, with a matching series interval, `ok`; with jitter over about a quarter of interval − step its
+skips blur and read `empty`), and a step-rate series losing more than about a fifth of its samples
+locally (or a slower one showing fewer than 2 gaps over the step) reads as slower than the step,
+hiding those losses; bucket counts cannot tell the two apart. A step-rate run next to a stretch
+less than 2 × slower is judged together with it. Sustained heavy loss (more than about a fifth of the samples over a stretch)
 in a series scraped near or slower than the step can likewise surface as a slower rate rather
 than `partial`/`empty`: as `interval_change` when it covers part of the time range, as
 `interval_differs` when it covers most of it; at several samples per bucket it

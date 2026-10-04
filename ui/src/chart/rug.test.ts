@@ -54,6 +54,12 @@ describe("rug", () => {
     expect(rugHint(uc, u, 60_000, "a", true)).toContain("cannot be observed");
   });
 
+  it("says a cadence-or-loss bucket cannot be told apart", () => {
+    const u = { ...st("a", [STATE.UNKNOWN], [0]), flags: [32] };
+    const text = rugHint(rugCells([u], 60_000, toX)[0], u, 60_000, "a", true);
+    expect(text).toContain("a little slower than the step, or lost a scrape");
+  });
+
   it("names what each function returns after the gap", () => {
     const s = { ...st("a", [STATE.OK], [4]), flags: [16] };
     const text = rugHint(rugCells([s], 60_000, toX)[0], s, 60_000, "a", true);

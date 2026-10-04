@@ -13,6 +13,7 @@ from telemetry_nerd.analysis.quantiles import quantile_bucket
 from telemetry_nerd.datasets.store import DatasetMeta
 from telemetry_nerd.model.bucket_state import STATE_SCHEMA, Flag, State, grid
 from telemetry_nerd.model.caveats import (
+    CADENCE_OR_LOSS,
     NO_REASON,
     SUBQUERY_FILLS_GAPS,
     differing_intervals,
@@ -49,17 +50,20 @@ UNKNOWN_SPANS_CAP = 10
 def _unknown_spans(meta: DatasetMeta, df: pl.DataFrame | None) -> dict:
     """Where the data is unknown, and why: failed fetches plus UNKNOWN buckets; capped for Claude.
     Each span is [start, end, reasons]: the failures touching it, `subquery_fills_gaps` for an
-    expression whose counts cannot be observed, else "source could not tell"."""
+    expression whose counts cannot be observed, `cadence_or_loss` for 0-sample buckets that keep a
+    regular spacing (a slightly slower series interval or a periodic loss), else "source could not
+    tell"."""
     ts: set[int] = set()  # straight from the dataset's failed fetches, independent of series
     for a, b, _reason in meta.failed_spans:
         ts.update(grid(max(a, meta.start_ms), min(b, meta.end_ms), meta.step_ms))
     filled: set[int] = set()
+    cadence: set[int] = set()
     if df is not None and df.height:
         unknown = df.filter(pl.col("state") == int(State.UNKNOWN))
         ts.update(unknown["ts_ms"].to_list())
-        filled.update(
-            unknown.filter((pl.col("flags") & int(Flag.SOURCE_FILLED)) != 0)["ts_ms"].to_list()
-        )
+        flagged = lambda f: unknown.filter((pl.col("flags") & int(f)) != 0)["ts_ms"].to_list()
+        filled.update(flagged(Flag.SOURCE_FILLED))
+        cadence.update(flagged(Flag.CADENCE))
     spans = runs(sorted(ts), meta.step_ms)
 
     def why(a: int, b: int) -> str:
@@ -67,6 +71,8 @@ def _unknown_spans(meta: DatasetMeta, df: pl.DataFrame | None) -> dict:
         found = failure_reasons(meta.failed_spans, inside, meta.step_ms)
         if filled.intersection(inside):
             found = sorted({*found, SUBQUERY_FILLS_GAPS})
+        if cadence.intersection(inside):
+            found = sorted({*found, CADENCE_OR_LOSS})
         return "; ".join(found or [NO_REASON])
 
     return {

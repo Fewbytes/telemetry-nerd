@@ -216,3 +216,23 @@ def test_unknown_caveat_names_at_most_the_series_cap():
     assert all(len(c.where.series) <= MAX_WHERE_SERIES for c in cs if c.where.series)
     [big] = [c for c in cs if c.where.series and len(c.where.series) == MAX_WHERE_SERIES]
     assert f"Affects {n + n // 2} series" in big.message
+
+
+def test_cadence_or_loss_unknown_names_its_reason():
+    from collections import Counter
+
+    import pyarrow as pa
+
+    from telemetry_nerd.model.bucket_state import compute
+    from telemetry_nerd.model.caveats import CADENCE_REASON, from_bucket_state
+    from telemetry_nerd.model.series import BUCKET_SCHEMA
+
+    c = Counter(-(-t // 15_000) * 15_000 for t in range(3_669, 3_600_000, 16_500))
+    ts = sorted(c)
+    b = pa.table({"ts_ms": ts, "series_id": ["a"] * len(ts), "avg": [1.0] * len(ts),
+                  "min": [1.0] * len(ts), "max": [1.0] * len(ts), "count": [c[t] for t in ts]},
+                 schema=BUCKET_SCHEMA)  # fmt: skip
+    out = compute(b, ("a",), start_ms=15_000, end_ms=3_600_000, step_ms=15_000,
+                  resolution_ms=15_000, mode="samples")  # fmt: skip
+    [cav] = [x for x in from_bucket_state(out, {"a": "A"}, 15_000) if x.code == "untrusted_data"]
+    assert CADENCE_REASON in cav.message

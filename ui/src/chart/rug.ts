@@ -91,6 +91,7 @@ const WORDS: Record<number, string> = {
 export const FLAG_INTERVAL_CHANGE = 2;
 export const FLAG_SOURCE_FILLED = 8;
 export const FLAG_POST_GAP = 16;
+export const FLAG_CADENCE = 32;
 
 /** `samples`: the state counts scrape samples (expected = the series' own rate in this bucket);
  * otherwise it only records presence (quantiles, heatmap columns) and has no sample count.
@@ -106,6 +107,7 @@ export function rugHint(cell: RugCell, s: BucketStatePayload, stepMs: number, na
   const flags = s.flags[cell.i] ?? 0;
   if (flags & FLAG_INTERVAL_CHANGE) lines.push("sample rate changed here (this series reports at a different rate than in the rest of the window)");
   if (flags & FLAG_SOURCE_FILLED) lines.push("coverage cannot be observed for this expression");
+  if (flags & FLAG_CADENCE) lines.push("no sample, at the regular spacing of this series' other empty buckets: it reports a little slower than the step, or lost a scrape at that spacing (counts cannot tell)");
   if (flags & FLAG_POST_GAP && cell.state !== STATE.UNKNOWN) {
     lines.push("computed from the sample before the gap (VictoriaMetrics): increase/delta include the whole gap's change, idelta returns the raw sample; not a real spike");
   }

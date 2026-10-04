@@ -842,3 +842,174 @@ def test_failure_reasons_off_grid_span_and_coarse_buckets_are_wider_on_purpose()
     # ... and a coarse bucket (end 4, covering (0, 4]) is touched by a failure anywhere inside it
     assert failure_reasons([(2 * STEP, 2 * STEP, "x")], [4 * STEP], 4 * STEP) == ["x"]
     assert failure_reasons([(5 * STEP, 5 * STEP, "x")], [4 * STEP], 4 * STEP) == []
+
+
+# --- mid-series step-rate stretches (bmt): a 16-gap side reaching across a rate change ---
+
+
+def _fast_between_slow(fast, slow, n, lost=(), slow_first=True):
+    """A slow stretch, `n` scrapes `fast` apart (mid-bucket, no spills), and a slow stretch again;
+    `lost`: indices into the fast stretch. Returns (states by bucket ts, lost buckets)."""
+    pre = list(range(60_000, 15 * 60_000, slow)) if slow_first else []
+    t0 = (pre[-1] + slow if pre else 0) + S15 // 2
+    fast_ts = [t0 + fast * i for i in range(n)]
+    post = list(range(fast_ts[-1] + slow, HOUR, slow))
+    gone = {fast_ts[i] for i in lost}
+    ts = [t for t in pre + fast_ts + post if t not in gone]
+    out = _compute_rows(_count_rows(ts, S15), step=S15, res=S15)
+    st = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
+    return st, {-(-t // S15) * S15 for t in gone}
+
+
+@pytest.mark.parametrize("slow", [45_000, 60_000])
+@pytest.mark.parametrize("back", [2, 3, 5, 8, 12, 16])  # scrapes before the next slow stretch
+@pytest.mark.parametrize("side", ["before", "after"])
+def test_lost_scrape_in_a_step_rate_stretch_next_to_a_slower_one_mid_series_is_empty(
+    slow, back, side
+):
+    # 15s scrapes for 15 minutes between 45s/60s ones, one lost `back` scrapes from a rate
+    # change: the 16 gaps on the slow side of it read slow, and a gap was slower than the step if
+    # either side was, so the scrape was hidden (9li fixed only the window edges)
+    n = 60
+    i = n - 1 - back if side == "before" else back
+    st, lost = _fast_between_slow(S15, slow, n, lost=(i,))
+    empty = {t for t, s in st.items() if s == State.EMPTY}
+    assert empty == lost
+
+
+@pytest.mark.parametrize("slow_first", [True, False])
+def test_two_lost_scrapes_in_a_row_next_to_a_slower_stretch_are_empty(slow_first):
+    # a hole (a gap over two steps) between two step-rate runs lies in the stretch
+    st, lost = _fast_between_slow(S15, 60_000, 40, lost=(30, 31), slow_first=slow_first)
+    assert {t for t, s in st.items() if s == State.EMPTY} == lost
+
+
+def test_lost_scrape_next_to_a_stretch_twice_as_slow_is_empty():
+    # 15s then 30s scrapes: the 30s stretch's consecutive long gaps bound the step-rate run
+    st, lost = _fast_between_slow(S15, 30_000, 40, lost=(36,))
+    assert {t for t, s in st.items() if s == State.EMPTY} == lost
+
+
+def test_step_rate_stretch_between_slower_ones_without_loss_has_no_empty():
+    for slow in (30_000, 45_000, 60_000):
+        st, _ = _fast_between_slow(S15, slow, 40)
+        assert State.EMPTY not in st.values(), slow
+
+
+# --- cadence a little slower than the step (e4v): regular skipped buckets, not losses ---
+
+
+def _cadence_states(interval, step, *, res, lost=(), phase=3_669, jitter=0, seed=0, end=HOUR):
+    ts = _sample_ts(interval, phase=phase, jitter=jitter, seed=seed, end=end)
+    gone = {ts[i] for i in lost}
+    out = _compute_rows(_count_rows([t for t in ts if t not in gone], step), step=step, end=end,
+                        res=res)  # fmt: skip
+    return out, {-(-t // step) * step for t in gone}
+
+
+SLIGHTLY_SLOW = [(16_500, 15_000), (33_000, 30_000), (66_000, 60_000), (15_750, 15_000),
+                 (18_000, 15_000), (18_750, 15_000)]  # fmt: skip
+
+
+@pytest.mark.parametrize(("interval", "step"), SLIGHTLY_SLOW)
+def test_slightly_slow_cadence_confirmed_by_the_series_interval_is_ok(interval, step):
+    # 16.5s scrapes at a 15s step skip every 11th bucket: read as losses they were 22/240 EMPTY,
+    # coverage 0.908. The source's series interval (16.5s) confirms the cadence
+    from telemetry_nerd.model.caveats import differing_intervals
+
+    out, _ = _cadence_states(interval, step, res=interval)
+    st = states(out)
+    assert set(st) <= {State.OK, State.ABSENT}
+    assert 0.98 <= _alive_coverage(out) <= 1.02
+    [secs] = differing_intervals(out, step, step // 4).values()
+    assert abs(secs * 1000 - interval) <= 0.05 * interval
+
+
+@pytest.mark.parametrize(("interval", "step"), SLIGHTLY_SLOW)
+@pytest.mark.parametrize("jitter", [0, 500])
+def test_slightly_slow_cadence_without_a_known_interval_is_unknown_not_empty(
+    interval, step, jitter
+):
+    # with the source's interval at the step, a regular skip is a cadence or a loss recurring at
+    # that spacing: counts cannot tell, so UNKNOWN + CADENCE, never EMPTY
+    out, _ = _cadence_states(interval, step, res=step, jitter=jitter, seed=interval)
+    st, fl = states(out), out["flags"].to_pylist()
+    assert State.EMPTY not in st and State.PARTIAL not in st
+    unknown = [f for s, f in zip(st, fl) if s == State.UNKNOWN]
+    assert unknown and all(f & Flag.CADENCE for f in unknown)
+    assert 0.98 <= _alive_coverage(out) <= 1.02
+
+
+@pytest.mark.parametrize("res", [16_500, 15_000])
+@pytest.mark.parametrize("lost", [(30,), (31,), (40,), (100, 160), (100, 101)])
+def test_lost_scrape_in_a_slightly_slow_series_is_empty(res, lost):
+    # 16.5s at 15s skips buckets 11 apart; a lost scrape breaks that spacing around it (31 sits
+    # next to a skipped bucket: two 0s in a row)
+    out, gone = _cadence_states(16_500, S15, res=res, lost=lost)
+    st = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
+    assert all(st[b] == State.EMPTY for b in gone)
+
+
+def test_step_rate_series_losing_scrapes_at_random_is_not_read_as_a_cadence():
+    # 1 in ~10 lost at random looks like a 16.5s interval by Σgap / Σsamples, but its 0s are
+    # irregular: each is a loss. (Kept 3+ apart: a local cluster losing over a fifth reads as a
+    # slower stretch, spec §5.1 limits)
+    import random
+
+    rnd = random.Random(5)
+    ts = _sample_ts(S15, phase=7_000)
+    lost, i = [], 0
+    while (i := i + rnd.randint(3, 17)) < len(ts):
+        lost.append(i)
+    out, gone = _cadence_states(S15, S15, res=S15, phase=7_000, lost=lost)
+    st = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
+    assert {b for b, s in st.items() if s == State.EMPTY} == gone
+
+
+def test_scrape_lost_every_eleventh_time_is_unknown_not_ok():
+    # undecidable from counts: the same skips as a 16.5s cadence. Never OK (that would hide the
+    # loss); UNKNOWN + CADENCE unless the series interval says which
+    ts = _sample_ts(S15, phase=7_000)
+    out, gone = _cadence_states(S15, S15, res=S15, phase=7_000, lost=range(5, len(ts), 11))
+    st = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
+    assert {st[b] for b in gone} == {State.UNKNOWN}
+    out, _ = _cadence_states(S15, S15, res=16_500, phase=7_000, lost=range(5, len(ts), 11))
+    st = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
+    assert {st[b] for b in gone} == {State.OK}  # the source says 16.5s: a cadence
+
+
+def test_slightly_slow_series_that_spills_often_is_at_the_step_rate():
+    # 2-sample buckets need jitter over half of (interval - step), which would blur a cadence's
+    # spacing: many of them mean a step-rate series, and its regular 0s are losses
+    ts = _sample_ts(S15, jitter=2_000, seed=3)
+    lost = set(ts[20::23][:10])
+    out = _compute_rows(_count_rows([t for t in ts if t not in lost], S15), step=S15, res=S15)
+    assert State.UNKNOWN not in states(out)
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_slightly_slow_cadence_fuzz(seed):
+    """Property, over ratios 1.05-1.25, phases, low jitter and loss positions: a loss-free series
+    has no EMPTY; every lost scrape's bucket is EMPTY or (where counts cannot tell) UNKNOWN, never
+    OK; with the series interval known every lost scrape's bucket is EMPTY."""
+    import random
+
+    rnd = random.Random(seed)
+    step = rnd.choice([15_000, 30_000, 60_000])
+    interval = int(step * rnd.uniform(1.05, 1.25))
+    jitter = rnd.choice([0, (interval - step) // 4])
+    # a window holding at least LATTICE_SPACINGS + 2 skipped buckets (fewer cannot show a
+    # regular spacing: EMPTY, the cautious reading)
+    skip = interval / (interval - step)  # buckets between skipped ones
+    phase = rnd.randint(0, step)
+    end = max(rnd.choice([HOUR, 4 * HOUR]), -(-int(7 * skip * step) // HOUR) * HOUR)
+    n = len(_sample_ts(interval, phase=phase, end=end))
+    kw = {"phase": phase, "jitter": jitter, "seed": seed, "end": end}
+    for res in (step, interval):
+        out, _ = _cadence_states(interval, step, res=res, **kw)
+        assert State.EMPTY not in states(out), (interval, step, res)
+        lost = rnd.sample(range(2, n - 2), rnd.randint(1, 3))
+        out, gone = _cadence_states(interval, step, res=res, lost=lost, **kw)
+        st = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
+        allowed = {State.EMPTY} if res == interval else {State.EMPTY, State.UNKNOWN}
+        assert {st[b] for b in gone} <= allowed, (interval, step, res, lost)
