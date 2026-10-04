@@ -16,7 +16,7 @@ from tests.unit.fakes import make_service
 ROOT = Path(__file__).resolve().parents[2]
 COMMANDS = sorted((ROOT / "commands").glob("*.md"))
 PREFIX = "mcp__plugin_telemetry-nerd_telemetry-nerd__"
-EXPECTED = {"start", "connect", "investigate", "open", "learn"}
+EXPECTED = {"start", "connect", "investigate", "open", "learn", "wrap"}
 # Skills written in parallel (d77.2); commands may reference them before the files land.
 PLANNED_SKILLS = {"triage", "evidence", "charting"}
 
@@ -86,3 +86,35 @@ def test_investigate_states_claim_scope_and_supported_rules():
     for word in ("scope_note", "alternatives_considered", "source_flags", "`scope`",
                  "concrete subject", "stance=for"):  # fmt: skip
         assert word in flat, word
+
+
+def _allowed(name: str) -> set[str]:
+    fm, _ = parse(ROOT / "commands" / f"{name}.md")
+    return {t.strip().removeprefix(PREFIX) for t in fm["allowed-tools"].split(",")}
+
+
+def test_start_uses_the_grafana_front_door_and_surfaces_lessons():
+    """3fs.2 shipped: a Grafana URL goes through discovery and connect-by-uid, not a hand-built
+    proxy url; approved lessons are asked for once the source is known (3fs.4)."""
+    _, body = parse(ROOT / "commands" / "start.md")
+    flat = " ".join(body.split())
+    assert {"source_discover_grafana", "source_connect", "lessons_for"} <= _allowed("start")
+    assert "source_discover_grafana(url)" in flat
+    assert "grafana=<url>, uid=<uid>" in flat and "supported" in flat
+    assert "not built yet" not in flat and "proxy/uid" not in flat
+
+
+def test_wrap_proposes_and_never_decides():
+    _, body = parse(ROOT / "commands" / "wrap.md")
+    flat = " ".join(body.split())
+    allowed = _allowed("wrap")
+    assert {"catalog_propose", "lesson_propose", "proposals_list", "workspace_get"} <= allowed
+    assert "catalog_write" not in allowed  # proposals only; the user decides
+    for word in ("lesson_beyond_evidence", "#/proposals", "rejected finding is not evidence"):
+        assert word in flat, word
+
+
+def test_investigate_asks_for_lessons_in_scope():
+    _, body = parse(ROOT / "commands" / "investigate.md")
+    assert {"lessons_for", "lesson_refute"} <= _allowed("investigate")
+    assert "lessons_for(source, services=" in body and "/telemetry-nerd:wrap" in body

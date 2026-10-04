@@ -176,6 +176,15 @@ in-flight gauge for Little's law, no status label for errors, a missing member. 
 `{name, type, labels?}` with `type` counter | gauge | histogram | summary. File it when the
 missing signal changes what can be concluded; say in the report what stays unknown without it.
 
+## Lessons: scoped methodology across sessions (principles 2, 16)
+
+A lesson (`lesson_propose`, from `/telemetry-nerd:wrap`) is re-applied later without its
+evidence in view, so it cites findings or panels and its scope (`{source, service?,
+metric_family?, labels?}`) is never broader than one cited item covers: evidence about one
+service makes a lesson about that service (else `lesson_beyond_evidence`: narrow the scope).
+An approved lesson is a prior, not evidence. A finding that contradicts one:
+`lesson_refute(lesson, evidence=[f…], reason)`. Established catalog values: `catalog_propose`.
+
 ## Recording a finding: checklist
 
 - One claim per finding, in the scope's words, with numbers and intervals.

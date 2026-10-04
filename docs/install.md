@@ -139,11 +139,12 @@ Fewbytes/telemetry-nerd` and `/plugin install telemetry-nerd@telemetry-nerd`.
 
 | Command | What it does |
 |---|---|
-| `/telemetry-nerd:start [url\|name]` | One entry point: ensures the daemon, connects your data (Prometheus-compatible URL or a public registry name), learns it, prints the workspace URL and what was learned (metrics, packs, binding suggestions). A Grafana URL is not yet resolved to a datasource (bead `3fs.2`); give a datasource proxy URL or a Prometheus URL. |
+| `/telemetry-nerd:start [url\|name]` | One entry point: ensures the daemon, connects your data (Prometheus-compatible URL, a Grafana URL whose datasources are discovered and connected by uid, or a public registry name), learns it, prints the workspace URL, what was learned (metrics, packs, binding suggestions) and the approved lessons that apply. |
 | `/telemetry-nerd:connect [url\|name]` | Connect a source and report its status. |
 | `/telemetry-nerd:investigate <question>` | Scope the question, record a hypothesis, follow the `triage` skill; claims need evidence. |
 | `/telemetry-nerd:open` | Print (and try to open) the workspace UI URL. |
 | `/telemetry-nerd:learn [source] [prefix]` | Learn what the source's metrics mean and record it in the catalog. |
+| `/telemetry-nerd:wrap` | End of an investigation: propose catalog updates and scoped lessons; you approve, edit or reject them in the UI's Proposals view. |
 
 Commands are namespaced by the plugin name (`/telemetry-nerd:<command>`); Claude Code also
 accepts the bare form (e.g. `/start`) when no other plugin claims it.

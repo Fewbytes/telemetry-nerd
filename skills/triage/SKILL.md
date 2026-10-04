@@ -135,6 +135,11 @@ model outputs (principle 16): "under a Poisson model …", "consistent with …"
 a label stands only under the cautious model the op names. Principles:
 `docs/principles.md`.
 
+## Lessons and wrap-up
+
+`lessons_for(source, services)` once the services are known: lessons are priors on where to
+look, never evidence. When done, `/telemetry-nerd:wrap` proposes lessons and catalog updates.
+
 ## Additional resources
 
 - **`references/worked-example.md`**: an executed incident on a seeded scenario, symptom →

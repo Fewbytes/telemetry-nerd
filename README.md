@@ -177,7 +177,7 @@ result.
 5. Verify: `curl -s http://127.0.0.1:7070/api/health` returns `{"ok":true,...}`, the `source_list` tool shows
    the source as `live`, and <http://127.0.0.1:7070> loads in a browser.
 
-Commands: `/telemetry-nerd:start` (connect, learn, open), `/telemetry-nerd:connect`, `/telemetry-nerd:investigate <question>`, `/telemetry-nerd:open`, `/telemetry-nerd:learn`.
+Commands: `/telemetry-nerd:start` (connect, learn, open), `/telemetry-nerd:connect`, `/telemetry-nerd:investigate <question>`, `/telemetry-nerd:open`, `/telemetry-nerd:learn`, `/telemetry-nerd:wrap` (propose catalog updates and scoped lessons at the end).
 
 Full details, the container path and network-security notes: [docs/install.md](docs/install.md).
 How the graphs are designed and why: [docs/telemetry-graphing-guide.md](docs/telemetry-graphing-guide.md).
