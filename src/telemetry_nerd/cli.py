@@ -80,9 +80,21 @@ def _configure_logging() -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+# Idle keep-alive connections are held well past clients' own pool expiry (Node's agent, which
+# Playwright's request context uses, and httpx both drop idle sockets after 5s, uvicorn's
+# default). With equal timeouts a request sent on a pooled socket can cross the server's close
+# and get ECONNRESET (3szb); a longer server timeout leaves closing idle sockets to the client.
+_KEEP_ALIVE_S = 75
+
+
 def _uvicorn_config(app: ASGIApp, settings: Settings) -> uvicorn.Config:
     return uvicorn.Config(
-        app, host=settings.host, port=settings.port, log_level="warning", access_log=False
+        app,
+        host=settings.host,
+        port=settings.port,
+        log_level="warning",
+        access_log=False,
+        timeout_keep_alive=_KEEP_ALIVE_S,
     )
 
 

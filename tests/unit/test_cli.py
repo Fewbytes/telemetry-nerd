@@ -1,6 +1,8 @@
 import logging
 import sys
 
+import pytest
+
 from telemetry_nerd import cli
 
 
@@ -111,3 +113,56 @@ def test_ensure_with_tn_daemon_url_does_not_spawn(monkeypatch, capsys):
     monkeypatch.setattr(daemon, "healthy", lambda url, timeout=1.0: False)
     cli.main(["ensure"])
     assert "no healthy daemon at TN_DAEMON_URL=http://127.0.0.1:1" in capsys.readouterr().out
+
+
+def _keepalive_settings(tmp_path):
+    settings = cli.Settings.from_env()
+    settings.data_dir = tmp_path
+    return settings
+
+
+def test_uvicorn_keepalive_outlives_client_idle_pools(tmp_path):
+    """3szb: the server must not be the side that closes an idle keep-alive connection.
+
+    Node's agent (Playwright's request context) and httpx keep idle sockets for 5s, uvicorn's
+    default; a request sent on a pooled socket just as the server closes it gets ECONNRESET.
+    """
+    config = cli._uvicorn_config(lambda *a: None, _keepalive_settings(tmp_path))  # type: ignore[arg-type]
+    assert config.timeout_keep_alive >= 30
+
+
+@pytest.mark.slow
+def test_idle_keepalive_connection_is_still_served_after_six_seconds(tmp_path):
+    import http.client
+    import socket
+    import threading
+    import time
+
+    import uvicorn
+
+    async def app(scope, receive, send):
+        if scope["type"] != "http":
+            return
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    server = uvicorn.Server(cli._uvicorn_config(app, _keepalive_settings(tmp_path)))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.02)
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn.request("GET", "/")
+        assert conn.getresponse().read() == b"ok"
+        time.sleep(6)  # idle past uvicorn's 5s default, as yview's request context did on CI
+        conn.request("GET", "/")  # same socket: fails if the server closed it meanwhile
+        assert conn.getresponse().read() == b"ok"
+        conn.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10)

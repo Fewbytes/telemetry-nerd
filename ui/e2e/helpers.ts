@@ -60,3 +60,27 @@ export async function mcpTool(
   expect(res.isError, JSON.stringify(res.content)).toBeFalsy();
   return JSON.parse(res.content[0].text);
 }
+
+/** The daemon's newest event seq: take it before a spec's own actions and pass it to
+ * `eventsSince`, so a spec reads only the events it caused, not the whole suite's (3szb). */
+export async function lastSeq(request: APIRequestContext): Promise<number> {
+  const r = await request.get("/api/health");
+  expect(r.ok()).toBeTruthy();
+  return (await r.json()).last_seq;
+}
+
+/** Every event after `since`, paging /api/events (it returns at most 1000 per call). */
+export async function eventsSince(
+  request: APIRequestContext,
+  since: number,
+): Promise<Array<Record<string, any>>> {
+  const out: Array<Record<string, any>> = [];
+  for (;;) {
+    const r = await request.get(`/api/events?since=${since}`);
+    expect(r.ok()).toBeTruthy();
+    const body = await r.json();
+    if (body.events.length === 0) return out;
+    out.push(...body.events);
+    since = body.last_seq;
+  }
+}

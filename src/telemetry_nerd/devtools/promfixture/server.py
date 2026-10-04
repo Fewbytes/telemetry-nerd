@@ -252,4 +252,11 @@ def main(argv: list[str] | None = None) -> None:
     store = Store()
     anchor = seed(store, now_ms(), hours=args.hours)
     log.info("seeded %d series anchored at %d on :%d", len(store), anchor, args.port)
-    uvicorn.run(create_app(store), host=args.host, port=args.port, log_level="warning")
+    # keep-alive past clients' 5s idle pools, as the daemon does (cli._KEEP_ALIVE_S, 3szb)
+    uvicorn.run(
+        create_app(store),
+        host=args.host,
+        port=args.port,
+        log_level="warning",
+        timeout_keep_alive=75,
+    )

@@ -1,8 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { seedPanel } from "./helpers.js";
+import { eventsSince, lastSeq, seedPanel } from "./helpers.js";
 
 test("marginal now vs previous, n shown, ambient event; indexed view labels 1", async ({ page, request }) => {
   const panel = await seedPanel(request, "Did demo latency's level shift against the previous window?");
+  const since = await lastSeq(request);
   await page.goto("/");
   const el = page.locator(`[data-panel-id="${panel.id}"]`);
   const row = el.getByRole("group", { name: "Marginal histogram" });
@@ -10,8 +11,8 @@ test("marginal now vs previous, n shown, ambient event; indexed view labels 1", 
   await expect(el.locator("[data-marginal]")).toHaveAttribute("data-marginal-basis", "samples");
   await expect(el.locator("[data-marginal-n]")).toContainText("now n=");
   await expect(el.locator('[data-note="marginal"]')).toContainText("not requests");
-  const events = await (await request.get("/api/events?since=0")).json();
-  expect(events.events.filter((e: { type: string }) => e.type === "panel.marginal_set").at(-1))
+  const events = await eventsSince(request, since);
+  expect(events.filter((e: { type: string }) => e.type === "panel.marginal_set").at(-1))
     .toMatchObject({ klass: "ambient", object_id: panel.id, payload: { reference: "previous" } });
   await page.reload();
   await expect(el.locator("[data-marginal]")).toBeVisible();

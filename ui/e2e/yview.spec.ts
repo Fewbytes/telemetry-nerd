@@ -1,8 +1,9 @@
 import { expect, test } from "@playwright/test";
-import { seedPanel } from "./helpers.js";
+import { eventsSince, lastSeq, seedPanel } from "./helpers.js";
 
 test("y-view: pick, badge, persist across reload, ambient event, band drag", async ({ page, request }) => {
   const panel = await seedPanel(request, "Does demo latency drift within its normal band?");
+  const since = await lastSeq(request);
   await page.goto("/");
   const el = page.locator(`[data-panel-id="${panel.id}"]`);
   const row = el.getByRole("group", { name: "Y-axis view" });
@@ -11,8 +12,8 @@ test("y-view: pick, badge, persist across reload, ambient event, band drag", asy
   await expect(el.locator('[data-note="y_view"]')).toContainText("y zoomed to data");
   await page.reload();
   await expect(row.getByRole("button", { name: "data range" })).toHaveClass(/on/);
-  const events = await (await request.get("/api/events?since=0")).json();
-  const sel = events.events.filter((e: { type: string }) => e.type === "panel.y_view_selected").at(-1);
+  const events = await eventsSince(request, since);
+  const sel = events.filter((e: { type: string }) => e.type === "panel.y_view_selected").at(-1);
   expect(sel).toMatchObject({ klass: "ambient", object_id: panel.id, payload: { mode: "data" } });
 
   await row.getByRole("button", { name: "band…" }).click();
