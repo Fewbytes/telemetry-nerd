@@ -270,6 +270,10 @@ describe("workspace frames in the store", () => {
     const calls = load.mock.calls.length;
     await vi.advanceTimersByTimeAsync(10_000);
     expect(load).toHaveBeenCalledTimes(calls);
+    // the accepted snapshot resets the stream position: later snapshots of it are not "behind"
+    load.mockResolvedValue(snap("w2", 3));
+    await ws.reload();
+    expect(ws.snapshot?.last_seq).toBe(3);
     stop();
   });
 

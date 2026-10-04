@@ -17,11 +17,13 @@ TITLE_MAX = 120
 QUESTION_MAX = 500
 
 # Open threads: live threads whose last message is the user's, newest first. The one
-# definition behind the registry counts and WorkspaceService.open_threads.
+# definition behind the registry counts and WorkspaceService.open_threads. Messages are never
+# deleted, and a thread's messages (ObjectStore.get_thread, the `last` text) include every
+# row, so the last message is read the same way here.
 _OPEN_THREADS = (
     "SELECT t.id FROM objects t WHERE t.workspace = ? AND t.kind = 'thread' AND t.deleted = 0"
     " AND (SELECT json_extract(m.data, '$.author') FROM objects m"
-    " WHERE m.kind = 'message' AND m.anchor = t.id AND m.deleted = 0"
+    " WHERE m.kind = 'message' AND m.anchor = t.id"
     " ORDER BY m.created_at_ms DESC, CAST(substr(m.id, 2) AS INTEGER) DESC, m.rowid DESC"
     " LIMIT 1) = 'user'"
     " ORDER BY t.created_at_ms DESC, CAST(substr(t.id, 2) AS INTEGER) DESC, t.rowid DESC"

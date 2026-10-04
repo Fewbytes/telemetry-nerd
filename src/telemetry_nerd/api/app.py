@@ -567,6 +567,7 @@ def create_app(
                 for event in batch:
                     await websocket.send_json(event.to_dict())
                     last_sent = event.seq
+            replayed = last_sent
             # Presence frames are control messages: no seq, never logged or replayed.
             await websocket.send_json(_ui_presence_frame())
             reader = asyncio.ensure_future(until_disconnect())
@@ -587,10 +588,11 @@ def create_app(
                 if getter in done:
                     event = getter.result()
                     getter = tasks[1] = asyncio.ensure_future(queue.get())
-                    # Only the active workspace's events; read per frame (spec "HTTP").
-                    if event["seq"] > last_sent and event["workspace"] == service.active.active:
+                    # Only the active workspace's events; read per frame (spec "HTTP"). Dedupe
+                    # against the replay only: live events can arrive out of seq order (a
+                    # worker-thread append reaches the loop after a later loop-thread one).
+                    if event["seq"] > replayed and event["workspace"] == service.active.active:
                         await websocket.send_json(event)
-                        last_sent = event["seq"]
                 if changed in done:
                     consumer = changed.result()
                     changed = tasks[2] = asyncio.ensure_future(changes.get())

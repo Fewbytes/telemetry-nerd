@@ -127,7 +127,7 @@
           <li class="ws-row" class:current={w.id === activeId} class:archived={w.archived} data-workspace-id={w.id}>
             {#if renaming === w.id}
               <input
-                class="ws-input" aria-label="Rename workspace" value={w.title} use:focusOnMount
+                class="ws-input" aria-label="Rename workspace" value={w.title} maxlength="120" use:focusOnMount
                 onkeydown={(e) => rename(e, w)} onblur={() => (renaming = null)}
               />
             {:else}
@@ -147,7 +147,7 @@
       </ul>
       {#if creating}
         <input
-          class="ws-input" aria-label="New investigation title" placeholder={defaultTitle(new Date())}
+          class="ws-input" aria-label="New investigation title" maxlength="120" placeholder={defaultTitle(new Date())}
           use:focusOnMount onkeydown={create}
         />
       {:else}

@@ -2080,7 +2080,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     async def workspace_switch(id: str) -> str:
         """Make workspace `id` the active one (calls after this one act on it).
 
-        Returns counts, open threads and source status; call workspace_get for the brief."""
+        Returns counts, open threads and source status; call workspace_get for the brief.
+        Source statuses: connected, restored (re-attached), conflict (the name is taken by
+        another spec), failed (with the error), disconnected (switching to the already-active
+        workspace reports state only, no reconnect)."""
         try:
             out = await service.workspaces.switch(id, "claude")
         except (ValueError, NotFound) as e:

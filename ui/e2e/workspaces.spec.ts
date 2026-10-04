@@ -91,6 +91,7 @@ test("workspace switcher: focus return, plain-list a11y, archived toggle", async
 
   // Esc in the create input returns focus to New investigation; a second Esc closes and focuses the trigger
   await page.getByRole("button", { name: "New investigation" }).click();
+  await expect(page.getByLabel("New investigation title")).toHaveAttribute("maxlength", "120"); // the daemon's cap
   await page.getByLabel("New investigation title").press("Escape");
   await expect(page.getByRole("button", { name: "New investigation" })).toBeFocused();
   await page.keyboard.press("Escape");
@@ -101,6 +102,7 @@ test("workspace switcher: focus return, plain-list a11y, archived toggle", async
   await trigger.click();
   const row = page.locator(".ws-row").first();
   await row.getByRole("button", { name: /^rename/i }).click();
+  await expect(page.getByRole("textbox", { name: "Rename workspace" })).toHaveAttribute("maxlength", "120");
   await page.getByRole("textbox", { name: "Rename workspace" }).press("Escape");
   await expect(row.getByRole("button", { name: /^rename/i })).toBeFocused();
   await page.keyboard.press("Escape");

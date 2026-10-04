@@ -190,3 +190,29 @@ def test_empty_question_clears_it(client, service):
     client.post(f"/api/workspaces/{w1}/update", json={"question": "why?"})
     resp = client.post(f"/api/workspaces/{w1}/update", json={"question": ""})
     assert resp.status_code == 200 and resp.json()["question"] is None
+
+
+def test_ui_socket_delivers_events_fanned_out_out_of_seq_order(client, service):
+    """A worker-thread append is handed to the loop later than a loop append right after it:
+    the socket sees seq N+1 before N and must still deliver N."""
+    import threading
+
+    def append(label):
+        return service.log.append("user", "annotation.created", None, {"label": label}).seq
+
+    async def interleave():
+        seqs = []
+        worker = threading.Thread(target=lambda: seqs.append(append("worker")))
+        worker.start()
+        worker.join()  # its put is queued on this loop, behind the next one
+        seqs.append(append("loop"))
+        return seqs
+
+    with client.websocket_connect("/ws") as ui:
+        assert ui.receive_json()["kind"] == "presence"
+        seqs = client.portal.call(interleave)
+        marker = client.portal.call(lambda: append("marker"))
+        seen = []
+        while (frame := ui.receive_json()).get("seq") != marker:
+            seen.append(frame.get("seq"))
+    assert sorted(s for s in seen if s is not None) == sorted(seqs)

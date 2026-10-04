@@ -124,7 +124,12 @@ class WorkspaceOps:
     def source_states(self, wid: str) -> list[dict]:
         """The recorded sources' state, without connecting anything (no network)."""
         return [
-            self._state(name, raw) or {"name": name, "status": "disconnected"}
+            self._state(name, raw)
+            or {
+                "name": name,
+                "status": "disconnected",
+                "hint": "source_connect the recorded spec, or switch away and back to restore it",
+            }
             for name, raw in self._registry.sources(wid).items()
         ]
 

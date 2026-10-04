@@ -73,7 +73,10 @@ export function createWorkspace() {
           fresh = id === shown ? s.last_seq >= lastSeq : newer;
           if (!fresh && shown !== undefined && id !== shown) {
             if (resyncs++ < RESYNC_RETRIES) schedule();
-            else fresh = true;
+            else {
+              fresh = true;
+              lastSeq = s.last_seq; // the stream position was not this daemon's (e.g. a wiped DB)
+            }
           }
         } else if (id === target) {
           // The /ws stream forwards a switch's frame and then the new workspace's events before

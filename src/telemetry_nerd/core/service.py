@@ -1832,7 +1832,7 @@ class TelemetryService:
         source = self.sources.build(spec)  # raises MissingSecret before any network call
         try:
             status = await source.probe()
-        except SourceError:
+        except BaseException:  # failed or cancelled: the built source must not leak
             await self._close(source)
             raise
         try:  # a concurrent connect may have taken the name while this one probed

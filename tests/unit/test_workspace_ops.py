@@ -306,7 +306,9 @@ async def test_noop_switch_does_not_restore_sources(tmp_path, monkeypatch):
     monkeypatch.setattr(svc.workspaces, "_connect", spy)
     out = await svc.workspaces.switch(w1, "claude")
     assert calls == []  # no network probe on a no-op
-    assert out["sources"] == [{"name": "vm", "status": "disconnected"}]
+    (res,) = out["sources"]
+    assert (res["name"], res["status"]) == ("vm", "disconnected")
+    assert "source_connect" in res["hint"] and "switch away and back" in res["hint"]
 
 
 class _Yielding(FakeSource):
@@ -384,3 +386,27 @@ async def test_open_threads_exclude_deleted_threads_like_the_counts(tmp_path):
     svc.registry._con.execute("UPDATE objects SET deleted = 1 WHERE id = ?", (gone.id,))
     assert [t["id"] for t in svc.ws.open_threads()] == [keep.id]
     assert svc.registry.get(w1).counts["open_threads"] == 1
+
+
+async def test_source_connect_closes_its_source_when_the_probe_is_cancelled(tmp_path, monkeypatch):
+    class Cancelled(_Yielding):
+        async def probe(self):
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(_Yielding, "closed", [])
+    svc = make_service(tmp_path, factory=lambda spec: Cancelled(name=spec.name))
+    with pytest.raises(asyncio.CancelledError):
+        await svc.source_connect(SourceSpec(name="vm", url="http://vm:8428"))
+    assert len(_Yielding.closed) == 1 and "vm" not in svc.sources
+
+
+async def test_open_thread_last_text_follows_the_open_definition(tmp_path):
+    """A soft-deleted message counts the same way for the count, the list and its text."""
+    svc = make_service(tmp_path)
+    t = svc.ws.objects.create_thread(None, None, "user")
+    svc.ws.post_message(t.id, "why?", "user")
+    reply = svc.ws.objects.add_message(t.id, "because", "claude")
+    svc.registry._con.execute("UPDATE objects SET deleted = 1 WHERE id = ?", (reply.id,))
+    listed = svc.ws.open_threads()
+    assert svc.registry.get(svc.active.active).counts["open_threads"] == len(listed)
+    assert all(x["last"] != "because" for x in listed)

@@ -149,8 +149,9 @@ list(include_archived=False, limit=20) -> {active, workspaces, more}
 `sources` report state only (`connected`, `conflict`, `failed`, or `disconnected`), with no
 reconnect or probe. Concurrent restores of one source name are serialized.
 Kernels are untouched by a switch: each workspace keeps its kernel until the idle reaper stops
-it, but at most `kernel_max_live` (default 2, `TN_KERNEL_MAX_LIVE`) stay live: starting one
-shuts down the least recently used idle ones.
+it. `kernel_max_live` (default 2, `TN_KERNEL_MAX_LIVE`) is a soft limit: it is checked only when
+a kernel starts, which then shuts down the least recently used idle kernels beyond it; a kernel
+with a run in progress or queued is skipped, so more can stay live for a while.
 
 Titles are capped at 120 characters and questions at 500 (`ValueError` → HTTP 400 / tool
 error); a blank question clears it (`update(question="")`).

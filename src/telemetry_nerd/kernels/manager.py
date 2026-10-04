@@ -198,6 +198,9 @@ class KernelManager:
         self._python = python
         self._kernels: dict[str, _Kernel] = {}
         self._locks: dict[str, asyncio.Lock] = {}
+        # runs started or queued per workspace: a released lock can still have a run about
+        # to take it, so lock.locked() alone does not say a kernel is idle
+        self._pending: dict[str, int] = {}
         self._reaper: asyncio.Task[None] | None = None
         self._closed = False
 
@@ -219,6 +222,23 @@ class KernelManager:
         if self._closed:
             raise RuntimeError("kernel manager is closed")
         timeout = self.config.run_timeout_s if timeout_s is None else timeout_s
+        self._pending[workspace_id] = self._pending.get(workspace_id, 0) + 1
+        try:
+            return await self._execute(workspace_id, code, env, cwd, timeout)
+        finally:
+            if (n := self._pending[workspace_id] - 1) > 0:
+                self._pending[workspace_id] = n
+            else:
+                del self._pending[workspace_id]
+
+    async def _execute(
+        self,
+        workspace_id: str,
+        code: str,
+        env: Mapping[str, str] | None,
+        cwd: str | os.PathLike[str] | None,
+        timeout: float,
+    ) -> ExecResult:
         async with self._lock(workspace_id):
             t0 = self._clock()
             restarted = False
@@ -282,13 +302,14 @@ class KernelManager:
         for k in idle:
             if len(self._kernels) <= cap:
                 break
-            lock = self._lock(k.workspace_id)
-            if lock.locked():  # running or queued: it stays
+            ws, used = k.workspace_id, k.last_used
+            if self._pending.get(ws) or self._lock(ws).locked():  # running or queued: it stays
                 continue
-            async with lock:
-                if self._kernels.get(k.workspace_id) is k:
-                    await self._stop(k.workspace_id)
-                    evicted.append(k.workspace_id)
+            async with self._lock(ws):
+                # used while this waited for the lock: no longer the least recently used
+                if self._kernels.get(ws) is k and k.last_used == used and not self._pending.get(ws):
+                    await self._stop(ws)
+                    evicted.append(ws)
         if evicted:
             log.info("kernels: over %d live kernels; shut down %s", cap, ", ".join(evicted))
 

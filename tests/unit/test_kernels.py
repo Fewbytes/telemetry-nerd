@@ -209,6 +209,39 @@ async def test_live_kernels_are_capped_least_recently_used_first(tmp_path):
         assert (await m.execute("a", "x")).result == "1"  # the survivor kept its state
 
 
+async def test_eviction_skips_a_kernel_with_a_queued_run(tmp_path, monkeypatch):
+    """Between a run releasing the lock and the next queued run waking, the lock reads as
+    free: eviction must still see the queued run and leave that kernel alone."""
+    from types import SimpleNamespace
+
+    from telemetry_nerd.kernels.manager import ExecResult, _Kernel
+
+    m = KernelManager(KernelConfig(root=tmp_path, max_live=2))
+
+    async def alive():
+        return True
+
+    async def run(k, code, timeout, deadline, silent=False):
+        return ExecResult("ok")
+
+    async def stop(ws):
+        m._kernels.pop(ws, None)
+
+    monkeypatch.setattr(m, "_run", run)
+    monkeypatch.setattr(m, "_stop", stop)
+    for i, ws in enumerate(("a", "b", "c")):
+        m._kernels[ws] = _Kernel(ws, SimpleNamespace(is_alive=alive), None, None, float(i))
+    lock = m._lock("a")
+    await lock.acquire()  # a's current run
+    queued = asyncio.ensure_future(m.execute("a", "1"))  # a's next run waits for the lock
+    for _ in range(3):
+        await asyncio.sleep(0)
+    lock.release()  # locked() is False now, but the queued run has not woken yet
+    await m._evict(keep="c")
+    assert (await queued).ok
+    assert sorted(m._kernels) == ["a", "c"]  # the idle b went, not a with its pending run
+
+
 async def test_aclose_kills_kernels_and_their_subprocesses(tmp_path):
     m = KernelManager(KernelConfig(root=tmp_path))
     r = await m.execute(
