@@ -33,13 +33,13 @@ PHI_SE_CAUTIOUS = 1.0  # the cautious level-shift model: phi this many SEs above
 # fitted mean-model parameters behind a changepoint test's residuals (the AR(1) bias count):
 # a step = 2 segment means + its selected boundary; a pulse = 3 means + 2 selected boundaries
 K_STEP, K_PULSE = 3, 5
-MIN_N_PER_PARAM = 8  # ar1_phi_unbiased solves the bias exactly from n = 8k; below, gain held
+MIN_N_PER_PARAM = 8  # ar1_phi_unbiased: first-order bias correction from n = 8k; below, gain held
 SHIFT_METHOD = (
-    "CUSUM changepoint (Kolmogorov step / Kuiper pulse null, Bonferroni), AR(1) long-run sigma "
+    "Assumes piecewise-constant means with AR(1) noise. CUSUM changepoint (Kolmogorov step / Kuiper pulse null, Bonferroni), AR(1) long-run sigma "
     "of the split residuals; phi bias-corrected (Kendall / Marriott-Pope form, k by simulation: "
     "a mean or a selected boundary each 1; gain held at 8/5 under 8k points). Point model p; "
     "cautious p_cautious: phi + 1 asymptotic SE of raw phi; label and 99% interval rest on it. "
-    "Simulated FAR <= 1% at phi <= 0.8, n >= 64; ~2% at phi 0.9, n 64; up to 2-3% under 40 points"
+    "Simulated FAR <= 1% at phi <= 0.8, n >= 64; ~2% at phi 0.9, n 64; up to ~3.5% at phi 0.9 under 40 points"
 )
 KPSS_LEVEL = ((0.10, 0.347), (0.05, 0.463), (0.025, 0.574), (0.01, 0.739))
 BIMODAL_BC = 5 / 9
