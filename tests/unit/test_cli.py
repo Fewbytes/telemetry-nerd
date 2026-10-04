@@ -103,6 +103,8 @@ def test_ensure_with_tn_daemon_url_does_not_spawn(monkeypatch, capsys):
     monkeypatch.setenv("TN_DAEMON_URL", "http://127.0.0.1:7070")
     monkeypatch.setattr(daemon, "healthy", lambda url, timeout=1.0: True)
     monkeypatch.setattr(daemon, "ensure_daemon", lambda s: (_ for _ in ()).throw(AssertionError))
+    # never ask a live daemon on :7070 for its proposals summary (y7hb: no live dependencies)
+    monkeypatch.setattr(cli, "_retro_lines", lambda url: [])
     cli.main(["ensure"])
     assert capsys.readouterr().out == "Telemetry Nerd workspace: http://127.0.0.1:7070\n"
     monkeypatch.setattr(daemon, "healthy", lambda url, timeout=1.0: False)
