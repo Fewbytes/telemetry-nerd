@@ -69,7 +69,7 @@ Responses pass through Varnish (`x-cache: … miss, pass`): nothing is cached fo
   `count by (__name__)({__name__=~".+"})` **timed out** (>60 s client side). Prometheus
   flags: `query.timeout=2m`, `query.max-samples=10M`.
 - Raw-sample queries (`up{job="node"}[2m]`) show **heterogeneous scrape intervals** —
-  mostly 60 s, also 15/20/30 s and jitter. Native resolution is a per-job/per-series
+  mostly 60 s, also 15/20/30 s and jitter. The series interval is a per-job/per-series
   property, not per-source.
 - Latency varies run to run (same query 1 s vs 30 s): shared, loaded infrastructure.
 
@@ -106,7 +106,7 @@ Responses pass through Varnish (`x-cache: … miss, pass`): nothing is cached fo
    - names from `/label/__name__/values` (one call), metadata from `/metadata` — retry and
      union, record `metadata_coverage` as a caveat; missing metadata ≠ "no type";
    - cardinality from `/status/tsdb` where available, else lazily per metric on first use;
-   - native resolution inferred per metric/job lazily (raw-sample instant query);
+   - series interval inferred per metric/job lazily (raw-sample instant query);
    - cluster name-encoded dimensions (Airflow) into name templates before T0/T2, or the
      catalog becomes 58k near-duplicate entries.
 4. **T1 sample stats budgeted and lazy** on a source like this: hot metrics and requested
@@ -140,14 +140,14 @@ gauge's 7.6 s is 8 requests (4 rollups x 2 cache chunks) serialized by the polit
 **The `thanos-downsample-1h` datasource does not serve downsampled data by default.** At 20,
 60, 120, 200 and 300 days back, `node_load1` / `max_over_time(x[5m])` at 5 min steps and
 `count_over_time(x[1h])` are identical to the raw `thanos` datasource (same values, count 60,
-native resolution); Wikimedia keeps raw data for >= 300 days, and the downsample datasource
+the raw series interval); Wikimedia keeps raw data for >= 300 days, and the downsample datasource
 only *allows* coarser blocks (Thanos `max_source_resolution`), it does not prefer them.
 Sending `max_source_resolution=1h` explicitly does return downsampled blocks (1h-spaced
 samples): hourly min/max/avg then match raw within ~0.3-0.6% (median relative difference;
 block boundaries differ slightly), rate(x[4h]) and the quantile within ~0.1%, but
 `count_over_time(x[1h])` returns about 1 (the downsampled sample count; the sample count is
 lost), with no latency gain. Consequences: the profile's hourly min/max on Wikimedia are the
-true native-resolution min/max (raw), the pairing is a functional no-op there, and the
+true min/max at the series interval (raw), the pairing is a functional no-op there, and the
 "downsampled data is faster" premise did not hold: raw Thanos already answers 30 d x 1h in
 under a second. Decision on the preset: telemetry-nerd-2as.25.
 

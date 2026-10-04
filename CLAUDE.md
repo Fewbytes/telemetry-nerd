@@ -81,4 +81,8 @@ _Add a brief overview of your project architecture_
 
 ## Conventions & Patterns
 
+- Vocabulary for time intervals and recurring terms (series interval, query window, query step,
+  display bucket, time range, ...): `docs/glossary.md`. Specs, skills, tool descriptions and panel
+  text use it; JSON keys and code identifiers keep their names.
+
 _Add your project-specific conventions here_

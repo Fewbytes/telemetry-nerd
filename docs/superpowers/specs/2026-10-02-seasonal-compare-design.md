@@ -1,15 +1,15 @@
 # Seasonal comparison: `compare_seasonal` (bead lkn.2)
 
-"Is now unusual for this time of day / week?" Compare the current window with the same phase of
+"Is now unusual for this time of day / week?" Compare the current time range with the same phase of
 previous cycles, with uncertainty from the spread **across** those cycles (never one noisy week).
-Builds on reference windows (4ok.6), the operating profile's leave-one-out band (2as.7),
+Builds on reference time ranges (4ok.6), the operating profile's leave-one-out band (2as.7),
 autocorrelation / n_eff (lkn.1) and the red-noise spectrum (lkn.4).
 
 ## Principles
 
 Principles 4, 8, 10, 11 and 14 apply (`docs/principles.md`). Consequences for this op:
 
-- The reference is chosen from history, never from the judged window, and **stated** (principle 14): which cycles, how many, how they are
+- The reference is chosen from history, never from the judged time range, and **stated** (principle 14): which cycles, how many, how they are
   aligned (UTC or a named timezone), which were excluded and why.
 - Uncertainty comes from what previous cycles actually did at the same phase (leave-one-cycle-out
   residuals), not from within-window noise and not from one reference cycle.
@@ -21,11 +21,11 @@ Principles 4, 8, 10, 11 and 14 apply (`docs/principles.md`). Consequences for th
 
 ## References (schemes)
 
-The dataset is the current window W = [start, end] at step s (N points). Candidate schemes:
+The dataset is the current time range W = [start, end] at step s (N points). Candidate schemes:
 
 | scheme | cycles | shift of cycle j |
 |---|---|---|
-| `previous` | 4 | j x span (adjacent windows; the non-seasonal baseline) |
+| `previous` | 4 | j x span (adjacent time ranges; the non-seasonal baseline) |
 | `1d` | 7 | j local calendar days |
 | `1w` | 4 | j x 7 local calendar days |
 
@@ -37,7 +37,7 @@ clock (lkn.8): point i at UTC t_i is compared with the instant whose local time 
 `local(t_i) - j days`. Across a DST change the shift is 23 h or 25 h, so "same local hour
 yesterday" stays the same local hour, and this holds point by point when the window itself (or a
 previous cycle) crosses a change. A local time that did not exist on the cycle's day (spring
-forward) leaves that point uncompared; a local hour that occurs twice in the window (autumn) is
+forward) leaves that point uncompared; a local hour that occurs twice in the time range (autumn) is
 compared twice with the same reference hour; either case sets caveat `dst_wall_clock` (it replaces
 lkn.2's `dst_within_window`, which flagged windows aligned at their start only). Every shift must
 be a multiple of the step (else refused with a hint). Cycles with any point not exactly j nominal
@@ -88,7 +88,7 @@ Values are compared on a log scale (ratio) when all values are > 0, else linearl
 
 Three detectors, each at alpha = 1% for the window:
 
-1. **level** (whole window): D_0 = mean d(i) vs the cycle levels D_j = mean (x_j - c). Prediction
+1. **level** (whole time range): D_0 = mean d(i) vs the cycle levels D_j = mean (x_j - c). Prediction
    interval D-bar +- t_{k-1} s_D sqrt(1 + v_k): Student t with k-1 df because only k cycles inform
    the spread; v_k because the centre is a median of k. Reported as ratio (or difference) now / reference with its 90% interval; flagged when
    outside the 99% interval.
@@ -120,7 +120,7 @@ interval, band exceedance share).
 ## Calibration (seeded simulation, 1000 seeds per row)
 
 `uv run python scripts/calibrate_seasonal.py`. Weekly load (weekday business-hours peak, low
-weekends), multiplicative noise (white or AR(0.7) within the window), optional per-cycle level
+weekends), multiplicative noise (white or AR(0.7) within the time range), optional per-cycle level
 jitter (sd 5%), 96-point windows, 1w scheme (lkn.8 numbers; lkn.2's rule gave the same within
 0.6 points, atypical exclusion of a normal cycle at k=6 with jitter 0.8% then, 0.2% now):
 
@@ -180,7 +180,7 @@ Choices that calibration forced (each was wrong first):
 
 `compare_seasonal` on a `histogram_quantile` series whose histogram is known, or on a
 `query_distribution` dataset, never compares percentiles: it fetches the histogram for now and
-for each previous cycle (same schemes and cycle counts; the cycle's window is the same local
+for each previous cycle (same schemes and cycle counts; the cycle's time range is the same local
 wall-clock window) and works on each cycle's **window histogram** (bucket counts summed over the
 window; counts are additive, percentiles are not, so nothing is pooled or averaged across cycles
 except counts where a pooled CDF is the reference for the descriptive shape distance).

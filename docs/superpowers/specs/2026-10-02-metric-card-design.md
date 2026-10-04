@@ -12,8 +12,8 @@ One section per catalogued metric in the panel's expression (max 3, a plain sele
 - **relations, bindings, gaps**: touching the metric; gaps are the ones its bindings raised.
 - **operating profile** summary (window, range, seasonal, stale) or why there is none (a refusal
   reason, or "being computed now": the request starts a background compute).
-- **data quality**: step, configured resolution, series in the panel, empty-bucket %, and the
-  scrape interval measured by one live query per metric (cached 1h; failures become a reason).
+- **data quality**: query step, configured series interval, series in the panel, empty-bucket %, and the
+  series interval (`scrape_interval_ms`) measured by one live query per metric (cached 1h; failures become a reason).
   Counter resets and catalog-wide cardinality are reported as **not measured** (2as.6; discovery's
   cardinality is not stored) rather than left blank.
 An unlearned source yields `learned: false` and the card says so.

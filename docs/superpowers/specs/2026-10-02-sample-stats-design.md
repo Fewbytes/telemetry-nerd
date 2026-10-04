@@ -8,7 +8,7 @@ Targets: named metrics, else a prefix (hot first), else this workspace's hot met
 metrics only. At most 100 queries per call, a 60s wall-clock budget, window 5m-6h, metrics scanned
 in the last day skipped unless `refresh`, a metric over the source's series cap skipped with the
 reason. Result: scanned / skipped / failed, `stopped` (limit|budget) and `remaining`.
-One query per metric (bare selector, step = resolution, coarser past ~120 points) through the
+One query per metric (bare selector, step = series interval, coarser past ~120 points) through the
 normal path (politeness gate, series cache, a dataset usable as evidence).
 
 ## Measurements (`analysis/samples.py`, pure)

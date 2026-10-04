@@ -125,7 +125,7 @@ containers restarted) -> each expected signal queried from VM (baseline window v
 after a settle period) -> `scenarios/runs/<id>-<UTC ts>.json` (gitignored). Trimmed samples live
 in `tests/fixtures/scenarios/`.
 
-Note the lag: the demo exports metrics and span-metrics every 60 s, so with 2m rate windows the
+Note the lag: the demo exports metrics and span-metrics every 60 s, so with 2m query windows the
 effect appears 1-3 min after the flag change (and fades 1-3 min after it is reverted). Ground
 truth gives the exact apply times plus `tolerance`; judge annotations against those.
 

@@ -16,7 +16,7 @@ A **binding** says which metrics play which role of a model for one service or r
 Bindings are catalog claims with a basis, like relations. Three tools use them: `show_binding`
 (one linked panel group), `binding_verdict` (per-signal health with evidence), `check_littles_law`
 (consistency of the three Little's law signals). All three are tier-1: they carry validated
-uncertainty, stated reference windows and `evidence` statistics. Do not rebuild them with
+uncertainty, stated reference time ranges and `evidence` statistics. Do not rebuild them with
 `run_code`.
 
 ## When to look for a binding
@@ -80,18 +80,18 @@ notes}`, a `{gap, suggest}` card, or an `{error}`. One time range, step and sele
 
 ## Reporting a verdict honestly
 
-`binding_verdict` compares each role against reference windows and returns `summary.text`, per
+`binding_verdict` compares each role against reference time ranges and returns `summary.text`, per
 role `status`, `direction`, `pattern`, `onset`, and `evidence`. Report:
 
 1. **The reference and the family.** Say what "before" was (`reference.label`, for example
-   "4 previous windows" or "the same hour on 7 previous days") and the family-wise alpha over the
+   "4 previous time ranges" or "the same hour on 7 previous days") and the family-wise alpha over the
    roles (`family`): "at 5% family-wise over 3 signals". Never state a verdict without its
    reference. `reference="profile"` needs `operating_profile` first (it is refused otherwise);
    `auto` falls back to `previous`, which is weak for daily rhythms: say so.
-2. **Per role, with the pattern.** `level` = the window differs but no onset is inside it (do not
+2. **Per role, with the pattern.** `level` = the time range differs but no onset is inside it (do not
    claim a start time). `shift` = one change point. `burst` / `blip` = an episode that ended
-   inside the window (observed: data after it shows the return). `sustained` = still going at the
-   end of the window. `insufficient` and `gap` are not "healthy".
+   inside the time range (observed: data after it shows the return). `sustained` = still going at the
+   end of the time range. `insufficient` and `gap` are not "healthy".
 3. **Ordering only as far as the intervals allow.** `summary.first` is null when onset intervals
    overlap: write "simultaneous within +-X", not "A caused B". "First" is first among roles that
    have an onset: a `level`-pattern role cannot be ordered and may have moved earlier. The

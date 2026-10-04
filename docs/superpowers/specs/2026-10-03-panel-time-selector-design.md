@@ -148,7 +148,7 @@ v1 `rescope()` handles:
   rather than a raise. Rescope re-populates it for the new dataset by calling
   `self.fleets.summary(new_dataset_id, **old_cfg)` (the same call the `fleet` MCP tool makes)
   with the old panel's `by`/`scale`/`normalise`/`band_window`, before `show(..., mark="fleet")`.
-- **`spc`** — the old baseline window (`spec.layers[0].windows[0]`) is reused via the same
+- **`spc`** — the old baseline time range (`spec.layers[0].windows[0]`) is reused via the same
   `resolve_baseline(meta, w.start_ms, w.end_ms)` call `show()` already makes, against the
   *new* dataset's meta. If the baseline no longer fits inside the new range,
   `resolve_baseline` raises the same error a fresh `show(mark="spc")` would — surfaced to the

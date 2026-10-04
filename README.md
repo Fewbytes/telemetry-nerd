@@ -182,6 +182,7 @@ Commands: `/telemetry-nerd:start` (connect, learn, open), `/telemetry-nerd:conne
 Full details, the container path and network-security notes: [docs/install.md](docs/install.md).
 How the graphs are designed and why: [docs/telemetry-graphing-guide.md](docs/telemetry-graphing-guide.md).
 Known quirks of real data sources: [docs/data-source-quirks.md](docs/data-source-quirks.md).
+The terms used for time intervals (series interval, query window, query step, ...): [docs/glossary.md](docs/glossary.md).
 
 ## Development
 
@@ -201,7 +202,8 @@ just brand        # regenerate logo PNGs and favicons from assets/brand/*.svg
 ```
 
 Work is tracked with [beads](https://github.com/gastownhall/beads) (`bd ready` to see what's
-open). Design specs live in `docs/superpowers/specs/`.
+open). Design specs live in `docs/superpowers/specs/`; they use the vocabulary in
+[`docs/glossary.md`](docs/glossary.md).
 
 Unit tests and the UI e2e suite never read an external VictoriaMetrics: unit tests use fakes and
 recorded responses (`tests/fixtures`), and e2e runs the daemon against

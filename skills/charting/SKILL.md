@@ -29,11 +29,12 @@ The rules below apply principles 3, 10 and 11 (`docs/principles.md`).
 - **Counters are drawn as rates**: `show` on a counter selector draws a new rate dataset and
   returns it as `drawn_dataset`; run `analyze`, `spectrum`, `fleet` and `filter` on that
   handle, not on the counter (they refuse raw counters).
-- **Rate windows are `[$__rate_interval]`**: write `rate(x[$__rate_interval])`, not a fixed
-  `[1m]`/`[5m]`, for anything you will `analyze`, judge or compare. It is the shortest window the
-  resolution allows at the step; a window spanning many steps smooths the series so neighbouring
-  points share data: few independent values (effective n), `insufficient_data`, a short surge
-  flattened. A longer window only when the question is about that window.
+- **Query windows are `[$__rate_interval]`**: write `rate(x[$__rate_interval])`, not a fixed
+  `[1m]`/`[5m]`, for anything you will `analyze`, judge or compare. It is the shortest query
+  window the series interval allows at the query step; a query window spanning many steps smooths
+  the series so neighbouring points share data: few independent values (effective n),
+  `insufficient_data`, a short surge flattened. A longer query window only when the question is
+  about that window. Terms: `docs/glossary.md`.
 - **Look, then claim**: a chart catches wrong joins, gaps and units before a statistic does.
 
 ## Decision table
@@ -56,7 +57,7 @@ The rules below apply principles 3, 10 and 11 (`docs/principles.md`).
 | Successes vs failures latency | histogram-backed dataset | `split_outcome(dataset)` |
 | Trend without noise / spikes without the baseline | series | `filter(dataset, kind, period, reason)`, then `show` |
 | Is now's value distribution different from before? | a time panel | `show_marginal(panel, reference="previous" \| "week" \| "profile")`; profile: plain series, step at most 1h, both sides hourly means; say requests vs per-step samples, with n |
-| Same window last week? | a time panel | `set_overlays(panel, ghost=true)`, `show_marginal(panel, reference="week")`, or `suggest_y_view(panel, mode, label, reason, baseline)` with `mode="indexed"`, `baseline="week"` |
+| Same time range last week? | a time panel | `set_overlays(panel, ghost=true)`, `show_marginal(panel, reference="week")`, or `suggest_y_view(panel, mode, label, reason, baseline)` with `mode="indexed"`, `baseline="week"` |
 
 Details per mark (requirements, refusals, what each draws): `references/marks.md`.
 
@@ -98,9 +99,10 @@ report (principles 8, 9, 11; `docs/principles.md`).
 ## Render budget
 
 The server sends about one bucket per pixel (min/max preserving). Keep `step="auto"` unless the
-question needs a resolution; a fine step over a long range breaks the budget (about 2 points
+question needs a particular query step; a fine step over a long range breaks the budget (about 2 points
 per pixel, 100 ms), which is logged as `render_budget_exceeded` and drawn coarser. Never ask for
-a step below two scrape intervals: it invents resolution (`fake_resolution` caveat).
+a step below two series intervals (scrape intervals, for scraped metrics): it invents detail
+(`fake_resolution` caveat).
 
 ## After drawing
 

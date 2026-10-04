@@ -52,7 +52,7 @@ Research bead: `telemetry-nerd-1h9.10`. Findings written 2026-10-02.
    keeps evaluating for the whole lookback: 285 s on Grafana Play's OTel-demo series, 300 s
    locally. Scraped series end within one scrape interval. Same metric, different
    truthfulness by ingestion path (PQ3, MQ1).
-4. **VictoriaMetrics' fill window is about one scrape interval, not 5 m**, and depends on the
+4. **VictoriaMetrics' fill window is about one series interval, not 5 m**, and depends on the
    detected interval (15 s series: ~22 s; 60 s series: ~66 s). A gap of three intervals
    already breaks the line (VQ1).
 5. **`count_over_time` on a Thanos tier counts downsampled points** (12 per hour on the 5 m
@@ -207,7 +207,7 @@ stable in every recorded exchange.
 Grafana Play `target_info` (OTLP-ingested, hosted OTel demo): the series is still evaluated
 **285 s** after its last sample (no marker). `kube_pod_info` (scraped): ends 45 s after its last
 sample, at the next 60 s scrape (`mimir/grafana-play__play_otlp_ended_*`,
-`grafana-play_scrape_ended_*`). CERN OpenStack had no ended series in the window.
+`grafana-play_scrape_ended_*`). CERN OpenStack had no ended series in the time range.
 
 ### MQ2 Query-frontend split seams ✅
 
@@ -225,7 +225,7 @@ One range, one backend; not exhaustive.
 
 ### VQ1 Gap-filling rule ✅
 
-Raw selector fill window ≈ one detected scrape interval: a 15 s series fills ≤ ~22 s after its
+Raw selector fill window ≈ one detected series interval: a 15 s series fills ≤ ~22 s after its
 last sample, a 60 s series ≤ ~66 s (`victoriametrics/vm__gapfill_i15_raw`, `_i60_raw`,
 `_i60_step{10,30,60}`); a gap of 3 intervals already breaks the line. Not the 5 m of Prometheus.
 `count_over_time` and `rollup` stay honest (absent in gaps; `vm__rollup_w60`). Windows are

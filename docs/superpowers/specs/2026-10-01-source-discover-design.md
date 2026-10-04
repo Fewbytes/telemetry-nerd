@@ -17,7 +17,7 @@ Histogram families: classic = `_bucket` with `_sum` and `_count`; native = metad
 histogram with no `_bucket` series (use histogram_quantile on the base name).
 
 ## scrape_interval
-Lazy, per metric (resolution varies per job): `selector[10m]` for one series (`limit=1`),
+Lazy, per metric (the series interval varies per job): `selector[10m]` for one series (`limit=1`),
 median sample spacing; None under 3 samples.
 
 ## Not included

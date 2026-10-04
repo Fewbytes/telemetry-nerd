@@ -16,7 +16,7 @@ Tools (MCP): `binding_suggest` proposes bindings from names, knowledge packs and
 
 What the numbers mean and how they are reported:
 
-- Verdicts compare against reference windows (previous windows, same hour on previous days or
+- Verdicts compare against reference time ranges (previous time ranges, same hour on previous days or
   weeks, or the operating profile) and control the false-alarm rate over all roles at once
   (default 5%). Ordering "A moved first" is stated only when the onset intervals do not overlap.
 - Latency is judged as the share of requests above a stated bucket edge, never as an averaged

@@ -20,13 +20,13 @@ Four queries at one sub-step `s` (bucket end times, `(t-s, t]`), one dataset eac
 | L | `sum by (G) (C)` | same | time-average of the gauge, with its sample count |
 
 (a gauge rate is used as is.) **Counters on VictoriaMetrics (9fd, 2026-10-03)**: `r` is the
-source resolution (the scrape interval) and each sub-step averages the subquery evaluated every
+series interval (the scrape interval, for scraped metrics) and each sub-step averages the subquery evaluated every
 `r`: VictoriaMetrics' `increase()` counts from the last sample before its window to the last one
 in it, without extrapolation, so the `r` tiles partition the counter exactly (their sum over a
 sub-step is the counter's increase between the last scrapes before its two ends; verified on
 v1.137) and each tile ends at the very scrape the gauge is read at. No lookback by construction.
 With `rate(x[$__rate_interval])` (the Prometheus path, and what the check did before) each
-evaluation reaches back over the whole rate interval: measured on VM, the counters' window sits
+evaluation reaches back over the whole query window: measured on VM, the counters' window sits
 ri/2 behind the bucket (10 s at 5-60 s sub-steps with a 5 s scrape) — the old bias term assumed
 (ri − s)/2, i.e. 2.5 s at 15 s sub-steps — and the spike's counts are smeared into the next
 windows (below).
@@ -44,14 +44,14 @@ to add a histogram. Rates are per second; W is converted to seconds from the uni
 catalog, else name suffix; if none: assumed seconds and flagged `latency_unit_assumed`).
 
 Windows: `window` (default ≈ range/12, a nice duration) holds k ≥ 8 sub-steps (`s` = the largest
-multiple of the scrape interval giving ≥ 20 per window). Sub-steps where any of the four signals is
+multiple of the series interval giving ≥ 20 per window). Sub-steps where any of the four signals is
 missing are dropped from all four (alignment); a window with < 4 is `insufficient`. `warmup`
 drops the start of the range. **Windows are anchored at the requested start** (rounded up to the
 sub-step; xa4): before, the range was widened outward to wall-clock multiples of the window, so
 up to a window of data before `start` (a warm-up the caller excluded) was judged and the grid
 did not follow the data. A trailing part of ≥ half a window is judged as a short window; a range
-holding fewer than two windows is refused. **Scrape interval probed**: the gauge's median sample
-spacing at the range end is compared with the source's configured resolution; a mismatch is
+holding fewer than two windows is refused. **Series interval probed**: the gauge's median sample
+spacing at the range end is compared with the source's configured series interval; a mismatch is
 stated in `gauge_sampling` (and in a refused window's message, with the `source_connect(…,
 resolution=…, replace=true)` hint); the error terms use the larger.
 
@@ -145,13 +145,13 @@ differ:
    means). A backlog that builds or drains inside a window is NOT in it: that is out of steady
    state, a real (special-cause) discrepancy.
 3. **Counter scrape timing**: increments between a window edge and the nearest scrape land in the
-   neighbouring window (rate() extrapolates over them): at most one scrape interval g per edge,
+   neighbouring window (rate() extrapolates over them): at most one series interval g per edge,
    Poisson in that fragment: √(2·g·λ)/(λT) for the arrival counter and √(2·g·C)/(C·T) for the
    latency count/sum (CV 1), added linearly (correlation unknown).
 4. **rate() lookback** (bias bound, added to the half-width; Prometheus path only — 0 with VM's
-   increase() tiles): each sub-step's rate() looks back δ = (rate interval − scrape)/2 further
+   increase() tiles): each sub-step's rate() looks back δ = (query window − series interval)/2 further
    than the gauge reading; the window's counts are those of a window shifted by δ:
-   R·δ/T·|x̄_end − x̄_start|/x̄ over the sub-steps one rate interval covers at each end (λ, S, C;
+   R·δ/T·|x̄_end − x̄_start|/x̄ over the sub-steps one query window covers at each end (λ, S, C;
    the largest), plus that estimate's own counting noise √(2/N_end). On real VM data this bound
    was the widest term exactly where a spike is (0.38 on a peak window whose sd was 0.07) and still
    failed to cover the truth (below): the tiles remove the cause instead of bounding it.

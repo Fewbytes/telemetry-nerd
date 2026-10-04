@@ -8,7 +8,7 @@ Key `(source, profiled expression)`. `profile_target(expr)` turns what the user 
 what is profiled at the profile step (1h):
 - bare counter selector (catalog/rule type `counter`) -> `rate(sel[W])`: never the raw total.
 - `rate/irate/deriv(sel[w])` windows are widened to `W = $__rate_interval` at the profile step
-  (max(4 x profile-source resolution, step + resolution)), so a 1m-rate panel and a 5m-rate
+  (max(4 x profile-source series interval, step + series interval)), so a 1m-rate panel and a 5m-rate
   panel share one profile. Other windowed functions keep their windows (widening `increase`
   or `max_over_time` would change the statistic).
 - `histogram_quantile(...)` is profiled as the per-hour quantile series (`kind=quantile`): a
@@ -20,7 +20,7 @@ what is profiled at the profile step (1h):
 ## Data
 1h x 30d (configurable) through the series cache (daily refresh re-fetches only the newest
 chunk). Bare selectors use the source's rollup path (`*_over_time` / MetricsQL `rollup`), so
-each hour carries the true intra-hour min/max at native resolution; other expressions are
+each hour carries the true intra-hour min/max at the series interval; other expressions are
 evaluated per step (`fetch_values`), and then min = max = value (`extremes: false`).
 Window = whole hours ending at the last complete hour. Empty / NaN / count=0 hours are gaps.
 
@@ -34,10 +34,10 @@ when it is live, else the source itself with caveat `profile_source_unavailable`
 - Range over hourly means: min, p0.5, p25, p50, p75, p99.5, max, MAD (unscaled). Quantiles
   are numpy type 7 (linear) over the hourly values.
 - `envelope` = [p0.5 of hourly minima, p99.5 of hourly maxima]: the robust range a
-  native-resolution panel would show; `min`/`max` are absolute (min of minima, max of maxima).
+  series-interval-step panel would show; `min`/`max` are absolute (min of minima, max of maxima).
   Without intra-hour extremes the envelope equals the hourly range (caveat
-  `no_intra_hour_extremes`); for rates it is at the rate window's resolution.
-- Caveats: `short_history` (data covers < 90% of the window), `gaps` (coverage within the
+  `no_intra_hour_extremes`); for rates it is at the query window's width.
+- Caveats: `short_history` (data covers < 90% of the time range), `gaps` (coverage within the
   history < 90%), `low_n_tails` (n < 200: p0.5/p99.5 are essentially the extremes),
   `looks_like_counter` (a level that rises in > 95% of hours: probably an unrated counter),
   `non_finite` (hours dropped for NaN/Inf), `quantile_series`.

@@ -58,7 +58,7 @@ Read: panel group `pg1`; `duration` is drawn as a heatmap (`p3`), `errors` as an
 {"tool": "binding_verdict", "args": {"source": "default", "group": "$group.group", "reference": "previous"}}
 ```
 
-Read: against 4 previous windows at 5% family-wise over 3 signals, `duration` moved first
+Read: against 4 previous time ranges at 5% family-wise over 3 signals, `duration` moved first
 (`shift`, onset 10:00Z, interval 09:56-10:02Z, share above 0.25 s 1.2% -> 5.4%, source special
 cause); `errors` next (`burst`, onset 10:20Z, 10:17-10:22Z, special cause); `rate`: no change
 (common cause, ratio about 0.99 with an interval spanning 1). The onset intervals do not overlap,

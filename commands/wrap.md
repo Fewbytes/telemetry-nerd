@@ -17,7 +17,7 @@ catalog or a later session until they approve it. Fewer, well-scoped proposals b
    thresholds the investigation actually established (and the catalog does not already hold:
    `catalog_get`), `catalog_propose(claims=[{metric, field, value, confidence, basis,
    evidence: [f…/p…]}], source)`. `basis` says what you checked; confidence at most 0.9. Not a
-   guess, not something one window merely suggested.
+   guess, not something one time range merely suggested.
 3. **Lessons.** At most three, each a methodology lesson that would have made this
    investigation faster or more correct next time ("for checkout, split latency by region
    before reading p95: one region carries the tail"), not a restatement of a finding.

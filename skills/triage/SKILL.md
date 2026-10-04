@@ -10,12 +10,12 @@ A short procedure. Each step names the tools; the methods live in sibling skills
 variation), `charting` (which view answers which question), `metric-learning` (what a metric
 means), `tier2-code` (custom statistics). Load them when a step needs them.
 
-## 1. Symptom and window
+## 1. Symptom and time range
 
 - Restate the symptom as a measurable question: which signal (latency, errors, throughput,
   saturation), which service, since when, noticed how (alert, user report).
-- Pick the window: from before the suspected onset to now, so the onset sits inside it (a
-  change at the window edge has no onset). Note the reference: previous windows by default,
+- Pick the time range: from before the suspected onset to now, so the onset sits inside it (a
+  change at the time range's edge has no onset). Note the reference: previous time ranges by default,
   the same hour of past days when the service has a daily rhythm.
 - Decide the question before looking: every re-run with another range or reference is another
   look (principle 14). Orient with `workspace_get` (it names the active workspace; another investigation is
@@ -34,7 +34,7 @@ first metric family you find.
   `traces_spanmetrics_*`) cover traced services that emit no HTTP/RPC metrics of their own.
 - An empty query or catalog lookup is absence of evidence. Never say a service or signal does
   not exist without an `entities` result (or series check) cited and scoped to its labels and
-  window; otherwise "not found under these labels in this window".
+  time range; otherwise "not found under these labels in this time range".
 - Query by the identifying label (`sum by (service_name) (...)`); for latency,
   `query_distribution(selector, by=[...])`: aggregate buckets, never average percentiles
   across members.
@@ -72,7 +72,7 @@ Is now unusual for this hour? `compare_seasonal(dataset)` (latency from the hist
 above an edge per cycle), `operating_profile(expr)` for the learned normal,
 `binding_verdict(..., reference="day")`, `show_marginal(panel, reference="week")`. A symptom
 inside the seasonal band is the usual peak (common cause): it can still hurt users, but the
-lever is capacity or the system, not a root cause in this window.
+lever is capacity or the system, not a root cause in this time range.
 
 ## 6. Little's law where concurrency exists
 
@@ -91,7 +91,7 @@ in `binding_verdict` (λ moved first, or W).
 Open competing hypotheses early with `hypothesis_create`, each naming the suspected service,
 resource or metric ("payment `charge` calls fail", not "a fault in one service"); for each,
 look first for the observation that would refute it. **Once an episode is found** (an onset,
-an annotated window), open a cause hypothesis for it that names the concrete subject (the
+an annotated region), open a cause hypothesis for it that names the concrete subject (the
 failing service, a flag, a deploy, an arrival surge), plus at least one competing cause, and
 test both: a question-framing or decoy hypothesis does not explain the episode.
 `finding_create` returns a `hint` when a special-cause finding's subject has no open hypothesis. `supported` is refused until a finding
@@ -127,7 +127,7 @@ Stop and report when any holds:
 ## Report
 
 Short, in this order, with object ids (they become links): symptom and scope (service,
-selector, window, reference, alpha); timeline (onsets with intervals, order only as far as
+selector, time range, reference, alpha); timeline (onsets with intervals, order only as far as
 intervals allow); findings (`f1`...) with source labels and uncertainty flags; hypotheses with
 status, including what was ruled out; unknowns and gaps; next steps. `highlight` the panel or
 finding the user should open first. Never claim cause from ordering (principle 13). Results are

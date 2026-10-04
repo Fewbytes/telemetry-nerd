@@ -12,7 +12,7 @@ reference="auto"|"previous"|"day"|"week"|"profile", tz, matchers, error_matcher,
 and `TelemetryService.binding_verdict(...)`. Roles are resolved and planned exactly as
 `show_binding` does (`BindingOps.resolve` + `plan_role`, czt.3), fetched through the same
 `_fetch` (error ratio = errors / requests per member and step; latency = the histogram).
-With `group=pgN` the group's window, step, matchers and error matcher are used and the group's
+With `group=pgN` the group's time range, step, matchers and error matcher are used and the group's
 roles are annotated (`GroupRole.verdict`, `PanelGroup.verdict`): the UI shows a badge per role
 and the first-mover line in the group header.
 
@@ -23,8 +23,8 @@ summary: {moved, first, order, text}, caveats}`. `status`: `changed` | `no_chang
 
 ## Reference
 
-k previous windows of the same length on the same step grid, each fetched like now (cached):
-`previous` (4 adjacent windows before now), `day` (the same window on 7 previous days), `week`
+k previous time ranges of the same length on the same step grid, each fetched like now (cached):
+`previous` (4 adjacent time ranges before now), `day` (the same time range on 7 previous days), `week`
 (4 previous weeks); shifts by `analysis.seasonal.cycle_shifts` (local calendar days in `tz`,
 23/25 h across DST). `auto` / `profile`: the cached operating profile of the role expressions
 picks `week` (hour_of_week) or `day` (hour_of_day), else (auto only) `previous`; `profile`
@@ -38,11 +38,11 @@ k-1 df), never below each cycle's own sampling noise: one quiet hour is not "nor
 
 Two detectors per role, each on now against the reference cycles:
 
-1. **Level** (whole window). A per-cycle level and its sampling variance; now against a
+1. **Level** (whole time range). A per-cycle level and its sampling variance; now against a
    Student-t prediction interval from the kept reference levels (atypical cycles excluded by
    `seasonal.atypical_levels`), s^2 = max(sample variance, mean sampling variance),
    var = s^2 (1 + 1/k) + max(0, V_now - mean V). p two-sided.
-2. **Episode** (within the window, so onsets can be timed). A standardised per-step residual
+2. **Episode** (within the time range, so onsets can be timed). A standardised per-step residual
    relative to now's own robust level, two-sided tabular CUSUM (k = 0.5) run without restarts:
    an episode is an excursion that exceeds h. h is solved so that the in-control probability of
    any episode over the window's N blocks is at most the detector's alpha, from the Brook-Evans
@@ -58,16 +58,16 @@ Two detectors per role, each on now against the reference cycles:
 
 | role | per-step data | level | episode residual |
 |---|---|---|---|
-| RED errors (error ratio) | errors a_t, requests n_t = rate x step (summed over members) | logit of the window share on **effective n** = N / (phi tau): phi the Pearson dispersion of per-step counts (reference median, >= 1; and the cautious model below), tau the integrated autocorrelation of the Pearson residuals | Pearson (a - n p_c) / sqrt(phi n p_c (1 - p_c)), steps merged into blocks with >= 5 expected errors and >= 5 expected clusters (errors / the cautious phi) |
+| RED errors (error ratio) | errors a_t, requests n_t = rate x step (summed over members) | logit of the time range's share on **effective n** = N / (phi tau): phi the Pearson dispersion of per-step counts (reference median, >= 1; and the cautious model below), tau the integrated autocorrelation of the Pearson residuals | Pearson (a - n p_c) / sqrt(phi n p_c (1 - p_c)), steps merged into blocks with >= 5 expected errors and >= 5 expected clusters (errors / the cautious phi) |
 | duration / latency (histogram) | requests above a threshold x and all requests, per step, from the histogram | as errors (the share above x) | as errors |
-| rate / arrival_rate, concurrency, saturation, utilization | the per-step value (log scale when all > 0, else linear) | mean of the window | (value - day/week phase shape - now's median) / within-cycle robust sigma of the reference |
+| rate / arrival_rate, concurrency, saturation, utilization | the per-step value (log scale when all > 0, else linear) | mean of the time range | (value - day/week phase shape - now's median) / within-cycle robust sigma of the reference |
 | USE errors (a rate of events) | events a_t = rate x step | log rate, quasi-Poisson | Pearson for Poisson, blocks >= 5 expected (and >= 5 clusters) |
 
 - **Two dispersion models for counts (principle 16, bead 8jjy).** Results are model outputs:
-  the level test runs under the *typical* dispersion (the reference windows' median phi;
-  independence when no reference window saw an event) and the *cautious* one (the largest
-  reference phi: now may be as noisy as the noisiest normal window; with no reference events,
-  the judged window's own long-run phi x tau, the change included, a conservative bound as in
+  the level test runs under the *typical* dispersion (the reference time ranges' median phi;
+  independence when no reference time range saw an event) and the *cautious* one (the largest
+  reference phi: now may be as noisy as the noisiest normal time range; with no reference events,
+  the judged time range's own long-run phi x tau, the change included, a conservative bound as in
   analyze's departure test). A request sibling is not used: a share is binomial given the
   requests, so traffic burstiness is conditioned out. Blocks hold >= 5 expected clusters under
   the cautious phi (fewer: the residuals stay skewed, now's CUSUM drifts on clustered noise and
@@ -90,11 +90,11 @@ Two detectors per role, each on now against the reference cycles:
   test: it qualifies a change (`at_capacity`) and does not spend alpha. A saturation metric whose
   name says throttling is noted as such. (A saturation `bounded_by` limit line is a follow-up.)
 - **Concurrency (Little's law binding).** Judged as a value, plus `model_check`: the
-  check_littles_law verdict over the same window (czt.2; L vs lambda W with its own propagated
+  check_littles_law verdict over the same time range (czt.2; L vs lambda W with its own propagated
   interval and its own stated 5% FWER, reported, not counted in this family).
 
-**Pattern.** `level` (the window differs, no onset inside it), `shift` (a single changepoint
-inside the window), `blip` (an episode of <= 2 blocks that ended), `burst` (an episode that
+**Pattern.** `level` (the time range differs, no onset inside it), `shift` (a single changepoint
+inside the time range), `blip` (an episode of <= 2 blocks that ended), `burst` (an episode that
 ended: >= 3 blocks follow its CUSUM peak), `sustained` (an episode still open at the end).
 
 ## Onsets and ordering
@@ -103,9 +103,9 @@ Onset = Page's estimator: the first step of the CUSUM excursion that fired (in t
 the level change when the level detector fired too). Interval = [onset - one block - the rate
 window's lookback, the step at which it fired]: a change cannot be detected before it happens,
 and rate() smears a change back by its window. When the level detector fired but no episode in
-its direction exists (the change covers most of the window), the single changepoint of the
+its direction exists (the change covers most of the time range), the single changepoint of the
 CUSUM-of-deviations test (`stability.changepoints`) is used, with Bai's (1997) 95% interval
-+- 11.03 (sigma_lr / delta)^2 steps; failing that, "before the window".
++- 11.03 (sigma_lr / delta)^2 steps; failing that, "before the time range".
 
 Ordering is only claimed when intervals do not overlap: "errors moved first (onset 12:03Z,
 11:58-12:05Z); duration followed (12:20Z)"; overlapping intervals read "simultaneous within
@@ -129,7 +129,7 @@ datasets): clean source data leaves them unflagged; anything else flags them (sp
 
 ## Validation (seeded, tests/unit/test_verdicts.py; `scripts/calibrate_verdicts.py`)
 
-Synthetic RED and USE sets (1-min steps, 1 h windows, 4 previous windows; requests ~3000/step
+Synthetic RED and USE sets (1-min steps, 1 h time ranges, 4 previous time ranges; requests ~3000/step
 with per-cycle level jitter and AR(1) noise; error share 0.2% with overdispersion; lognormal
 latency in classic buckets with a jittered median; utilization ~0.4 AR(1)):
 
@@ -141,7 +141,7 @@ latency in classic buckets with a jittered median; utilization ~0.4 AR(1)):
   and saturation `changed`, utilization `at_capacity`, simultaneous (2 minutes apart, onset
   intervals overlap).
 
-Service tests (`ScenarioSource`: values keyed by minute and member, so every reference window
+Service tests (`ScenarioSource`: values keyed by minute and member, so every reference time range
 is reproducible) run the same scenarios end to end through `binding_verdict`, the group
 annotation and the MCP tool.
 
@@ -173,7 +173,7 @@ under the cautious model, not a tuned number.
 
 Quiet, 2000 seeds: any role flagged 2.0% (RED) / 1.8% (USE) at the nominal family-wise 5%
 (conservative; per role 0.3-1.1%). Onset intervals cover the truth 90-100% (Bai's interval
-for a shift covering most of the window runs slightly below its nominal 95%). Power is what k
-reference windows allow at alpha / 2m: a 20% latency median shift is caught ~98% of the time,
+for a shift covering most of the time range runs slightly below its nominal 95%). Power is what k
+reference time ranges allow at alpha / 2m: a 20% latency median shift is caught ~98% of the time,
 a 3x error burst of 8 minutes ~80% (97% before the cautious blocks); the episode detector carries most of it (the level
 detector's t with k-1 = 3 df at 0.8% is strict).

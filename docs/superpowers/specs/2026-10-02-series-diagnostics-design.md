@@ -14,9 +14,9 @@ Principles 4, 8, 10, 11 and 14 apply (`docs/principles.md`). Consequences for th
   of observed points `k` steps apart, run rules break at gaps.
 - Every statistic carries an interval or a stated n (exact counts). Intervals use the
   **effective sample size** (n_eff = n / τ_int), never the raw n.
-- SPC limits come from a **stated baseline window**, never from the data being judged
+- SPC limits come from a **stated baseline time range**, never from the data being judged
   (principle 14). Default
-  baseline: the first half of the dataset range; the judged window is everything outside it.
+  baseline: the first half of the dataset range; the judged time range is everything outside it.
 - Verdict says `insufficient_data` instead of guessing.
 - No scipy: numpy + `statistics.NormalDist` + small closed forms (documented below).
 
@@ -97,9 +97,9 @@ Principles 4, 8, 10, 11 and 14 apply (`docs/principles.md`). Consequences for th
 ## Reference baselines, seasonal residual charts, gaps (lkn.5)
 
 - **`baseline="previous" | "day" | "week"`** (`baseline_cycles` 1..4 / 1..7 / 1..4): the limits
-  come from a **separate fetch** of earlier windows (same expr, step, source, through the cache),
+  come from a **separate fetch** of earlier time ranges (same expr, step, source, through the cache),
   aligned exactly as `compare_seasonal` does (`analysis/seasonal.cycle_shifts`: `previous` = the
-  preceding windows of the same length, `day` / `week` = the same window on previous local
+  preceding time ranges of the same length, `day` / `week` = the same time range on previous local
   calendar days / weeks in `tz`, 23 h / 25 h across DST). Every point of the dataset is judged.
   The reference is prepended to the series for the chart (positions on the common step grid, so
   pairs, AR(1) residuals and run windows never span the gap between them) and the chart is then
@@ -168,10 +168,10 @@ is, else common cause. When it is special cause and n_eff < 10, the structure is
 τ, n_eff and σ_within are re-estimated from the residuals with the run fitted. Calibration
 (`scripts/calibrate_excursion.py`, `tests/unit/test_excursion.py`; 24 / 31 / 60 points, half
 baseline, 4000 trials): cautious false alarms ≤ 0.12% for white, AR(1) 0.5 / 0.8, a 2-step
-rate window, t3 and lognormal(0.5) noise, 0.88-1.0% for lognormal(1) (per-point skew 6, the
+query window, t3 and lognormal(0.5) noise, 0.88-1.0% for lognormal(1) (per-point skew 6, the
 binding case); the baseline model: 0.7-4.8% for Gaussian noise at 24-31 points, 10-20% under
 t3, 32-62% for lognormal(1). Power for a 4-step episode in 24 points (cautious): 20σ 60%
-(white) / 23% (rate window) / 28% (AR 0.5), 30σ 90% / 61% / 60%, 100σ ≥ 99%; one isolated
+(white) / 23% (query window) / 28% (AR 0.5), 30σ 90% / 61% / 60%, 100σ ≥ 99%; one isolated
 point needs ≳ 30σ (a 15σ spike is `undetermined`). The price of holding under heavy tails and
 skew on a 12-point baseline: a 10σ episode is mostly `undetermined`.
 
@@ -199,7 +199,7 @@ not "noisy". Reasons are short strings with the numbers.
 - `show(dataset, question, mark="spc", windows=[{start, end, label: "baseline"}])`: the window is
   the baseline (default first half, same function as analyze).
 - Panel payload `kind: "spc"`: per series ts, value, centre, lcl/ucl (+ 2σ), violations
-  `{ts, value, rules}`, EWMA/CUSUM signal times, baseline window, mode, caveats.
+  `{ts, value, rules}`, EWMA/CUSUM signal times, baseline time range, mode, caveats.
 - UI `SpcPlot.svelte`: series line (null rows at gaps), centre line, 3σ band, shaded baseline
   window, violations (filled: deciding rules, hollow: supplementary run rules), legend stating
   baseline, mode (individuals | AR(1) residuals), n, n_eff.

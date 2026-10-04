@@ -25,7 +25,7 @@ context for free.
 | How do many pods/nodes behave as a group; which are outliers? | `fleet` |
 | Latency distribution, fraction of REQUESTS over x, heatmap | `query_distribution`, `fraction_over`, `show` |
 | Latency of successes vs failures | `split_outcome` |
-| Current window vs previous / last week | `analyze(baseline=...)`, `show_marginal`, `set_overlays` |
+| Current time range vs previous / last week | `analyze(baseline=...)`, `show_marginal`, `set_overlays` |
 
 A ratio of two metrics is a PromQL expression: `query("sum(errors) / sum(requests)")` returns it
 as a dataset. Use `run_code` only for what the query language cannot give: the interval around
@@ -100,7 +100,7 @@ Rules that keep results honest:
   is flagged as a lower bound. Pass such statistics on as is.
 - Name the method in words (`"moving-block bootstrap, block=12"`): the interval is only as good
   as that sentence. Put assumptions the reader must know in `caveats` (bucket midpoints,
-  fractional counts, a stationary window). An interval does not cover bias from a modelling
+  fractional counts, a stationary time range). An interval does not cover bias from a modelling
   shortcut: say so in the caveat.
 
 ## Fits
@@ -197,8 +197,8 @@ tn.meta("d3")  # unit, step_ms, representation, caveats, uncertainty, start_ms, 
   `representation`, `step_ms`, `start_ms`, `end_ms`, `unit`, `description`, `caveats`,
   `parents`, `uncertainty={"method", "level", "kind", "propagation"}` or `exact=True`, `name` (lowercase;
   default `out1`, `out2`). `kind`: `confidence` (default), `credible`, `prediction`, `tolerance`.
-- A one-number summary is a one-row series: `ts_ms` = window start, `step_ms` = the whole span,
-  `start_ms`/`end_ms` = the window (see the worked examples).
+- A one-number summary is a one-row series: `ts_ms` = time range start, `step_ms` = the whole span,
+  `start_ms`/`end_ms` = the time range (see the worked examples).
 - `tn.put_fit(model, params, *, method, diagnostics, goodness=None, level=None, prediction=None,
   prediction_meta=None, name=None, parents=None, caveats=None, start_ms=None, end_ms=None,
   propagation=None)`:

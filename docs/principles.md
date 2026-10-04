@@ -8,7 +8,8 @@ new principles are appended, never renumbered.
 
 Each principle gives the rule, where it came from (a decision date where one is known) and where
 it is enforced. Detailed policy lives in the linked spec sections; skills restate the rules as
-operational instructions for Claude and cite the principle number.
+operational instructions for Claude and cite the principle number. Terms (series interval, query
+window, query step, display bucket, time range, ...) are defined in [`glossary.md`](glossary.md).
 
 Context: Telemetry Nerd is **not an "AI SRE"** (MVP spec §1.1). Claude is an analyst's assistant:
 it proposes hypotheses, gathers evidence for and against, draws the graphs that make the data
@@ -31,7 +32,7 @@ a chart by eye or a summary line without its statistic is not evidence.
 
 Every finding carries an explicit scope: source, selector, time range, step, aggregation and an
 optional baseline. A claim is worded so that it is true only inside that scope; Claude never
-generalises from a member to the service, from one source to production, or from a window to
+generalises from a member to the service, from one source to production, or from a time range to
 "always". Enforced by schema, not by prompting.
 
 - Decided: 2026-09-30.
@@ -130,7 +131,7 @@ neighbouring steps, on the analysis scale. Points are named special causes only 
 family-wise tests (principle 14), never because they leave a zone: points beyond 3σ that no test
 flagged are reported as a rate against what chance gives (0.27% if normal), never marked one by
 one; only a step where the fleet widened faster than its pooled σ tracks is marked (a p-chart
-against the window's own share, overdispersion-corrected, family-wise over the steps), as a
+against the time range's own share, overdispersion-corrected, family-wise over the steps), as a
 common-cause signal. A descriptive view (the per-step
 quantiles across members) is a separate toggle and carries missing-member bounds (principles 9,
 11), never a sampling interval. (Here, not in 14: the band's job is to be the envelope this
@@ -156,9 +157,9 @@ recurred"); it holds only over a finite set we have fully examined. Telemetry is
 a time series keeps growing, members join and leave, sources drop and backfill. So negative claims
 are made only about the scoped past interval and the members actually analysed ("no gap in the 6 h
 examined, for the 20 pods returned"), never about the series, the service or the future. Trailing
-silence is "no samples since T", not "left" or "ended": a wider window may show it return; a gap
+silence is "no samples since T", not "left" or "ended": a wider time range may show it return; a gap
 bounded by samples is a positively observed disconnect. Where a negative question matters, say
-what wider check would test it (e.g. is set(pod) per bucket consistent over a longer window)
+what wider check would test it (e.g. is set(pod) per bucket consistent over a longer time range)
 instead of asserting it.
 
 - Decided: 2026-10-03, user.
@@ -188,9 +189,9 @@ the median of member p99s. A percentile is never cited without its sample count 
 "No info is itself info." Missing data is shown, never filled: no interpolation, no zero-fill, no
 carrying forward; "no data" ≠ 0 ≠ "don't know", and an unknown (failed, unobservable) span is
 neither present nor missing. Missingness is rarely random: a member that stops reporting before
-the window end may be the sick one, so it is listed and labelled source undetermined: neither
+the time range's end may be the sick one, so it is listed and labelled source undetermined: neither
 missing data nor healthy, never dropped. Membership changes (members appearing, or stopping
-reporting, inside the window) are normal lifecycle, not a fault; because n moves, they are a
+reporting, inside the time range) are normal lifecycle, not a fault; because n moves, they are a
 measurement effect on fleet aggregates and labelled so (`measurement_system`), with text saying
 it is normal lifecycle. A member that stopped and came back (a gap bounded by samples) is the
 suspicious case; detecting leave-then-rejoin is not implemented yet (bead telemetry-nerd-ojo).
@@ -199,9 +200,9 @@ Work with the data there is (user decision 2026-10-03): claim checks run per ser
 series the claim's selector matches. In a multi-series claim, silent, low-coverage or untrusted
 members produce a warning and are labelled in the finding; the claim is blocked only when it
 cannot be supported (more than half of the members, or none, usable). A single-series claim is
-judged over the whole claim window. A selector whose label matchers match no evidence series,
+judged over the claim's whole time range. A selector whose label matchers match no evidence series,
 or check none of them, blocks: the claimed series were not examined. The mechanics (silence
-under 5 min at a window edge is lost scrapes, counted missing; longer edge silence is
+under 5 min at a time range edge is lost scrapes, counted missing; longer edge silence is
 membership, labelled) are in the missing-data spec §4.4.
 
 - Decided: brainstorm 2026-10-01/02 (missing-data spec §1); user decisions 2026-10-03 (churn is
@@ -251,8 +252,8 @@ result.
 ## 14. Decide before looking; count the looks
 
 The question, range and reference are chosen before the result is seen, and stated with it.
-Reference windows and control limits come from a stated baseline or from history, never from
-the window being judged. Each op's simultaneous tests (roles, members, windows, steps) share one
+Reference time ranges and control limits come from a stated baseline or from history, never from
+the time range being judged. Each op's simultaneous tests (roles, members, windows, steps) share one
 family-wise error budget, and every re-run with another range, reference or alpha is another look that the budget
 does not cover: say how many looks were taken.
 

@@ -127,12 +127,12 @@ The catalog's auto-chart (`show(signal)`) picks the form; explicit specs overrid
 | Trend of one gauge/rate | `line+envelope` (mean + min/max band) | Mean only | TN, C R5 |
 | Counter | rate with envelope; never raw cumulative value | Raw counter line | P, G (OTel) |
 | Latency/size distribution over time | `heatmap` (x time, y value, colour count) | avg/max lines alone | P, C D1–D2 |
-| "How many requests were fast enough?" (SLO-style) | fraction ≤ X over the window, merged by summing counts, with [lo, hi] bounds at bucket edges; draggable threshold readout | p99 line, averaged percentiles | P, H; SfE |
-| Tail at a window ("how bad is the worst 0.1%?") | `ccdf` / `quantile_curve`, tail axis stretched | Percentiles cut at p95 | P2, C P4–P5 |
-| Shape comparison now vs reference | `histogram` / `ecdf` with ≤4 windows | Overlaid density with hidden bin choice | P, C D12 |
+| "How many requests were fast enough?" (SLO-style) | fraction ≤ X over the time range, merged by summing counts, with [lo, hi] bounds at bucket edges; draggable threshold readout | p99 line, averaged percentiles | P, H; SfE |
+| Tail over a time range ("how bad is the worst 0.1%?") | `ccdf` / `quantile_curve`, tail axis stretched | Percentiles cut at p95 | P2, C P4–P5 |
+| Shape comparison now vs reference | `histogram` / `ecdf` with ≤4 time ranges | Overlaid density with hidden bin choice | P, C D12 |
 | Spans >2 decades | log axis, labelled with variable+unit (not "log(x)") | Linear axis with bulk in a corner | P, C A7; TN §6.2 |
 | Ratio vs baseline (p99 now / last week) | log axis, 1 centred | Linear ratio axis | P, C A8 |
-| Sustained-shift detection in noise | smoothed line **over** raw/envelope, labelled + window | Smoothing alone | E, C R1–R4, R7 |
+| Sustained-shift detection in noise | smoothed line **over** raw/envelope, labelled + its window | Smoothing alone | E, C R1–R4, R7 |
 | Isolated-spike detection | raw / min-max / heatmap | Any smoothing | P, C R3 |
 | Error ratio | Wilson band; normalized comparison → funnel plot (P2 phase) | Bare ratio line | TN |
 | Success vs failed latency | **separate series** | One merged latency | P, C T7 |
@@ -156,8 +156,8 @@ M7, C4). A pile of lines is not evidence.
     0.27% a normal fleet gives, never marked per point (with 100 members a quarter of the steps
     would carry one by chance); a drawn line's point there says "not significant at fleet-wide
     1%" on hover. Only a step where the fleet widened faster than its pooled σ tracks is marked
-    (p-chart against the window's own share, overdispersion-corrected, family-wise over the
-    steps: ≈1% chance of any mark per window): common cause.
+    (p-chart against the time range's own share, overdispersion-corrected, family-wise over the
+    steps: ≈1% chance of any mark per time range): common cause.
   - **Two outlier modes, two marks.** Consistently off / shifted / drifting: the whole member
     line coloured, labelled kind + effect ("+38% since 09:10", "drifting +2%/h"). Transient:
     the line grey where inside, only its episodes coloured and bracketed on the time axis,
@@ -219,7 +219,7 @@ Implemented in `ui/src/chart/heatmap.ts`, `colormap.ts`, `HeatmapPlot.svelte`.
   `log1p(v)/log1p(max)`; density is linear. Datadog's linear/rank blend is the alternative
   if rare modes still vanish. The legend must state the mapping. [P, C D4; G] → **gap** (§10).
 - Outlier trimming (e.g. top 0.1%) only with visible disclosure. [P, C D6]
-- Keep finer data for re-render on zoom; state the resolution shown (step in footer). [P, C D7]
+- Keep finer data for re-render on zoom; state the display bucket shown (step in footer). [P, C D7]
 - Percentile overlays on heatmaps: computed from buckets with bucket-edge bounds, gated
   by `minSamples(q) = ⌈10/(1−q)⌉`. [TN]
 - Separate read/write (or success/failure) distributions; don't merge modes. [P, C D9, T7]
@@ -247,7 +247,7 @@ worked numeric example.
   incident, while 99.5% of all requests happened elsewhere. → Percentile and heatmap views
   need traffic context: count strip aligned under the plot, low-n buckets faded (we fade
   below `n_min`; a count strip is missing). [P, H; remedy X]
-- **Threshold readout UI**: histogram over the window with a draggable threshold showing
+- **Threshold readout UI**: histogram over the time range with a draggable threshold showing
   three numbers — *below / inside the straddled bucket / above* (his demo: 89.3% / 0.2% /
   10.5%). This is exactly our bucket-edge uncertainty made visible: the middle number is
   the bound width. [P, H]
@@ -288,7 +288,7 @@ is why distribution views are our default for latency.
   at random. → our min/max envelope.
 - *Beam effect*: skip-sampling oscillating data aliases to a false, slower period; mean
   aggregation low-passes it away. Periods below 2×step are not real in any downsampled
-  view. → Spectrum op must work at scrape resolution or cut at Nyquist (2×step) and say so.
+  view. → Spectrum op must work at the series interval or cut at Nyquist (2×step) and say so.
 - Verified in code: `PromQLSource.build_queries` uses `*_over_time` / `rollup` over the full
   step window, so the main path is aggregation, not skip-sampling. Good.
 - "Interpolation lines add the illusion of continuity." Each plotted bucket value
@@ -306,7 +306,7 @@ quartiles, outliers as points. Supports robust outlier rules for the group cloud
 aren't mergeable, compute on the merged data. [P, SfE]
 
 **Survival curve.** ratio_above(threshold) vs threshold, one curve per hour overlaid:
-"the faster it goes to 0 the better". = our `ccdf` mark; per-window overlays are the
+"the faster it goes to 0 the better". = our `ccdf` mark; per-time-range overlays are the
 comparison form. Multi-threshold counts over time ("banded metrics", VividCortex) = count
 over threshold over time with several thresholds. [P, SfE]
 
@@ -345,7 +345,7 @@ state means something different and must look different:
 | `ok` | observed ≈ expected samples | (no rug if every bucket is ok) | normal |
 | `partial` | observed/expected < 0.9 | grey fill ∝ missing share | faded |
 | `empty` | series alive, 0 samples | solid grey | dot texture |
-| `absent` | series not alive yet (before its first sample in the window; trailing silence is `empty`, principle 9) | dotted line | — |
+| `absent` | series not alive yet (before its first sample in the time range; trailing silence is `empty`, principle 9) | dotted line | — |
 | `unknown` | fetch failed, outside retention, source can't tell | hatch | hatch texture |
 
 Flags on top of the states: `reset` (↺ on the plot), `interval_change` (axis tick),
@@ -367,10 +367,10 @@ Flags on top of the states: `reset` (↺ on the plot), `interval_change` (axis t
     thin it.
   - Values over buckets where reporting < alive carry a caveat ("band over 41/44").
 - **Window views** (histogram, ECDF, CCDF, threshold readout) have no time axis. They show a
-  coverage badge ("covers 87% of window · 5m missing · 2 resets") that opens a mini rug.
+  coverage badge ("covers 87% of the time range · 5m missing · 2 resets") that opens a mini rug.
   Fractions and counts carry the caveat when coverage < 100%.
 - **Hover hints** on rug cells and textured columns show: span · state + reason · observed/
-  expected samples at the resolution · last seen · for groups, `reporting/alive` and the
+  expected samples at the series interval · last seen · for groups, `reporting/alive` and the
   silent members.
 - **Missing data travels to Claude and to findings.** Summaries report coverage %, the
   longest gap, silent members, resets and unknown spans. A finding's coverage is judged
@@ -381,10 +381,10 @@ Flags on top of the states: `reset` (↺ on the plot), `interval_change` (axis t
   greys must pass 3:1 against the background in both themes.
 
 **Sources fabricate and hide data differently.** Prometheus-engine evaluation fills gaps
-up to its 5m lookback. `rate`/`increase` extrapolate to window edges (Prometheus) or use
-the sample before the window (VictoriaMetrics, so a possible fake spike after a gap).
+up to its 5m lookback. `rate`/`increase` extrapolate to query-window edges (Prometheus) or use
+the sample before the query window (VictoriaMetrics, so a possible fake spike after a gap).
 Thanos/Mimir switch to downsampled tiers and can return partial responses. Rules:
-- Read values only via `*_over_time` / `rollup` over the step window, never via instant
+- Read values only via `*_over_time` / `rollup` over a query window equal to the step (a tile), never via instant
   evaluation.
 - Whatever the source invents is flagged `source_filled`.
 - A bucket we can't judge is `unknown`, never `ok`.

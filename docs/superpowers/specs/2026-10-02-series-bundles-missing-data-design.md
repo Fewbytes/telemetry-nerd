@@ -126,9 +126,9 @@ a localized mark ⇒ show its caveat.
 
 ### 4.4 Findings
 
-A finding whose claim window/series overlaps a `blocks_claim` caveat is rejected with a hint
+A finding whose claim time range/series overlaps a `blocks_claim` caveat is rejected with a hint
 (name only series with data, narrow the window, or cite evidence that contains the claimed
-series). `warn`/`info` caveats in the window are copied into the finding's caveats. Rules
+series). `warn`/`info` caveats in the time range are copied into the finding's caveats. Rules
 (`core/coverage_check.py`, `core/claim_scope.py`):
 
 - **Which series.** Coverage is judged per series, never pooled (Σobserved / Σexpected over a
@@ -150,22 +150,22 @@ series). `warn`/`info` caveats in the window are copied into the finding's cavea
   block (`scope_mismatch`: the claim names series this evidence lacks). When no label matcher
   applies to any checked dataset (`labels_unchecked` on all), nothing checked the claimed series
   and the claim is blocked, saying so. Identical `claim_scope` notes are said once per finding.
-- **One series.** The whole claim window counts: < 50% of expected samples, or any `unknown`,
+- **One series.** The whole claim time range counts: < 50% of expected samples, or any `unknown`,
   blocks; less warns. Time before its first sample and after its last is unobserved (that it
   did not exist yet, or left, is a negative claim not provable from this evidence; principle
   9, `docs/principles.md`): it counts against coverage, and the caveat says "no samples before T / since T in this
   evidence" with the alternatives (may not have existed yet or was not scraped; may have left or
-  may return after the window), never that it was missing, not born or ended, plus a hint to
-  check a wider window (`count by (pod) (<selector>)`).
-- **Several series.** Each is judged over its own span in the window: from its first sample
-  when the silence before it in the window lasts ≥ `LONG_GAP_MS` (or it comes after the
+  may return after the time range), never that it was missing, not born or ended, plus a hint to
+  check a wider time range (`count by (pod) (<selector>)`).
+- **Several series.** Each is judged over its own span in the time range: from its first sample
+  when the silence before it in the time range lasts ≥ `LONG_GAP_MS` (or it comes after the
   window), to its last when the silence after it (to the data's end) does; shorter silence at
   either edge is lost scrapes and counts as missing. Long edge silence is membership change, not
-  loss (a series first seen after the window is named too, not dropped): named in a
+  loss (a series first seen after the time range is named too, not dropped): named in a
   `membership` caveat with the alternatives above and a hint to check whether
   set(<identity label>) per bucket (`pod`, `instance`, `host`, `container`, `node` preferred,
-  else the most distinct label; `count by (pod) (<selector>)`) is consistent over a wider window.
-  An `unknown` bucket anywhere in the window (also before the first sample: `unknown` beats
+  else the most distinct label; `count by (pod) (<selector>)`) is consistent over a wider time range.
+  An `unknown` bucket anywhere in the time range (also before the first sample: `unknown` beats
   `absent`, so the span itself is unknown) makes the member untrusted and never reads as
   membership. Members silent, under 50%, or untrusted are named (`MAX_NAMED` per list, with
   totals) in a warning; the claim is blocked only when more than half of the members alive in
@@ -193,12 +193,12 @@ accepts both shapes during migration.
 |---|---|
 | `observed` | samples in the bucket (today's `count`) |
 | `expected` | step / series' own sample interval (see below) |
-| `state` | `ok` · `partial` (observed/expected < 0.9) · `empty` (alive, 0 samples; also after the last sample, which cannot tell a series that left from one that will return) · `absent` (before the first sample in the window: not alive yet; trailing silence is `empty`, principle 9) · `unknown` (fetch failed, outside retention, source can't tell) |
+| `state` | `ok` · `partial` (observed/expected < 0.9) · `empty` (alive, 0 samples; also after the last sample, which cannot tell a series that left from one that will return) · `absent` (before the first sample in the time range: not alive yet; trailing silence is `empty`, principle 9) · `unknown` (fetch failed, outside retention, source can't tell) |
 | `flags` | bitmask: `reset`, `interval_change`, `stale_marker`, `source_filled` |
 | `reason` | for `unknown`/`source_filled`: short code from the source profile or error |
 
 Series interval `I` (samples mode) is judged **locally**, from the gaps between the series'
-non-zero buckets, so a series whose scrape rate changes within the window is judged against the
+non-zero buckets, so a series whose scrape rate changes within the time range is judged against the
 rate it has at that point. For each gap (non-zero bucket p to the next one, n) there are two
 neighbourhoods: the 16 gaps ending at p and the 16 after n. Each estimates `I` = Σgap / Σsamples
 over its gaps, leaving out holes (gaps over 2 × the centred median gap; bucketed gaps snap to whole
@@ -231,11 +231,11 @@ time since the series' last sample exceeds max(1.5 × I, I + step) (cadence miss
 silence likewise), else `ok`. Elsewhere every 0 bucket is `empty`, except at about one sample per
 bucket (step / I in [0.8, 1.2]): a scrape near a bucket boundary lands in the neighbouring bucket,
 so a lone 0 bucket paired with a 2 bucket (either order, only 1s between, each 2 pairing one 0) is
-`ok`; an unpaired 0 is a lost scrape. A 2 opening a run (window start, after a hole or `unknown`
+`ok`; an unpaired 0 is a lost scrape. A 2 opening a run (time range start, after a hole or `unknown`
 span) pairs with a 0 out of sight and gives no credit to a later 0, except right after a run of
 exactly two 0s bounded by samples (one lost scrape next to one that spilled; next to an
 `unknown` bucket the run may be longer), whose second 0 it pairs. A 0 still waiting for its 2
-at the window end, or before a hole or `unknown` span, is `ok` if the series was seen spilling.
+at the time range's end, or before a hole or `unknown` span, is `ok` if the series was seen spilling.
 There `expected` is the series' samples per bucket over its at-or-faster-than-step gaps, robust
 to loss: holes and `empty` buckets' time are left out, and it is re-estimated twice without the
 buckets short of the previous estimate (at least 1). A stretch with fewer samples per bucket
@@ -252,7 +252,7 @@ sample over the 5 non-zero buckets centred on each (Σgap / Σsamples, holes lef
 per-bucket values would flip on a steady ~1.5-step cadence, whose gaps alternate one and two
 steps); when that spans ≥ 2×, the buckets split at
 the geometric middle and, with 3 non-zero buckets a side and the slower side's lower quartile above
-the faster side's upper one, the side covering less of the window is flagged (with the 0 buckets of
+the faster side's upper one, the side covering less of the time range is flagged (with the 0 buckets of
 its gaps). Other series compare the counts of the halves of their non-zero buckets (≥ 2×, same
 separation rule). The caveat gives each side's interval as its time over its samples. Coarsening
 (§5.3) judges `empty` from states: a coarse bucket is `empty` only if none of its sub-buckets is
@@ -264,7 +264,7 @@ now and then (its skipped buckets `empty`), and a step-rate series losing more t
 its samples (or a slower one showing fewer than 2 gaps over the step) reads the other way; bucket counts cannot
 tell the two apart. Sustained heavy loss (more than about a fifth of the samples over a stretch)
 in a series scraped near or slower than the step can likewise surface as a slower rate rather
-than `partial`/`empty`: as `interval_change` when it covers part of the window, as
+than `partial`/`empty`: as `interval_change` when it covers part of the time range, as
 `interval_differs` when it covers most of it; at several samples per bucket it
 reads `partial`, with coverage showing the loss.
 
@@ -315,7 +315,7 @@ and are only trusted once verified there (✅ with fixture).
 | retention edge | `unknown` (not `empty`) before retention |
 
 Adapter rules:
-1. Values come from `*_over_time` / `rollup` over the step window, never instant evaluation;
+1. Values come from `*_over_time` / `rollup` over a query window equal to the step, never instant evaluation;
    unavoidable filling ⇒ `source_filled`.
 2. Can't tell ⇒ `unknown` with reason, never `ok`.
 3. Profile summary shown on the source card and in the provenance footer.
@@ -327,11 +327,11 @@ back over it, `idelta` returns the raw sample in the first bucket (`1h9.13`, `mj
 `deriv`, `rate_over_sum` verified unaffected); warnings / `isPartial` are ignored (`1h9.12`).
 Profiles are in `sources/semantics.py`.
 
-**Blind spot (`mj0`, undetectable from states).** A gap that straddles the *query window start*
+**Blind spot (`mj0`, undetectable from states).** A gap that straddles the *query time range start*
 reads `absent` ("series not seen yet") in the leading buckets, not `empty`, and VictoriaMetrics
-still computes the first returned value from the sample before the window
+still computes the first returned value from the sample before the time range
 (`vm__pg_straddle_*`: 615 instead of 15). No state or flag marks that bucket, so the post-gap
-caveat cannot cover it. It is indistinguishable from a series that really starts mid-window, and a
+caveat cannot cover it. It is indistinguishable from a series that really starts mid-range, and a
 magnitude test against the series' typical increase would also flag healthy series (a series
 that just restarted, a burst), so it is deliberately not guessed at: documented only. Mitigation
 for the reader: start the window a little before the period of interest.
@@ -421,14 +421,14 @@ cell = measured, nothing happened. Partial columns faded like low-n cells.
 
 ### 7.3 Window views (histogram, ECDF, CCDF, threshold readout)
 
-Coverage badge ("covers 87% of window · 5m missing · 2 resets"), with a tooltip listing missing steps; a mini rug only if real use shows the
+Coverage badge ("covers 87% of the time range · 5m missing · 2 resets"), with a tooltip listing missing steps; a mini rug only if real use shows the
 tooltip is not enough.
 Fractions/counts carry the caveat when coverage < 100%.
 
 ### 7.4 Hover hints
 
 On rug cells and textured columns: span · state + reason (from source profile) · observed/expected
-at resolution · last seen · for groups `reporting/alive` and silent ids.
+at the series interval · last seen · for groups `reporting/alive` and silent ids.
 
 ### 7.5 Accessibility
 
@@ -454,12 +454,12 @@ Neutral greys/textures ≥ 3:1 against background in both themes; states disting
 - UI unit: rug drawn iff any state ≠ ok; texture per state; isolated sample visible; stepped path
   geometry; hover content.
 - Findings validator: claim over `blocks_claim` span rejected; `warn` caveats copied.
-- E2E on local stack scenario (`1h9.5`): kill a target mid-window → rug shows `empty` for that
+- E2E on local stack scenario (`1h9.5`): kill a target mid-range → rug shows `empty` for that
   series, group shows silent member, Claude summary reports the gap.
 
 ## 10. Phasing (for the plan)
 
-1. Bundle + companion registry + `bucket_state` computation from existing `count` and resolution;
+1. Bundle + companion registry + `bucket_state` computation from existing `count` and the series interval;
    op declarations; summaries. (No source-profile dependency.)
 2. Structured caveats + footer index + findings rule; migration of string caveats.
 3. Partial fetch failures → `unknown` spans.

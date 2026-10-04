@@ -6,7 +6,7 @@ bands stay in M4 (4ok).
 - **Counter -> rate.** `TelemetryService.show_auto` (used by the MCP `show` tool and `POST /api/show`;
   the sync `show` is unchanged): when the dataset is a plain selector of a metric whose resolved type
   (`catalog_facts`: user > claude > stats > pack > metadata > rule, name rule included) is `counter`,
-  a new dataset `rate(<selector>[$__rate_interval])` is queried over the same window, step and
+  a new dataset `rate(<selector>[$__rate_interval])` is queried over the same time range, step and
   source, and the panel is drawn from it. The dataset that was asked for is untouched and cited in
   `spec.auto {transform, source_dataset, reason}`; the panel shows "Shown as a rate: ... the running
   total is dataset dN; ask Claude for it with show(raw=true)". `raw=true` draws the dataset as is.

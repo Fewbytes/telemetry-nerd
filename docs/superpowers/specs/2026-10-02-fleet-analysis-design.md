@@ -53,7 +53,7 @@ judge against:
 - **`band_window`** (odd steps from 13, the tests' pool and default, to min(steps, 121); else
   refused, saying the limit): larger pools sigma over +-band_window // 2 steps and smooths the
   centre by a centred moving median over band_window steps (a calmer band for long windows).
-  Flags are unchanged. The median is centred, so no phase lag mid-window, but a fleet-wide step
+  Flags are unchanged. The median is centred, so no phase lag mid-range, but a fleet-wide step
   is spread over +-band_window // 2 steps, fleet-wide peaks shorter than that are cut, and in the
   last band_window // 2 steps the median is one-sided and lags (stated as `smoothing`). Pooling
   works in blocks of steps (at most ~4M values at once), so a wide window does not materialise
@@ -74,14 +74,14 @@ judge against:
   per-member run rules.
 - **Widening** (a p-chart). A step is marked (a small wedge at the top) when the fleet widened
   faster than the +-6-step sigma tracks: its count c_t of unflagged members beyond 3 sigma, of n_t
-  usable, against p_hat = max(0.27%, the window's own share) (heavy tails are the fleet's shape,
+  usable, against p_hat = max(0.27%, the time range's own share) (heavy tails are the fleet's shape,
   not widening). Overdispersion (autocorrelated, heavy-tailed members): Pearson phi = mean over
   steps of (c - n p)^2 / (n p (1 - p)), floored at 1, and the test is quasi-binomial, c_t / phi
   against Bin(n_t / phi, p_hat). Chosen over Laney's p' chart, whose normal approximation is far
   off at p ~ 0.3% and counts of 0-5; the scaled binomial keeps the exact discrete tail. Each step
   is judged against p_hat and phi of the other steps (leave-one-out: one widened step would
   inflate its own phi and hide itself). Family-wise over the steps: each at 1% / steps with
-  n_t > 0, so the chance of any mark in the window is <= 1%. Null (100 members x 1440 steps,
+  n_t > 0, so the chance of any mark in the time range is <= 1%. Null (100 members x 1440 steps,
   150 seeds): AR(0.6) normal 0 marked windows, t(4) 0 (an earlier per-step 1% rule against a
   fixed 0.27% marked ~58% of the steps under t(4)). `widening` {steps, at, note, rule}; per group
   when grouped, and the top-level band lists each group's.
@@ -126,7 +126,7 @@ steps carry them), caveat (member error not propagated).
 members of different size: a ratio is the honest comparison), else linear; `scale` overrides.
 **Normalisation** (`normalise`): `none` (default; members compared as they are, so a member that
 is consistently higher is a persistent outlier) or `member` (each member divided by / minus its own
-median over the window: only *shape* is compared, level differences between heterogeneous members
+median over the time range: only *shape* is compared, level differences between heterogeneous members
 such as different instance sizes are removed, and the level test is off). The choice is stated.
 
 **Per-step deviation.** For member i at step t: d_it = y_it - median of the OTHER members at t,
@@ -146,7 +146,7 @@ Subtracting the per-step median removes everything the fleet shares (load, diurn
 | change | C_i = trimmed mean of z in the last third - in the first third | drifting / shifted |
 | excursions | max over t of abs z_it (spike), of its 5-step and 15-step rolling medians (episodes) | transient |
 
-Trimmed means make level blind to an episode under 20% of the window and change to one under 20%
+Trimmed means make level blind to an episode under 20% of the time range and change to one under 20%
 of a third. **Not medians:** the time-median of median-centred deviations is miscalibrated (2-4%
 false alarms against a 0.33% design in simulation): every step's median forces exactly half the
 members above it, which distorts the across-member distribution of time-medians. The trimmed mean
@@ -163,7 +163,7 @@ against 0.33%. Student t quantiles are computed exactly (incomplete beta), not b
 expansion: the far tail matters at Bonferroni levels.
 
 **Excursion tests.** Three durations share alpha / 3: single steps, and rolling medians over 5
-and 15 steps (most of the window must be out, so isolated heavy-tailed noise cannot fake an
+and 15 steps (most of the time range must be out, so isolated heavy-tailed noise cannot fake an
 episode). Per member-step threshold: Student t with the pooled sigma's df (0.3675 x pooled values
 / min(tau, 13) - 1, tau = the fleet's typical autocorrelation time of deviations), Bonferroni over
 all member-steps tested; for the rolling medians, in units of their own robust scale.
@@ -224,12 +224,12 @@ noise down to t(3) (1.3% at 300 seeds, 1.6% at 1000). See Calibration.
   persistent and drifting members, M = 60): normal AR(0.6) noise 0 of 800; t(4) noise 21 of 800
   (2.6%).
 `since`: start of the final stretch where the member's rolling median z (window max(5, 2 tau))
-stays beyond 2 in the outlier's direction; `since_window_start` when it covers the window start
+stays beyond 2 in the outlier's direction; `since_window_start` when it covers the time range's start
 (the member was off at least since then). `score` = the largest |statistic| / threshold (>= 1).
 The member's tau is computed on its calm steps with a linear trend removed (a drift is signal,
 not noise) and never below the fleet's typical tau.
 
-**Effect sizes and evidence.** Offset: 20% trimmed mean of d over the window, as a ratio to the
+**Effect sizes and evidence.** Offset: 20% trimmed mean of d over the time range, as a ratio to the
 other members (log scale) or a difference, with a 99% interval: winsorized sd / ((1 - 2 x 0.2)
 sqrt(n_eff)), t with n_eff - 1 df, n_eff = n / tau (Tukey-McLaughlin with autocorrelation).
 Change: last third minus first third, intervals combined. Transient: the same over the strongest
@@ -290,12 +290,12 @@ dataset whose op drops it) the fleet falls back to presence from values and says
   `members_partial` (members and spans; `warn` and in `caveats` above 5% of alive member-steps,
   else `info`). Outliers carry `partial_buckets` and, for transients, `episode_partial_buckets`
   per episode: an excursion that rests on half-empty buckets may be a collection artefact.
-- `appeared`: first seen after the window start (+ tolerance max(3 steps, 5%)), counting known steps
+- `appeared`: first seen after the time range start (+ tolerance max(3 steps, 5%)), counting known steps
   only.
 - `stopped_reporting`: last seen before the end (same tolerance, known steps), with `last_seen` and
   `state`: `marked_stale` when a staleness marker (bucket_state flag `stale_marker`) is on its buckets
   from the last sample on (the source marked the target or series stale; principle 9: report it
-  as "marked stale since T", not as "left": a wider window may show it return), else `silent`
+  as "marked stale since T", not as "left": a wider time range may show it return), else `silent`
   (alive, no samples, spec §5.2: listed next to the outliers, never silently dropped). Today no
   adapter sets `stale_marker`: Prometheus-family range queries never carry staleness markers
   (`stale_marker_visible` is false for Prometheus, Thanos, Mimir; VictoriaMetrics shows them only
@@ -338,8 +338,8 @@ dataset whose op drops it) the fleet falls back to presence from values and says
     date where the day changes), matching the HH:MMZ times in labels and summaries.
   - **Marks per mode** (<= 6 drawn, Okabe-Ito): persistent / shifted / drifting: the whole member
     line coloured, end label kind + effect ("+38% since 09:10", "shifted +41% at 10:07",
-    "drifting +2%/h"; "since window start" when the offset covers the window, the offset over
-    the since stretch, or "(window mean)" when it is not). Transient: the line grey (3:1 muted) where inside, only its episode
+    "drifting +2%/h"; "since the time range start" when the offset covers the window, the offset over
+    the since stretch, or "(time-range mean)" when it is not). Transient: the line grey (3:1 muted) where inside, only its episode
     segments coloured, each episode bracketed on the time axis, peak z in the label ("spike 6.1σ
     10:22–10:25 (momentary)"; a sustained run is an "episode"). Both: the coloured line plus
     muted, unlabelled episode brackets (uncalibrated, db0).
@@ -357,7 +357,7 @@ dataset whose op drops it) the fleet falls back to presence from values and says
 
 `uv run python scripts/calibrate_fleet.py --seeds 300` (fleets from `tests/unit/fleet_sim.py`):
 288 steps, shared daily load x exp(member level (sd 5%) + AR(1) noise (sd 10%)); planted members:
-persistent x1.8, transient x2.7 for 12 steps mid-window, drifting 0 -> x2.2 over the window.
+persistent x1.8, transient x2.7 for 12 steps mid-range, drifting 0 -> x2.2 over the time range.
 False alarm = share of homogeneous fleets in which ANY member is named (design: 1%). Detection =
 the planted member named with the right kind (drifting may be `shifted`).
 

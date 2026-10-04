@@ -16,7 +16,7 @@ instructions apply throughout.
    in one line; the old one stays reopenable (`workspace_list`, `workspace_switch`).
 2. **Scope the question** before touching data: the service or system, the time range (absolute
    times and timezone; a "spike" or "slow" needs a start, an end or "ongoing", and a baseline
-   window), the symptom (latency, errors, saturation, throughput, missing data), and the source.
+   time range), the symptom (latency, errors, saturation, throughput, missing data), and the source.
    Ask the user for whatever you cannot infer; at most one short round of questions. State the
    resulting scope in one line. Then `lessons_for(source, services=[...])` with the services in
    scope: say which approved lessons apply (id, text, evidence ids) and use them as priors
@@ -27,7 +27,7 @@ instructions apply throughout.
    the RED binding that covers the most services, for all of them (span metrics,
    `traces_span_metrics_*`, cover traced services that emit no HTTP/RPC metrics). Never conclude
    that a service or signal is absent from an empty query or catalog lookup: cite the `entities`
-   result and scope the claim to the labels and window it searched.
+   result and scope the claim to the labels and time range it searched.
 4. **Triage** per the `triage` skill: blast radius over those services, RED/USE per affected
    service, changepoints against the baseline, rule things out. Every panel answers an explicit
    question. A question you want to test up front may be a hypothesis (`hypothesis_create` with a
@@ -35,12 +35,12 @@ instructions apply throughout.
    does not replace step 5.
    **Annotate as you go** (the user reads the chart, not the log): once the evidence places the
    onset, `annotate(kind="event", at=<onset>, panel=<the panel that shows it>, label="onset: ...")`;
-   for a fault, outage or degradation window with a start and an end, `annotate(kind="region",
+   for a fault, outage or degradation period with a start and an end, `annotate(kind="region",
    at=<start>, until=<end>, panel=..., label=...)`, and mark the recovery (or "ongoing"). Use the
    onset interval's best estimate and put its bounds in the label. Annotate deploys, config
    changes and other events the user gave you the same way. Ask the user for such events once;
    if there are none, say so.
-5. **Cause hypotheses for the episode.** Once an episode is found (onset or window annotated),
+5. **Cause hypotheses for the episode.** Once an episode is found (onset or region annotated),
    `hypothesis_create` a cause that names its concrete subject (the failing service, a flag, a
    deploy, an arrival surge vs. a slow service) and at least one competing cause, then test them:
    `finding_create(..., hypotheses=[{"id": <cause>, "stance": "for"}, {"id": <competitor>,
@@ -53,7 +53,7 @@ instructions apply throughout.
 6. **Never claim without evidence.** (A signal you wish existed: `gap_create`.) A claim becomes
    `finding_create` with scope (source, selector, range, step) and evidence (for a change or
    deviation, the op's `evidence` statistic as returned, which carries its variation source; the
-   panel and the annotation id for an onset or window beside it), and attaches to a hypothesis
+   panel and the annotation id for an onset or region beside it), and attaches to a hypothesis
    with its stance. Refuting evidence is recorded too. Name only the entities (services, pods,
    jobs) your cited evidence covers: a claim naming one outside it is refused with the datasets
    that hold it, so cite those; only when the claim must reach beyond its evidence pass

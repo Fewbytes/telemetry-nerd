@@ -35,17 +35,17 @@ outrank the user, and you do not try. If your write comes back
 
 ## Measuring behaviour
 
-`catalog_scan` samples a bounded set of metrics over a short window (default 30m) and records what
+`catalog_scan` samples a bounded set of metrics over a short time range (`window`, default 30m) and records what
 it saw: resets, small decreases (a counter never does that), negatives. It writes `stats` claims
 where the evidence is strong and files system findings for contradictions (a declared gauge that
 only grows, a counter that decreases, negative values under a non-negative claim). Use it on the
 metrics an investigation touches, or one family at a time, never on a whole source. A result is
-a suggestion from a short window: a quiet counter looks constant, a slow gauge looks monotonic.
+a suggestion from a short time range: a quiet counter looks constant, a slow gauge looks monotonic.
 Read the findings before overriding a pack or the source's declaration, and cite the scan
 (`basis`) when you write a claim that rests on it.
 
 What a scan and the catalog record about the instruments (resets, a counter that decreases, the
-scrape interval, units, which members report) is the **measurement system**, one of the three
+series interval, units, which members report) is the **measurement system**, one of the three
 sources of variation the analysis ops label (principle 8; spec §5.4). Analyses lean on it to tell instrument
 error apart from process variation, so a wrong unit or interval claim moves variation into the
 wrong source: record such facts with evidence, and say when they are unknown.
@@ -88,7 +88,7 @@ line naming what you actually checked. A claim without a real basis is a guess; 
 | Naming convention only (`_seconds`, `_total`) | 0.6-0.7 |
 | Declared HELP text states it plainly | 0.75-0.85 |
 | Source code, exporter docs, or the emitting library's documented behavior (cite file/URL) | 0.8-0.9 |
-| Observed values consistent with the claim (range, monotonicity, resets) over a real window | 0.7-0.8, never more than documentation |
+| Observed values consistent with the claim (range, monotonicity, resets) over a real time range | 0.7-0.8, never more than documentation |
 | "Probably" | do not write |
 
 Rules that keep the catalog honest:

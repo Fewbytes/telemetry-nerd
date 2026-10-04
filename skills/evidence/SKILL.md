@@ -40,25 +40,25 @@ baseline_end?}`. `step` is the dataset's resolved step from its summary (`1m`), 
   refuses a claim naming others (`claim_beyond_evidence`, with the datasets of the same metric
   that hold them): cite those too, or split the claim. Pooled evidence (`sum(rate(x[1m]))`)
   covers a service when the source holds one value of the label over its range: a dataset of
-  the same metric by service, or `entities(kind="service")` (or `metric=`) over a window
+  the same metric by service, or `entities(kind="service")` (or `metric=`) over a time range
   holding the range, listing exactly one; the result's `scope.message` names that witness. `scope_note` (why the claim reaches further) records it
   flagged `beyond_evidence` instead; use it rarely and repeat it in the report.
-- **Time range and reference**: the window judged and what it was compared with ("against the 4
+- **Time range and reference**: the time range judged and what it was compared with ("against the 4
   previous hours", "the same hour on 7 previous days"). A verdict without its reference is not a
   claim.
 - **Population**: requests (histogram observations) or per-step samples (scrape values);
   `show_marginal` and `fraction_over` say which. A share of requests is not a share of time.
 - **Aggregation**: how members were combined (summed counts, per member). Never generalise from
-  a member to the service, from one source to production, or from this window to "always".
+  a member to the service, from one source to production, or from this time range to "always".
 
 Missing data narrows scope: `coverage`, `unknown_spans` and `silent_members` say where nothing was
-measured. Say "no change detected in the 92% of the window that was measured", not "no change".
+measured. Say "no change detected in the 92% of the time range that was measured", not "no change".
 
 **Positive vs negative claims.** What was observed can be claimed outright ("s3 had no samples
 10:20-10:45Z"). What is absent or complete ("nothing missing", "all members reported", "s3 left",
-"it did not recur") holds only for the finite set examined: this window, these members. Time
+"it did not recur") holds only for the finite set examined: this time range, these members. Time
 series are never finite, so scope every negative claim to the interval and members analyzed, and
-never extend it to the series, the service or the future. A series silent until the window end
+never extend it to the series, the service or the future. A series silent until the time range's end
 is "no samples since 10:45Z", not "left"; a gap with samples on both sides is an observed
 disconnect. When the negative question matters, name the wider check that would test it (for
 example: is the set of `pod` values per bucket the same over the previous day). Principle 9.

@@ -10,7 +10,7 @@ resolves the range from it plus the drawn data.
   (lower bound 0, "counter rate"). Mixed expressions get none (a ratio of two metrics belongs to
   neither's bounds).
 - **physical limit**: for a plain selector with a `bounded_by` relation, the bounding metric under
-  the same label matchers is fetched over the panel's window/step as its own dataset
+  the same label matchers is fetched over the panel's time range/step as its own dataset
   (`limit.dataset`, reusable by 2as.11 for the limit line); `limit.hi` is its max. Not applied to
   rates of the bounded metric.
 - **operating range** from the T1 profile (`ProfileService.ensure`): pooled envelope (or robust

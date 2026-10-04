@@ -56,12 +56,12 @@ Read and report:
 - The duration verdict is the share of requests above 0.25 s (the bucket edge where the reference
   share above is nearest 5%; coarse buckets leave it at 1.2%): 1.2% in the reference, 5.4% now.
   It is not a percentile.
-- `family`: 3 roles judged, 5% family-wise. `reference.label`: "previous windows", 4 cycles.
+- `family`: 3 roles judged, 5% family-wise. `reference.label`: "previous time ranges", 4 cycles.
 - The duration role carries the `overdispersed` caveat and the errors role `noisier_than_reference`
   (its share is noisier now than in the reference, so the larger spread is used): the intervals
   already account for both, so say so rather than quoting the odds ratios as exact.
 
-An answer built from this: "Against the 4 previous windows at 5% family-wise over 3 signals, the
+An answer built from this: "Against the 4 previous time ranges at 5% family-wise over 3 signals, the
 share of requests slower than 250 ms rose from 1.2% to 5.4% (intervals and n from `level` and
 `evidence`) from about 10:00Z (09:56-10:02Z, approximate); the
 5xx share rose in a burst from about 10:20Z (10:17-10:22Z). The onset intervals do not overlap, so

@@ -134,11 +134,12 @@ Each dataset declares:
 
 - **representation:** `sample` (instant point), `bucket_agg` (aggregated over step),
   `distribution`, or `estimate` (fit/statistic with interval);
-- **native resolution** (scrape interval) and **display step**;
+- **series interval** (the scrape interval, for scraped metrics) and **query step**; level of
+  detail draws it at a **display bucket** (terms: `docs/glossary.md`);
 - **unit** and catalog reference;
 - producing **node**.
 
-A step smaller than the native resolution raises a `fake_resolution` caveat.
+A query step smaller than the series interval raises a `fake_resolution` caveat.
 
 ### 3.3 Workspace objects
 
@@ -221,7 +222,7 @@ finding that uses it; low goodness tags `weak_fit`.
 class Source(Protocol):
     async def discover(self) -> Discovery: ...
         # metric list, metadata (type/help/unit), label names, cardinality,
-        # inferred scrape interval
+        # inferred series interval
     def fetch(self, expr: str, range: TimeRange, step: Duration) -> AsyncIterator[RecordBatch]: ...
         # rollup buckets: avg, min, max, count — chunked
     def fetch_histogram(self, metric: str, selector: str, range: TimeRange,
@@ -580,9 +581,9 @@ at explicit user request, and render as a caveat on the panel.
 ```
 
 - **Question** header (required) and answer status linking to the finding.
-- **Marginal histogram** on the y-axis: current window vs reference window.
+- **Marginal histogram** on the y-axis: current time range vs reference time range.
 - **Metric card** (collapsible): description; type/unit/bounds; learnings with origin and
-  confidence, confirm/edit in place; operating profile; data quality (scrape interval, gap
+  confidence, confirm/edit in place; operating profile; data quality (series interval, gap
   %, resets, cardinality); spectrum thumbnail (dominant periods); related signals and
   bindings as links; gaps.
 - **Provenance footer:** source, scope, step, representation, caveats — always rendered.

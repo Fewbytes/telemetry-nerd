@@ -32,7 +32,7 @@ Pack `[[reframe]]` rules (`MemFree`→`MemAvailable`, `filesystem free`→`avail
 apply when the source has the replacement; a generated "% of <limit>" appears for a plain selector with
 a same-label hard limit. They are stored on the panel's y context, shown as buttons with the reason on
 hover, and returned by `show` to Claude. Accepting one (`POST /api/panels/{id}/reframe`, MCP `reframe`)
-creates a NEW panel over the same window and step, marked `auto.transform = "reframe"` with a
+creates a NEW panel over the same time range and step, marked `auto.transform = "reframe"` with a
 caveat on it; the original is untouched.
 
 ## Gaps
