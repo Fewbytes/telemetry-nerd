@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import time
+from collections.abc import Callable
 from pathlib import Path
+
+from telemetry_nerd.model.time import now_ms
 
 _EVENTS_DDL = """CREATE TABLE IF NOT EXISTS events (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -223,7 +225,7 @@ _WORKSPACE_INDEXES = (
 )
 
 
-def _seed_w1(con: sqlite3.Connection) -> None:
+def _seed_w1(con: sqlite3.Connection, clock: Callable[[], int]) -> None:
     """Existing data becomes workspace w1 (spec Migration): its creation time is the earliest
     event or panel, its settings the old workspace_settings rows. Ids continue at w2."""
     con.execute("BEGIN IMMEDIATE")
@@ -233,7 +235,7 @@ def _seed_w1(con: sqlite3.Connection) -> None:
                 "SELECT MIN(t) FROM (SELECT MIN(ts_ms) AS t FROM events"
                 " UNION ALL SELECT MIN(created_at_ms) FROM panels)"
             ).fetchone()
-            now = int(time.time() * 1000)
+            now = clock()
             settings = dict(con.execute("SELECT key, value FROM workspace_settings"))
             con.execute(
                 "INSERT INTO workspaces (id, title, created_at_ms, opened_at_ms, settings)"
@@ -270,7 +272,8 @@ def _migrate_event_actors(con: sqlite3.Connection) -> None:
         raise
 
 
-def open_workspace_db(path: str | Path) -> sqlite3.Connection:
+def open_workspace_db(path: str | Path, clock: Callable[[], int] = now_ms) -> sqlite3.Connection:
+    """`clock` stamps a fresh w1 (the daemon's or a test's clock, never the wall clock directly)."""
     con = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
     con.execute("PRAGMA journal_mode=WAL")
     con.executescript(_SCHEMA)
@@ -292,5 +295,5 @@ def open_workspace_db(path: str | Path) -> sqlite3.Connection:
             con.execute(_WORKSPACE_COLUMN.format(table=table))
     for ddl in _WORKSPACE_INDEXES:
         con.execute(ddl)
-    _seed_w1(con)
+    _seed_w1(con, clock)
     return con

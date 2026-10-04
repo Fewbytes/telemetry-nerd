@@ -339,7 +339,9 @@ class ProfileService:
         df = df.filter(keep)
         wanted = {s.series_id for s in p.series if s.seasonal and s.seasonal.period != "none"}
         out = []
-        for (sid,), g in df.sort("ts_ms").group_by("series_id", maintain_order=True):
+        for (sid,), g in df.sort("ts_ms", maintain_order=True).group_by(
+            "series_id", maintain_order=True
+        ):
             if sid not in wanted:
                 continue
             ts = g["ts_ms"].to_numpy()

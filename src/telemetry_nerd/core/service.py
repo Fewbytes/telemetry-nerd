@@ -278,7 +278,8 @@ class TelemetryService:
     active: ActiveWorkspace
     registry: WorkspaceRegistry
     clock: Callable[[], int] = now_ms
-    presence: PresenceRegistry = field(default_factory=PresenceRegistry)
+    #: bridge presence, stamped by this service's clock (zek0.3)
+    presence: PresenceRegistry = field(init=False)
     signal: SignalOps = field(init=False)
     diagnostics: SeriesDiagnostics = field(init=False)
     profiles: ProfileService = field(init=False)
@@ -302,6 +303,7 @@ class TelemetryService:
     retro: RetroOps = field(init=False)
 
     def __post_init__(self) -> None:
+        self.presence = PresenceRegistry(self.clock)
         self.ws.current = self._current_workspace
         self.workspaces = WorkspaceOps(
             self.registry, self.active, self.log, self.sources, self.source_connect,
@@ -403,7 +405,8 @@ class TelemetryService:
             ]
             before = set(out["caveats"])
             mark_statistics(out, self.datasets, used)
-            for c in set(out["caveats"]) - before:  # spec 5.4: the measurement system's variation
+            # in caveat order, not set order (string hashing is per process, n3sv)
+            for c in [c for c in out["caveats"] if c not in before]:  # spec 5.4: measurement's
                 for s in out["series"]:
                     s["variation"] += measurement_items([c])
             return out

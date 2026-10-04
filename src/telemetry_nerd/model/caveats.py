@@ -163,7 +163,9 @@ def from_bucket_state(
         return []
     df = pl.from_arrow(states)
     out = _untrusted(df, step_ms, failed)
-    for (sid,), g in df.sort("ts_ms").group_by("series_id", maintain_order=True):
+    for (sid,), g in df.sort("ts_ms", maintain_order=True).group_by(
+        "series_id", maintain_order=True
+    ):
         name = names.get(sid, sid)
         empty_ts = g.filter(pl.col("state") == int(State.EMPTY))["ts_ms"].to_list()
         partial_ts = g.filter(pl.col("state") == int(State.PARTIAL))["ts_ms"].to_list()

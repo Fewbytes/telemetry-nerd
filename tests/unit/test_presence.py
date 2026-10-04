@@ -85,3 +85,11 @@ async def test_subscribers_get_consumer_on_every_change():
     reg.unsubscribe(q)
     reg.connect("claude", "hook")
     assert q.empty()
+
+
+def test_service_presence_uses_the_service_clock(tmp_path):
+    from tests.unit.fakes import make_service
+
+    svc = make_service(tmp_path, clock=lambda: 777)  # not the wall clock (zek0.3)
+    svc.presence.connect("claude", "hook")
+    assert svc.presence.snapshot("claude")["since_ms"] == 777

@@ -197,8 +197,8 @@ def test_a_slow_profile_is_pending_and_says_re_run(svc, monkeypatch):
     fetch = src.fetch
 
     async def slow(expr, rng, step_ms):
-        if step_ms == H:  # the profile's hourly history
-            await asyncio.sleep(0.5)
+        if step_ms == H:  # the profile's hourly history never arrives in time (zek0.3)
+            await asyncio.Event().wait()
         return await fetch(expr, rng, step_ms)
 
     src.fetch = src.fetch_values = slow

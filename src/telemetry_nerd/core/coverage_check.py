@@ -321,7 +321,10 @@ def _verdict(
         return [caveat("untrusted_data", "blocks_claim", UNOBSERVABLE_MESSAGE + " Re-query a "
                        "simpler expression (e.g. split it into its selectors) instead of retrying "
                        "this one.")]  # fmt: skip
-    groups = [g for _, g in df.sort("ts_ms").group_by("series_id", maintain_order=True)]
+    groups = [
+        g
+        for _, g in df.sort("ts_ms", maintain_order=True).group_by("series_id", maintain_order=True)
+    ]
     if len(ids) == 1:
         m = _judge(groups[0], start_ms, end_ms, step_ms, False)
         return _single(m, labels, caveat, selector)

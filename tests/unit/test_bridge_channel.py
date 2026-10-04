@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import io
 import json
@@ -165,9 +164,9 @@ async def test_bridge_handshake_captures_session(live_daemon):
         assert client.session.server_capabilities.tools is not None
         assert "Telemetry Nerd workspace" in (client.session.instructions or "")
         assert live_daemon.url in (client.session.instructions or "")
-        # notifications/initialized is dispatched asynchronously by the runner;
-        # give it a moment to land before asserting the capture.
-        await asyncio.sleep(0.3)
+        # notifications/initialized is dispatched asynchronously by the runner: wait for
+        # the capture itself, not a fixed delay (zek0.3)
+        await _until(lambda: delivery.session is not None)
         # notifications/initialized observed the handshake: session captured,
         # but the gate stays closed (this client advertised nothing).
         assert delivery.session is not None

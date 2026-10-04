@@ -88,7 +88,9 @@ def _grouped(table, labels: dict[str, dict]) -> dict[str, tuple[dict, np.ndarray
     """sid -> (labels, ts_ms, y) of the steps with a finite value, sorted by time."""
     df = pl.from_arrow(table).with_columns(pl.col("avg").fill_nan(None)).drop_nulls("avg")
     out: dict[str, tuple[dict, np.ndarray, np.ndarray]] = {}
-    for (sid,), g in df.sort("ts_ms").group_by("series_id", maintain_order=True):
+    for (sid,), g in df.sort("ts_ms", maintain_order=True).group_by(
+        "series_id", maintain_order=True
+    ):
         out[sid] = (labels.get(sid, {}), g["ts_ms"].to_numpy(), g["avg"].to_numpy())
     return out
 

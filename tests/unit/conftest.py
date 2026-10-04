@@ -67,3 +67,13 @@ def spawned_daemon(url: str, tmp_path) -> Iterator[LiveDaemon]:
 def live_daemon(tmp_path) -> Iterator[LiveDaemon]:
     with spawned_daemon(f"http://127.0.0.1:{_free_port()}", tmp_path) as daemon:
         yield daemon
+
+
+def pytest_terminal_summary(terminalreporter, config) -> None:
+    """Test order is random (pytest-randomly; zek0.3): name the seed even under -q, so any
+    order-dependent failure reproduces with that one flag."""
+    seed = getattr(config.option, "randomly_seed", None)
+    if isinstance(seed, int) and config.pluginmanager.has_plugin("randomly"):
+        terminalreporter.write_line(
+            f"test order: --randomly-seed={seed} (-p no:randomly: file order)"
+        )

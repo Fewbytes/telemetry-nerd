@@ -128,7 +128,9 @@ def _spans(ts: np.ndarray, mask: np.ndarray) -> list[list[int]]:
 def filter_buckets(spec: FilterSpec, buckets: pa.Table, step_ms: int) -> FilterOutput:
     df = pl.from_arrow(buckets).with_columns(pl.col("avg").fill_nan(None)).drop_nulls("avg")
     parts, edges, removed, n_edge = [], {}, {}, 0
-    for (sid,), g in df.sort("ts_ms").group_by("series_id", maintain_order=True):
+    for (sid,), g in df.sort("ts_ms", maintain_order=True).group_by(
+        "series_id", maintain_order=True
+    ):
         ts, y = g["ts_ms"].to_numpy(), g["avg"].to_numpy()
         f = apply(spec, ts, y, step_ms)
         inner = ~f.edge

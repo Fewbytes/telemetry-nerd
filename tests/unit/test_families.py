@@ -98,9 +98,9 @@ def test_three_hundred_thousand_names_in_seconds():
         f"airflow_ti_finish_dag{i % 900}_task{i}_{s}" for i in range(24_000) for s in ("ok", "bad")
     ] * 6
     names += [f"other_{i}_gauge" for i in range(30_000)]
-    t = time.monotonic()
+    t = time.process_time()  # CPU time: a loaded machine slows the wall clock, not this (zek0.3)
     d = detect(names)
-    assert time.monotonic() - t < 15 and d.families
+    assert time.process_time() - t < 15 and d.families
 
 
 # evaluation on the hand-labelled Wikimedia sample --------------------------------------------

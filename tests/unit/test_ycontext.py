@@ -260,7 +260,7 @@ async def test_profile_without_true_extremes_uses_the_robust_quantiles(svc):
 
 async def test_slow_profile_is_pending_not_blocking(svc, monkeypatch):
     async def slow(source, expr, force=False):
-        await asyncio.sleep(5)
+        await asyncio.Event().wait()  # never in time, whatever the load (zek0.3)
 
     svc.profiles.ensure = slow  # type: ignore[method-assign]
     monkeypatch.setattr(service_mod, "PROFILE_WAIT_S", 0.05)

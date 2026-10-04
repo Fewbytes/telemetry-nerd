@@ -153,7 +153,7 @@ def make_service(
 ) -> TelemetryService:
     source = source or FakeSource()
     con = open_duckdb(tmp_path / "series.duckdb")
-    wcon = open_workspace_db(tmp_path / "workspace.db")
+    wcon = open_workspace_db(tmp_path / "workspace.db", clock)
     registry = WorkspaceRegistry(wcon, lambda prefix: workspace.next_id(prefix), clock)
     active = ActiveWorkspace(registry.active_id())
     workspace = WorkspaceStore(wcon, clock=clock, scope=active, registry=registry)

@@ -48,7 +48,8 @@ def column_quantiles(
             pl.col("count").cum_sum().over(_KEYS).alias("acc"),
             pl.col("count").sum().over(_KEYS).alias("total"),
         )
-        .join(cols.select([*_KEYS, "n"]), on=_KEYS, how="inner")
+        # left order: `.first()` below takes each column's lowest bucket reaching q (n3sv)
+        .join(cols.select([*_KEYS, "n"]), on=_KEYS, how="inner", maintain_order="left")
     )
     out: dict[str, dict[str, dict[str, list]]] = {}
     for q in qs:

@@ -248,7 +248,8 @@ def summarize(
         .with_columns(
             pl.max_horizontal(pl.lit(expected) - pl.col("with_data"), pl.lit(0)).alias("gaps")
         )
-        .sort("max", descending=True, nulls_last=True)
+        # ties (equal max, all-null) by id: group_by order is random per process (n3sv)
+        .sort("max", "series_id", descending=[True, False], nulls_last=True)
     )
     if per["gaps"].sum() > 0:
         caveats.insert(0, "gaps")
@@ -299,7 +300,11 @@ def _summarize_quantile(
         .with_columns(
             pl.max_horizontal(pl.lit(expected) - pl.col("buckets"), pl.lit(0)).alias("gaps")
         )
-        .sort("n_total" if meta.n_min is not None else "buckets", descending=True)
+        .sort(
+            "n_total" if meta.n_min is not None else "buckets",
+            "series_id",
+            descending=[True, False],
+        )
     )
     if meta.n_min is None:
         caveats.append("n_unknown")
@@ -381,7 +386,8 @@ def summarize_distribution(
             pl.len().alias("columns"),
             (pl.col("n") == 0).sum().alias("zero_columns"),
             ((pl.col("n") > 0) & (pl.col("n") < n_min)).sum().alias("low_n_columns"),
-            pl.col("ts_ms").sort_by("n").last().alias("busiest_ts"),
+            # the latest of the busiest columns: rows owe no order (n3sv)
+            pl.col("ts_ms").sort_by("n", "ts_ms").last().alias("busiest_ts"),
             pl.col("n").max().alias("busiest_n"),
         )
         .with_columns(
@@ -389,7 +395,7 @@ def summarize_distribution(
                 "missing_columns"
             )
         )
-        .sort("n_total", descending=True)
+        .sort("n_total", "series_id", descending=[True, False])
     )
     merged: dict[str, list[tuple[float, float, float]]] = {}
     for r in (

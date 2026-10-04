@@ -66,6 +66,13 @@ def test_fresh_db_starts_with_w1(tmp_path):
     assert con.execute("SELECT id FROM workspaces").fetchall() == [("w1",)]
 
 
+def test_fresh_w1_times_come_from_the_injected_clock(tmp_path):
+    # not the wall clock: a test's (or the daemon's) clock owns every timestamp (zek0.3)
+    con = open_workspace_db(tmp_path / "workspace.db", clock=lambda: 123_456)
+    row = con.execute("SELECT created_at_ms, opened_at_ms FROM workspaces").fetchone()
+    assert row == (123_456, 123_456)
+
+
 def test_reopen_keeps_a_user_edited_w1_row(tmp_path):
     path = tmp_path / "workspace.db"
     old_db(path)

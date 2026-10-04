@@ -482,7 +482,9 @@ class CodeOps:
         if df.height == 0:
             return out
         series = []
-        for sid, g in df.sort("ts_ms").group_by("series_id", maintain_order=True):
+        for sid, g in df.sort("ts_ms", maintain_order=True).group_by(
+            "series_id", maintain_order=True
+        ):
             v = g["avg"].drop_nulls()
             if v.len() == 0:
                 continue

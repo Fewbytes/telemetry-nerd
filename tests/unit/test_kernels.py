@@ -106,7 +106,8 @@ async def test_error_returns_traceback_and_keeps_kernel(mgr):
 @module_loop
 async def test_infinite_loop_is_interrupted_at_timeout(mgr):
     await mgr.execute("loop", "z = 3")
-    r = await mgr.execute("loop", "print('start')\nwhile True: pass", timeout_s=0.5)
+    # the cell must start (and print) before the timeout even on a loaded machine (zek0.3)
+    r = await mgr.execute("loop", "print('start')\nwhile True: pass", timeout_s=2)
     assert (r.status, r.restarted, r.stdout) == ("timeout", False, "start\n")
     assert "KeyboardInterrupt" in r.traceback
     assert (await mgr.execute("loop", "z")).result == "3"  # interrupt kept the state

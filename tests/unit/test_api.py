@@ -24,6 +24,16 @@ def client(tmp_path):
 JSON = {"content-type": "application/json"}
 
 
+def _until(predicate, timeout_s: float = 10.0) -> bool:
+    """Poll a condition the server thread sets: a deadline, not a fixed number of sleeps."""
+    deadline = time.monotonic() + timeout_s
+    while not predicate():
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.01)
+    return True
+
+
 def make_panel(client, question="Is it stable?"):
     ds = client.post("/api/query", json={"expr": "up", "start": "now-2h", "end": "now-1h"}).json()
     return client.post("/api/show", json={"dataset": ds["dataset"], "question": question})
@@ -101,16 +111,8 @@ def test_websocket_disconnect_unsubscribes(tmp_path):
     service = make_service(tmp_path)
     with TestClient(_app(service)) as c:
         with c.websocket_connect("/ws"):
-            for _ in range(100):
-                if service.log.subscriber_count == 1:
-                    break
-                time.sleep(0.01)
-            assert service.log.subscriber_count == 1
-        for _ in range(200):
-            if service.log.subscriber_count == 0:
-                break
-            time.sleep(0.01)
-        assert service.log.subscriber_count == 0
+            assert _until(lambda: service.log.subscriber_count == 1)
+        assert _until(lambda: service.log.subscriber_count == 0)
 
 
 @pytest.mark.parametrize("path", ["/api/query", "/api/show", "/api/render-report"])

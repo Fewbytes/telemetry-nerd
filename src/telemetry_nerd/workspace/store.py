@@ -43,7 +43,7 @@ class WorkspaceStore:
         scope: Callable[[], str] = lambda: "w1",
         registry: WorkspaceRegistry | None = None,
     ) -> None:
-        self._db = db if isinstance(db, sqlite3.Connection) else open_workspace_db(db)
+        self._db = db if isinstance(db, sqlite3.Connection) else open_workspace_db(db, clock)
         self._clock = clock
         self._scope = scope
         self._registry = registry

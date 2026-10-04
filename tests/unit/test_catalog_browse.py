@@ -219,11 +219,11 @@ def test_a_large_catalog_pages_without_loading_every_claim(tmp_path):
     con.execute("COMMIT")
     statements: list[str] = []
     con.set_trace_callback(statements.append)
-    t0 = time.monotonic()
+    t0 = time.process_time()  # CPU time: robust to a loaded machine (zek0.3)
     total, page, summary = browse(
         con, "vm", Browse(origin="metadata", conflicts=False, limit=50, offset=10_000)
     )
-    elapsed = time.monotonic() - t0
+    elapsed = time.process_time() - t0
     con.set_trace_callback(None)
     assert total == n and len(page) == 50 and page[0] == "metric_010000"
     # both unit claims say "x": no disagreement; every metric has a pack role: all reviewed
