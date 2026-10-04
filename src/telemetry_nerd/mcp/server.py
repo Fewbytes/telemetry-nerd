@@ -28,7 +28,7 @@ from telemetry_nerd.model.jsonsafe import dumps
 from telemetry_nerd.model.time import format_duration, iso, parse_duration, parse_time
 from telemetry_nerd.retro.models import LessonScope
 from telemetry_nerd.sources.base import SourceError
-from telemetry_nerd.sources.grafana import discover_datasources, probe_backend
+from telemetry_nerd.sources.grafana import discover_datasources, probe_backend, proxy_url
 from telemetry_nerd.sources.public import PUBLIC_SOURCES
 from telemetry_nerd.sources.spec import AuthRef, SourceSpec
 from telemetry_nerd.workspace.models import (
@@ -230,6 +230,13 @@ def _trim_to_fit(items: list, render: Callable[[list], dict]) -> tuple[list, int
         items.pop()
         cut += 1
     return items, cut
+
+
+def _auth_ref(auth_env: str | None, auth_file: str | None, auth_scheme: str) -> dict | None:
+    """The auth reference (never the secret) a tool's auth_env/auth_file/auth_scheme name."""
+    if auth_env is None and auth_file is None:
+        return None
+    return {"env": auth_env, "file": auth_file, "scheme": auth_scheme}
 
 
 def _dump(obj: dict) -> str:
@@ -862,57 +869,14 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         The source is probed before it is saved; it persists across daemon restarts.
         Returns {source, status} (plus {backend} when detected via grafana+uid).
         """
-        try:
-            if grafana is not None:
-                if url is not None:
-                    raise ToolError("pass either grafana+uid or url, not both")
-                if uid is None:
-                    raise ToolError(
-                        "grafana needs uid: see source_discover_grafana(url=...) for datasource uids"
-                    )
-                auth = None
-                if auth_env is not None or auth_file is not None:
-                    auth = {"env": auth_env, "file": auth_file, "scheme": auth_scheme}
-                auth_ref = AuthRef.model_validate(auth) if auth else None
-                proxy_url = f"{grafana.rstrip('/')}/api/datasources/proxy/uid/{uid}"
-                backend, detected_flavor = await probe_backend(proxy_url, auth_ref)
-                spec = SourceSpec.model_validate(
-                    {
-                        "name": name,
-                        "url": proxy_url,
-                        "flavor": detected_flavor,
-                        "resolution_ms": None
-                        if resolution == "auto"
-                        else parse_duration(resolution),
-                        "auth": auth,
-                        "politeness": {
-                            "max_concurrency": max_concurrency,
-                            "min_interval_ms": parse_duration(min_interval),
-                            "timeout_s": parse_duration(timeout) / 1000,
-                        },
-                        "profile_source": profile_source,
-                        "timezone": timezone,
-                    }
-                )
-                out = await service.source_connect(spec, replace=replace)
-                out["backend"] = backend
-                return _dump(out)
-            if url is None:
-                entry = PUBLIC_SOURCES.get(name)
-                if entry is None:
-                    raise ToolError(
-                        f"no url given and {name!r} is not a public source "
-                        f"(known: {', '.join(sorted(PUBLIC_SOURCES))})"
-                    )
-                return _dump(await service.source_connect(entry.to_spec(), replace=replace))
-            auth = None
-            if auth_env is not None or auth_file is not None:
-                auth = {"env": auth_env, "file": auth_file, "scheme": auth_scheme}
-            spec = SourceSpec.model_validate(
+        auth = _auth_ref(auth_env, auth_file, auth_scheme)
+
+        def spec(source_url: str, source_flavor: str) -> SourceSpec:
+            return SourceSpec.model_validate(
                 {
                     "name": name,
-                    "url": url,
-                    "flavor": flavor,
+                    "url": source_url,
+                    "flavor": source_flavor,
                     "resolution_ms": None if resolution == "auto" else parse_duration(resolution),
                     "auth": auth,
                     "politeness": {
@@ -924,7 +888,32 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                     "timezone": timezone,
                 }
             )
-            return _dump(await service.source_connect(spec, replace=replace))
+
+        try:
+            if grafana is not None:
+                if url is not None:
+                    raise ToolError("pass either grafana+uid or url, not both")
+                if uid is None:
+                    raise ToolError(
+                        "grafana needs uid: see source_discover_grafana(url=...) for datasource uids"
+                    )
+                datasource_url = proxy_url(grafana, uid)
+                backend, detected_flavor = await probe_backend(
+                    datasource_url, AuthRef.model_validate(auth) if auth else None
+                )
+                out = await service.source_connect(
+                    spec(datasource_url, detected_flavor), replace=replace
+                )
+                return _dump({**out, "backend": backend})
+            if url is None:
+                entry = PUBLIC_SOURCES.get(name)
+                if entry is None:
+                    raise ToolError(
+                        f"no url given and {name!r} is not a public source "
+                        f"(known: {', '.join(sorted(PUBLIC_SOURCES))})"
+                    )
+                return _dump(await service.source_connect(entry.to_spec(), replace=replace))
+            return _dump(await service.source_connect(spec(url, flavor), replace=replace))
         except ValidationError as e:
             raise _fail(e) from e
         except SourceError as e:
@@ -957,12 +946,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         source_connect(grafana=..., uid=...) asks the datasource's own buildinfo.
         """
         try:
-            auth = None
-            if auth_env is not None or auth_file is not None:
-                auth = AuthRef.model_validate(
-                    {"env": auth_env, "file": auth_file, "scheme": auth_scheme}
-                )
-            datasources = await discover_datasources(url, auth)
+            auth = _auth_ref(auth_env, auth_file, auth_scheme)
+            datasources = await discover_datasources(
+                url, AuthRef.model_validate(auth) if auth else None
+            )
             return _dump(
                 {"grafana_url": url.rstrip("/"), "datasources": [d.describe() for d in datasources]}
             )

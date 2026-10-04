@@ -14,7 +14,8 @@ annotation; here it is asked for directly because a Grafana URL comes with no su
 from __future__ import annotations
 
 import os
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Iterable, Mapping
+from contextlib import asynccontextmanager
 from typing import Literal
 
 import httpx
@@ -37,6 +38,11 @@ UNSUPPORTED_HINT = (
 )
 
 
+def proxy_url(grafana_url: str, uid: str) -> str:
+    """The Prometheus-compatible API base of datasource `uid`, through Grafana's proxy."""
+    return f"{grafana_url.rstrip('/')}/api/datasources/proxy/uid/{uid}"
+
+
 class GrafanaDatasource(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -53,7 +59,7 @@ class GrafanaDatasource(BaseModel):
         return self.type in SUPPORTED_TYPES
 
     def proxy_url(self, grafana_url: str) -> str:
-        return f"{grafana_url.rstrip('/')}/api/datasources/proxy/uid/{self.uid}"
+        return proxy_url(grafana_url, self.uid)
 
     def describe(self) -> dict:
         out: dict = {
@@ -84,6 +90,10 @@ def _entry(uid: object, name: object, raw: Mapping[str, object]) -> GrafanaDatas
     )
 
 
+def _sorted(entries: Iterable[GrafanaDatasource | None]) -> list[GrafanaDatasource]:
+    return sorted((ds for ds in entries if ds is not None), key=lambda d: d.name)
+
+
 def _from_frontend_settings(body: object) -> list[GrafanaDatasource]:
     datasources = body.get("datasources") if isinstance(body, dict) else None
     if not isinstance(datasources, dict):
@@ -91,11 +101,11 @@ def _from_frontend_settings(body: object) -> list[GrafanaDatasource]:
             "Grafana's /api/frontend/settings response has no datasources map",
             hint="check the url points at a Grafana instance, not a login page or proxy",
         )
-    out = []
-    for name, raw in datasources.items():
-        if isinstance(raw, dict) and (ds := _entry(raw.get("uid"), raw.get("name", name), raw)):
-            out.append(ds)
-    return sorted(out, key=lambda d: d.name)
+    return _sorted(
+        _entry(raw.get("uid"), raw.get("name", name), raw)
+        for name, raw in datasources.items()
+        if isinstance(raw, dict)
+    )
 
 
 def _from_datasources_api(body: object) -> list[GrafanaDatasource]:
@@ -104,11 +114,22 @@ def _from_datasources_api(body: object) -> list[GrafanaDatasource]:
             "Grafana's /api/datasources response is not a list",
             hint="check the token has at least Viewer access",
         )
-    out = []
-    for raw in body:
-        if isinstance(raw, dict) and (ds := _entry(raw.get("uid"), raw.get("name"), raw)):
-            out.append(ds)
-    return sorted(out, key=lambda d: d.name)
+    return _sorted(
+        _entry(raw.get("uid"), raw.get("name"), raw) for raw in body if isinstance(raw, dict)
+    )
+
+
+@asynccontextmanager
+async def _client(client: httpx.AsyncClient | None) -> AsyncIterator[httpx.AsyncClient]:
+    """`client` as given (the caller closes it), or a new one closed on exit."""
+    if client is not None:
+        yield client
+        return
+    owned = httpx.AsyncClient()
+    try:
+        yield owned
+    finally:
+        await owned.aclose()
 
 
 async def _get(client: httpx.AsyncClient, url: str, headers: Mapping[str, str]) -> httpx.Response:
@@ -144,19 +165,13 @@ async def discover_datasources(
     what is in it depends on the instance's anonymous-access setting."""
     base = url.rstrip("/")
     headers = auth.headers(environ) if auth is not None else {}
-    owns_client = client is None
-    client = client or httpx.AsyncClient()
-    try:
-        if auth is not None:
-            resp = await _get(client, f"{base}/api/datasources", headers)
-            body = _json(resp, base)
-            return _from_datasources_api(body)
-        resp = await _get(client, f"{base}/api/frontend/settings", headers)
-        body = _json(resp, base)
-        return _from_frontend_settings(body)
-    finally:
-        if owns_client:
-            await client.aclose()
+    if auth is not None:
+        path, parse = "/api/datasources", _from_datasources_api
+    else:
+        path, parse = "/api/frontend/settings", _from_frontend_settings
+    async with _client(client) as http:
+        resp = await _get(http, f"{base}{path}", headers)
+        return parse(_json(resp, base))
 
 
 def _json(resp: httpx.Response, base: str) -> object:
@@ -220,22 +235,18 @@ async def probe_backend(
     for real (a trivial query) before saving it, so an actually-unreachable source still
     fails loudly there."""
     headers = auth.headers(environ) if auth is not None else {}
-    owns_client = client is None
-    client = client or httpx.AsyncClient()
-    try:
-        resp = await client.get(
-            f"{proxy_url.rstrip('/')}/api/v1/status/buildinfo",
-            headers={"User-Agent": USER_AGENT, **headers},
-            timeout=timeout_s,
-        )
-        if resp.status_code == 200:
-            body = resp.json()
-            data = body.get("data") if isinstance(body, dict) else None
-            if isinstance(data, dict):
-                return detect_backend(data)
-    except (httpx.HTTPError, ValueError):
-        pass
-    finally:
-        if owns_client:
-            await client.aclose()
+    async with _client(client) as http:
+        try:
+            resp = await http.get(
+                f"{proxy_url.rstrip('/')}/api/v1/status/buildinfo",
+                headers={"User-Agent": USER_AGENT, **headers},
+                timeout=timeout_s,
+            )
+            if resp.status_code == 200:
+                body = resp.json()
+                data = body.get("data") if isinstance(body, dict) else None
+                if isinstance(data, dict):
+                    return detect_backend(data)
+        except (httpx.HTTPError, ValueError):
+            pass
     return "prometheus", "prometheus"
