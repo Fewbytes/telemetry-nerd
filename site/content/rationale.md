@@ -166,8 +166,9 @@ Telemetry Nerd answers.
 ## The design principles
 
 Everything above follows from sixteen principles, kept in one canonical document in the
-repository (`docs/principles.md`). Each one is enforced in code, by schema or validation, rather
-than by asking the agent to behave. Four of them shape the experience most directly.
+repository (`docs/principles.md`). Each one is backed by code, schema validation or a skill that
+states the rule as an operational instruction, not just by asking the agent to behave. Four of
+them shape the experience most directly.
 
 ### Evidence first, and every claim scoped
 
