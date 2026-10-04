@@ -17,7 +17,7 @@ identifiers and JSON keys keep their historical names (`resolution_ms`, `scrape_
 | **query bucket** | One fetched point: the interval `(t − step, t]` and its `(avg, min, max, count)`. | rows of a dataset table |
 | **display bucket** | The width of a drawn point after level of detail or zoom merges k query buckets. A display artifact. | `effective_step_ms` of a panel |
 | **time range** | `start..end` of a query, dataset or panel. Never called a bare "window". | `start_ms`/`end_ms`, `TimeRange` |
-| **tile** | A query bucket holding exactly one non-overlapping evaluation: query window = query step. The only case where values add across buckets (`increase(x[1m])` at a 1 m step). | `_TILE_FUNCS` (`model/companions.py`) |
+| **tile** | A query bucket holding exactly one non-overlapping evaluation: query window = query step **and** one evaluation per query bucket (query resolution = query step, or values fetched at the step). The only case where values add across buckets: `increase(x[1m])` at a 1 m step evaluated once per bucket is a tile; at a 15 s query resolution it is the mean of 4 overlapping 1 m windows, not a tile. | `_TILE_FUNCS` (`model/companions.py`) |
 | **effective time resolution** | max(query window, query step, display bucket), never finer than the series interval. What a panel means by "detail shorter than X is smoothed". | — |
 
 ### Relationships
@@ -30,7 +30,7 @@ identifiers and JSON keys keep their historical names (`resolution_ms`, `scrape_
   step under two series intervals). A step close to the series interval (0.8–1.2 samples per
   bucket) makes samples **spill** into the neighbouring bucket (a 2 next to a 0;
   `SPILL_RATE`, `model/bucket_state.py`). A step of several series intervals is **stable**.
-- **Query window vs query step.** Window = step: **tiles** (each sample counted once; values sum).
+- **Query window vs query step.** Window = step with one evaluation per bucket: **tiles** (each sample counted once; values sum).
   Window > step: **sliding** windows, a smoothing filter of the window's width (neighbouring
   points share samples, so effective n drops). Window < step: **partial**, part of each bucket is
   not looked at (between evaluations).
