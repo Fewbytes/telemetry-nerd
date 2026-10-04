@@ -1,0 +1,144 @@
+name: Stress
+
+# Flake hunt (bead zek0.1; policy: a flake is a P0 bug, retries never hide one).
+# Nightly + manual, never blocking normal pushes. Also called by ci.yml (and so by release.yml)
+# with small counts: a release requires a green stress pass on the commit it tags.
+#
+#   e2e        Playwright full suite x repeat-each N, failOnFlakyTests (pass-on-retry = red)
+#   e2e-throttled   same, with CDP CPU throttling 4x (E2E_CPU_THROTTLE, ui/playwright.config.ts)
+#   unit       tests/unit x K with different PYTHONHASHSEEDs (scripts/stress_unit.py)
+#   vitest     vitest x K with shuffled test order
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      e2e_repeat:
+        description: Playwright --repeat-each
+        type: string
+        default: "3"
+      repeat:
+        description: Repeat count for the unit and vitest runs
+        type: string
+        default: "3"
+  workflow_call:
+    inputs:
+      sha:
+        description: Commit to test
+        type: string
+        default: ""
+      e2e_repeat:
+        type: string
+        default: "2"
+      repeat:
+        type: string
+        default: "2"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stress-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  E2E_REPEAT: ${{ inputs.e2e_repeat || '3' }}
+  REPEAT: ${{ inputs.repeat || '3' }}
+
+jobs:
+  e2e:
+    name: e2e x N${{ matrix.throttle == '4' && ' (CPU throttled)' || '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        throttle: ["0", "4"]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.sha }}
+      - uses: astral-sh/setup-uv@v10.2.0  # no floating major tag upstream
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+        working-directory: ui
+      - run: npx playwright install --with-deps chromium
+        working-directory: ui
+      - run: npm run build
+        working-directory: ui
+      - name: Playwright --repeat-each ${{ env.E2E_REPEAT }}
+        run: npx playwright test --repeat-each "$E2E_REPEAT"
+        working-directory: ui
+        env:
+          E2E_CPU_THROTTLE: ${{ matrix.throttle }}
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-stress-throttle${{ matrix.throttle }}
+          path: |
+            ui/test-results
+            ui/playwright-report
+          if-no-files-found: ignore
+
+  unit:
+    name: unit x K (PYTHONHASHSEED)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.sha }}
+      - uses: astral-sh/setup-uv@v10.2.0  # no floating major tag upstream
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - run: uv sync --locked
+      - run: uv run python scripts/stress_unit.py "$REPEAT"
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: unit-stress-logs
+          path: |
+            .pytest_cache
+            **/*.log
+          if-no-files-found: ignore
+
+  vitest:
+    name: vitest x K (shuffled)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.sha }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+      - name: vitest --sequence.shuffle x ${{ env.REPEAT }}
+        run: |
+          for i in $(seq "$REPEAT"); do
+            npx vitest run --sequence.shuffle --reporter=verbose | tee "vitest-stress-$i.log"
+            [ "${PIPESTATUS[0]}" -eq 0 ] || exit 1
+          done
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: vitest-stress-logs
+          path: ui/vitest-stress-*.log
+          if-no-files-found: ignore

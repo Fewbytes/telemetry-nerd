@@ -68,6 +68,17 @@ e2e *args:
     just ui-build
     cd ui && npx playwright install chromium && npx playwright test {{args}}
 
+# Flake hunt (bead zek0.1): every test x n, with 4x CPU throttling. A pass-on-retry also fails
+# (failOnFlakyTests), so any red here is a real flake or a real bug, never noise.
+e2e-stress n="5":
+    just ui-build
+    cd ui && npx playwright install chromium && E2E_CPU_THROTTLE=4 npx playwright test --repeat-each {{n}}
+
+# Unit suite x n under different PYTHONHASHSEEDs, then vitest x n with shuffled test order.
+test-stress n="3":
+    uv run python scripts/stress_unit.py {{n}}
+    cd ui && for i in $(seq {{n}}); do npx vitest run --sequence.shuffle || exit 1; done
+
 # Serve the e2e fixture PromQL source by hand (port 7079; --port N), e.g. to point `just serve
 # --source-url http://127.0.0.1:7079 --source-flavor prometheus` at it.
 fixture-source *args:

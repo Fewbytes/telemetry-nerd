@@ -16,6 +16,12 @@ tags by hand: a tag must imply that everything passed.
    - `ci` (reusable `ci.yml`, checking out exactly that commit): `python` (lint, unit tests), `ui`, `e2e` (Playwright on the fixture
      source) and `integration` (`pytest -m integration`, VictoriaMetrics testcontainers) must all be
      green. The `network` job is disabled for releases (it only runs on push/PR, non-blocking).
+   - `stress` (reusable `stress.yml`, small counts: e2e `--repeat-each 2` plain and 4x CPU-throttled,
+     unit x2 with different `PYTHONHASHSEED`s, vitest x2 shuffled): any failure, including a test
+     that only passed on retry, blocks the release. Before dispatching, check that the latest
+     scheduled **Stress** run on `master` (nightly, or run it by hand: `gh workflow run stress.yml
+     -f e2e_repeat=5 -f repeat=5`) is green; a red one is a P0 flake bug to fix, never to re-run
+     until green.
    - `tag`: only after all of the above, creates the annotated tag `vX.Y.Z` on the tested sha and
      pushes it.
    - `image`: builds and pushes the slim and `-full` images (`image.yml`) for that tag.
@@ -23,6 +29,13 @@ tags by hand: a tag must imply that everything passed.
 5. If `image` fails after the tag exists, use "Re-run failed jobs" on that Release run. Never
    delete and re-tag. Tagged commit = tested commit, even if master moved on meanwhile.
 6. If you add a tag ruleset for `v*`, it must allow `github-actions[bot]` to create tags.
+
+## Stress runs and flakes
+
+Policy: a flaky test is a P0 bug and retries never hide one. Playwright runs with
+`failOnFlakyTests` (CI keeps one retry only so the failure records both attempts and a trace).
+Locally: `just e2e-stress n=5` (repeat-each plus 4x CPU throttle, `E2E_CPU_THROTTLE`) and
+`just test-stress n=3` (unit under different hash seeds, vitest shuffled).
 
 ## Why the image is built inside the workflow
 

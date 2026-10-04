@@ -70,6 +70,7 @@ jobs:
       # informational only.
       sha: ${{ needs.prepare.outputs.sha }}
       network: false
+      stress: true
 
   tag:
     name: Create and push tag

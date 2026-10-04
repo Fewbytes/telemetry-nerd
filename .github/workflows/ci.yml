@@ -26,6 +26,10 @@ on:
         description: Run the non-blocking public-network job
         type: boolean
         default: true
+      stress:
+        description: Also run the flake-stress jobs (stress.yml, small repeat counts); release.yml sets it
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -155,6 +159,17 @@ jobs:
           cache-dependency-glob: uv.lock
       - run: uv sync --locked
       - run: uv run pytest -m network || uv run pytest -m network --last-failed
+
+  stress:
+    name: Flake stress (releases only)
+    # Policy: a flake is a P0 bug. Skipped on push/PR (the nightly stress.yml covers those);
+    # release.yml passes stress: true so a release needs a green stress pass on its commit.
+    if: inputs.stress == true
+    uses: ./.github/workflows/stress.yml
+    with:
+      sha: ${{ inputs.sha }}
+      e2e_repeat: "2"
+      repeat: "2"
 
   image:
     name: Publish image (manually pushed version tags only)
