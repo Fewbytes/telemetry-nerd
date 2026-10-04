@@ -254,3 +254,29 @@ def test_settings_delegate_to_the_registry_per_workspace(tmp_path):
         store.set_setting("default_range", "now-6h")
     assert store.get_setting("default_range") == "now-3h"
     assert registry.get_setting(w2, "default_range") == "now-6h"
+
+
+def test_every_object_kind_is_inserted_into_the_active_workspace(stores):
+    active, ws, objects, _ = stores
+    fields = {
+        "kind": "use", "key": "k", "source": "default", "author": "claude", "start_ms": 0,
+        "end_ms": 1, "step_ms": 1, "basis": "suggestion", "roles": [],
+    }  # fmt: skip
+    with active.using("w2"):
+        made = {
+            "hypothesis": objects.create_hypothesis("h", "claude").id,
+            "finding": _finding(objects).id,
+            "gap": objects.create_gap(GapIn(missing_signal="m", needed_for="n"), "claude").id,
+            "annotation": objects.create_annotation(
+                AnnotationIn(kind="note", panel="p1", label="x"), "user"
+            ).id,
+            "panel_group": objects.create_group(**fields).id,
+            "code": objects.create_code("1", [], "claude").id,
+        }
+        thread = objects.create_thread(None, None, "user")
+        made["thread"] = thread.id
+        made["message"] = objects.add_message(thread.id, "hi", "user").id
+    rows = dict(ws.connection.execute("SELECT kind, workspace FROM objects"))
+    assert set(rows) == set(made)  # every kind ObjectStore creates is covered
+    assert set(rows.values()) == {"w2"}
+    assert {i for (i,) in ws.connection.execute("SELECT id FROM objects")} == set(made.values())

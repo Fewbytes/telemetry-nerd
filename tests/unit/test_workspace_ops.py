@@ -216,3 +216,50 @@ async def test_switch_notifies_before_restoring_sources(tmp_path, monkeypatch, e
         await svc.workspaces.switch(w1, "user")
     assert svc.active.active == w1 != out["workspace"]["id"]
     assert q.get_nowait()["active"]["id"] == w1
+
+
+async def test_known_spec_but_not_live_is_reconnected_with_replace(tmp_path, monkeypatch):
+    svc = make_service(tmp_path)
+    await _connect_vm(svc)
+    await svc.query("up", source="vm")
+    wid = svc.active.active
+    svc.sources._live.pop("vm")  # spec persisted and recorded, but the source is not live
+    assert svc.sources.spec("vm") is not None and "vm" not in svc.sources
+    calls = []
+    real = svc.workspaces._connect
+
+    async def spy(spec, **kw):
+        calls.append((spec.name, kw))
+        return await real(spec, **kw)
+
+    monkeypatch.setattr(svc.workspaces, "_connect", spy)
+    assert await svc.workspaces.restore_sources(wid) == [{"name": "vm", "status": "restored"}]
+    assert calls == [("vm", {"replace": True, "actor": "system"})]
+    assert "vm" in svc.sources
+
+
+async def test_live_name_without_a_persisted_spec_is_a_conflict(tmp_path):
+    from tests.unit.fakes import FakeSource
+
+    svc = make_service(tmp_path)
+    wid = svc.active.active
+    live = FakeSource()
+    svc.sources.attach("settings-src", live)  # live, settings-owned: no runtime spec
+    assert svc.sources.spec("settings-src") is None
+    svc.registry.note_source(wid, "settings-src", {"name": "settings-src", "url": "http://x:1"})
+    (res,) = await svc.workspaces.restore_sources(wid)
+    assert res["name"] == "settings-src" and res["status"] == "conflict"
+    assert "another name" in res["hint"]
+    assert svc.sources["settings-src"] is live and svc.sources.spec("settings-src") is None
+
+
+async def test_switch_to_archived_unarchives_without_an_update_event(tmp_path):
+    svc = make_service(tmp_path)
+    w1 = svc.active.active
+    await svc.workspaces.create("two", None, "user")
+    svc.workspaces.update(w1, archived=True, actor="user")
+    before = len(_events(svc, w1, "workspace.updated"))
+    out = await svc.workspaces.switch(w1, "user")
+    assert out["workspace"]["archived"] is False and not svc.registry.get(w1).archived
+    assert len(_events(svc, w1, "workspace.updated")) == before
+    assert len(_events(svc, w1, "workspace.opened")) == 1

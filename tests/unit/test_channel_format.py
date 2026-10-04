@@ -152,3 +152,18 @@ def test_describe_workspace_opened_new_and_updated():
     assert describe_event(ev(5, "workspace.updated", "w1", {"question": "Q?"})) == (
         'user changed the question of w1 to "Q?"'
     )
+
+
+def test_workspace_updated_joins_several_changed_keys():
+    e = ev(2, "workspace.updated", "w1", {"title": "X", "question": "Q?", "archived": True})
+    assert describe_event(e) == (
+        'user renamed w1 to "X"; changed the question of w1 to "Q?"; archived w1'
+    )
+
+
+def test_ambient_lines_from_another_workspace_are_prefixed():
+    current = Event(5, 1_005, "user", "panel.closed", "p1", "intentional", {}, workspace="w3")
+    here = Event(6, 1_006, "user", "panel.closed", "p2", "ambient", {}, workspace="w3")
+    other = Event(7, 1_007, "user", "panel.closed", "p9", "ambient", {}, workspace="w1")
+    content, _ = format_channel([current], [here, other])
+    assert content.splitlines()[-1] == ("ambient: user closed p2; [w1] user closed p9")

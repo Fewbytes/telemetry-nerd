@@ -249,7 +249,10 @@ def _migrate_event_actors(con: sqlite3.Connection) -> None:
     try:
         con.execute("ALTER TABLE events RENAME TO events_old")
         con.execute(_EVENTS_DDL)
-        con.execute("INSERT INTO events SELECT * FROM events_old")
+        con.execute(
+            "INSERT INTO events (seq, ts_ms, actor, type, object_id, klass, payload)"
+            " SELECT seq, ts_ms, actor, type, object_id, klass, payload FROM events_old"
+        )
         con.execute("DROP TABLE events_old")
         con.execute("COMMIT")
     except BaseException:

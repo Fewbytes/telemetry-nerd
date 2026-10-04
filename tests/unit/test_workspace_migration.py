@@ -64,3 +64,36 @@ def test_migration_is_idempotent(tmp_path):
 def test_fresh_db_starts_with_w1(tmp_path):
     con = open_workspace_db(tmp_path / "workspace.db")
     assert con.execute("SELECT id FROM workspaces").fetchall() == [("w1",)]
+
+
+def test_reopen_keeps_a_user_edited_w1_row(tmp_path):
+    path = tmp_path / "workspace.db"
+    old_db(path)
+    con = open_workspace_db(path)
+    con.execute(
+        "UPDATE workspaces SET title = 'My title', settings = ? WHERE id = 'w1'",
+        (json.dumps({"default_range": "now-9h"}),),
+    )
+    con.close()
+    con = open_workspace_db(path)
+    title, settings = con.execute(
+        "SELECT title, settings FROM workspaces WHERE id = 'w1'"
+    ).fetchone()
+    assert title == "My title"
+    assert json.loads(settings) == {"default_range": "now-9h"}
+    assert con.execute("SELECT COUNT(*) FROM workspaces").fetchone() == (1,)
+
+
+def test_reopen_keeps_a_larger_workspace_counter(tmp_path):
+    path = tmp_path / "workspace.db"
+    con = open_workspace_db(path)
+    con.execute("UPDATE counters SET n = 5 WHERE prefix = 'w'")
+    con.close()
+    con = open_workspace_db(path)
+    assert con.execute("SELECT n FROM counters WHERE prefix = 'w'").fetchone() == (5,)
+
+
+def test_workspace_indexes_exist(tmp_path):
+    con = open_workspace_db(tmp_path / "workspace.db")
+    names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+    assert {"panels_workspace", "objects_workspace", "events_workspace"} <= names
