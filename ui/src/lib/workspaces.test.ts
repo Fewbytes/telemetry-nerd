@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Snapshot, WorkspaceInfo } from "./api";
-import { defaultTitle, sortForSwitcher, workspaceChanged } from "./workspaces";
+import { defaultTitle, sortForSwitcher, withWorkspace, workspaceChanged } from "./workspaces";
 
 const info = (id: string, last_activity_ms = 0): WorkspaceInfo => ({
   id, title: id, question: null, archived: false, created_at_ms: 0, last_activity_ms,
@@ -32,5 +32,20 @@ describe("sortForSwitcher", () => {
     const list = [info("a", 1), info("b", 5), info("c", 3)];
     expect(sortForSwitcher(list, "a").map((w) => w.id)).toEqual(["a", "b", "c"]);
     expect(list.map((w) => w.id)).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("withWorkspace", () => {
+  const list = [info("w1"), info("w2")];
+  it("replaces a saved workspace in place and appends a new one, without mutating", () => {
+    const renamed = { ...info("w2"), title: "renamed" };
+    expect(withWorkspace(list, renamed).map((w) => w.title)).toEqual(["w1", "renamed"]);
+    expect(withWorkspace(list, info("w3")).map((w) => w.id)).toEqual(["w1", "w2", "w3"]);
+    expect(list.map((w) => w.title)).toEqual(["w1", "w2"]);
+  });
+  it("drops an archived one from a live list, keeps it in a full one", () => {
+    const archived = { ...info("w2"), archived: true };
+    expect(withWorkspace(list, archived).map((w) => w.id)).toEqual(["w1"]);
+    expect(withWorkspace(list, archived, true)[1].archived).toBe(true);
   });
 });

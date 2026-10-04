@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type APIResponse, type Route } from "@playwright/test";
 import { seedPanel } from "./helpers.js";
 
 test("workspace switcher: new investigation, reopen, follow, archive", async ({ page, request }, testInfo) => {
@@ -163,5 +163,46 @@ test("workspace switcher: a slow list response from before a rename cannot rever
   release();
   // the stale response lands now; the renamed row must stay
   await page.waitForTimeout(500);
+  await expect(row).toContainText(`${title} renamed`);
+});
+
+test("workspace switcher: a rename and an archive show once saved, whatever the list refetches do (rhe2)", async ({ page, request }, testInfo) => {
+  await seedPanel(request, "Is checkout latency in the saved-mutation test elevated?");
+  const title = `saved ${testInfo.retry}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const created = await request.post("/api/workspaces", { data: { title } });
+  expect(created.ok()).toBeTruthy();
+  const otherId: string = (await created.json()).workspace.id;
+  const list = await (await request.get("/api/workspaces")).json();
+  const activeId: string = list.workspaces.find((w: { id: string }) => w.id !== otherId).id;
+  expect((await request.post(`/api/workspaces/${activeId}/open`, { data: {} })).ok()).toBeTruthy();
+  await page.goto("/");
+  await expect(page.locator(".ws-trigger")).toBeVisible();
+
+  // A loaded daemon (CI: a board of many panels refetching at once) answers list refetches
+  // late. Each one is answered by the daemon when issued, but held here until the end.
+  const held: { route: Route; response: APIResponse }[] = [];
+  let issued = 0;
+  await page.route((u) => u.pathname === "/api/workspaces" && !u.search, async (route) => {
+    const n = issued++;
+    held[n] = { route, response: await route.fetch() };
+  });
+  await page.locator(".ws-trigger").click();
+  await expect.poll(() => held.filter(Boolean).length).toBe(1); // the popover's refetch: pre-rename
+
+  const row = page.locator(`[data-workspace-id="${otherId}"]`);
+  await row.getByRole("button", { name: /^rename/i }).click();
+  await page.getByRole("textbox", { name: "Rename workspace" }).fill(`${title} renamed`);
+  await page.getByRole("textbox", { name: "Rename workspace" }).press("Enter");
+  await expect(row).toContainText(`${title} renamed`);
+  await row.getByRole("button", { name: /^archive/i }).click();
+  await expect(row).toHaveCount(0);
+
+  // the refetches land, the one from before the rename last: the list must not regress
+  await expect.poll(() => held.filter(Boolean).length).toBe(issued);
+  for (const h of held.slice(1)) await h.route.fulfill({ response: h.response });
+  await held[0].route.fulfill({ response: held[0].response });
+  await page.waitForTimeout(500);
+  await expect(row).toHaveCount(0);
+  await page.getByLabel("Show archived").check();
   await expect(row).toContainText(`${title} renamed`);
 });

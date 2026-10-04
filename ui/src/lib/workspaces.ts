@@ -16,3 +16,10 @@ export const sortForSwitcher = (list: WorkspaceInfo[], activeId: string): Worksp
   [...list].sort(
     (a, b) => Number(b.id === activeId) - Number(a.id === activeId) || b.last_activity_ms - a.last_activity_ms,
   );
+
+/** `list` with a saved `info` in it: replaced in place or appended; an archived one leaves a live
+ * list (`archived` false) and stays in a full one. Does not mutate `list`. */
+export const withWorkspace = (list: WorkspaceInfo[], info: WorkspaceInfo, archived = false): WorkspaceInfo[] => {
+  if (info.archived && !archived) return list.filter((w) => w.id !== info.id);
+  return list.some((w) => w.id === info.id) ? list.map((w) => (w.id === info.id ? info : w)) : [...list, info];
+};

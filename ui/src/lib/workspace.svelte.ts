@@ -4,7 +4,7 @@ import {
 } from "./api";
 import type { DaemonState } from "./connection";
 import { applyHighlightEvent, expire, nextExpiry, type Highlights } from "./highlights";
-import { workspaceChanged } from "./workspaces";
+import { withWorkspace, workspaceChanged } from "./workspaces";
 
 const RELOAD_TYPES = new Set([
   "panel.created", "panel.answered", "finding.created", "finding.verdict",
@@ -52,6 +52,13 @@ export function createWorkspace() {
   const refreshList = () => {
     const n = ++listReq;
     return fetchWorkspaces().then((l) => { if (n === listReq) workspaces = l.workspaces; }).catch(() => { /* the list is a convenience; the next switch refetches */ });
+  };
+  // A create/rename/archive/open this UI saw saved shows at once, not after its frame and a refetch
+  // (a loaded daemon answers those late). The refetch issued here voids every earlier request:
+  // one sent before the save may be answered from before it and would revert it.
+  const applyWorkspace = (info: WorkspaceInfo) => {
+    workspaces = withWorkspace(workspaces, info);
+    void refreshList();
   };
 
   // a switch invalidates everything the board shows: highlights belong to the old workspace
@@ -144,9 +151,11 @@ export function createWorkspace() {
     get proposalsSeq() { return proposalsSeq; },
     /** active highlights (Claude's and the user's), expired ones already dropped */
     get highlights() { return highlights; },
-    /** non-archived workspaces, as last fetched */
+    /** non-archived workspaces, as last fetched or saved from this UI */
     get workspaces() { return workspaces; },
     refreshWorkspaces: refreshList,
+    /** a workspace this UI created, renamed, archived or opened, as the daemon saved it */
+    applyWorkspace,
     reload: load,
     start(): () => void {
       let stopUnsub = () => {};
@@ -172,7 +181,12 @@ export function createWorkspace() {
             target = f.active.id;
             frames++;
             if (snapshot !== null && f.active.id === snapshot.workspace.id) {
-              snapshot = { ...snapshot, workspace: f.active };
+              // only when something shown changed: a new snapshot re-renders, and so refetches,
+              // every panel, and another workspace's rename or archive changes nothing here
+              const w = snapshot.workspace;
+              if (f.active.title !== w.title || f.active.question !== w.question || f.active.archived !== w.archived) {
+                snapshot = { ...snapshot, workspace: f.active };
+              }
               refreshList();
             } else {
               clearHighlights();

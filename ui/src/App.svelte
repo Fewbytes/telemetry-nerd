@@ -110,7 +110,7 @@
       </a>
     </nav>
     <div class="header-controls">
-      <WorkspaceSwitcher active={ws.snapshot?.workspace ?? null} workspaces={ws.workspaces} onopen={ws.refreshWorkspaces} />
+      <WorkspaceSwitcher active={ws.snapshot?.workspace ?? null} workspaces={ws.workspaces} onopen={ws.refreshWorkspaces} onsaved={ws.applyWorkspace} />
       <ConnectionPill daemon={ws.daemon} presence={ws.presence} />
       <select
         class="theme-toggle"

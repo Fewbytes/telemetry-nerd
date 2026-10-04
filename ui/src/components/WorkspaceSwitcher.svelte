@@ -3,13 +3,15 @@
     createWorkspace, fetchWorkspaces, openWorkspace, updateWorkspace, type Snapshot, type WorkspaceInfo,
   } from "../lib/api";
   import { focusAfterRender } from "../lib/focus";
-  import { defaultTitle, sortForSwitcher } from "../lib/workspaces";
+  import { defaultTitle, sortForSwitcher, withWorkspace } from "../lib/workspaces";
 
-  let { active, workspaces, onopen }: {
+  let { active, workspaces, onopen, onsaved }: {
     active: Snapshot["workspace"] | null;
     workspaces: WorkspaceInfo[];
     /** the popover opened: refetch the list so rows, counts and "ago" are current */
     onopen?: () => void;
+    /** a create, rename, archive or open landed: the workspace as the daemon saved it */
+    onsaved?: (w: WorkspaceInfo) => void;
   } = $props();
 
   let open = $state(false);
@@ -50,11 +52,16 @@
 
   // one request at a time: a double or held Enter must not create two workspaces
   let busy = false;
-  const run = (action: () => Promise<unknown>, done?: () => void) => {
+  const run = (action: () => Promise<WorkspaceInfo>, done?: () => void) => {
     if (busy) return;
     busy = true;
     action()
-      .then(() => { error = null; done?.(); })
+      .then((w) => {
+        error = null;
+        if (archivedList) archivedList = withWorkspace(archivedList, w, true);
+        onsaved?.(w);
+        done?.();
+      })
       .catch((e) => (error = String(e)))
       .finally(() => (busy = false));
   };
@@ -81,7 +88,7 @@
     if (e.key === "Escape") { e.stopPropagation(); creating = false; refocus(".ws-new-btn"); return; }
     if (e.key !== "Enter") return;
     const t = e.currentTarget.value.trim() || defaultTitle(new Date());
-    run(() => createWorkspace(t), close);
+    run(() => createWorkspace(t).then((r) => r.workspace), close);
   };
 
   const rowSel = (id: string, sub: string) => `[data-workspace-id="${CSS.escape(id)}"] ${sub}`;
@@ -128,7 +135,7 @@
                 onkeydown={(e) => rename(e, w)} onblur={() => (renaming = null)}
               />
             {:else}
-              <button type="button" class="ws-open" title={w.question ?? undefined} aria-current={w.id === activeId ? "true" : undefined} onclick={() => run(() => openWorkspace(w.id), close)}>
+              <button type="button" class="ws-open" title={w.question ?? undefined} aria-current={w.id === activeId ? "true" : undefined} onclick={() => run(() => openWorkspace(w.id).then((r) => r.workspace), close)}>
                 <span class="ws-name">{w.title}</span>
                 <span class="ws-meta">
                   {#if w.archived}archived · {/if}{ago(w.last_activity_ms)} · {w.counts.findings} finding{w.counts.findings === 1 ? "" : "s"}

@@ -323,6 +323,66 @@ describe("workspace frames in the store", () => {
     stop();
   });
 
+  describe("a saved mutation (rhe2)", () => {
+    const info = (id: string, title: string, archived = false) =>
+      ({ id, title, archived, question: null, created_at_ms: 0, last_activity_ms: 0, counts: { panels: 0, hypotheses: 0, findings: 0, open_threads: 0 } }) as WorkspaceInfo;
+    const list = (...ws: WorkspaceInfo[]) => ({ active: "w1", more: 0, workspaces: ws });
+    type L = Awaited<ReturnType<typeof fetchWorkspaces>>;
+    async function withList(...ws: WorkspaceInfo[]) {
+      const { ws: store, stop, send } = await started(snap("w1", 1));
+      const lists = vi.mocked(fetchWorkspaces);
+      lists.mockReset();
+      lists.mockResolvedValue(list(...ws));
+      await store.refreshWorkspaces();
+      const resolvers: ((l: L) => void)[] = [];
+      lists.mockReset();
+      lists.mockImplementation(() => new Promise((r) => resolvers.push(r)));
+      return { store, stop, send, lists, resolvers };
+    }
+
+    it("shows in the list at once, before any refetch answers", async () => {
+      const { store, stop, resolvers } = await withList(info("w1", "one"), info("w2", "two"));
+      store.applyWorkspace(info("w2", "renamed"));
+      expect(store.workspaces.map((w) => w.title)).toEqual(["one", "renamed"]);
+      expect(resolvers.length).toBe(1); // and a refetch issued after it
+      store.applyWorkspace(info("w2", "renamed", true));
+      expect(store.workspaces.map((w) => w.id)).toEqual(["w1"]); // archived: off the live list
+      store.applyWorkspace(info("w3", "new"));
+      expect(store.workspaces.map((w) => w.id)).toEqual(["w1", "w3"]); // created
+      stop();
+    });
+
+    it("a list request issued before it cannot revert it, even when no later request was issued", async () => {
+      const { store, stop, send, lists, resolvers } = await withList(info("w1", "one"), info("w2", "two"));
+      void store.refreshWorkspaces(); // the popover opened before the rename was saved
+      lists.mockImplementation(() => new Promise(() => {})); // later refetches never answer (a loaded daemon)
+      store.applyWorkspace(info("w2", "renamed"));
+      send(frame("w1")); // the rename's frame
+      resolvers[0](list(info("w1", "one"), info("w2", "two"))); // the stale answer lands last
+      await new Promise((r) => setTimeout(r, 0));
+      expect(store.workspaces.find((w) => w.id === "w2")?.title).toBe("renamed");
+      stop();
+    });
+
+    it("a list request issued after it applies", async () => {
+      const { store, stop, resolvers } = await withList(info("w1", "one"), info("w2", "two"));
+      store.applyWorkspace(info("w2", "renamed"));
+      resolvers[0](list(info("w1", "one"), info("w2", "renamed again elsewhere")));
+      await vi.waitFor(() => expect(store.workspaces.find((w) => w.id === "w2")?.title).toBe("renamed again elsewhere"));
+      stop();
+    });
+  });
+
+  it("a frame that changes nothing shown keeps the snapshot (no board-wide panel refetch)", async () => {
+    const { ws, stop, send } = await started(snap("w1", 1));
+    const active = { id: "w1", title: "t", question: null, archived: false, created_at_ms: 0 };
+    send(JSON.stringify({ kind: "workspace", active }));
+    const before = ws.snapshot;
+    send(JSON.stringify({ kind: "workspace", active: { ...active, last_activity_ms: 5 } })); // another workspace was renamed
+    expect(ws.snapshot).toBe(before);
+    stop();
+  });
+
   it("fetches the workspace list with the first snapshot, even one that landed after a retry", async () => {
     vi.useFakeTimers();
     const load = vi.mocked(fetchWorkspace);
