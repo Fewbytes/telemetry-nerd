@@ -170,7 +170,7 @@ merge is explained.
 fetched query buckets, which is what the source would return (F1.1), and the panel says so explicitly:
 the merge `basis`/method text and a panel note "line: local time mean of the fetched {query step}
 query buckets, not re-queried; [re-query at {S}]". `unknown` carries the caveat `merged_plotted_mean`;
-`ratio` carries `cannot_combine` (a mean of ratios, P10) and first tries native resolution up to
+`ratio` carries `cannot_combine` (a mean of ratios, P10) and first tries the query step (unmerged) up to
 `NATIVE_POINT_CAP` (4× width, at most 4000 points per series) before merging.
 
 **Forced re-query (decided, Q1).** The user can always ask for the source's own value at the
@@ -250,13 +250,13 @@ it lands, re-query datasets are listed folded by `producer.kind == "requery"`.
 
 - cached (`peek` covers the range, or `spec.views` has S): served in the same response,
   `status: "requeried"`;
-- not cached: the response carries native resolution when within `NATIVE_POINT_CAP`, else the
+- not cached: the response carries the query step (unmerged) when within `NATIVE_POINT_CAP`, else the
   envelope only (no line), `status: "pending"`; one background re-query per (dataset, `S`),
   a newer `S` for the same panel supersedes it; on completion a UI-only socket frame
   `panel.view_ready {panel, step_ms}` (internal class, never in Claude's feed) makes the UI
   refetch. The badge reads "line: re-querying the source at 5 m".
 - source unreachable / `SourceError` / `LimitExceeded`: `status: "failed"`, caveat
-  `requery_failed` with the reason; envelope only (or native resolution within the cap). Never a
+  `requery_failed` with the reason; envelope only (or the query step (unmerged) within the cap). Never a
   count-weighted mean as a stand-in (P11: unknown is not a value).
 
 The time-selector preview/rescope (`core/service.py:1044-1090`, spec
