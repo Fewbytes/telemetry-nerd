@@ -40,6 +40,10 @@ export interface LittlesPromoted extends OffsetSpan {
 export interface LittlesCommonCause {
   completions_per_window: number | null; rel95: number | null; spread_rel: number | null; warning: string | null;
 }
+/** Raw per-sub-step arrays (not windowed or judged): the validation view. */
+export interface LittlesRaw {
+  ts_ms: number[]; arrivals: (number | null)[]; w_s: (number | null)[]; conc: (number | null)[];
+}
 export interface LittlesSeries {
   id: string; labels: Record<string, string>;
   verdict: "consistent" | "L_high" | "L_low" | "inconsistent_in_windows" | "insufficient" | "no_traffic";
@@ -49,6 +53,8 @@ export interface LittlesSeries {
   transient?: LittlesTransient[];
   promoted?: LittlesPromoted[];
   common_cause?: LittlesCommonCause;
+  /** absent only in older test fixtures; the server always sends it */
+  raw?: LittlesRaw;
 }
 export interface LittlesUnmatched { labels: Record<string, string>; present_in: string[]; missing_in: string[] }
 
@@ -141,6 +147,27 @@ export function toRatioUplot(s: LittlesSeries): { data: uPlot.AlignedData; bands
 export function ratioRange(data: uPlot.AlignedData): [number, number] {
   const vals = (data.slice(1, 4) as (number | null)[][]).flat().filter((v): v is number => v != null);
   return [Math.min(0.5, ...vals), Math.max(2, ...vals)];
+}
+
+/**
+ * The raw validation view: throughput, latency and observed concurrency at native sub-step
+ * resolution (no windowing or judging), plus λ·W stepped per window for the concurrency chart
+ * to overlay — so a reader can eyeball the gauge against the calculated value even where the
+ * verdict machinery can't label a window's steadiness confidently (e.g. near saturation).
+ * Columns: x, arrivals, W, conc, λ·W (stepped, null outside any window).
+ */
+export function toValidationUplot(s: LittlesSeries): { data: uPlot.AlignedData } {
+  const raw = s.raw;
+  if (!raw) return { data: [[], [], [], [], []] as unknown as uPlot.AlignedData };
+  const ts = raw.ts_ms;
+  const x = ts.map((t) => t / 1000);
+  let wi = 0;
+  const lamW = ts.map((t) => {
+    while (wi < s.windows.length - 1 && t > s.windows[wi].end_ms) wi++;
+    const w = s.windows[wi];
+    return w && t > w.start_ms && t <= w.end_ms ? w.lambda_W : null;
+  });
+  return { data: [x, raw.arrivals, raw.w_s, raw.conc, lamW] as uPlot.AlignedData };
 }
 
 /** Transient windows (beyond the measurement interval around the reference), in seconds, with their source. */

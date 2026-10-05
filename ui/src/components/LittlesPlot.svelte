@@ -1,7 +1,7 @@
 <script lang="ts">
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
-  import { discrepancyText, littlesLegend, promotedSpans, ratioRange, seriesTitle, systematicLabel, toLittlesUplot, toRatioUplot, transientSpans, verdictText, windowTip } from "../chart/littles";
+  import { discrepancyText, littlesLegend, promotedSpans, ratioRange, seriesTitle, systematicLabel, toLittlesUplot, toRatioUplot, toValidationUplot, transientSpans, verdictText, windowTip } from "../chart/littles";
   import { fmtRatio } from "../chart/indexed";
   import { HIDDEN_SERIES, plotAxes, axisGutterSize, tipAt, type HoverTip } from "../chart/plotKit";
   import { plotColors, theme } from "../lib/theme.svelte";
@@ -14,11 +14,19 @@
   } = $props();
 
   const RATIO_H = 150; // the discrepancy strip leads: it is what the check is about
+  const RAW_H = 110;
   const L_COLOR = "#0072B2", LW_COLOR = "#E69F00", SYS_COLOR = "#CC79A7";
+  const THROUGHPUT_COLOR = "#009E73", LATENCY_COLOR = "#D55E00";
   let top = $state<HTMLDivElement | null>(null);
   let strip = $state<HTMLDivElement | null>(null);
   let wrap = $state<HTMLDivElement | null>(null);
   let tip = $state<HoverTip | null>(null);
+  /** verdict: the discrepancy/windows check. raw: unjudged sub-steps, to eyeball by eye
+   * (always available, not just when the verdict can't label a window confidently: 83w). */
+  let view = $state<"verdict" | "raw">("verdict");
+  let rawThroughput = $state<HTMLDivElement | null>(null);
+  let rawLatency = $state<HTMLDivElement | null>(null);
+  let rawConcurrency = $state<HTMLDivElement | null>(null);
   const spans = $derived(transientSpans(series));
   const promoted = $derived(promotedSpans(series));
   const sysLabel = $derived(systematicLabel(series));
@@ -75,7 +83,7 @@
 
   $effect(() => {
     const a = top, b = strip; // b (the discrepancy strip) is drawn first, above L and λ·W
-    if (!a || !b) return;
+    if (!a || !b || view !== "verdict") return;
     const t0 = performance.now();
     const mode = theme.effective;
     const { stroke, grid } = plotColors(a, mode);
@@ -141,23 +149,80 @@
     onRendered(performance.now() - t0, (m.data[0] as number[]).length * 3);
     return () => { u1.destroy(); u2.destroy(); };
   });
+
+  $effect(() => {
+    const tEl = rawThroughput, lEl = rawLatency, cEl = rawConcurrency;
+    if (!tEl || !lEl || !cEl || view !== "raw") return;
+    const t0 = performance.now();
+    const themeMode = theme.effective;
+    const { stroke, grid } = plotColors(tEl, themeMode);
+    const v = toValidationUplot(series);
+    const gutter = axisGutterSize();
+    const cursor = { drag: { x: false, y: false }, points: { show: false }, sync: { key: `littles-raw-${data.panel.id}-${series.id}` } };
+    const single = (el: HTMLDivElement, label: string, color: string, col: uPlot.AlignedData[number]) =>
+      new uPlot(
+        {
+          width, height: RAW_H,
+          series: [{}, { label, stroke: color, width: 1.5, points: { show: false } }],
+          scales: { y: { range: (_u, lo, hi) => [Math.min(0, lo ?? 0), (hi ?? 1) * 1.05] } },
+          legend: { show: false },
+          axes: plotAxes(stroke, grid, { label, size: gutter }, { show: false }),
+          cursor,
+        },
+        [v.data[0], col] as uPlot.AlignedData,
+        el,
+      );
+    const u3 = single(tEl, "arrivals/s", THROUGHPUT_COLOR, v.data[1]);
+    const u4 = single(lEl, "W (s)", LATENCY_COLOR, v.data[2]);
+    const u5 = new uPlot(
+      {
+        width, height: RAW_H,
+        series: [
+          {},
+          { label: "L (observed)", stroke: L_COLOR, width: 1.5, points: { show: false } },
+          { label: "λ·W (calculated)", stroke: LW_COLOR, width: 1.5, dash: [6, 3], paths: uPlot.paths.stepped!({ align: 1 }), points: { show: false } },
+        ],
+        scales: { y: { range: (_u, lo, hi) => [Math.min(0, lo ?? 0), (hi ?? 1) * 1.05] } },
+        legend: { show: false },
+        axes: plotAxes(stroke, grid, { label: "concurrency", size: gutter }),
+        cursor,
+      },
+      [v.data[0], v.data[3], v.data[4]] as uPlot.AlignedData,
+      cEl,
+    );
+    onRendered(performance.now() - t0, (v.data[0] as number[]).length * 3);
+    return () => { u3.destroy(); u4.destroy(); u5.destroy(); };
+  });
 </script>
 
-<div class="littles" data-littles-verdict={series.verdict} data-littles-transient={spans.length} data-littles-systematic={series.systematic ? series.systematic.direction : ""} data-littles-promoted={promoted.length}>
+<div class="littles" data-littles-verdict={series.verdict} data-littles-transient={spans.length} data-littles-systematic={series.systematic ? series.systematic.direction : ""} data-littles-promoted={promoted.length} data-littles-view={view}>
   <div class="verdict">
     {seriesTitle(series)}: <b data-littles-discrepancy>{discrepancyText(series)}</b> · {verdictText(series.verdict)}
     <span class="key"><i style="background:{L_COLOR}"></i>L <i class="dash" style="border-color:{LW_COLOR}"></i>λ·W</span>
+    <span class="views">
+      <button type="button" class:active={view === "verdict"} data-littles-view-verdict onclick={() => (view = "verdict")}>verdict</button>
+      <button type="button" class:active={view === "raw"} data-littles-view-raw onclick={() => (view = "raw")}>raw</button>
+    </span>
   </div>
   {#if sysLabel}<div class="sys" data-littles-systematic-label>{sysLabel}</div>{/if}
-  <div class="plot" bind:this={wrap} role="presentation" onmouseleave={() => (tip = null)}>
-    <div bind:this={strip}></div>
-    <div bind:this={top}></div>
-    {#if tip}
-      <ChartTip {tip} data-littles-tip />
-    {/if}
-  </div>
-  {#if warning}<div class="warn" data-littles-common-cause>{warning}</div>{/if}
-  <div class="legend">{littlesLegend(series, data.window_ms)}</div>
+  {#if view === "verdict"}
+    <div class="plot" bind:this={wrap} role="presentation" onmouseleave={() => (tip = null)}>
+      <div bind:this={strip}></div>
+      <div bind:this={top}></div>
+      {#if tip}
+        <ChartTip {tip} data-littles-tip />
+      {/if}
+    </div>
+    {#if warning}<div class="warn" data-littles-common-cause>{warning}</div>{/if}
+    <div class="legend">{littlesLegend(series, data.window_ms)}</div>
+  {:else}
+    <div class="plot raw" data-littles-raw>
+      <div bind:this={rawThroughput}></div>
+      <div bind:this={rawLatency}></div>
+      <div bind:this={rawConcurrency}></div>
+    </div>
+    <div class="legend">raw sub-steps, not judged: throughput, latency, and observed vs calculated (λ·W) concurrency</div>
+  {/if}
 </div>
 
 <style>
@@ -166,6 +231,10 @@
   .key i { display: inline-block; width: 14px; height: 2px; }
   .key i.dash { height: 0; border-top: 2px dashed; }
   .plot { position: relative; }
+  .plot.raw { display: flex; flex-direction: column; gap: 2px; }
   .sys { font-size: 0.8em; color: #CC79A7; font-weight: 600; margin: 0 0 2px; }
   .warn { font-size: 0.78em; opacity: 0.85; margin-top: 2px; }
+  .views { margin-left: auto; display: inline-flex; gap: 2px; }
+  .views button { font-size: 0.78em; padding: 1px 8px; border: 1px solid var(--border, #8884); border-radius: 3px; background: transparent; cursor: pointer; opacity: 0.65; }
+  .views button.active { opacity: 1; font-weight: 600; }
 </style>

@@ -289,6 +289,24 @@ def test_show_littles_panel(tmp_path):
     assert {"reference", "systematic", "transient", "common_cause"} <= set(s0)
 
 
+def test_littles_panel_carries_raw_substeps_for_the_validation_view(tmp_path):
+    # the raw view (user-facing: latency + throughput paired, concurrency vs lambda W) is a
+    # companion to the verdict, not derived from it: every group gets its own unjudged arrays
+    svc = _service(tmp_path, n=2)
+    out = _run(svc, by=["instance"])
+    panel = svc.show(out["datasets"]["concurrency"], "Does L match lambda W?", mark="littles").panel
+    data = svc.panel_data(panel.id, 800)
+    for s in data["series"]:
+        raw = s["raw"]
+        assert {"ts_ms", "arrivals", "w_s", "conc"} == set(raw)
+        n = len(raw["ts_ms"])
+        assert n > 0 and all(len(raw[k]) == n for k in ("arrivals", "w_s", "conc"))
+        assert raw["ts_ms"] == sorted(raw["ts_ms"])
+    # a different (non-total) group's raw arrivals differ from the total's: not a shared alias
+    total, grp = data["series"][0]["raw"], data["series"][1]["raw"]
+    assert total["arrivals"] != grp["arrivals"]
+
+
 def test_show_littles_needs_a_check_first(tmp_path):
     svc = _service(tmp_path)
     d = asyncio.run(svc.query(CONCURRENCY, start="now-1h", end="now", step="15s"))["dataset"]

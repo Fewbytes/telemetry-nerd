@@ -561,20 +561,20 @@ class LittlesOps:
         grouped = bool(by) and len(keys) > 1
         tests = n_win * ((len(matched) if grouped else 0) + 1)
         arr = cfg["arrivals"]
-        total = check(
-            combine(list(subs.values())) if keys else sub(()), cfg["k"], cfg["skip"], tests,
-            arrivals=arr,
-        )  # fmt: skip
+        total_sub = combine(list(subs.values())) if keys else sub(())
+        total = check(total_sub, cfg["k"], cfg["skip"], tests, arrivals=arr)
         groups = (
             [
-                (names[k], check(subs[k], cfg["k"], cfg["skip"], tests, arrivals=arr))
+                (names[k], check(subs[k], cfg["k"], cfg["skip"], tests, arrivals=arr), subs[k])
                 for k in matched
             ]
             if grouped
             else []
         )
         out = {
-            "total": total, "groups": groups, "unmatched": unmatched, "lacking": lacking,
+            "total": total, "total_sub": total_sub,
+            "groups": [(lb, g) for lb, g, _ in groups], "group_subs": [s for _, _, s in groups],
+            "unmatched": unmatched, "lacking": lacking,
             "no_concurrency": not per_role["concurrency"],
         }  # fmt: skip
         self._memo.put(key, out)
@@ -777,9 +777,10 @@ class LittlesOps:
 
     def panel(self, cfg: dict) -> dict:
         r = self.run(cfg)
-        groups = [("total", {}, r["total"])] + [
-            (_labels_text(lb), lb, g) for lb, g in r["groups"][:MAX_GROUPS]
-        ]
+        groups = [("total", {}, r["total"], r["total_sub"])] + [
+            (_labels_text(lb), lb, g, s)
+            for (lb, g), s in zip(r["groups"][:MAX_GROUPS], r["group_subs"][:MAX_GROUPS], strict=True)
+        ]  # fmt: skip
         return {
             "kind": "littles",
             "effective_step_ms": cfg["window_ms"],
@@ -808,8 +809,9 @@ class LittlesOps:
                         for p in g.promoted
                     ],
                     "common_cause": _common_wire(g),
+                    "raw": _raw_wire(s),
                 }
-                for gid, lb, g in groups
+                for gid, lb, g, s in groups
             ],
             "unmatched": r["unmatched"],
             "more_groups": max(0, len(r["groups"]) - MAX_GROUPS),
@@ -1033,6 +1035,21 @@ def _block_wire(b: Block) -> dict:
     if b.reason:
         out["reason"] = b.reason
     return out
+
+
+def _raw_wire(sub: Substeps) -> dict:
+    """Raw per-sub-step arrays for the validation view: throughput (arrivals), latency (W =
+    lat_sum / lat_count) and observed concurrency (conc), aligned to `ts_ms`. The verdict
+    machinery's windowing/statistics never touch these; a reader can eyeball them against the
+    per-window `lambda_W` already on `windows[i]` regardless of how confident the verdict is."""
+    with np.errstate(invalid="ignore", divide="ignore"):
+        w = sub.lat_sum / sub.lat_count
+    return {
+        "ts_ms": sub.ts_ms.tolist(),
+        "arrivals": [sig(x) for x in sub.arrivals],
+        "w_s": [sig(x) for x in w],
+        "conc": [sig(x) for x in sub.conc],
+    }
 
 
 def _rel(ci: tuple[float, float] | None) -> list[float | None] | None:
