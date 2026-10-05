@@ -92,6 +92,13 @@ a.obj-id:hover { text-decoration: underline; }
 
 /* Delivery state under a user's thread message */
 .delivery { display: block; font-size: 11px; color: var(--muted); }
+.delivery.processing { display: flex; align-items: center; gap: 5px; }
+.spinner {
+  width: 9px; height: 9px; border-radius: 50%;
+  border: 1.5px solid var(--border); border-top-color: var(--muted);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 
 /* Two-column layout: panels | sidebar; one column under 900px */
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }

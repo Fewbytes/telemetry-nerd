@@ -95,7 +95,7 @@ test("message status: queued → delivered → answered", async ({ page, request
   try {
     bridge.send({ type: "hello", mode: "channel" });
     bridge.send({ type: "ready" });
-    await expect(status).toHaveText("delivered");
+    await expect(status).toHaveText("processing");
     expect(bridge.deliveries.some((d) => d.content.includes("is this delivered?"))).toBe(true);
   } finally {
     bridge.close();

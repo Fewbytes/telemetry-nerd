@@ -14,7 +14,13 @@
     <li class="message">
       <span class="badge author {m.author}">{m.author}</span>
       <span class="text"><RefText text={m.text} /></span>
-      {#if status}<span class="delivery" data-testid="delivery-{m.id}">{status}</span>{/if}
+      {#if status === "delivered"}
+        <span class="delivery processing" data-testid="delivery-{m.id}">
+          <span class="spinner" aria-hidden="true"></span>processing
+        </span>
+      {:else if status}
+        <span class="delivery" data-testid="delivery-{m.id}">{status}</span>
+      {/if}
     </li>
   {/each}
 </ul>
