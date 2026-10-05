@@ -54,7 +54,7 @@
         tzDate: (ts: number) => uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"),
         bands: m.bands.map((b, j) => ({ ...b, fill: fills[j] })),
         scales: { y: { range: () => range } },
-        axes: plotAxes(stroke, grid, { size: 44, font: "10px sans-serif" }, { size: 22, font: "10px sans-serif", values: (_u: uPlot, splits: number[]) => utcTicks(splits) }),
+        axes: plotAxes(stroke, grid, { size: 44, font: "10px sans-serif" }, { size: 28, font: "10px sans-serif", values: (_u: uPlot, splits: number[]) => utcTicks(splits) }),
         legend: { show: false },
         cursor: { show: false },
       }, cols_ as uPlot.AlignedData, slot));
