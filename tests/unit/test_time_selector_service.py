@@ -64,6 +64,28 @@ async def test_preview_returns_a_dataset_over_the_new_range_without_touching_the
     assert after == before  # untouched: same question, status, spec, dataset_ids
 
 
+async def test_preview_returns_a_renderable_series_payload(tmp_path):
+    # bead geje: the preview dataset is unattached to any panel, so the UI needs its own
+    # chartable payload (not just the aggregate `summary`) to actually draw it.
+    svc = make_service(tmp_path)
+    shown = svc.show((await svc.query("rate(node_cpu_seconds_total[5m])"))["dataset"], "cpu?")
+    out = await svc.preview(shown.panel.id, "now-3h", "now")
+    assert out["series"], "preview should carry at least one series to draw"
+    assert all({"id", "ts", "avg", "min", "max", "count"} <= s.keys() for s in out["series"])
+    meta = svc.datasets.meta(out["dataset"])
+    assert out["start_ms"] == meta.start_ms
+    assert out["end_ms"] == meta.end_ms
+    assert out["effective_step_ms"] > 0
+
+
+async def test_preview_width_sizes_the_series_bucketing(tmp_path):
+    svc = make_service(tmp_path)
+    shown = svc.show((await svc.query("rate(node_cpu_seconds_total[5m])"))["dataset"], "cpu?")
+    narrow = await svc.preview(shown.panel.id, "now-3h", "now", width_px=50)
+    wide = await svc.preview(shown.panel.id, "now-3h", "now", width_px=4000)
+    assert narrow["effective_step_ms"] >= wide["effective_step_ms"]
+
+
 async def test_preview_logs_no_ambient_or_intentional_event(tmp_path):
     svc = make_service(tmp_path)
     shown = svc.show((await svc.query("rate(node_cpu_seconds_total[5m])"))["dataset"], "cpu?")

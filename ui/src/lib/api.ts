@@ -445,8 +445,17 @@ export const splitOutcome = (id: string) => postJSON<OutcomeSplit>(`/api/panels/
 export const reframePanel = (id: string, index: number) => postJSON<{ panel: Panel }>(`/api/panels/${id}/reframe`, { index });
 export const refreshYContext = (id: string) => postJSON<unknown>(`/api/panels/${id}/y-context`);
 
-export const previewPanel = (id: string, start: string, end: string) =>
-  postJSON<{ dataset: string; summary: unknown }>(`/api/panels/${id}/preview`, { start, end });
+/** bead geje: a renderable line-series payload alongside the aggregate `summary` — the preview
+ * dataset is unattached to any panel, so `series`/`effective_step_ms`/`start_ms`/`end_ms` are
+ * the only way the UI can actually draw it. Absent only for a representation the preview
+ * render pipeline doesn't support yet (e.g. distribution), in which case the caller falls back
+ * to the summary-only badge. */
+export interface PreviewResult {
+  dataset: string; summary: unknown;
+  series?: SeriesData[]; effective_step_ms?: number; start_ms?: number; end_ms?: number;
+}
+export const previewPanel = (id: string, start: string, end: string, width?: number) =>
+  postJSON<PreviewResult>(`/api/panels/${id}/preview`, { start, end, ...(width ? { width } : {}) });
 export const rescopePanel = (id: string, start: string, end: string) =>
   postJSON<{ panel: Panel }>(`/api/panels/${id}/rescope`, { start, end });
 export const fetchDefaultRange = () =>

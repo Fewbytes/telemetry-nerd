@@ -3,10 +3,26 @@ export interface Viewport {
   end_ms: number;
 }
 
+/** Viewport fully covered by what's already been fetched, within `toleranceMs` (a few ms/one
+ * step of slack for a "now"-anchored viewport resolved a moment after the data was fetched —
+ * see `nowAnchor`). Without it (and without `nowAnchor`), this was effectively unreachable:
+ * presets/typed ranges resolved against `Date.now()`, which only moves forward, so by the time
+ * a click landed "now" was already past the fetched end_ms. */
 export const isInBounds = (
   viewport: Viewport,
   fetched: { start_ms: number; end_ms: number },
-): boolean => viewport.start_ms >= fetched.start_ms && viewport.end_ms <= fetched.end_ms;
+  toleranceMs = 0,
+): boolean =>
+  viewport.start_ms >= fetched.start_ms && viewport.end_ms <= fetched.end_ms + toleranceMs;
+
+/** What a preset/typed "now"-relative range resolves against. Anchoring to wall-clock time
+ * unconditionally is why isInBounds almost never fired: "now" always runs ahead of whatever was
+ * last fetched. Anchoring to the panel's already-fetched end instead means a preset no wider
+ * than what's loaded lands in bounds (no round trip, just a client-side window of the data in
+ * hand); only a genuinely wider or older range still needs the server. Falls back to wall-clock
+ * time when nothing has been fetched yet. */
+export const nowAnchor = (fetchedEndMs: number | null | undefined, clockNowMs: number): number =>
+  fetchedEndMs != null && fetchedEndMs > 0 ? fetchedEndMs : clockNowMs;
 
 const PRESET_MS: Record<string, number> = {
   "15m": 15 * 60_000,

@@ -6,7 +6,8 @@
     closePanel, fetchPanelData, previewPanel, refreshYContext, reframePanel, rescopePanel, splitOutcome, reportRender, selectYView, setMarginal, selectDataView, setOverlays,
     type Annotation, type Panel, type PanelData, type Thread, type Where, type YView,
   } from "./lib/api";
-  import { isInBounds, parseRelative, presetRange, type Viewport } from "./chart/viewport";
+  import { isInBounds, nowAnchor, parseRelative, presetRange, type Viewport } from "./chart/viewport";
+  import { sliceSeries, type PreviewRender } from "./chart/preview";
   import { rgba, seriesName, toUplot } from "./chart/toUplot";
   import { drawRug, facetTop, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, rugMoreLabel, type RugCell } from "./chart/rug";
   import { describeShown, intervalLegend, panelNotes, provenanceParts, provenanceText } from "./lib/panelNotes";
@@ -112,6 +113,7 @@
   });
 
   let plotEl = $state<HTMLDivElement | null>(null);
+  let previewEl = $state<HTMLDivElement | null>(null);
   let data = $state.raw<PanelData | null>(null);
   let fetchWidth = $state(0);
   let error = $state<string | null>(null);
@@ -217,12 +219,14 @@
   };
 
   // time-range selector (task 11): viewport is null while showing the panel's committed/fetched range.
-  // Picking a preset/typed range selects it (fetching it from the server when it's outside what's
-  // already loaded); "keep this range" rescopes the panel for real, which opens a new panel for that
-  // range. The chart itself does NOT re-render the selected range yet (no rendering pipeline for an
-  // unattached preview dataset), so the badge only says what was fetched/selected, never "previewing".
+  // Picking a preset/typed range previews it in place — a client-side window of already-fetched
+  // data when the range is covered (tier 1, no round trip), or a server-fetched dataset otherwise
+  // (tier 2) — always with a "preview, not this panel's evidence" treatment (previewRender/
+  // chart/preview.ts), never mutating the panel; "keep this range" rescopes it for real, which
+  // opens a new panel for that range.
   let viewport = $state<Viewport | null>(null);
   let previewData = $state<{ dataset: string; summary: unknown } | null>(null);
+  let previewRender = $state<PreviewRender | null>(null);
   let rangeBusy = $state(false);
   let rangeError = $state<string | null>(null);
 
@@ -236,22 +240,37 @@
   const applyViewport = (v: Viewport) => {
     viewport = v;
     rangeError = null;
-    if (isInBounds(v, fetchedBounds())) {
-      previewData = null; // in-bounds: nothing to fetch (the chart is not re-windowed yet either)
+    const fb = fetchedBounds();
+    if (data?.kind === "time" && isInBounds(v, fb, data.effective_step_ms)) {
+      // tier 1: already have it, just window what's on screen — no round trip
+      previewData = null;
+      previewRender = {
+        series: sliceSeries(data.series, v.start_ms, v.end_ms),
+        start_ms: v.start_ms, end_ms: v.end_ms, step_ms: data.effective_step_ms, source: "local",
+      };
       return;
     }
     rangeBusy = true;
-    previewPanel(panel.id, String(v.start_ms), String(v.end_ms))
-      .then((r) => (previewData = r))
+    previewPanel(panel.id, String(v.start_ms), String(v.end_ms), fetchWidth || 800)
+      .then((r) => {
+        previewData = r;
+        previewRender = r.series
+          ? {
+              series: r.series, start_ms: r.start_ms ?? v.start_ms, end_ms: r.end_ms ?? v.end_ms,
+              step_ms: r.effective_step_ms ?? (data?.kind === "time" ? data.effective_step_ms : 0),
+              source: "fetched",
+            }
+          : null; // a representation the preview pipeline doesn't draw yet (e.g. distribution)
+      })
       .catch((e) => (rangeError = String(e)))
       .finally(() => (rangeBusy = false));
   };
 
   const pickPreset = (preset: "15m" | "1h" | "6h" | "24h" | "7d") =>
-    applyViewport(presetRange(preset, Date.now()));
+    applyViewport(presetRange(preset, nowAnchor(fetchedBounds().end_ms, Date.now())));
 
   const pickTyped = (text: string) => {
-    const v = parseRelative(text, Date.now());
+    const v = parseRelative(text, nowAnchor(fetchedBounds().end_ms, Date.now()));
     if (v) applyViewport(v);
     else rangeError = `could not parse "${text}"`;
   };
@@ -263,12 +282,41 @@
       .then(() => {
         viewport = null;
         previewData = null;
+        previewRender = null;
         // the rescoped range arrives as a new panel via the workspace snapshot stream
         // (same pattern as reframe()/splitOutcome() above) — nothing else to do here.
       })
       .catch((e) => (rangeError = String(e)))
       .finally(() => (rangeBusy = false));
   };
+
+  // the preview chart (tier 1 local slice or tier 2 fetched dataset): a small, separate uPlot
+  // instance so it never touches the main plot above — it is explicitly NOT this panel's
+  // evidence, just a look at the picked range before "keep this range" makes it real.
+  $effect(() => {
+    const el = previewEl;
+    const pr = previewRender;
+    if (!el || !pr) return;
+    const mode = theme.effective; // tracked: rebuild on a theme flip
+    const { stroke, grid, palette } = plotColors(el, mode);
+    const model = toUplot(pr.series, { start: pr.start_ms, end: pr.end_ms, step: pr.step_ms }, { palette });
+    const width = el.clientWidth || fetchWidth || 800;
+    const up = new uPlot(
+      {
+        width, height: 140, series: model.series, bands: model.bands,
+        tzDate: (ts: number) => uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"),
+        scales: { x: { time: true } },
+        axes: [
+          { stroke, grid: { stroke: grid }, ticks: { stroke: grid } },
+          { stroke, grid: { stroke: grid }, ticks: { stroke: grid }, size: axisGutterSize() },
+        ],
+        cursor: { drag: { setScale: false, x: false, y: false } },
+        legend: { show: false },
+      },
+      model.data, el,
+    );
+    return () => up.destroy();
+  });
 
 
   // marginal histogram (4ok.6): server computes it; the toggle lives in the panel spec
@@ -866,13 +914,23 @@
       />
       {#if viewport && !rangeBusy && !rangeError}
         <span class="hint" data-preview-badge>
-          {previewData ? "fetched" : "selected"} {fmtRange(viewport.start_ms, viewport.end_ms)} — the chart still shows the
-          current range; click 'keep this range' to open a panel over it
+          {#if previewRender}
+            previewing {fmtRange(previewRender.start_ms, previewRender.end_ms)}
+            ({previewRender.source === "local" ? "from data already loaded" : "fetched"}) — not this panel's evidence
+          {:else}
+            selected {fmtRange(viewport.start_ms, viewport.end_ms)} — summary only, no chart for this kind of data
+          {/if}
         </span>
         <button type="button" disabled={rangeBusy} onclick={keepThisRange}>keep this range</button>
       {/if}
       {#if rangeError}<span class="hint" data-range-error>{rangeError}</span>{/if}
     </div>
+    {#if previewRender}
+      <div class="preview-render" data-preview-render={previewRender.source}>
+        <span class="preview-tag">preview — not {panel.id}'s evidence</span>
+        <div bind:this={previewEl} class="preview-plot"></div>
+      </div>
+    {/if}
   {/if}
   {#if data?.kind === "time" && data.filter}
     <div class="legend y-views" role="group" aria-label="Data view">

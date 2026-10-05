@@ -504,11 +504,18 @@ def create_app(
 
     @_api
     async def panel_preview(request: Request) -> object:
-        """A dataset over a different range for this panel, without mutating it."""
+        """A dataset over a different range for this panel, without mutating it. `width` sizes
+        the returned preview series (same clamp as panel_data's ?width); defaults to 800px."""
         body = await _body(request, start=str, end=str)
+        width = body.get("width")
+        width_px = (
+            min(4000, max(50, width))
+            if isinstance(width, int) and not isinstance(width, bool)
+            else 800
+        )
         try:
             return await service.preview(
-                request.path_params["id"], body["start"], body["end"], "user"
+                request.path_params["id"], body["start"], body["end"], "user", width_px=width_px
             )
         except SourceError as e:
             raise _BadRequest(str(e), e.hint or "") from e

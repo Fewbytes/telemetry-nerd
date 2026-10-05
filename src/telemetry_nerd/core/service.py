@@ -1044,19 +1044,49 @@ class TelemetryService:
             error_matcher=g.error_matcher, actor=actor, reframed_from=g.id,
         )  # fmt: skip
 
-    async def preview(self, panel_id: str, start: str, end: str, actor: Actor = "user") -> dict:
+    async def preview(
+        self, panel_id: str, start: str, end: str, actor: Actor = "user", width_px: int = 800
+    ) -> dict:
         """A dataset over a different range for `panel_id`, without touching it (bead aqk):
         the server side of a client-side zoom preview. Nothing is persisted or logged beyond
-        the routine internal dataset.created event any fetch makes."""
+        the routine internal dataset.created event any fetch makes.
+
+        Also returns enough to actually draw it (bead geje): a plain line-series payload for
+        the new dataset, unattached to any panel. The caller renders it with its own "preview,
+        not this panel's evidence" treatment; this is not the panel_data endpoint and carries
+        none of a panel's caveats/overlays/rug/marginal."""
         p = self.workspace.get_panel(panel_id)
         meta = self.datasets.meta(p.dataset_ids[0])
         refuse_requery(meta, "a time-range preview")
         _refuse_derived_rescope(panel_id, meta, ChartSpec.model_validate(p.spec))
         # step=auto: the old step was chosen for the old range (a 15 m panel's step over 7 d
         # would be tens of thousands of buckets)
-        return await self.query(
+        out = await self.query(
             meta.expr, start=start, end=end, step="auto", source=meta.source, actor=actor
         )
+        new_meta = self.datasets.meta(out["dataset"])
+        out["start_ms"] = new_meta.start_ms
+        out["end_ms"] = new_meta.end_ms
+        if new_meta.representation != "distribution":
+            series, effective_step_ms = self._preview_series(out["dataset"], width_px)
+            out["series"] = series
+            out["effective_step_ms"] = effective_step_ms
+        return out
+
+    def _preview_series(self, dataset_id: str, width_px: int) -> tuple[list[dict], int]:
+        """Lightweight line-series payload for an unattached preview dataset: just enough to
+        draw a chart at this width, none of panel_data's caveats/overlays/rug/filters."""
+        meta, result = self.datasets.get(dataset_id)
+        interval = self.datasets.interval(dataset_id)
+        if meta.representation == "quantile" or interval is not None:
+            # never re-aggregate percentiles over time, nor a declared interval
+            table, effective_step = result.buckets, meta.step_ms
+        else:
+            table, effective_step = lod(
+                result.buckets, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px
+            )
+        labels = series_labels(result.series)
+        return series_payload(table, labels, interval), effective_step
 
     async def rescope(
         self, panel_id: str, start: str, end: str, actor: Actor = "user"

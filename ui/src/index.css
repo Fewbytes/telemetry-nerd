@@ -261,6 +261,12 @@ ul.gaps { list-style: none; margin: 0; padding: 0; }
    of .plot, ahead of the chart itself: the badge/strip's usual top offset (anchored to the
    chart's top-right corner on every other panel kind) would otherwise sit on top of it */
 .panel .plot:has(.fleet .views) .y-badge, .panel .plot:has(.fleet .views) .y-strip { top: 50px; }
+/* the range selector's preview chart (bead geje): dashed border + a tag, so it never reads as
+   this panel's committed evidence, whether it's a client-side slice (tier 1) or a fetched
+   dataset (tier 2) */
+.panel .preview-render { position: relative; margin-top: 8px; padding-top: 14px; border: 2px dashed var(--warn); border-radius: 4px; }
+.panel .preview-render .preview-tag { position: absolute; top: -9px; left: 8px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--warn); background: var(--bg); padding: 0 4px; }
+.panel .preview-plot { padding: 2px 6px 6px; }
 
 /* Metric card (bead 2as.12) */
 .metric-card { margin-top: 8px; font-size: 12px; border-top: 1px solid var(--border); padding-top: 6px; }

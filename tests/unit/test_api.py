@@ -370,7 +370,22 @@ def test_panel_preview_returns_a_dataset_without_mutating_the_panel(client):
     pid = make_panel(client).json()["panel"]["id"]
     resp = client.post(f"/api/panels/{pid}/preview", json={"start": "now-3h", "end": "now"})
     assert resp.status_code == 200
-    assert "dataset" in resp.json()
+    body = resp.json()
+    assert "dataset" in body
+    # bead geje: a renderable series payload, not just the aggregate summary — the preview
+    # dataset is unattached to any panel, so this is the only way the UI can draw it.
+    assert body["series"]
+    assert body["effective_step_ms"] > 0
+    assert body["start_ms"] < body["end_ms"]
+
+
+def test_panel_preview_honors_a_width_hint(client):
+    pid = make_panel(client).json()["panel"]["id"]
+    resp = client.post(
+        f"/api/panels/{pid}/preview", json={"start": "now-3h", "end": "now", "width": 50}
+    )
+    assert resp.status_code == 200
+    assert resp.json()["effective_step_ms"] > 0
 
 
 def test_panel_rescope_returns_a_new_panel(client):
