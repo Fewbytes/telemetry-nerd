@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchWorkspace, fetchWorkspaces, subscribe, type Snapshot, type WorkspaceEvent, type WorkspaceInfo } from "./api";
+import { fetchWorkspace, fetchWorkspaces, subscribe, type Panel, type Snapshot, type WorkspaceEvent, type WorkspaceInfo } from "./api";
 import { createWorkspace, needsReload } from "./workspace.svelte";
 
 vi.mock("./api", async (orig) => ({ ...(await orig<typeof import("./api")>()), fetchWorkspace: vi.fn(), fetchWorkspaces: vi.fn() }));
@@ -381,6 +381,31 @@ describe("workspace frames in the store", () => {
     const before = ws.snapshot;
     send(JSON.stringify({ kind: "workspace", active: { ...active, last_activity_ms: 5 } })); // another workspace was renamed
     expect(ws.snapshot).toBe(before);
+    stop();
+  });
+
+  it("keeps an unchanged panel's object identity across a reload, so only the changed one looks new (rhe2)", async () => {
+    const panel = (id: string, question: string): Panel => ({
+      id, question, status: "open", dataset_ids: ["d1"], created_at_ms: 0, answered_by: null, closed: false,
+      spec: { layers: [{ mark: "line", data: "d1" }], y: { range_mode: "data", unit: null, label: null } },
+    });
+    const withPanels = (id: string, last_seq: number, panels: Panel[]): Snapshot => ({
+      panels, annotations: [], hypotheses: [], findings: [], gaps: [], threads: [], last_seq,
+      workspace: { id, title: "t", question: null, archived: false, created_at_ms: 0 },
+    });
+    const unchanged = panel("p1", "same throughout");
+    const changedBefore = panel("p2", "before");
+    const { ws, load, stop } = await started(withPanels("w1", 1, [unchanged, changedBefore]));
+    const beforePanels = ws.snapshot?.panels;
+    // a new fetch re-parses both panels from JSON (new objects), but only p2's question actually
+    // moved (last_seq past 5: started() sends a seq-5 highlight that otherwise makes this stale)
+    load.mockResolvedValue(withPanels("w1", 6, [panel("p1", "same throughout"), panel("p2", "after")]));
+    await ws.reload();
+    const afterPanels = ws.snapshot?.panels;
+    expect(afterPanels).not.toBe(beforePanels);
+    expect(afterPanels?.find((p) => p.id === "p1")).toBe(beforePanels?.find((p) => p.id === "p1"));
+    expect(afterPanels?.find((p) => p.id === "p2")).not.toBe(beforePanels?.find((p) => p.id === "p2"));
+    expect(afterPanels?.find((p) => p.id === "p2")?.question).toBe("after");
     stop();
   });
 

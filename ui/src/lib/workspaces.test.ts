@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { Snapshot, WorkspaceInfo } from "./api";
-import { defaultTitle, sortForSwitcher, withWorkspace, workspaceChanged } from "./workspaces";
+import type { Panel, Snapshot, WorkspaceInfo } from "./api";
+import { defaultTitle, reconcilePanels, sortForSwitcher, withWorkspace, workspaceChanged } from "./workspaces";
 
 const info = (id: string, last_activity_ms = 0): WorkspaceInfo => ({
   id, title: id, question: null, archived: false, created_at_ms: 0, last_activity_ms,
@@ -9,6 +9,11 @@ const info = (id: string, last_activity_ms = 0): WorkspaceInfo => ({
 const snap = (id: string): Snapshot => ({
   panels: [], annotations: [], hypotheses: [], findings: [], gaps: [], threads: [], last_seq: 1,
   workspace: info(id),
+});
+
+const panel = (id: string, question = "q"): Panel => ({
+  id, question, status: "open", dataset_ids: ["d1"], created_at_ms: 0, answered_by: null, closed: false,
+  spec: { layers: [{ mark: "line", data: "d1" }], y: { range_mode: "data", unit: null, label: null } },
 });
 
 describe("workspaceChanged", () => {
@@ -47,5 +52,40 @@ describe("withWorkspace", () => {
     const archived = { ...info("w2"), archived: true };
     expect(withWorkspace(list, archived).map((w) => w.id)).toEqual(["w1"]);
     expect(withWorkspace(list, archived, true)[1].archived).toBe(true);
+  });
+});
+
+describe("reconcilePanels", () => {
+  it("reuses the old object for a panel that is byte-for-byte unchanged, by id", () => {
+    const old1 = panel("p1");
+    const old2 = panel("p2");
+    // a fresh fetch re-parses every panel from JSON: p1 is identical content but a new object;
+    // only p2 actually changed (its spec grew a window)
+    const next1 = panel("p1");
+    const next2 = { ...panel("p2"), spec: { ...panel("p2").spec, layers: [{ mark: "line", data: "d1", windows: [] }] } };
+    const out = reconcilePanels([old1, old2], [next1, next2]);
+    expect(out[0]).toBe(old1); // unchanged: kept the prior reference
+    expect(out[1]).toBe(next2); // changed: the new object, so its component refetches
+    expect(out[1]).not.toBe(old2);
+  });
+
+  it("does not reuse across ids, and passes new panels through untouched", () => {
+    const old1 = panel("p1");
+    const next = panel("p3");
+    const out = reconcilePanels([old1], [next]);
+    expect(out[0]).toBe(next);
+  });
+
+  it("returns `next` itself (no new array) when nothing could be reused", () => {
+    const next = [panel("p9")];
+    expect(reconcilePanels([], next)).toBe(next);
+    expect(reconcilePanels([panel("p1")], next)).toBe(next);
+  });
+
+  it("does not mutate either input array", () => {
+    const old = [panel("p1")];
+    const next = [panel("p1")];
+    reconcilePanels(old, next);
+    expect(old[0]).not.toBe(next[0]); // originals untouched; only the returned array is new
   });
 });

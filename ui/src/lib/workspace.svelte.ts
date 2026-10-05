@@ -4,7 +4,7 @@ import {
 } from "./api";
 import type { DaemonState } from "./connection";
 import { applyHighlightEvent, expire, nextExpiry, type Highlights } from "./highlights";
-import { withWorkspace, workspaceChanged } from "./workspaces";
+import { reconcilePanels, withWorkspace, workspaceChanged } from "./workspaces";
 
 const RELOAD_TYPES = new Set([
   "panel.created", "panel.answered", "finding.created", "finding.verdict",
@@ -106,7 +106,12 @@ export function createWorkspace() {
         if (fresh) {
           const first = snapshot === null;
           const switched = workspaceChanged(snapshot, s);
-          snapshot = s;
+          // keep unchanged panels' object identity across the reload (bead rhe2): otherwise every
+          // panel component's data-fetch effect, keyed off its `panel` prop's identity, reruns.
+          const panels = !switched && snapshot !== null && s.panels
+            ? reconcilePanels(snapshot.panels ?? [], s.panels)
+            : s.panels;
+          snapshot = panels === s.panels ? s : { ...s, panels };
           error = null;
           resyncs = 0;
           if (switched) clearHighlights();
