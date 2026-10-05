@@ -149,6 +149,51 @@ Fewbytes/telemetry-nerd` and `/plugin install telemetry-nerd@telemetry-nerd`.
 Commands are namespaced by the plugin name (`/telemetry-nerd:<command>`); Claude Code also
 accepts the bare form (e.g. `/start`) when no other plugin claims it.
 
+### Working in this repo as a local checkout (not marketplace-installed)
+
+A marketplace install (`/plugin install telemetry-nerd@telemetry-nerd`) has Claude Code merge
+`hooks/hooks.json` and `.mcp.json` for you. Working directly in a source checkout of *this*
+repo (e.g. as the `telemetry-nerd@inline` dev loop) only picks up `.mcp.json` automatically —
+Claude Code does not merge an unregistered checkout's `hooks/hooks.json`. Without it, the
+`UserPromptSubmit` hook that drains queued UI events into context never runs, and workspace
+chat messages sit "queued" until something calls `pending` by hand.
+
+Wire it into `.claude/settings.json` yourself, using `$CLAUDE_PROJECT_DIR` (not
+`${CLAUDE_PLUGIN_ROOT}`, which only resolves inside an actual plugin context):
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command",
+        "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/tn-launch\" ensure", "timeout": 30 } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command",
+        "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/tn-launch\" pending", "timeout": 10 } ] }
+    ]
+  }
+}
+```
+
+### Channel vs. hook delivery
+
+Workspace UI events reach Claude Code one of two ways (`core/presence.py`):
+
+- **channel** (push): live over the bridge's `/ws/bridge` socket, the moment an event happens.
+  Requires the connecting MCP client to advertise the experimental `claude/channel` capability
+  during initialize, or `TN_CHANNEL=1` in the bridge's environment.
+- **hook** (poll): the default today, since Claude Code doesn't advertise `claude/channel` yet.
+  The `UserPromptSubmit` hook (`tn-launch pending`) claims and prints whatever queued since your
+  last prompt. No live push, but no unread backlog either — it drains on every turn.
+
+**If/when Anthropic ships `claude/channel` support in Claude Code, no action is needed here.**
+The bridge already detects it automatically: `client_advertised_channel()` in
+`bridge/proxy.py` checks `ClientCapabilities.experimental` on every session and calls
+`gate.enable()` the moment it sees the capability, switching that session from `hook` to
+`channel` mode on the spot. `TN_CHANNEL=1` exists only to force the same switch early, e.g. for
+testing against a client build that supports it but doesn't advertise it yet.
+
 ### Plugin against a container daemon
 
 The bridge is a small stdio process that still needs the `telemetry-nerd` CLI (install 2 above);

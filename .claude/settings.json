@@ -1,3 +1,12 @@
 {
-  "hooks": {}
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command",
+        "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/tn-launch\" ensure", "timeout": 30 } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command",
+        "command": "sh \"$CLAUDE_PROJECT_DIR/scripts/tn-launch\" pending", "timeout": 10 } ] }
+    ]
+  }
 }
