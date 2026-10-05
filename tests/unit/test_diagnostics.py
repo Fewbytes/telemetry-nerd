@@ -107,6 +107,22 @@ def test_a_short_series_is_judged_without_a_period_search():
     assert not d.peaks and d.shifts[0].ts_ms == 16 * M
 
 
+def test_baseline_contaminated_by_a_previous_episode_is_flagged_not_calm():
+    """telemetry-nerd-k9sn: the default baseline (first half of the range) can hold the tail of
+    an earlier, different episode (e.g. a previous scenario's last points still elevated). The
+    excursion test is robust to it (median/MAD), but nothing said the baseline wasn't actually
+    calm; it should flag `baseline_not_calm`."""
+    y = 10 + noise(5)
+    y[:30] += 15  # a different episode's tail bleeding into the first 30 of 720 baseline points
+    d = run(y)
+    assert "baseline_not_calm" in d.caveats
+
+
+def test_a_calm_baseline_is_not_flagged():
+    d = run(noise(6))
+    assert "baseline_not_calm" not in d.caveats
+
+
 def test_a_shift_only_the_point_model_sees_is_undetermined_not_level_shifted():
     """Principle 16 (nbz): a step significant under the bias-corrected AR(1) phi but not under
     the cautious one (phi + 1 SE) is reported as undetermined context, never the step model."""

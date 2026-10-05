@@ -65,18 +65,34 @@ REFERENCE_SCHEMES = {"previous": "previous", "day": "1d", "week": "1w"}
 Run = tuple[Prepared, tuple[int, int, str], dict[str, Diagnosis], dict[str, dict]]
 
 
-def default_baseline(meta: DatasetMeta) -> tuple[int, int]:
-    """First half of the dataset range, on whole steps: [start, end)."""
-    steps = (meta.end_ms - meta.start_ms) // meta.step_ms + 1
+def future_range(meta: DatasetMeta, now_ms: int | None) -> bool:
+    """The requested range is PARTLY in the future: some of it is already observed (now_ms
+    falls inside it), the rest cannot exist yet (telemetry-nerd-k9sn). `now_ms` before the
+    range's start is a different, unrelated situation (e.g. a mock clock in a test unrelated to
+    the dataset's own timestamps) and is not called "future" here."""
+    return now_ms is not None and meta.start_ms <= now_ms < meta.end_ms
+
+
+def default_baseline(meta: DatasetMeta, now_ms: int | None = None) -> tuple[int, int]:
+    """First half of the dataset's OBSERVED range, on whole steps: [start, end). When the
+    requested range's end is still in the future (telemetry-nerd-k9sn), the split is over the
+    span that actually exists, not the full requested range: a range mostly in the future would
+    otherwise put a thin sliver of real data as "the first half" and call the rest (future steps
+    that cannot exist yet) the window being judged."""
+    end = min(meta.end_ms, now_ms) if future_range(meta, now_ms) else meta.end_ms
+    steps = (end - meta.start_ms) // meta.step_ms + 1
     return meta.start_ms, meta.start_ms + (steps // 2) * meta.step_ms
 
 
 def resolve_baseline(
-    meta: DatasetMeta, start_ms: int | None, end_ms: int | None
+    meta: DatasetMeta, start_ms: int | None, end_ms: int | None, now_ms: int | None = None
 ) -> tuple[int, int, str]:
     if start_ms is None and end_ms is None:
-        s, e = default_baseline(meta)
-        return s, e, "first half of the range (default)"
+        s, e = default_baseline(meta, now_ms)
+        basis = "first half of the range (default)"
+        if future_range(meta, now_ms):
+            basis = "first half of the observed range (default; the requested range extends past now)"  # fmt: skip
+        return s, e, basis
     s = meta.start_ms if start_ms is None else start_ms
     e = meta.end_ms + meta.step_ms if end_ms is None else end_ms
     if not meta.start_ms - meta.step_ms <= s < e <= meta.end_ms + meta.step_ms:
@@ -318,11 +334,16 @@ class SeriesDiagnostics:
         start_ms: int | None = None,
         end_ms: int | None = None,
         ref: dict | None = None,
+        now_ms: int | None = None,
     ) -> Run:
         """(prepared series, baseline (start, end, basis), diagnosis per series, per series the
         operating profile whose seasonal shape is the SPC centre)."""
         meta = self._signal.check(dataset_id, "analyze")
-        base = reference_baseline(meta, ref) if ref else resolve_baseline(meta, start_ms, end_ms)
+        base = (
+            reference_baseline(meta, ref)
+            if ref
+            else resolve_baseline(meta, start_ms, end_ms, now_ms)
+        )
         # the seasonal shape never sees the data being judged: the whole dataset is excluded
         shapes = (
             self._shapes(meta.source, meta.expr, meta.start_ms - meta.step_ms, meta.end_ms)
@@ -337,6 +358,7 @@ class SeriesDiagnostics:
             (shapes.profile_id, shapes.computed_at_ms) if shapes else None,
             tuple(sorted((k, v) for k, v in siblings.items() if v)),
             tuple(sorted((k, v) for k, v in ratios.items() if v)),
+            base,
         )  # fmt: skip
         if (hit := self._memo.get(key)) is not None:
             return hit
@@ -399,10 +421,15 @@ class SeriesDiagnostics:
         start_ms: int | None = None,
         end_ms: int | None = None,
         ref: dict | None = None,
+        now_ms: int | None = None,
     ) -> dict:
-        prep, base, diags, used = self.run(dataset_id, start_ms, end_ms, ref)
+        prep, base, diags, used = self.run(dataset_id, start_ms, end_ms, ref, now_ms)
         eff = format_duration(prep.step_ms)
         caveats = list(prep.caveats)
+        if future_range(prep.meta, now_ms):
+            # telemetry-nerd-k9sn: part of the requested range doesn't exist yet; the default
+            # baseline (resolve_baseline, above) already split over the observed span only
+            caveats.append("future_range")
         series = []
         expected = (prep.meta.end_ms - prep.meta.start_ms) // prep.step_ms + 1
         for sid, d in diags.items():

@@ -128,14 +128,21 @@ def test_round4_departure_is_citable_evidence(tmp_path):
     s = next(s for s in out["series"] if s["labels"] == PATH[2])  # checkout PlaceOrder
     dep = s["stability"]["departure"]
     assert dep["at"] == "2026-10-03T16:41:00+00:00" and dep["events"] == sum(BURST)
-    assert (dep["n_baseline"], dep["n_judged"]) == ((BORN - LIVE) // M, (NOW - BORN) // M + 1)
+    # telemetry-nerd-k9sn: NOW (16:48:40) is before T_END (16:55), so the default baseline
+    # splits the OBSERVED span (T0..NOW) in half -> baseline ends 16:37, inside the LIVE..BORN
+    # zero fill: n_baseline = (16:37 - LIVE) / M, n_judged = (NOW - 16:37) / M + 1
+    assert (dep["n_baseline"], dep["n_judged"]) == (10, 12)
+    assert "future_range" in out["caveats"]
     ev = dep["evidence"]
     assert ev["name"] == "departure_from_zero" and ev["source"] == "undetermined"
-    # both models, each named; the label rests on the clustered one
-    assert dep["p"] < 1e-20 and 0.01 < dep["p_clustered"] < 0.02
-    assert ev["params"]["p_poisson"] < 1e-20 and ev["params"]["dispersion_source"] == "judged"
+    # both models, each named; the label rests on the clustered one. The module docstring's
+    # 0vg7 numbers (p~2e-24, p_clustered~0.015) are the historical eval run's own, computed over
+    # its (buggy) 13-step zero baseline; the k9sn fix shrinks the default baseline to the
+    # observed span (10 steps here), moving the split and so these numbers
+    assert dep["p"] < 1e-10 and 0.1 < dep["p_clustered"] < 0.2
+    assert ev["params"]["p_poisson"] < 1e-10 and ev["params"]["dispersion_source"] == "judged"
     assert dep["label_rests_on"] == "clustered" and "Poisson" in ev["method"]
-    assert dep["summary"].startswith("under a Poisson model (independent events) p=2.1e-24;")
+    assert dep["summary"].startswith("under a Poisson model (independent events) p=8.8e-17;")
     assert "allowing clustered events" in dep["summary"]
     # the op recorded it: cited back without its source, the source is derived (tcfz path too)
     bare = {k: v for k, v in ev.items() if k != "source"} | {"method": "analyze"}

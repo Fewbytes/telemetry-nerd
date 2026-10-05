@@ -1678,6 +1678,7 @@ class TelemetryService:
             dataset_id,
             parse_time(baseline_start, now) if baseline_start else None,
             parse_time(baseline_end, now) if baseline_end else None,
+            now_ms=now,
         )
         self.diagnostics.remember(dataset_id, None)
         return mark_statistics(self._analyze_hint(dataset_id, out), self.datasets, [dataset_id])
@@ -1702,7 +1703,7 @@ class TelemetryService:
             await self.diagnostics.fetch_ratio(d, actor)
 
         def run() -> dict:
-            out = self.diagnostics.summary(dataset_id, ref=ref)
+            out = self.diagnostics.summary(dataset_id, ref=ref, now_ms=self.clock())
             self.diagnostics.remember(dataset_id, ref)
             return self._analyze_hint(dataset_id, out)
 

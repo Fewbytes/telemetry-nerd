@@ -64,6 +64,28 @@ def test_analyze_step_with_default_baseline_and_evidence(tmp_path):
     assert len(json.dumps(out)) < 6000
 
 
+def test_future_range_is_caveated_and_default_baseline_uses_observed_span(tmp_path):
+    """telemetry-nerd-k9sn: when the requested range's end is after "now", the default
+    first-half baseline (and the judged window's step count) must not be computed over a span
+    that partly doesn't exist yet. Flag it (`future_range`) and split the default baseline over
+    the observed span only, not the full requested range."""
+    now = 700 * M  # the dataset runs 0..(N-1)*M (~24h); only the first ~11h40m is observed
+    svc = make_service(tmp_path, clock=lambda: now)
+    d = put(svc, step_series())
+    out = svc.analyze(d)
+    assert "future_range" in out["caveats"]
+    # half of the OBSERVED span (0..700*M), not half of the full requested range (0..1439*M,
+    # which would end at 720*M as in the default-baseline test above)
+    assert out["baseline"]["end"] == "1970-01-01T05:50:00+00:00"  # 350 * M
+
+
+def test_no_future_range_caveat_when_the_range_is_entirely_past(tmp_path):
+    svc = make_service(tmp_path)  # default clock (NOW) is well after the dataset's range
+    d = put(svc, step_series())
+    out = svc.analyze(d)
+    assert "future_range" not in out["caveats"]
+
+
 def test_stated_baseline_is_validated_and_used(tmp_path):
     svc = make_service(tmp_path)
     d = put(svc, step_series())

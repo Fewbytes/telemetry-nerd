@@ -529,7 +529,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         Returns per series: verdict, also, reasons (with numbers), and the sections; headline
         numbers carry an `evidence` statistic for finding_create. Caveats: coarsened, gaps,
         red_noise, short_baseline, near_random_walk, seasonal_not_in_baseline, no_period_search
-        (< 32 points: judged for shifts / trend / SPC, periods not searched), absent_as_zero
+        (< 32 points: judged for shifts / trend / SPC, periods not searched), future_range (the
+        requested range's end is after now: the default baseline split over the first half of
+        the OBSERVED span only, not the full requested range), baseline_not_calm (the baseline
+        itself holds an excursion, e.g. the tail of an earlier, different episode: pass an
+        explicit baseline_start/baseline_end for a calmer stretch), absent_as_zero
         (an error/outcome counter series born on its first event, e.g. status_code=ERROR, was
         read as 0 where its live sibling reports: a measurement-system assumption stated in
         the series' `absent_as_zero` and `variation`; report it with any claim on that series).

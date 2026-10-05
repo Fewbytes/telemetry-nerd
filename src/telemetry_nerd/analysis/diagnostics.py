@@ -365,6 +365,29 @@ def _two_model_reason(source: str, reasons: list[str], var: list[dict], why: dic
     var.append(item(source, why[source]))
 
 
+def _baseline_calm(b_ts: np.ndarray, b_pos: np.ndarray, b_y: np.ndarray) -> Excursion | None:
+    """Self-check (bead k9sn): is the baseline itself calm? The control limits trust it as the
+    common-cause reference, but either end can hold the tail of an earlier, different episode
+    (e.g. the previous scenario's last points still elevated). Split the baseline at its
+    midpoint both ways (first half as the reference / second half judged, and back) and scan
+    each for an excursion (same test as the judged window, bead 7f15: median/MAD, Bonferroni
+    over every run), so contamination at either end is caught regardless of which half it falls
+    in. None when there are too few baseline points to test (< 2 x MIN_SEGMENT) or neither split
+    finds one."""
+    n = b_y.size
+    if n < 2 * MIN_SEGMENT:
+        return None
+    mid = n // 2
+    for ref_first in (True, False):
+        sub = np.zeros(n, bool)
+        sub[:mid] = ref_first
+        sub[mid:] = not ref_first
+        exc = excursion(b_ts, b_pos, b_y, sub)
+        if exc is not None and exc.status != COMMON:
+            return exc
+    return None
+
+
 def diagnose(
     ts_ms: np.ndarray,
     y: np.ndarray,
@@ -434,6 +457,14 @@ def diagnose(
     if sp is not None:
         caveats += [c for c in sp.caveats if c not in caveats]
     caveats += [c for c in chart.caveats if c not in caveats]
+    if reference is not None:
+        b_ts = np.asarray(reference[0], np.int64)
+        b_y = np.asarray(reference[1], float)
+        b_pos = positions(b_ts, step_ms) if b_ts.size else b_ts
+    else:
+        b_ts, b_pos, b_y = ts_ms[baseline], pos[baseline], y[baseline]
+    if (calm := _baseline_calm(b_ts, b_pos, b_y)) is not None and calm.status != COMMON:
+        caveats.append("baseline_not_calm")
 
     labels: list[str] = []
     reasons: list[str] = []

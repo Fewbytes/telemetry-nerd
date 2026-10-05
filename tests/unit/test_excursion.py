@@ -182,7 +182,13 @@ def test_round5_analyze_reports_the_episode_as_citable_special_cause(tmp_path):
     svc = make_service(tmp_path, source=Round5(name="default", n_series=1), clock=lambda: now)
     d = asyncio.run(svc.query(D6, start=str(t0), end=str(t1), step="120s"))["dataset"]
     out = asyncio.run(svc.analyze_profiled(d))
-    assert out["baseline"]["basis"] == "first half of the range (default)"
+    # telemetry-nerd-k9sn: 14 min of the requested range (22:00-22:14) is still in the future;
+    # flagged, and the default baseline splits the OBSERVED span (21:14-22:00:30) in half, not
+    # the full requested range
+    assert "future_range" in out["caveats"]
+    assert out["baseline"]["basis"] == (
+        "first half of the observed range (default; the requested range extends past now)"
+    )
     s = next(s for s in out["series"] if s["labels"] == {"service_name": "shipping"})
     assert s["verdict"] == "level_shifted" and s["structure"] == "excursion", s["reasons"]
     ex = s["stability"]["excursion"]
