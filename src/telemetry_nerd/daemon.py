@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import subprocess
@@ -51,15 +52,35 @@ def healthy(url: str, timeout: float = 1.0) -> bool:
         return False
 
 
+def lock_path(data_dir: Path) -> Path:
+    return Path(data_dir) / "daemon.lock"
+
+
 def ensure_daemon(settings: Settings, wait_s: float = 15.0) -> str:
-    """Return the URL of a healthy daemon for this data dir, spawning one if needed."""
+    """Return the URL of a healthy daemon for this data dir, spawning one if needed.
+
+    The whole check-then-spawn decision is made under an flock on
+    `data_dir/daemon.lock` (telemetry-nerd-au99): two concurrent callers can both
+    observe "not healthy", but only the one that wins the lock spawns a daemon. The
+    other blocks on the lock and, once it acquires it, re-checks health (now true,
+    since the winner's daemon has finished starting) and returns without spawning.
+    """
+    settings.data_dir.mkdir(parents=True, exist_ok=True)
+    with open(lock_path(settings.data_dir), "a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            return _check_then_spawn(settings, wait_s)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _check_then_spawn(settings: Settings, wait_s: float) -> str:
     state = read_state(settings.data_dir)
     if state is not None and healthy(state["url"]):
         return state["url"]
     url = settings.daemon_url
     if healthy(url):
         return url
-    settings.data_dir.mkdir(parents=True, exist_ok=True)
     cmd = [
         sys.executable,
         "-m",

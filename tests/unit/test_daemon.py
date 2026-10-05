@@ -1,5 +1,7 @@
 import socket
 import subprocess
+import threading
+import time
 
 from telemetry_nerd import daemon
 from telemetry_nerd.config import Settings
@@ -61,3 +63,54 @@ def test_ensure_daemon_spawns_when_unhealthy(tmp_path, monkeypatch):
     cmd, kw = calls[0]
     assert "telemetry_nerd.cli" in cmd and "serve" in cmd
     assert kw["start_new_session"] is True
+
+
+def test_ensure_daemon_concurrent_calls_spawn_only_once(tmp_path, monkeypatch):
+    """Regression for the check-then-spawn race (telemetry-nerd-au99): N concurrent
+    ensure_daemon() calls against a fresh data_dir must spawn exactly one daemon."""
+    settings = Settings(data_dir=tmp_path, port=7998)
+    spawn_count = 0
+    spawn_lock = threading.Lock()
+    started = threading.Event()
+
+    def fake_popen(cmd, **kw):
+        nonlocal spawn_count
+        with spawn_lock:
+            spawn_count += 1
+
+        def _become_healthy():
+            time.sleep(0.1)
+            daemon.write_state(tmp_path, settings.daemon_url, 12345)
+            started.set()
+
+        threading.Thread(target=_become_healthy, daemon=True).start()
+
+        class P:
+            pass
+
+        return P()
+
+    def fake_healthy(url, timeout=1.0):
+        return started.is_set() and url == settings.daemon_url
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(daemon, "healthy", fake_healthy)
+
+    results: list[str] = []
+    errors: list[Exception] = []
+
+    def worker():
+        try:
+            results.append(daemon.ensure_daemon(settings, wait_s=5.0))
+        except Exception as e:  # noqa: BLE001 - captured for assertion in the main thread
+            errors.append(e)
+
+    threads = [threading.Thread(target=worker) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    assert not errors
+    assert spawn_count == 1, f"expected exactly one spawn, got {spawn_count}"
+    assert all(r == settings.daemon_url for r in results)

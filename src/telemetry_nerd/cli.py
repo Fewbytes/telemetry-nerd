@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import anyio
+import duckdb
 import httpx
 import uvicorn
 from starlette.types import ASGIApp
@@ -99,7 +100,15 @@ def _uvicorn_config(app: ASGIApp, settings: Settings) -> uvicorn.Config:
 
 
 async def _serve(settings: Settings) -> None:
-    service = build_service(settings)
+    try:
+        service = build_service(settings)
+    except duckdb.IOException:
+        # telemetry-nerd-au99: ensure_daemon() holds an flock around check-then-spawn,
+        # but a daemon started directly (bypassing ensure_daemon) can still lose this
+        # race. Fail quietly instead of a full traceback; the winner already owns the
+        # data dir.
+        logging.getLogger(__name__).info("another daemon already holds the lock, exiting")
+        return
     mcp = build_mcp(service, settings.ui_url)
     app = create_app(service, settings.ui_dir, allowed_hosts=settings.allowed_hosts, mcp=mcp)
     server = uvicorn.Server(_uvicorn_config(app, settings))

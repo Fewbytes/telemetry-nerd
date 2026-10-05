@@ -1,6 +1,8 @@
 import logging
 import sys
 
+import anyio
+import duckdb
 import pytest
 
 from telemetry_nerd import cli
@@ -49,6 +51,24 @@ def test_default_data_dir_env_precedence(monkeypatch, tmp_path):
     monkeypatch.setenv("TN_DATA_DIR", "/x/y")
     assert Settings.from_env().data_dir == Path("/x/y")
     assert Settings.from_env().daemon_url == "http://127.0.0.1:7070"
+
+
+def test_serve_exits_quietly_on_duckdb_lock_conflict(tmp_path, monkeypatch, caplog):
+    """telemetry-nerd-au99 layer 2: a losing daemon that still hits the DuckDB lock
+    (e.g. started directly, bypassing ensure_daemon's flock) logs one line and returns
+    instead of raising a traceback."""
+
+    def boom(settings):
+        raise duckdb.IOException("Could not set lock on file")
+
+    monkeypatch.setattr(cli, "build_service", boom)
+    settings = cli.Settings.from_env()
+    settings.data_dir = tmp_path
+
+    with caplog.at_level(logging.INFO, logger="telemetry_nerd.cli"):
+        anyio.run(cli._serve, settings)
+
+    assert any("already holds the lock" in r.message for r in caplog.records)
 
 
 def test_serve_refuses_when_healthy_daemon_same_data_dir(tmp_path, monkeypatch, capsys):
