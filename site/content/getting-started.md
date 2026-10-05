@@ -84,25 +84,29 @@ provenance footer that tells you what was queried, at what resolution, and how i
 plus any caveats (missing data, low sample counts, and so on). A clean panel has no caveat
 clutter — caveats only appear when there is something to say.
 
-![Panel anatomy, numbered](/img/getting-started-anatomy.png)
+![Panel anatomy, numbered, on a fleet panel: CPU utilization across 25 nodes](/img/getting-started-anatomy.png)
 
-1. **Panels / Catalog** — switch between the panel feed and the metric catalog.
-2. **Panel header** — the panel id, its question, an "open" status, the Highlight pin, and a
+This one is a **fleet panel** — CPU utilization across 25 real CERN Kubernetes nodes over about an
+hour, drawn as a spread instead of 25 overlapping lines (more on that view in
+[A fleet, not a hundred overlapping lines](#a-fleet-not-a-hundred-overlapping-lines) below).
+
+1. **Panel header** — the panel id, its question, an "open" status, the Highlight pin, and a
    close button (closing is soft: the panel can still be reopened and linked from findings).
-3. **Chart: line + min–max envelope.** The line is the mean per bucket; the shaded band behind it
-   keeps every bucket's min and max, so a spike survives even after zooming out.
-4. **Coverage rug.** The strip right under the chart marks, bucket by bucket, where data is
-   missing, partial or untrusted — color-coded per series. Here it shows a long stretch where one
-   node stopped reporting.
-5. **Legend.** One entry per series, color-matched to the chart.
-6. **View controls** — `layers` (normal band, limit line, last week overlays), `y` (axis mode:
-   auto, from zero, log, ratio-to-baseline, ...) and `marginal` (a secondary comparison strip).
-7. **Caveats** — what's wrong or worth knowing about this specific data (missing samples, settling
-   data, low counts). Never silent.
-8. **Notes** — context that isn't a problem, just useful: what the reference range includes, where
-   a physical limit comes from.
-9. **Query** and **metric card** — collapsed by default; expand for the raw expression or the full
-   metric card (next screenshot).
+2. **Chart: SPC band.** The shaded band is the robust ±2σ/±3σ spread across all 25 nodes per step,
+   with the median as the solid line; the dashed line is the fleet's actual max. A member is only
+   ever drawn as its own line when the outlier tests flag it — here none are, so the whole fleet
+   reads as one common-cause band.
+3. **View controls** — `view` (band, spread, member × time) and the y-axis derivation note: here
+   Claude asserted the `[0,1]` natural bounds itself, since this panel's expression is a ratio it
+   built, not a plain catalog metric.
+4. **Member summary** — count, outliers, reporting coverage per step, and how many member-steps sat
+   beyond 3σ without being flagged (a sanity check on the outlier tests themselves).
+5. **Y-axis controls** — same `auto` / `from zero` / `reference range` / `natural bounds` toggles as
+   any panel.
+6. **Notes** — context that isn't a problem, just useful: how the fleet is aggregated, how many
+   members had fewer samples than expected, what the y-axis scaling means here.
+7. **Query** and **metric card** — collapsed by default; expand for the raw expression or the full
+   metric card (next screenshot, from a different panel).
 
 Click **Highlight** (the pin icon next to "open") on any panel, hypothesis, finding or gap to
 attach an optional note and flag it — to yourself, or to Claude on its next turn:
@@ -113,8 +117,10 @@ attach an optional note and flag it — to yourself, or to Claude on its next tu
    Claude as context, without you having to re-explain which panel or object you mean.
 2. **Metric card**, expanded — type, unit, bounds, additivity and role, each with its origin (a
    naming rule, a curated pack, your own confirmation) and a confidence.
-3. **Claims and confidence** — every fact the catalog knows is a claim, not a bare truth. You can
-   `Confirm` or `Edit` any of them, and your word outranks everything else, including Claude's.
+3. **Claims and confidence** — every fact the catalog knows is a claim, not a bare truth, and
+   claims can conflict (the orange **conflict** badge here is two packs disagreeing on this
+   metric's type). You can `Confirm` or `Edit` any of them, and your word outranks everything
+   else, including Claude's.
 
 Selecting a region of the chart itself (click-drag) opens a different menu: **Ask Claude…** about
 that selection, **Mark region** / **Mark event** to annotate it, **Focus** to zoom the
@@ -124,17 +130,20 @@ distribution for the selected span.
 ### Hypotheses and findings
 
 A **hypothesis** is something Claude (or you) thinks might explain what you're seeing, such as
-"payment errors are driving checkout failures."
+"the three outlier pods from the fleet panel above are CPU-shifted because of a Cilium policy
+reconcile storm, not organic traffic growth."
 
 ![A hypothesis card](/img/getting-started-hypothesis.png)
 
-1. **Statement** — the concrete explanation being tested, with a pin to highlight it.
-2. **Status** — proposed, supported, refuted or inconclusive.
+1. **Statement** — the concrete explanation being tested, with its scope (which series, which
+   window) and a pin to highlight it.
+2. **Scope** — the selector, time range and source the hypothesis applies to.
 3. **Origin** — who's making the claim (`claude`, or you).
-4. **For / against** — findings linked as evidence for or against this hypothesis. Refuted
-   hypotheses move to a "ruled out" list instead of disappearing — ruling something out is a
-   result, not a dead end.
-5. **Your verdict** — you can mark any hypothesis yourself. Claude sees it and works from it.
+4. **For / against** — findings linked as evidence for or against this hypothesis, each shown
+   with its own verdict state. Refuted hypotheses move to a "ruled out" list instead of
+   disappearing — ruling something out is a result, not a dead end.
+5. **Your verdict** — proposed, supported, refuted or inconclusive. You can mark any hypothesis
+   yourself; Claude sees it and works from it.
 
 A **finding** is a scoped claim with **evidence links** attached.
 
@@ -143,7 +152,9 @@ A **finding** is a scoped claim with **evidence links** attached.
 1. **Claim** — worded to be true only inside its scope.
 2. **Scope** — the exact series, time window, resolution and source the claim covers. A claim
    can't quietly generalise beyond this.
-3. **Evidence** — the panel(s) behind the claim.
+3. **Evidence** — the panel(s) behind the claim, with a flag when the evidence doesn't fully pin
+   down the claim's cause — here `source undetermined`, because no statistic was cited saying
+   *why* the series moved, just that it did.
 4. **Statistic** — the actual number, with its interval and what it was computed from, so you can
    check the arithmetic, not just trust the sentence.
 5. **Your verdict** — Accept, Reject or ask for more. This is what "the human concludes" means
@@ -156,8 +167,9 @@ A **gap** is Claude flagging a signal it needed but doesn't have — not a silen
 ![Two gap cards](/img/getting-started-gaps.png)
 
 Each one names the missing signal, what it was needed for, and a concrete metric that would fill
-it, so a gap becomes something you can actually go instrument rather than an unexplained dead end
-in the investigation.
+it — here, Claude wanted Cilium's own reconcile-duration metric and pod restart counts to confirm
+or rule out the hypothesis above, and neither exists on this source yet. A gap is something you can
+actually go instrument, rather than an unexplained dead end in the investigation.
 
 ### Annotations
 
@@ -169,14 +181,16 @@ incident, a window you want to compare), so every panel lines up against "what e
 The **Catalog** tab lists every metric the source exposes, with what Telemetry Nerd knows about
 each one and where that knowledge came from.
 
-![The catalog table](/img/getting-started-catalog.png)
+![The catalog table, filtered to container_cpu metrics on a CERN Kubernetes source](/img/getting-started-catalog.png)
 
-1. **Source and summary** — which source you're browsing, and how many of its metrics are
-   reviewed, conflicting, or have findings attached.
-2. **Search and filters** — by name, prefix, origin, or review status.
-3. **Per-metric facts** — type, unit, role and bounds, each tagged with its origin (here, a naming
-   `rule`, or `source` metadata). Run `/telemetry-nerd:learn` to have Claude work through a
-   source's metrics with you and fill in the gaps.
+1. **Source and summary** — which source you're browsing (here, `cern-openstack`, with 1,975
+   metrics), and how many are reviewed, conflicting, or have findings attached.
+2. **Search and filters** — by name, prefix, origin, or review status; filtered here to
+   `container_cpu`.
+3. **Per-metric facts** — type, unit, role and bounds, each tagged with its origin (a naming
+   `rule`, a curated `pack`, or `source` metadata) and flagged when two origins disagree (the
+   `conflict: type` badge). Run `/telemetry-nerd:learn` to have Claude work through a source's
+   metrics with you and resolve them.
 
 ## What you'd see that a dashboard wouldn't show you
 
