@@ -106,9 +106,14 @@ a step below two series intervals (scrape intervals, for scraped metrics): it in
 
 ## After drawing
 
-Share the panel id (`p5`) and `highlight(object, note)` it; read `warnings`, `auto` (what was
-transformed) and `y_range_notes`. Mark onsets and deploys with `annotate`. A chart supports a
-finding as `{kind: "panel", panel}` evidence only for its own question (see `evidence`).
+Share the panel id (`p5`) as a clickable link (`<workspace-url>/#/panel/<id>`, the workspace URL
+from the SessionStart hook context or the MCP server instructions) and `highlight(object, note)`
+it; read `warnings`, `auto` (what was transformed) and `y_range_notes`. Mark onsets and deploys
+with `annotate`. A chart supports a finding as `{kind: "panel", panel}` evidence only for its own
+question (see `evidence`). On the first panel drawn in a session, also try opening the workspace
+in the browser (`open <url>` on macOS, `xdg-open <url>` on Linux; silently just link it if that's
+unavailable) — the user shouldn't have to ask; later panels in the same session just get the link,
+the tab is already open.
 
 ## Additional resources
 

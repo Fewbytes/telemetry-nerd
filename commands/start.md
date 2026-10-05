@@ -1,7 +1,7 @@
 ---
 description: Get going - make sure the daemon runs, connect your data, learn it, open the workspace
 argument-hint: "[prometheus-url | registry-name | grafana-url]"
-allowed-tools: Bash(sh ${CLAUDE_PLUGIN_ROOT}/scripts/tn-launch *), mcp__plugin_telemetry-nerd_telemetry-nerd__source_list, mcp__plugin_telemetry-nerd_telemetry-nerd__source_discover_grafana, mcp__plugin_telemetry-nerd_telemetry-nerd__lessons_for, mcp__plugin_telemetry-nerd_telemetry-nerd__workspace_list, mcp__plugin_telemetry-nerd_telemetry-nerd__source_connect, mcp__plugin_telemetry-nerd_telemetry-nerd__source_status, mcp__plugin_telemetry-nerd_telemetry-nerd__source_learn, mcp__plugin_telemetry-nerd_telemetry-nerd__public_sources, mcp__plugin_telemetry-nerd_telemetry-nerd__binding_suggest
+allowed-tools: Bash(sh ${CLAUDE_PLUGIN_ROOT}/scripts/tn-launch *), Bash(open:*), Bash(xdg-open:*), mcp__plugin_telemetry-nerd_telemetry-nerd__source_list, mcp__plugin_telemetry-nerd_telemetry-nerd__source_discover_grafana, mcp__plugin_telemetry-nerd_telemetry-nerd__lessons_for, mcp__plugin_telemetry-nerd_telemetry-nerd__workspace_list, mcp__plugin_telemetry-nerd_telemetry-nerd__source_connect, mcp__plugin_telemetry-nerd_telemetry-nerd__source_status, mcp__plugin_telemetry-nerd_telemetry-nerd__source_learn, mcp__plugin_telemetry-nerd_telemetry-nerd__public_sources, mcp__plugin_telemetry-nerd_telemetry-nerd__binding_suggest
 ---
 
 Start a Telemetry Nerd session. Data location given: `$ARGUMENTS` (may be empty).
@@ -37,7 +37,9 @@ Start a Telemetry Nerd session. Data location given: `$ARGUMENTS` (may be empty)
    Then `lessons_for(source)`: approved lessons from earlier sessions that apply to the whole
    source (`held` counts those scoped to a service: `/telemetry-nerd:investigate` asks for them
    once the services are known).
-5. **Open the UI.** Print the workspace URL for the user to open (/telemetry-nerd:open does the same).
+5. **Open the UI.** Print the workspace URL as a clickable link, and try to open it in the browser
+   (`open <url>` on macOS, `xdg-open <url>` on Linux); if that is unavailable, just print the
+   link. Do not retry. (`/telemetry-nerd:open` does the same, for later.)
 6. **Report briefly:** source name, flavor and reachability; metric count from the learn result;
    the knowledge packs matched (node_exporter, Kubernetes, ...) if the result lists any; how many
    binding suggestions were found (RED / USE / Little's law) and the top ones; caveats
