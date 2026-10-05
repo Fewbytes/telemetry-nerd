@@ -32,7 +32,7 @@ from telemetry_nerd.analysis.littles import (
     kendall_increasing_p,
 )
 
-from .littles_sim import simulate, substeps
+from .littles_sim import exact_r, simulate, substeps
 
 LOAD = [(0.0, 2.0), (1200.0, 3.7), (2400.0, 2.0)]  # M/M/4, mu=1: rho 0.5 -> 0.925 -> 0.5
 SPIKE = [(0.0, 2.0), (1500.0, 5.0), (1800.0, 2.0)]  # M/M/4: rho 1.25 for 5 min, a queue builds
@@ -65,6 +65,74 @@ def test_consistent_under_heavy_load_and_high_concurrency():
         alarms += r.verdict != "consistent"
         assert r.common_cause["warning"] is None  # 5700 requests per window: +-5%
     assert alarms <= 2
+
+
+def test_ci95_holds_the_exact_r_across_tile_phases_near_a_spike(seed_range=range(60)):
+    """p1ht: littles_sim had no tile-boundary-phase concept (counters always read exactly on the
+    gauge's own grid), so a spike landing at an arbitrary phase relative to a tile edge could
+    never be reproduced or calibrated against. `tile_jitter_s` gives each tile's counters an
+    independent +-jitter offset from the gauge's grid (real scrape timing jitter, as in
+    test_queue_sim_vm.py); `exact_r` is the simulation's true R from the continuous path, the
+    estimand every judged window's ci95 claims to cover. Swept across jitter up to half a tile at
+    a moderate overload (rho 1.5, c=4): coverage holds at the nominal 95%, up to the misses a
+    calibrated interval makes by chance (binomial(n, 0.05), P(>k) < 1%). This is the regression
+    guard the fix still needs for the harder, rho >= 4 regime: see
+    test_ci95_still_undercovers_at_extreme_overload_near_a_full_tile_phase below."""
+    rates = [(0.0, 2.0), (900.0, 6.0), (960.0, 2.0)]  # rho 0.5 -> 1.5 -> 0.5, a 60 s spike
+    scrape_s, duration_s = 5.0, 1800.0
+    covered = total = 0
+    for seed in seed_range:
+        for jitter in (0.0, 1.0, 2.0, 2.4):
+            m = simulate(seed, duration_s=duration_s, rates=rates, c=4, scrape_s=scrape_s,
+                         tile_jitter_s=jitter)  # fmt: skip
+            r = check(substeps(m, scrape_s=scrape_s), k=12)
+            for w in r.windows:
+                if w.verdict == "insufficient":
+                    continue
+                e = exact_r(seed, w.start_ms / 1000, w.end_ms / 1000, duration_s=duration_s,
+                            rates=rates, c=4)  # fmt: skip
+                if math.isnan(e):
+                    continue
+                total += 1
+                covered += w.ci95[0] <= e <= w.ci95[1]
+    # binomial(n, 0.05): allow a handful more misses than nominal before calling it miscalibrated
+    assert covered / total >= 0.93, (covered, total)
+
+
+@pytest.mark.xfail(
+    reason=(
+        "p1ht, open: at severe overload (rho 5) the drain window right after the spike has its "
+        "own lambda/completions rate changing fast tile to tile; with scrape jitter near a full "
+        "tile, term (3)'s sd_count still under-covers the exact R there (~15-25% miss, not 5%). "
+        "Tried: bounding sd_count's fragment rate by the busiest boundary sub-step instead of the "
+        "window mean (_edge_rate) -- it narrowed the gap (24.7% -> 17.3% miss here) but also "
+        "widened ordinary (phase-aligned, rho 1.25) spike windows enough to swallow the drain "
+        "transient in test_littles_service.test_load_spike_is_called_out_as_transient_at_a_peak, "
+        "so it was reverted rather than traded in. The miss here is a real bias (measured ratio "
+        "far below exact R, not just a width problem) from a genuinely non-steady drain, which "
+        "term (2) (edge_straddle) explicitly excludes from its own steady-state model -- the fix "
+        "likely needs a non-steady-aware term, not a bigger Poisson bound on term (3) alone."
+    ),
+    strict=True,
+)
+def test_ci95_still_undercovers_at_extreme_overload_near_a_full_tile_phase():
+    rates = [(0.0, 2.0), (900.0, 20.0), (960.0, 2.0)]  # rho 0.5 -> 5.0 -> 0.5, a 60 s spike
+    scrape_s, duration_s = 5.0, 1800.0
+    covered = total = 0
+    for seed in range(60):
+        m = simulate(seed, duration_s=duration_s, rates=rates, c=4, scrape_s=scrape_s,
+                     tile_jitter_s=2.4)  # fmt: skip
+        r = check(substeps(m, scrape_s=scrape_s), k=12)
+        w = r.windows[16]  # the drain window right after the spike
+        if w.verdict == "insufficient":
+            continue
+        e = exact_r(seed, w.start_ms / 1000, w.end_ms / 1000, duration_s=duration_s,
+                    rates=rates, c=4)  # fmt: skip
+        if math.isnan(e):
+            continue
+        total += 1
+        covered += w.ci95[0] <= e <= w.ci95[1]
+    assert covered / total >= 0.95, (covered, total)
 
 
 def test_measurement_interval_holds_no_count_noise_and_the_common_cause_scale_is_apart():
