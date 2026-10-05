@@ -140,6 +140,37 @@ test("end labels stay inside the plot, pushed back up from the bottom edge", asy
   expect(ys[2] - ys[1]).toBeGreaterThanOrEqual(12 - 1e-9);
 });
 
+test("a cluster of outliers ending at the same point (p35: a flat fleet's 6 outliers) keeps lh spacing even when the block overflows both edges", async () => {
+  const { placeEndLabels } = await import("./fleet");
+  const h = 26; // 13 * dpr(2)
+  const top = 400, bottom = 500; // a short panel: only 100px for 6 labels that need (6-1)*h = 130px
+  // all 6 outliers end at (nearly) the same x and the same y, as on a flat metric's last point
+  const items = Array.from({ length: 6 }, (_, i) => ({
+    right: 900 - i * 0.3,
+    w: 240 + i * 6, // "pod=<id> · shifted higher · shifted +NN% at <time>", widths differ slightly
+    y: bottom - 10 + i * 0.5,
+  }));
+  const ys = placeEndLabels(items, h, top, bottom);
+  const sorted = [...ys].sort((a, b) => a - b);
+  for (let k = 1; k < sorted.length; k++) expect(sorted[k] - sorted[k - 1]).toBeGreaterThanOrEqual(h - 1e-9);
+  // the block doesn't fit (needs 130px in a 100px panel): overflow is shared, not dumped on one edge
+  expect(Math.min(...ys)).toBeLessThan(top + h / 2);
+  expect(Math.max(...ys)).toBeGreaterThan(bottom - h / 2);
+  expect(top - Math.min(...ys)).toBeLessThanOrEqual((Math.max(...ys) - bottom) + 1e-9 + h);
+});
+
+test("a block that overflows only the bottom hugs the bottom edge without touching the top", async () => {
+  const { placeEndLabels } = await import("./fleet");
+  const h = 12, top = 0, bottom = 300;
+  // 5 labels fit comfortably (needs 48px) but are anchored low enough to spill past bottom
+  const items = Array.from({ length: 5 }, (_, i) => ({ right: 50, w: 20, y: 295 + i }));
+  const ys = placeEndLabels(items, h, top, bottom);
+  const sorted = [...ys].sort((a, b) => a - b);
+  for (let k = 1; k < sorted.length; k++) expect(sorted[k] - sorted[k - 1]).toBeCloseTo(h, 9);
+  expect(Math.max(...ys)).toBeLessThanOrEqual(bottom - h / 2 + 1e-9);
+  expect(Math.min(...ys)).toBeGreaterThan(top + h / 2); // plenty of room: never pinned to top
+});
+
 test("outlier ends skip trailing gaps", async () => {
   const { outlierEnds } = await import("./fleet");
   expect(outlierEnds(d)).toEqual([{ j: 2, v: 20 }, { j: 2, v: 1 }]);

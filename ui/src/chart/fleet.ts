@@ -499,8 +499,12 @@ export interface EndLabel { right: number; w: number; y: number }
 
 /** Vertical label positions (centres) so no two labels whose boxes share x overlap (bead cis):
  *  labels are grouped by horizontal overlap (transitively); within a group, sorted by y, each is
- *  pushed down to clear the one above by `h`, then the group is pushed back up from `bottom`, and
- *  finally clamped to `top`. Order is preserved, so a label never jumps over its neighbour. */
+ *  pushed down to clear the one above by `h` (preserving order, so a label never jumps over its
+ *  neighbour). If the spaced block still overflows one edge, it is shifted rigidly to hug that
+ *  edge — a single translation, so the `h` spacing established above is never re-tightened. If it
+ *  overflows both edges because the block genuinely doesn't fit between `top` and `bottom`, it is
+ *  centred instead, so the unavoidable overflow is shared between the two edges rather than piled
+ *  entirely onto one (which used to push the lowest labels far off-panel). */
 export function placeEndLabels(items: EndLabel[], h: number, top: number, bottom: number): number[] {
   const out = items.map((it) => Math.min(Math.max(it.y, top + h / 2), bottom - h / 2));
   const order = items.map((_, i) => i).sort((a, b) => items[a].right - items[a].w - (items[b].right - items[b].w));
@@ -521,14 +525,18 @@ export function placeEndLabels(items: EndLabel[], h: number, top: number, bottom
     if (g.length < 2) continue;
     g.sort((a, b) => out[a] - out[b] || a - b);
     for (let k = 1; k < g.length; k++) out[g[k]] = Math.max(out[g[k]], out[g[k - 1]] + h);
-    const last = g[g.length - 1];
-    if (out[last] > bottom - h / 2) {
-      out[last] = bottom - h / 2;
-      for (let k = g.length - 2; k >= 0; k--) out[g[k]] = Math.min(out[g[k]], out[g[k + 1]] - h);
-    }
-    if (out[g[0]] < top + h / 2) {
-      out[g[0]] = top + h / 2; // more labels than fit: keep the order, let the bottom ones overflow
-      for (let k = 1; k < g.length; k++) out[g[k]] = Math.max(out[g[k]], out[g[k - 1]] + h);
+    const first = g[0], last = g[g.length - 1];
+    const span = out[last] - out[first];
+    if (span > bottom - top - h) {
+      // doesn't fit even ideally: centre the block so the overflow is shared top/bottom
+      const start = (top + bottom) / 2 - span / 2;
+      g.forEach((i, k) => (out[i] = start + k * h));
+    } else if (out[last] > bottom - h / 2) {
+      const shift = bottom - h / 2 - out[last];
+      for (const i of g) out[i] += shift;
+    } else if (out[first] < top + h / 2) {
+      const shift = top + h / 2 - out[first];
+      for (const i of g) out[i] += shift;
     }
   }
   return out;
