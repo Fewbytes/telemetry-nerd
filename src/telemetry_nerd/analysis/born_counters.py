@@ -134,11 +134,17 @@ class Filled:
     trail: int  # steps after the last observed point read as 0
 
 
-def fill_absent(ts: np.ndarray, y: np.ndarray, alive: np.ndarray) -> Filled:
-    """Zeros at the live-sibling steps (`alive`, sorted ts) outside [ts[0], ts[-1]]; interior
-    gaps are left alone. `ts` must be sorted and non-empty."""
-    lead = alive[alive < ts[0]]
-    trail = alive[alive > ts[-1]]
+def fill_absent(
+    ts: np.ndarray, y: np.ndarray, alive: np.ndarray, lifetime: tuple[int, int] | None = None
+) -> Filled:
+    """Zeros at the live-sibling steps (`alive`, sorted ts) outside the series' observed
+    lifetime; interior gaps are left alone. `lifetime`: its first/last row INCLUDING one with
+    no finite value, when wider than `ts`'s own edges (`ts` only ever holds finite points) — a
+    row that merely lacks a value is still a row, not absence, so the fill must stop there, not
+    reach past it. `ts` must be sorted and non-empty."""
+    first, last = lifetime if lifetime is not None else (ts[0], ts[-1])
+    lead = alive[alive < first]
+    trail = alive[alive > last]
     if not lead.size and not trail.size:
         return Filled(ts, y, 0, 0)
     out_ts = np.concatenate([lead, ts, trail]).astype(ts.dtype)
@@ -150,12 +156,16 @@ Series = dict[str, tuple[dict, np.ndarray, np.ndarray]]
 
 
 def fill_born(
-    series: Series, siblings: Mapping[str, tuple[dict, np.ndarray]] | None = None
+    series: Series,
+    siblings: Mapping[str, tuple[dict, np.ndarray]] | None = None,
+    lifetimes: Mapping[str, tuple[int, int]] | None = None,
 ) -> tuple[Series, dict[str, Filled]]:
     """Fill every series of `series` (sid -> labels, ts, y) from its live siblings: the other
     series of the same dataset with the same identity (`sibling_key`) plus `siblings` (sid ->
-    labels, ts: the fetched complement). Returns the series and, per filled sid, what was
-    filled."""
+    labels, ts: the fetched complement). `lifetimes` (sid -> first/last row, value or not):
+    the caller's own rows before `series` dropped the ones with no finite value, when an edge
+    row like that would otherwise read as absence. Returns the series and, per filled sid, what
+    was filled."""
     alive: dict[tuple, dict[str, np.ndarray]] = {}
     for sid, (labels, ts, _) in series.items():
         alive.setdefault(sibling_key(labels), {})[sid] = ts
@@ -170,7 +180,7 @@ def fill_born(
         if not parts or not ts.size:
             out[sid] = (labels, ts, y)
             continue
-        f = fill_absent(ts, y, np.unique(np.concatenate(parts)))
+        f = fill_absent(ts, y, np.unique(np.concatenate(parts)), (lifetimes or {}).get(sid))
         out[sid] = (labels, f.ts, f.y)
         if f.lead or f.trail:
             filled[sid] = f
@@ -263,14 +273,22 @@ def born_ratio(expr: str, type_of: Callable[[str], str | None]) -> BornRatio | N
 
 
 def fill_ratio(
-    num: Series, den: Series
+    num: Series,
+    den: Series,
+    lifetimes: Mapping[str, tuple[int, int]] | None = None,
 ) -> tuple[Series, dict[str, Filled], dict[str, tuple[np.ndarray, np.ndarray]]]:
     """The ratio per denominator series (keyed and labelled as the denominator's), the
     numerator read as 0 outside its observed lifetime where the denominator reports > 0
     (fill_absent; its interior gaps stay gaps), at the steps where both are known and the
-    denominator > 0. Also per series the (numerator, denominator) values behind each ratio
-    point: the events and the traffic they are a share of."""
+    denominator > 0. `lifetimes` (numerator sid -> first/last row, value or not): see
+    `fill_born`. Also per series the (numerator, denominator) values behind each ratio point:
+    the events and the traffic they are a share of."""
     by_key = {sibling_key(lab): (ts, y) for lab, ts, y in num.values()}
+    life_by_key = {
+        sibling_key(lab): lifetimes[sid]
+        for sid, (lab, _, _) in num.items()
+        if lifetimes and sid in lifetimes
+    }
     out: Series = {}
     filled: dict[str, Filled] = {}
     behind: dict[str, tuple[np.ndarray, np.ndarray]] = {}
@@ -280,11 +298,14 @@ def fill_ratio(
         alive = np.asarray(tb)[ok]
         if not alive.size:
             continue
-        got = by_key.get(sibling_key(labels))
+        key = sibling_key(labels)
+        got = by_key.get(key)
         if got is None or not got[0].size:  # never born in the range: 0 wherever it reports
             f = Filled(alive, np.zeros(alive.size), int(alive.size), 0)
         else:
-            f = fill_absent(np.asarray(got[0]), np.asarray(got[1], float), alive)
+            f = fill_absent(
+                np.asarray(got[0]), np.asarray(got[1], float), alive, life_by_key.get(key)
+            )
         common, ia, ib = np.intersect1d(f.ts, alive, return_indices=True)
         keep = np.isfinite(f.y[ia])
         a, b = f.y[ia][keep], yb[ok][ib][keep]

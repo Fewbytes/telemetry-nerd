@@ -88,6 +88,30 @@ def test_counter_reset_by_a_restart_reads_as_zero_after_last_point():
     assert list(out["e"][2]) == [1.0] * 6 + [0.0] * 4
 
 
+def test_fill_absent_keeps_a_lifetime_edge_outside_ts_as_a_gap():
+    # a row at step 2 exists but has no finite value (an explicit NaN, already dropped from
+    # `ts`/`y` by the caller): the lifetime starts there, not at the first finite point (3), so
+    # the sibling reporting at 2 must not be read as 0 events
+    alive = np.arange(10)
+    ts = np.array([3, 4, 6, 7])
+    f = fill_absent(ts, np.array([1.0, 2.0, 3.0, 4.0]), alive, lifetime=(2, 7))
+    assert list(f.ts) == [0, 1, 3, 4, 6, 7, 8, 9]  # 2 is excluded: still a gap, not filled
+    assert (f.lead, f.trail) == (2, 2)
+
+
+def test_fill_born_passes_each_series_its_own_lifetime():
+    # "e"'s first finite value is at step 1, but it already had a row (an explicit NaN) at
+    # step 0: without `lifetimes`, the live sibling reporting at step 0 would read as 0 events
+    ts = np.arange(10)
+    series = {
+        "e": ({"status_code": "ERROR", "job": "a"}, ts[1:6], np.ones(5)),
+        "o": ({"status_code": "UNSET", "job": "a"}, ts, np.full(10, 5.0)),
+    }
+    out, filled = fill_born(series, lifetimes={"e": (0, 5)})
+    assert 0 not in out["e"][1]  # step 0 is excluded: still a gap, not filled
+    assert filled["e"].lead == 0 and filled["e"].trail == 4
+
+
 def test_no_sibling_no_fill():
     ts = np.arange(5, 10)
     out, filled = fill_born({"e": ({"status_code": "ERROR"}, ts, np.ones(5))})
@@ -220,6 +244,26 @@ def test_analyze_reads_in_dataset_siblings_without_fetching(tmp_path):
     assert up["delta"] > 0 > down["delta"] and up["source"] == down["source"] == "special_cause"
     assert "no events" in e["absent_as_zero"]["spc"]  # all-zero baseline: no envelope
     assert "absent_as_zero" not in by["STATUS_CODE_UNSET"]
+
+
+def test_an_explicit_nan_row_right_before_birth_stays_a_gap_not_a_fill(tmp_path):
+    # the error series has a row at ONSET-1 with no finite value (an explicit NaN: the
+    # instrument reported, but unknown) one step before its first real event; the live
+    # sibling reports there too, so it must not be read as 0 events, only ONSET-2 and earlier
+    svc = make_service(tmp_path)
+    ts = T0 + np.arange(N) * S
+    err_ts = np.concatenate([ts[ONSET - 1 : ONSET], ts[ONSET:END]])
+    err_y = np.concatenate([[np.nan], 60 * _err_rate(END - ONSET)])
+    err = ({"status_code": "STATUS_CODE_ERROR"}, err_ts, err_y)
+    ok = ({"status_code": "STATUS_CODE_UNSET"}, ts, 60 * _ok_rate(N))
+    d = svc.datasets.put(
+        source="default", expr=BY_STATUS, rng=TimeRange(T0, T0 + (N - 1) * S), step_ms=S,
+        resolution_ms=15_000, result=_table([err, ok]),
+    ).id  # fmt: skip
+    out = svc.analyze(d)
+    e = next(s for s in out["series"] if s["labels"]["status_code"] == "STATUS_CODE_ERROR")
+    assert e["absent_as_zero"]["before_first_point"] == ONSET - 1  # not ONSET: the NaN row
+    # at ONSET - 1 stays a gap, it is not re-counted as one more filled-zero step
 
 
 def test_instrument_down_stays_unknown(tmp_path):

@@ -95,6 +95,19 @@ def _grouped(table, labels: dict[str, dict]) -> dict[str, tuple[dict, np.ndarray
     return out
 
 
+def _lifetimes(table) -> dict[str, tuple[int, int]]:
+    """sid -> (first, last) ts_ms of every row, value or not: wider than `_grouped`'s
+    finite-only steps when an edge row is an explicit unknown (born_counters.fill_absent must
+    not read that row as absence)."""
+    df = pl.from_arrow(table)
+    return {
+        sid: (lo, hi)
+        for sid, lo, hi in df.group_by("series_id")
+        .agg(pl.col("ts_ms").min().alias("lo"), pl.col("ts_ms").max().alias("hi"))
+        .iter_rows()
+    }
+
+
 class SignalOps:
     def __init__(self, datasets: DatasetStore, facts: Callable[[str, str], Facts]) -> None:
         self._datasets = datasets
@@ -150,14 +163,17 @@ class SignalOps:
         """The ratio from its parts (born_counters.fill_ratio), keyed by this dataset's series
         ids where the labels match."""
         parts = []
-        for d in ratio:
+        num_life: dict[str, tuple[int, int]] | None = None
+        for i, d in enumerate(ratio):
             pm, pres = self._datasets.get(d)
             if not same_grid(pm, meta):
                 raise ValueError(f"ratio part {d} does not share {meta.id}'s step grid")
             ts_col = pc.field("ts_ms")
             t = pres.buckets.filter((ts_col >= meta.start_ms) & (ts_col <= meta.end_ms))
+            if i == 0:
+                num_life = _lifetimes(t)
             parts.append((pm, _grouped(t, _labels(pres.series))))
-        series, filled, behind = born_counters.fill_ratio(parts[0][1], parts[1][1])
+        series, filled, behind = born_counters.fill_ratio(parts[0][1], parts[1][1], num_life)
         own = {json.dumps(lab, sort_keys=True): sid for sid, lab in labels.items()}
         ids = {sid: own.get(json.dumps(lab, sort_keys=True), sid) for sid, (lab, _, _) in series.items()}  # fmt: skip
         info = {
@@ -237,7 +253,9 @@ class SignalOps:
                 siblings = _grouped(stable, _labels(sres.series))
             sib_counts = born_counters.sibling_counts(raw, siblings)
             raw, filled = born_counters.fill_born(
-                raw, {sid: (lab, ts) for sid, (lab, ts, _) in (siblings or {}).items()}
+                raw,
+                {sid: (lab, ts) for sid, (lab, ts, _) in (siblings or {}).items()},
+                _lifetimes(table),
             )
             if filled:
                 caveats.append(born_counters.CAVEAT)
