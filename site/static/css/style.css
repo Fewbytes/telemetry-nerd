@@ -30,6 +30,8 @@ a:hover { text-decoration: underline; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
+  row-gap: 0.6rem;
   padding: 0.9rem 1.25rem;
   max-width: 900px;
 }
@@ -40,9 +42,15 @@ a:hover { text-decoration: underline; }
   color: var(--ink);
   font-weight: 600;
 }
-.site-header nav { display: flex; gap: 1.25rem; align-items: center; }
+.site-header nav { display: flex; flex-wrap: wrap; gap: 0.6rem 1.25rem; align-items: center; }
 .site-header nav a { color: var(--ink-soft); font-size: 0.95rem; }
 .site-header nav a.icon-link { display: flex; align-items: center; gap: 0.35rem; }
+
+@media (max-width: 560px) {
+  .site-header .wrap { justify-content: center; text-align: center; }
+  .site-header nav { justify-content: center; gap: 0.5rem 0.9rem; }
+  .site-header nav a { font-size: 0.88rem; }
+}
 
 main { max-width: 900px; margin: 0 auto; }
 
