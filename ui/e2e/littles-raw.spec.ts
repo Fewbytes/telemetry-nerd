@@ -30,6 +30,12 @@ test.beforeAll(async ({ request }) => {
     lines.push(`${PREFIX}_concurrency ${conc.toFixed(3)} ${t}`);
   }
   await importSeries(request, lines.join("\n") + "\n");
+  // The catalog is global per source, not per workspace (zek0.2), and check_littles_law trusts
+  // it once it knows anything about "default": other specs' earlier source_learn calls leave it
+  // populated but unaware of this test's own series, which native_histogram then reads as "no
+  // _sum/_count" and refuses. Learn the source ourselves so it knows about our series regardless
+  // of what ran before us (matches binding-group.spec.ts and friends).
+  await mcpTool(request, "source_learn", { source: "default" });
 });
 
 test.afterAll(async ({ request }) => {
