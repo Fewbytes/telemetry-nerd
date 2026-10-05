@@ -497,6 +497,12 @@ export function fleetY(d: FleetData, ctx: YContext | null, chosen: YView | null 
  *  right-aligned, left of the point), `w` its width, `y` the point's y (all px). */
 export interface EndLabel { right: number; w: number; y: number }
 
+/** On-chart labels a single horizontal cluster draws before the rest fall back to their line's
+ *  colour only (and the legend list below the chart, which always names every outlier): beyond
+ *  this many stacked in one spot, the labels themselves start covering more chart than they
+ *  explain. */
+export const MAX_LABELS_PER_CLUSTER = 4;
+
 /** Vertical label positions (centres) so no two labels whose boxes share x overlap (bead cis):
  *  labels are grouped by horizontal overlap (transitively); within a group, sorted by y, each is
  *  pushed down to clear the one above by `h` (preserving order, so a label never jumps over its
@@ -504,9 +510,13 @@ export interface EndLabel { right: number; w: number; y: number }
  *  edge — a single translation, so the `h` spacing established above is never re-tightened. If it
  *  overflows both edges because the block genuinely doesn't fit between `top` and `bottom`, it is
  *  centred instead, so the unavoidable overflow is shared between the two edges rather than piled
- *  entirely onto one (which used to push the lowest labels far off-panel). */
-export function placeEndLabels(items: EndLabel[], h: number, top: number, bottom: number): number[] {
-  const out = items.map((it) => Math.min(Math.max(it.y, top + h / 2), bottom - h / 2));
+ *  entirely onto one (which used to push the lowest labels far off-panel). A cluster beyond
+ *  `cap` keeps only its first `cap` items (the caller's own priority order, e.g. most severe
+ *  first); the rest get `null` — not drawn, so they stop piling onto the chart underneath. */
+export function placeEndLabels(
+  items: EndLabel[], h: number, top: number, bottom: number, cap: number = Infinity,
+): (number | null)[] {
+  const out: (number | null)[] = items.map((it) => Math.min(Math.max(it.y, top + h / 2), bottom - h / 2));
   const order = items.map((_, i) => i).sort((a, b) => items[a].right - items[a].w - (items[b].right - items[b].w));
   // horizontal groups: sweep by left edge, a label joins the group while it overlaps the group's extent
   const groups: number[][] = [];
@@ -521,22 +531,27 @@ export function placeEndLabels(items: EndLabel[], h: number, top: number, bottom
       reach = items[i].right;
     }
   }
-  for (const g of groups) {
+  for (let g of groups) {
+    if (g.length > cap) {
+      const kept = new Set([...g].sort((a, b) => a - b).slice(0, cap));
+      for (const i of g) if (!kept.has(i)) out[i] = null;
+      g = g.filter((i) => kept.has(i));
+    }
     if (g.length < 2) continue;
-    g.sort((a, b) => out[a] - out[b] || a - b);
-    for (let k = 1; k < g.length; k++) out[g[k]] = Math.max(out[g[k]], out[g[k - 1]] + h);
+    g.sort((a, b) => (out[a] as number) - (out[b] as number) || a - b);
+    for (let k = 1; k < g.length; k++) out[g[k]] = Math.max(out[g[k]] as number, (out[g[k - 1]] as number) + h);
     const first = g[0], last = g[g.length - 1];
-    const span = out[last] - out[first];
+    const span = (out[last] as number) - (out[first] as number);
     if (span > bottom - top - h) {
       // doesn't fit even ideally: centre the block so the overflow is shared top/bottom
       const start = (top + bottom) / 2 - span / 2;
       g.forEach((i, k) => (out[i] = start + k * h));
-    } else if (out[last] > bottom - h / 2) {
-      const shift = bottom - h / 2 - out[last];
-      for (const i of g) out[i] += shift;
-    } else if (out[first] < top + h / 2) {
-      const shift = top + h / 2 - out[first];
-      for (const i of g) out[i] += shift;
+    } else if ((out[last] as number) > bottom - h / 2) {
+      const shift = bottom - h / 2 - (out[last] as number);
+      for (const i of g) out[i] = (out[i] as number) + shift;
+    } else if ((out[first] as number) < top + h / 2) {
+      const shift = top + h / 2 - (out[first] as number);
+      for (const i of g) out[i] = (out[i] as number) + shift;
     }
   }
   return out;

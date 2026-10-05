@@ -123,7 +123,7 @@ test("end labels never overlap when outliers end at similar values (cis)", async
     { right: 500, w: 60, y: 100 }, { right: 500, w: 50, y: 103 }, { right: 500, w: 70, y: 98 },
     { right: 500, w: 60, y: 200 }, { right: 200, w: 60, y: 101 },
   ];
-  const ys = placeEndLabels(items, h, 0, 300);
+  const ys = placeEndLabels(items, h, 0, 300) as number[];
   const col = [0, 1, 2, 3].map((i) => ys[i]).sort((a, b) => a - b);
   for (let k = 1; k < col.length; k++) expect(col[k] - col[k - 1]).toBeGreaterThanOrEqual(h - 1e-9);
   expect(ys[2]).toBeLessThan(ys[0]); // order kept: the highest point keeps the highest label
@@ -134,7 +134,7 @@ test("end labels never overlap when outliers end at similar values (cis)", async
 
 test("end labels stay inside the plot, pushed back up from the bottom edge", async () => {
   const { placeEndLabels } = await import("./fleet");
-  const ys = placeEndLabels([{ right: 10, w: 5, y: 295 }, { right: 10, w: 5, y: 296 }, { right: 10, w: 5, y: 299 }], 12, 0, 300);
+  const ys = placeEndLabels([{ right: 10, w: 5, y: 295 }, { right: 10, w: 5, y: 296 }, { right: 10, w: 5, y: 299 }], 12, 0, 300) as number[];
   expect(Math.max(...ys)).toBeLessThanOrEqual(294);
   expect(ys[1] - ys[0]).toBeGreaterThanOrEqual(12 - 1e-9);
   expect(ys[2] - ys[1]).toBeGreaterThanOrEqual(12 - 1e-9);
@@ -150,7 +150,7 @@ test("a cluster of outliers ending at the same point (p35: a flat fleet's 6 outl
     w: 240 + i * 6, // "pod=<id> · shifted higher · shifted +NN% at <time>", widths differ slightly
     y: bottom - 10 + i * 0.5,
   }));
-  const ys = placeEndLabels(items, h, top, bottom);
+  const ys = placeEndLabels(items, h, top, bottom) as number[];
   const sorted = [...ys].sort((a, b) => a - b);
   for (let k = 1; k < sorted.length; k++) expect(sorted[k] - sorted[k - 1]).toBeGreaterThanOrEqual(h - 1e-9);
   // the block doesn't fit (needs 130px in a 100px panel): overflow is shared, not dumped on one edge
@@ -164,11 +164,31 @@ test("a block that overflows only the bottom hugs the bottom edge without touchi
   const h = 12, top = 0, bottom = 300;
   // 5 labels fit comfortably (needs 48px) but are anchored low enough to spill past bottom
   const items = Array.from({ length: 5 }, (_, i) => ({ right: 50, w: 20, y: 295 + i }));
-  const ys = placeEndLabels(items, h, top, bottom);
+  const ys = placeEndLabels(items, h, top, bottom) as number[];
   const sorted = [...ys].sort((a, b) => a - b);
   for (let k = 1; k < sorted.length; k++) expect(sorted[k] - sorted[k - 1]).toBeCloseTo(h, 9);
   expect(Math.max(...ys)).toBeLessThanOrEqual(bottom - h / 2 + 1e-9);
   expect(Math.min(...ys)).toBeGreaterThan(top + h / 2); // plenty of room: never pinned to top
+});
+
+test("a cluster beyond the cap keeps only its first (highest-priority) labels, the rest null", async () => {
+  const { placeEndLabels } = await import("./fleet");
+  const h = 12, top = 0, bottom = 300;
+  // 6 outliers stacked at the same point, in the caller's severity order; cap 4
+  const items = Array.from({ length: 6 }, () => ({ right: 500, w: 60, y: 150 }));
+  const ys = placeEndLabels(items, h, top, bottom, 4);
+  expect(ys.slice(0, 4).every((y) => y !== null)).toBe(true);
+  expect(ys.slice(4)).toEqual([null, null]);
+  const kept = ys.slice(0, 4) as number[];
+  const sorted = [...kept].sort((a, b) => a - b);
+  for (let k = 1; k < sorted.length; k++) expect(sorted[k] - sorted[k - 1]).toBeGreaterThanOrEqual(h - 1e-9);
+});
+
+test("a cluster at or under the cap draws every label (no capping effect)", async () => {
+  const { placeEndLabels } = await import("./fleet");
+  const items = Array.from({ length: 4 }, () => ({ right: 500, w: 60, y: 150 }));
+  const ys = placeEndLabels(items, 12, 0, 300, 4);
+  expect(ys.every((y) => y !== null)).toBe(true);
 });
 
 test("outlier ends skip trailing gaps", async () => {

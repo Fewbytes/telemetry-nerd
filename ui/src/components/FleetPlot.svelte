@@ -2,7 +2,7 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import {
-    FLEET_HUE, MUTED_LINE, OUTLIER_COLORS, THRESHOLD_DASH, bandFills, bandView, boundFill, boundsAt, boundsText, coverageGaps, fleetAxisLabel,
+    FLEET_HUE, MAX_LABELS_PER_CLUSTER, MUTED_LINE, OUTLIER_COLORS, THRESHOLD_DASH, bandFills, bandView, boundFill, boundsAt, boundsText, coverageGaps, fleetAxisLabel,
     fleetKey, fleetLegend, groupEnds, groupFill, groupStyle, groupZoneFills, grouped, isolatedIdx, missingSteps, modeText, nearestOutlier,
     outlierEnds, outlierText, outsideUnflagged, spcOf, utcTicks, wideningMarks, placeEndLabels, toFleetUplot, untrustedSpans, type BandView, type EndLabel,
   } from "../chart/fleet";
@@ -194,13 +194,14 @@
                 endLabel(e, `${id} · ${modeText(o, fmtTimeZ, unit)}`, OUTLIER_COLORS[i % OUTLIER_COLORS.length]);
               });
               if (isGrouped) groupEnds(data, vw).forEach((e, gi) => endLabel(e, `${data.clusters![gi].id} (${data.clusters![gi].size})`, groupStyle(dark, gi).line));
-              const ys = placeEndLabels(items, lh, p.bbox.top, p.bbox.top + p.bbox.height);
-              // placed label boxes (css px), for checking that none overlap
-              host.dataset.fleetLabels = JSON.stringify(items.map((it, k) => [
-                Math.round((it.right - it.w) / dpr), Math.round((ys[k] - lh / 2) / dpr), Math.round(it.w / dpr), Math.round(lh / dpr),
-              ]));
+              const ys = placeEndLabels(items, lh, p.bbox.top, p.bbox.top + p.bbox.height, MAX_LABELS_PER_CLUSTER);
+              // placed label boxes (css px), for checking that none overlap; skips suppressed labels
+              host.dataset.fleetLabels = JSON.stringify(items.flatMap((it, k) => ys[k] === null ? [] : [[
+                Math.round((it.right - it.w) / dpr), Math.round((ys[k]! - lh / 2) / dpr), Math.round(it.w / dpr), Math.round(lh / dpr),
+              ]]));
               items.forEach((it, k) => {
-                const col = it.color, y = ys[k];
+                if (ys[k] === null) return; // past the per-cluster cap: its line keeps its colour, the legend below names it
+                const col = it.color, y = ys[k]!;
                 if (Math.abs(y - it.y) > 2 * dpr) {
                   c.strokeStyle = col; c.lineWidth = 1 * dpr;
                   c.beginPath(); c.moveTo(it.px - 1 * dpr, it.py); c.lineTo(it.right + 2 * dpr, y); c.stroke();
