@@ -71,6 +71,20 @@ main { max-width: 900px; margin: 0 auto; }
   border: 1px solid var(--line);
 }
 
+.features {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2rem 1.5rem;
+  padding: 0 1.25rem 2.5rem;
+  max-width: 620px;
+  margin: 0 auto;
+  text-align: center;
+}
+.feature { flex: 0 1 170px; }
+.feature h3 { font-size: 1rem; margin: 0 0 0.35rem; color: var(--ink); }
+.feature p { color: var(--ink-soft); font-size: 0.9rem; margin: 0; line-height: 1.5; }
+
 .prose { padding: 1rem 1.25rem 3rem; max-width: 900px; }
 .prose img { max-width: 100%; border-radius: 6px; border: 1px solid var(--line); }
 .prose h1 { font-size: 2rem; }
