@@ -499,6 +499,22 @@ def test_step_equal_to_interval_with_jitter_still_shows_lost_scrapes():
     assert states(out).count(State.EMPTY) >= 5
 
 
+def test_clustered_losses_in_a_fractionally_slow_series_are_not_hidden_ok():
+    # a 1.2x-step series: clustered losses (adjacent lost scrapes) used to drag the local
+    # interval estimate past SLOW_MARGIN, reading as cadence skips (OK) instead of EMPTY
+    step, interval, end = 30_000, 36_093, 3_600_000
+    lost = {3_284_463, 3_320_556, 3_356_649, 3_428_835, 3_464_928}
+    ts = _sample_ts(interval, seed=1013, end=end)
+    out = _compute_rows(
+        _count_rows([t for t in ts if t not in lost], step), step=step, end=end, res=step
+    )
+    by_ts = dict(zip(out["ts_ms"].to_pylist(), out["state"].to_pylist()))
+    obs_by_ts = dict(zip(out["ts_ms"].to_pylist(), out["observed"].to_pylist()))
+    for t in lost:
+        b = -(-t // step) * step
+        assert not (obs_by_ts[b] == 0 and by_ts[b] == State.OK), (b, State(by_ts[b]).name)
+
+
 @pytest.mark.parametrize(("interval", "end"), [(120_000, 10 * 60_000), (60_000, 6 * 60_000)])
 def test_few_non_zero_buckets_within_cadence_are_not_empty(interval, end):
     out = _compute_rows(_count_rows(_sample_ts(interval, end=end), S15), step=S15, end=end)

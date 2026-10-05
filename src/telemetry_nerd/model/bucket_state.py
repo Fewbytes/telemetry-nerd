@@ -374,11 +374,20 @@ def _lattice(
     it). Jitter moves a skipped bucket by one, not by half the spacing."""
     w = LATTICE_SPACINGS
     twos = ((pl.col("observed") >= 2) & ~pl.col("_unk")).sum().over(_S).alias("_twos")
+    # a series whose own overall interval already reads at (about) the step's rate has no real
+    # cadence to trust: the half-spacing pairing below still catches losses squeezed close
+    # together there, even short of the quartile regularity `_steady` normally requires
+    glob_ok = pl.col("_gi") <= SLOW_MARGIN * step_ms
     zeros = (
-        df.with_columns(twos, miss.alias("_miss"))
+        df.with_columns(twos, miss.alias("_miss"), glob_ok.alias("_gok"))
         .filter(skipped)
         .select(
-            _S, "ts_ms", "_twos", "_miss", (pl.col("ts_ms").diff().over(_S) / step_ms).alias("_d")
+            _S,
+            "ts_ms",
+            "_twos",
+            "_miss",
+            "_gok",
+            (pl.col("ts_ms").diff().over(_S) / step_ms).alias("_d"),
         )
     )
     d = pl.col("_d")
@@ -413,10 +422,10 @@ def _lattice(
         if resolution_ms is None or resolution_ms <= step_ms
         else (interval / resolution_ms - 1).abs() <= LATTICE_MATCH
     )
-    judged = zeros.filter(pl.col("_steady")).select(
+    judged = zeros.filter(pl.col("_steady") | pl.col("_gok")).select(
         _S,
         "ts_ms",
-        (covered & pl.col("_miss")).alias("_cad"),
+        (covered & pl.col("_miss") & pl.col("_steady")).alias("_cad"),
         # half the typical spacing or less next to it: a 0 between two of the cadence's
         (pl.min_horizontal(d, d.shift(-1).over(_S)) <= d.median().over(_S) / 2).alias("_off"),
         (~matches).fill_null(True).alias("_u"),
@@ -514,6 +523,7 @@ def _local_interval(nz: pl.DataFrame, gap: str, step_ms: int) -> pl.DataFrame:
         (pl.when(pv | av).then(ps | as_).otherwise(gs) & ~run).alias("_sl"),
         pl.when(run).then(run_i).otherwise(pl.coalesce(bi, gi)).alias("_It"),
         (pl.when(bv).then(bs).otherwise(gs) & ~run).alias("_slt"),
+        gi.alias("_gi"),  # the series' own overall interval, for `_cadence`'s global check
     )
 
 
@@ -597,6 +607,10 @@ def _spread(df: pl.DataFrame, est: pl.DataFrame, step_ms: int) -> pl.DataFrame:
     return df.with_columns(
         pick("_I", "_It").fill_null(float(step_ms)).alias("_I"),
         pick("_sl", "_slt").fill_null(False).alias("_slow"),
+        # a per-series constant: either fill direction reaches it from the nearest non-zero bucket
+        pl.coalesce(pl.col("_gi").backward_fill().over(_S), pl.col("_gi").forward_fill().over(_S))
+        .fill_null(float(step_ms))
+        .alias("_gi"),
     ).drop("_sl", "_It", "_slt")
 
 
