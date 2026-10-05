@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
+from telemetry_nerd.analysis.outcome import candidate_labels, classify
 from telemetry_nerd.catalog.binding_suggest import find_suggestion, role_candidates
 from telemetry_nerd.catalog.relations import BINDING_ROLES, SUGGESTIONS
 from telemetry_nerd.charts.spec import LINE_SERIES_BUDGET, GroupRef
@@ -29,9 +31,12 @@ from telemetry_nerd.core.binding_view import (
     littles_selectors,
     natural_bound,
     plan_role,
+    sel,
+    split_matcher,
 )
 from telemetry_nerd.core.events import Actor
 from telemetry_nerd.core.littles_ops import NOT_POSSIBLE
+from telemetry_nerd.core.panel_payloads import series_labels
 from telemetry_nerd.datasets.store import Lineage
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.time import TimeRange, format_duration, parse_duration, parse_time
@@ -227,6 +232,45 @@ class BindingOps:
             )  # fmt: skip
         return infos, plans
 
+    async def _probe_error_matcher(
+        self, source: str, b: Resolved, mt: Mapping[str, str], rng: TimeRange
+    ) -> str | None:
+        """A generic-scope RED errors role whose label_split hint names no status label
+        (binding_suggest's `<status-label>` placeholder, telemetry-nerd-xal): probe the metric's
+        own label values for one that classifies into failure values, the same way split_outcome
+        resolves ambiguous outcome labels (analysis/outcome.py candidate_labels/classify), instead
+        of giving up and asking the caller for error_matcher. None when no candidate label's
+        values classify (genuinely ambiguous): the error-card/error_matcher fallback still
+        applies."""
+        if b.kind != "RED":
+            return None
+        metric = b.roles.get("errors")
+        hint = b.hints.get("errors")
+        if not metric or hint is None or hint.form != "label_split":
+            return None
+        matcher = split_matcher(hint)
+        if not matcher or "<" not in matcher:
+            return None  # a named status label: already resolved, nothing to probe
+        svc = self.svc
+        src = svc._source(source)
+        cands = candidate_labels((await src.discover()).label_names)
+        if not cands:
+            return None
+        step_ms = max(rng.end_ms - rng.start_ms, src.resolution_ms)
+        selector = sel(metric, mt)
+        for label in cands:
+            try:
+                result = await src.fetch(f"sum by ({label}) ({selector})", rng, step_ms)
+            except SourceError:
+                continue
+            values = [lb[label] for lb in series_labels(result.series).values() if lb.get(label)]
+            if not values:
+                continue
+            outcomes = classify(label, values)
+            if outcomes.failure:
+                return f'{label}=~"{"|".join(re.escape(v) for v in outcomes.failure)}"'
+        return None
+
     # the view -----------------------------------------------------------------------------------
     async def show(
         self,
@@ -247,7 +291,24 @@ class BindingOps:
         src = svc._source(source)
         rng = parse_range(start, end, svc.clock())
         mt = dict(matchers or {})
+        probed_matcher = None
+        if error_matcher is None:
+            probed_matcher = await self._probe_error_matcher(source, b, mt, rng)
+            if probed_matcher is not None:
+                error_matcher = probed_matcher
         infos, plans = self.plans(source, b, mt, error_matcher)
+        if probed_matcher is not None and (ep := plans.get("errors")) is not None:
+            plans = {
+                **plans,
+                "errors": replace(ep, notes=(
+                    *ep.notes,
+                    (
+                        "status label found by probing the source's own values "
+                        "(candidate_labels/classify, as split_outcome does), not read from a "
+                        "known semantic label"
+                    ),
+                )),
+            }  # fmt: skip
         step_ms = self.grid_step(rng, step, src.resolution_ms, plans.values())
         group = svc.ws.group_create(
             actor, kind=b.kind, key=b.key, source=source, start_ms=rng.start_ms,

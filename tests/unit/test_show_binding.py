@@ -367,6 +367,97 @@ async def test_a_confirmed_binding_takes_its_error_split_from_the_suggestions_hi
     assert all(r.panel for r in g.roles)
 
 
+class GenericErrorSource(FakeSource):
+    """A generic-scope counter (not an OTel/known name) with no catalogued status label: its
+    RED errors role's hint is binding_suggest's `<status-label>` placeholder (telemetry-nerd-xal).
+    `status_values` are what a `sum by (status_code) (...)` probe would see on the wire."""
+
+    status_values: tuple[str, ...] = ("200", "200", "500")
+
+    def __init__(self):
+        # a second, distinctly-named metric for request_latency: a generic-scope suggestion needs
+        # >=2 distinct metrics filled to be proposed at all (binding_suggest.MIN_FILLED)
+        ms = (
+            DiscoveredMetric("cart_requests_total", "counter", None, None),
+            DiscoveredMetric("cart_request_duration_seconds", "histogram", None, None),
+        )
+        super().__init__(
+            name="default", n_series=2,
+            discovery=Discovery(
+                ms, ("job", "status_code"), {"cart_request_duration_seconds": "classic"},
+                None, 1.0, (), False,
+            ),
+        )  # fmt: skip
+
+    async def fetch(self, expr, rng, step_ms):
+        self.calls += 1
+        self.exprs = [*getattr(self, "exprs", []), expr]
+        if "by (status_code)" not in expr:
+            return await super().fetch(expr, rng, step_ms)
+        ts = list(range(rng.start_ms, rng.end_ms + 1, step_ms))
+        labels = [{"status_code": v} for v in self.status_values]
+        sids = [series_id(self.name, lb) for lb in labels]
+        rows = [(t, sid, 1.0) for sid in sids for t in ts]
+        buckets = pa.table(
+            {
+                "ts_ms": [r[0] for r in rows],
+                "series_id": [r[1] for r in rows],
+                "avg": [r[2] for r in rows],
+                "min": [r[2] for r in rows],
+                "max": [r[2] for r in rows],
+                "count": [1] * len(rows),
+            },
+            schema=BUCKET_SCHEMA,
+        )
+        series = pa.table(
+            {"series_id": sids, "labels": [labels_json(lb) for lb in labels]}, schema=SERIES_SCHEMA
+        )
+        return FetchResult(buckets, series)
+
+
+async def _generic_red_svc(tmp_path, status_values=("200", "200", "500")):
+    src = GenericErrorSource()
+    src.status_values = status_values
+    svc = make_service(tmp_path, src)
+    await svc.learn("default")
+    svc.ws.bind_claude(
+        "default", "RED", "cart",
+        {
+            "rate": "cart_requests_total", "errors": "cart_requests_total",
+            "duration": "cart_request_duration_seconds",
+        },
+        join_on=["job"], basis="test", confidence=0.8,
+    )  # fmt: skip
+    return svc, src
+
+
+async def test_a_generic_error_split_with_no_known_status_label_resolves_by_probing(tmp_path):
+    """bead telemetry-nerd-xal: a generic-scope label_split hint names no status label
+    (`<status-label>`); show_binding probes the source's own label values the way split_outcome
+    does (candidate_labels/classify) instead of asking the caller for error_matcher."""
+    svc, src = await _generic_red_svc(tmp_path)
+    g = await svc.show_binding(source="default", kind="RED", key="cart")
+    roles = {r.role: r for r in g.roles}
+    assert roles["errors"].view != "error", roles["errors"].error
+    assert roles["errors"].form == "error_ratio" and roles["errors"].panel
+    assert any("by (status_code)" in e for e in src.exprs)
+    assert any('status_code=~"500"' in e for e in src.exprs)
+    # the group remembers the resolved matcher, so a reframe or verdict reuses it
+    assert g.error_matcher is not None and "status_code" in g.error_matcher
+
+
+async def test_a_generic_error_split_that_cannot_be_classified_still_asks_for_error_matcher(
+    tmp_path,
+):
+    """Genuinely ambiguous (no candidate label's values classify into failures): the existing
+    error-card/error_matcher fallback still applies, unchanged."""
+    svc, _ = await _generic_red_svc(tmp_path, status_values=("widget", "gadget"))
+    g = await svc.show_binding(source="default", kind="RED", key="cart")
+    roles = {r.role: r for r in g.roles}
+    assert roles["errors"].view == "error"
+    assert "error_matcher" in (roles["errors"].error or "")
+
+
 async def test_a_role_that_cannot_be_fetched_is_reported_not_fatal(tmp_path):
     svc, src = await _svc(tmp_path)
     src.fail_on = "active_requests"
