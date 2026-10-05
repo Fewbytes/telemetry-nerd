@@ -490,6 +490,48 @@ def test_the_recorded_spike_makes_no_systematic_offset_on_any_grid(k):
         assert r.verdict in ("inconsistent_in_windows", "consistent"), (skip, r.verdict)
 
 
+def _padded_with_quiet_baseline(name: str, reps: int = 3) -> tuple[Substeps, dict]:
+    """`_recorded`'s substeps with `reps` extra copies of its first two windows (a quiet stretch,
+    well before the spike) on each side: a baseline away from the spike's episode
+    (`_backlog_not_steady`'s MIN_BASELINE) without touching the recorded spike itself."""
+    sub, call, _ = _recorded(name)
+    quiet = 2 * call["k"]
+    fields = ("arrivals", "lat_sum", "lat_count", "conc", "conc_n")
+    ext = {
+        f: np.concatenate(
+            [getattr(sub, f)[:quiet]] * reps + [getattr(sub, f)] + [getattr(sub, f)[:quiet]] * reps
+        )
+        for f in fields
+    }  # fmt: skip
+    n = ext["arrivals"].size
+    ts = (np.arange(1, n + 1) * sub.step_ms).astype(np.int64)
+    padded = Substeps(
+        ts, step_ms=sub.step_ms, lookback_ms=sub.lookback_ms, scrape_ms=sub.scrape_ms, **ext
+    )
+    return padded, call
+
+
+def test_a_drain_the_linear_trend_test_misses_is_caught_against_its_own_baseline():
+    """cgk3 (1i26 follow-up): the recorded drain (L 481 -> 19, -396% relative change) reads
+    not_steady False from the within-window linear trend test alone (under n_eff: the bug) --
+    padded with quiet windows for a baseline (MIN_BASELINE), `_backlog_not_steady` catches it
+    instead: the change is far beyond what the quiet windows' own gauge variance explains."""
+    sub, call = _padded_with_quiet_baseline("overload_spike_arrivals_1i26")
+    r = check(
+        sub, k=call["k"], skip=2, tests=call["tests"], arrivals=call["arrivals"], offset=False
+    )
+    (i,) = [
+        i for i, w in enumerate(r.windows)
+        if w.L_edges and round(w.L_edges[0]) == 481 and round(w.L_edges[1]) == 19
+    ]  # fmt: skip
+    w = r.windows[i]
+    assert w.drift["L"]["significant"] is False
+    ev = w.drift["backlog"]
+    assert ev["kind"] == "backlog_not_steady" and ev["significant"] and abs(ev["z"]) > ev["k"]
+    assert "not_steady" in w.flags
+    assert i in r.core  # not off the reference (R stays near it): the ratio test alone misses it
+
+
 def test_the_systematic_offset_names_the_windows_it_rests_on():
     """1i26: `basis` is the windows behind the level (wired as `systematic.windows`): the steady
     non-transient ones. Queueing the timer misses at rho 0.95 (seed 7): windows 7 and 9 are not

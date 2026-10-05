@@ -51,6 +51,8 @@ PEAK_LAMBDA = 1.1  # a window's lambda this far above the median window: a load 
 PEAK_W = 1.5  # a window's W this far above the median window: a latency surge
 MAX_ITER = 6
 PROMOTE_ALPHA = 0.05  # family-wise false promotions per check (its own budget, apart from alpha)
+#: family-wise false not_steady flags from the backlog-vs-baseline test (cgk3), its own budget
+NOT_STEADY_BACKLOG_ALPHA = 0.05
 MIN_BASELINE = 4  # windows outside a peak's episode needed to scale its backlog / W tests
 #: judged windows needed to estimate the process's own window-to-window variation (`spread`);
 #: fewer: the cautious envelope (Block.common_cautious) carries the special-cause label (4ahp)
@@ -459,7 +461,7 @@ def _check_grid(
     if not judged:
         out.verdict = "no_traffic" if pooled.verdict == "no_traffic" else "insufficient"
         return out
-    _classify(out, sub, wins, judged, q_win, alpha)
+    _classify(out, sub, wins, judged, q_win, alpha, m)
     _promote(out, sub, wins, judged, m, arrivals)
     for t in out.transient:
         t["cause"] = _cause(t)
@@ -574,7 +576,7 @@ def _level(
 
 def _classify(
     out: GroupResult, sub: Substeps, wins: list[np.ndarray], judged: list[int], q: float,
-    alpha: float,
+    alpha: float, tests: int,
 ) -> None:  # fmt: skip
     """Systematic offset vs transient windows. Start from the median window ratio (robust to a
     few transients), mark the windows off that level beyond their measurement interval, take
@@ -584,17 +586,28 @@ def _classify(
     over the range), the reference is the offset's linear trend, not a constant. Repeat until
     the transient set is stable. A systematic offset needs most windows: with half or more of
     them transient there is none. The level is taken over the windows not flagged `not_steady`
-    (L or lambda drifting significantly and materially inside the window) when they are most:
-    L T = lambda W T holds over any window up to the edge term (requests in flight at its
-    edges), and a backlog building or draining inside the window makes that term a real
-    discrepancy of the process, not of the instruments, so such a window's R must not make a
-    measurement-system offset (1i26). Otherwise (a leak, a long overload: not steady anywhere)
-    all non-transient windows, and the trend takes the drift."""
+    (L or lambda drifting significantly and materially inside the window, _drift; or (1i26,
+    cgk3) a load-peak or draining window whose backlog change is beyond what windows away from
+    any load episode show, _backlog_not_steady: the within-window linear trend test alone misses
+    a drain/peak under n_eff) when they are most: L T = lambda W T holds over any window up to
+    the edge term (requests in flight at its edges), and a backlog building or draining inside
+    the window makes that term a real discrepancy of the process, not of the instruments, so
+    such a window's R must not make a measurement-system offset (1i26). Otherwise (a leak, a
+    long overload: not steady anywhere) all non-transient windows, and the trend takes the
+    drift."""
     ws = out.windows
     ratio = {i: float(ws[i].ratio) for i in judged}  # type: ignore[arg-type]
     side = {v: sum(ws[i].verdict == v for i in judged) for v in ("L_high", "L_low")}
     majority = next((v for v, k in side.items() if 2 * k > len(judged)), None)
     drift = bool(out.growing and out.growing["significant"])
+    lam = np.array([ws[i].lam for i in judged], float)
+    W = np.array([ws[i].W_s for i in judged], float)
+    lam_med, W_med = float(np.median(lam)), float(np.median(W))
+    L_med = float(np.median([ws[i].L for i in judged]))
+    lam_q75 = float(np.quantile(lam, 0.75))
+    for i in judged:
+        out.phases[i] = _load(ws[i], lam_med, lam_q75, W_med, L_med)
+    _backlog_not_steady(out, sub, wins, judged, tests)
     steady = [i for i in judged if "not_steady" not in ws[i].flags]
     # the level's candidates: the steady windows when they are most (a leak or a long overload
     # may be not steady anywhere: then all of them, and the trend below takes the drift)
@@ -655,13 +668,6 @@ def _classify(
         out.common_cause["cautious_rel95"] = float(
             np.median([ws[i].common_cautious for i in judged])  # type: ignore[misc]
         )
-    lam = np.array([ws[i].lam for i in judged], float)
-    W = np.array([ws[i].W_s for i in judged], float)
-    lam_med, W_med = float(np.median(lam)), float(np.median(W))
-    L_med = float(np.median([ws[i].L for i in judged]))
-    lam_q75 = float(np.quantile(lam, 0.75))
-    for i in judged:
-        out.phases[i] = _load(ws[i], lam_med, lam_q75, W_med, L_med)
     for i in judged:
         w = ws[i]
         assert w.ratio is not None and w.common is not None
@@ -840,6 +846,52 @@ def _backlog(
         "null_sd": scale, "z": z, "k": k, "p_bound": 1 / (1 + z * z) if z > 0 else 1.0,
         "significant": z >= k,
     }  # fmt: skip
+
+
+def _backlog_not_steady(
+    out: GroupResult, sub: Substeps, wins: list[np.ndarray], judged: list[int], tests: int,
+) -> None:  # fmt: skip
+    """not_steady from the backlog itself (1i26, cgk3): a window at a load peak or draining one
+    (`_load`'s phase: its two edge readings, L_start -> L_end) whose change is also beyond what
+    windows away from any load episode show (the process's own gauge variance there, MIN_BASELINE
+    of them needed; two-sided Cantelli bound, distribution-free, its own family-wise budget) --
+    independent of, and catching what, the within-window linear trend test (`_drift`) misses
+    under n_eff (a short, heavily autocorrelated ramp, or a sharp drop that does not fit a
+    straight line). The within-window Poisson edge noise alone (3 sqrt(2 L), `_load`'s `noise`)
+    is too tight a bar on its own: a near-saturation queue's natural per-window backlog swings
+    can exceed it while being common cause (the same windows elsewhere in the group show swings
+    of that size too; 1i26/cgk3 investigation, seed 7 rho 0.95 window 5); the baseline drawn from
+    those other windows is what tells the two apart. Too few baseline windows (a short range, or
+    one episode spanning most of it): no evidence either way, left to the linear trend test
+    alone."""
+    ws = out.windows
+    phases = out.phases
+    episodes = _episodes(judged, phases)
+    episode_of = {i: ep for ep in episodes for i in ep}
+    usable = sub.usable()
+    k_backlog = cantelli_k(NOT_STEADY_BACKLOG_ALPHA / (2 * max(1, tests)))
+    for i in judged:
+        w = ws[i]
+        if phases[i]["phase"] not in ("peak", "drain") or "not_steady" in w.flags:
+            continue
+        ep = episode_of.get(i, [i])
+        base = [j for j in judged if not ep[0] - 1 <= j <= ep[-1] + 1]
+        if len(base) < MIN_BASELINE:
+            continue
+        g = np.concatenate([sub.conc[wins[j][usable[wins[j]]]] for j in base])
+        var_n = max(float(np.var(g, ddof=1)), float(np.mean(g)), 1e-12)
+        scale = math.sqrt(2 * var_n)
+        l0, l1 = w.L_edges  # type: ignore[misc]
+        x = l1 - l0
+        z = x / scale
+        ev = {
+            "kind": "backlog_not_steady", "value": x, "unit": "requests",
+            "baseline_windows": len(base), "null_sd": scale, "z": z, "k": k_backlog,
+            "p_bound": 1 / (1 + z * z) if z else 1.0, "significant": abs(z) >= k_backlog,
+        }  # fmt: skip
+        w.drift["backlog"] = ev
+        if ev["significant"]:
+            w.flags.append("not_steady")
 
 
 def _w_noise(sub: Substeps, idx: np.ndarray) -> tuple[float, float]:
