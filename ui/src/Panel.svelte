@@ -48,6 +48,7 @@
   import DistributionPlot from "./components/DistributionPlot.svelte";
   import { GROUP_GUTTER_PX, GROUP_LABEL_PX, type GroupLink } from "./lib/groupLink.svelte";
   import { msAt, xAt } from "./lib/groups";
+  import { exportPanelPdf, exportPanelPng } from "./chart/exportPanel";
 
   let { panel, annotations = [], threads = [] }: {
     panel: Panel; annotations?: Annotation[]; threads?: Thread[];
@@ -442,6 +443,18 @@
 
   const close = () => closePanel(panel.id).catch((e) => (error = String(e)));
 
+  // export (telemetry-nerd-ulh9): save this panel's chart as a PNG or a one-page PDF, for sharing
+  // a single finding outside the app. See chart/exportPanel.ts for how the capture works and why
+  // PDF is a hand-rolled wrapper instead of a dependency.
+  let exportBusy = $state<"png" | "pdf" | null>(null);
+  const doExport = (kind: "png" | "pdf") => {
+    if (!plotEl || exportBusy) return;
+    exportBusy = kind;
+    (kind === "png" ? exportPanelPng(panel.id, plotEl) : exportPanelPdf(panel.id, plotEl))
+      .catch((e) => (error = String(e)))
+      .finally(() => (exportBusy = null));
+  };
+
   // reference layers (2as.11): switching one changes the payload, so fetch it again
   let overlayBusy = $state(false);
   const toggleOverlay = (key: "normal" | "limit" | "ghost", on: boolean) => {
@@ -676,6 +689,18 @@
     {/if}
     {#if loading}<span class="loading-tag" data-panel-loading><span class="spinner" aria-hidden="true"></span>{data ? "updating" : "loading"}</span>{/if}
     <PinButton object={panel.id} />
+    <span class="export-group" role="group" aria-label="Export panel">
+      <button
+        type="button" class="export" data-export="png" disabled={!!exportBusy}
+        title="Save this panel's chart as a PNG image" aria-label="Export panel as PNG"
+        onclick={() => doExport("png")}
+      >{exportBusy === "png" ? "…" : "PNG"}</button>
+      <button
+        type="button" class="export" data-export="pdf" disabled={!!exportBusy}
+        title="Save this panel's chart as a one-page PDF" aria-label="Export panel as PDF"
+        onclick={() => doExport("pdf")}
+      >{exportBusy === "pdf" ? "…" : "PDF"}</button>
+    </span>
     <button class="close" type="button" aria-label="Close panel" onclick={close}>×</button>
   </header>
   {#if error}<div class="error">{error}</div>{/if}
