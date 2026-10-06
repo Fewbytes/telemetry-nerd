@@ -841,6 +841,15 @@
     {#if data && data.kind === "fleet"}
       <FleetPlot data={data} width={fetchWidth} range={yres?.range ?? null} unit={panel.spec.y.unit ?? null} bind:view={fleetView} onRendered={(ms, pts, h) => onFacetRendered(0, 1, ms, pts, h ?? 260, true)}
         xRange={link ? [link.domain[0] / 1000, link.domain[1] / 1000] : null} gutter={link ? GROUP_GUTTER_PX : null} onPlot={link ? areaOf : undefined} />
+      <!-- fleet puts a view switcher + encoding/key text ahead of its chart, at a height that
+           varies with the view and the key's own content: floating the badge/strip at a fixed
+           top offset (as "time" panels do, where the chart is the first thing in .plot) always
+           ends up either colliding with that header or guessing too far past it. Flowing them
+           here instead, right after that header and before whatever comes next, can't collide
+           with content whose height it doesn't know. -->
+      {#if yIsValues && yres && yres.effective && (yres.zoomed || yres.log || yres.effective.mode === "semantic" || (yres.reference && chosen?.mode === "reference"))}
+        <div class="y-badge-flow" data-y-badge>{badgeText(yres.effective, yres, panel.spec.y.unit, undefined, yctx)}</div>
+      {/if}
     {/if}
     {#if data && data.kind === "spectrogram"}
       {@const sg = data}
@@ -862,8 +871,8 @@
         />
       {/each}
     {/if}
-    {#if (data?.kind === "time" || data?.kind === "fleet") && yIsValues && yres && yres.effective && (yres.zoomed || yres.log || yres.effective.mode === "semantic" || (yres.reference && chosen?.mode === "reference"))}
-      <span class="y-badge" data-y-badge>{badgeText(yres.effective, yres, panel.spec.y.unit, data.kind === "time" ? data.index?.label : undefined, yctx)}</span>
+    {#if data?.kind === "time" && yIsValues && yres && yres.effective && (yres.zoomed || yres.log || yres.effective.mode === "semantic" || (yres.reference && chosen?.mode === "reference"))}
+      <span class="y-badge" data-y-badge>{badgeText(yres.effective, yres, panel.spec.y.unit, data.index?.label, yctx)}</span>
     {/if}
     {#if (data?.kind === "time" || data?.kind === "fleet") && yIsValues && yres?.zoomed && yres.range && yst?.all}
       {@const cs = contextStrip(stripExtent(yst.all, yctx), yres.range)}

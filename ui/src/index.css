@@ -89,6 +89,7 @@ a.obj-id:hover { text-decoration: underline; }
 }
 
 .header-controls { display: flex; align-items: center; gap: 8px; }
+.build-sha { font-size: 10px; font-family: ui-monospace, monospace; color: var(--muted); cursor: help; }
 
 /* Connection pill: daemon + Claude presence; the label carries the state, color only echoes it */
 .connection { position: relative; }
@@ -280,10 +281,10 @@ ul.gaps { list-style: none; margin: 0; padding: 0; }
 .panel .marginal { position: absolute; top: 0; right: 0; }
 .panel .marginal-head { position: absolute; top: -2px; right: 2px; width: 80px; font-size: 10px; line-height: 11px; color: var(--muted); display: flex; flex-direction: column; text-align: right; }
 .panel .plot:has(.marginal) .y-badge, .panel .plot:has(.marginal) .y-strip { right: 88px; }
-/* fleet panels put their view switcher (band/quantiles/heat/multiples buttons) at the very top
-   of .plot, ahead of the chart itself: the badge/strip's usual top offset (anchored to the
-   chart's top-right corner on every other panel kind) would otherwise sit on top of it */
-.panel .plot:has(.fleet .views) .y-badge, .panel .plot:has(.fleet .views) .y-strip { top: 50px; }
+/* fleet's own badge (Panel.svelte): flows after its view switcher + encoding/key text instead of
+   floating at a fixed top offset, since that header's height varies with the view and the key's
+   own content and a fixed guess always ends up colliding with it somewhere */
+.panel .y-badge-flow { display: inline-block; margin: 2px 0; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--badge); border-left: 3px solid var(--warn); }
 /* the range selector's preview chart (bead geje): dashed border + a tag, so it never reads as
    this panel's committed evidence, whether it's a client-side slice (tier 1) or a fetched
    dataset (tier 2) */

@@ -132,6 +132,7 @@
         onclick={exportPdf}
       >{exportBusy ? "Exporting…" : "Export PDF"}</button>
       <ConnectionPill daemon={ws.daemon} presence={ws.presence} />
+      <span class="build-sha" data-build-sha title="UI build commit — confirms what you're looking at is current">{__GIT_SHA__}</span>
       <select
         class="theme-toggle"
         value={theme.setting}
