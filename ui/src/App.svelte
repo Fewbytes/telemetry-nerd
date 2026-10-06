@@ -21,6 +21,7 @@
   import HighlightStrip from "./components/HighlightStrip.svelte";
   import { scrollIfOffscreen, syncHighlightClasses } from "./lib/refHighlight";
   import type { Highlight } from "./lib/highlights";
+  import { downloadWorkspacePdf } from "./lib/exportPdf";
 
   const ws = createWorkspace();
   // threads read presence for per-message delivery state without prop drilling
@@ -80,6 +81,19 @@
   });
   const pending = $derived(proposals?.pending ?? 0);
 
+  // workspace-to-PDF export (bead w7ht): every open panel's chart plus the question,
+  // hypotheses and findings, in one document for sharing/archiving
+  let exportBusy = $state(false);
+  let exportError = $state<string | null>(null);
+  const exportPdf = () => {
+    if (!ws.snapshot || exportBusy) return;
+    exportBusy = true;
+    exportError = null;
+    downloadWorkspacePdf(ws.snapshot)
+      .catch((e) => (exportError = String(e)))
+      .finally(() => (exportBusy = false));
+  };
+
   const panels = $derived((ws.snapshot?.panels ?? []).filter((p) => !p.closed));
   const threads = $derived(ws.snapshot?.threads ?? []); // anchored ones render inside Panel
   // panels of one binding view (bead czt.3) render together as a group
@@ -111,6 +125,12 @@
     </nav>
     <div class="header-controls">
       <WorkspaceSwitcher active={ws.snapshot?.workspace ?? null} workspaces={ws.workspaces} onopen={ws.refreshWorkspaces} onsaved={ws.applyWorkspace} />
+      <button
+        type="button" class="export-pdf" data-export-pdf
+        disabled={!ws.snapshot || exportBusy}
+        aria-label="Export workspace to PDF"
+        onclick={exportPdf}
+      >{exportBusy ? "Exporting…" : "Export PDF"}</button>
       <ConnectionPill daemon={ws.daemon} presence={ws.presence} />
       <select
         class="theme-toggle"
@@ -125,6 +145,7 @@
     </div>
   </div>
   {#if ws.error}<div class="error">{ws.error}</div>{/if}
+  {#if exportError}<div class="error" data-export-error role="alert">Export failed: {exportError}</div>{/if}
   <HighlightStrip highlights={ws.highlights} />
   {#if route === "catalog"}<CatalogView />{/if}
   {#if route === "proposals"}
