@@ -2,7 +2,8 @@
 
     python -m telemetry_nerd.kernels.launch --parent-pid PID [--memory-mb N] -- <ipykernel args>
 
-Runs before ipykernel is imported and must stay stdlib-only (no daemon packages).
+Runs before ipykernel is imported and must stay stdlib-only (no daemon packages, including its
+own `kernels.cgroups` sibling, which is stdlib-only for the same reason).
 
 Parent death (the daemon is SIGKILLed or crashes, so it cannot shut kernels down):
 - Linux: PR_SET_PDEATHSIG=SIGKILL makes the OS kill the kernel the moment the daemon dies.
@@ -35,10 +36,29 @@ def _parse(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
 
 
 def set_memory_limit(memory_mb: int) -> bool:
-    """Cap the address space (RLIMIT_AS) on Linux. macOS does not enforce RLIMIT_AS, so it is
-    left alone there. Returns whether a limit was applied."""
-    if memory_mb <= 0 or not sys.platform.startswith("linux"):
+    """Cap this kernel process's memory (Linux only; macOS enforces neither mechanism).
+
+    Prefers a cgroup v2 `memory.max`, layered with RLIMIT_AS at the same budget rather than
+    instead of it: RLIMIT_AS is what gives a single oversized allocation a clean, catchable
+    `MemoryError` (checked at `mmap()` time, before any page is touched), while the cgroup is a
+    harder-to-evade backstop that covers this process's whole subtree and real charged memory
+    (see `kernels.cgroups` for why each is needed). Falls back to RLIMIT_AS alone when cgroup
+    v2's memory controller isn't usable here (no permission, no delegation, not mounted).
+    Returns whether any limit was applied.
+    """
+    if memory_mb <= 0:
         return False
+    if not sys.platform.startswith("linux"):
+        return False
+
+    from telemetry_nerd.kernels import cgroups
+
+    base = cgroups.kernel_base_from_inside()
+    if base is not None:
+        cgroup_dir = cgroups.create(base, str(os.getpid()), memory_mb)
+        if cgroup_dir is not None:
+            cgroups.join_self(cgroup_dir)
+
     import resource
 
     limit = memory_mb * 1024 * 1024

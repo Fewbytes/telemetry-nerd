@@ -19,7 +19,7 @@ from starlette.testclient import TestClient
 
 from telemetry_nerd.api.app import create_app
 from telemetry_nerd.config import Settings
-from telemetry_nerd.kernels import runtime
+from telemetry_nerd.kernels import cgroups, runtime
 from telemetry_nerd.kernels.launch import set_memory_limit
 from telemetry_nerd.kernels.manager import KernelConfig, KernelManager, _Output
 from tests.unit.fakes import make_service
@@ -304,8 +304,24 @@ async def test_kernel_start_failure_is_a_crashed_result(tmp_path):
 
 @pytest.mark.skipif(not LINUX, reason="RLIMIT_AS is only enforced on Linux")
 async def test_memory_bomb_is_limited_on_linux(tmp_path):
-    async with KernelManager(KernelConfig(root=tmp_path, memory_limit_mb=1024)) as m:
-        r = await m.execute("a", "b = bytearray(4 * 1024**3)")
+    # Every kernel's first `execute()` also runs the preamble (`runtime.provide`), which
+    # unconditionally imports numpy and polars into the kernel before the cell below runs
+    # (telemetry_nerd/kernels/runtime.py). Reproduced on Linux (see bd telemetry-nerd-36jm): at
+    # memory_limit_mb=1024, that unavoidable numpy import can itself run the kernel out of
+    # budget while OpenBLAS sizes its own internal thread workspace -- the kernel log showed
+    # "OpenBLAS error: Memory allocation still failed after 10 retries, giving up.", and
+    # OpenBLAS's own allocator gives up by killing the process, not by raising a catchable
+    # Python MemoryError. So the preamble's forced import was racing the deliberate bytearray
+    # below for the same tight budget, and whichever one actually ran out first (sensitive to
+    # PYTHONHASHSEED/pytest-randomly order, which perturbs allocation timing) decided whether
+    # the kernel died ("crashed") or the cell failed cleanly ("error"). Verified on a real Linux
+    # host: the original 1024MB/4GiB version failed 40/40 runs across 40 PYTHONHASHSEED values
+    # (always with that OpenBLAS message in the kernel log); giving the baseline real headroom
+    # under the cap (2048MB here vs. the production default of 4096MB, which integration/e2e
+    # runs the same imports under without incident) made 40/40 runs pass cleanly, with the same
+    # ~4x margin preserved between the cap and the deliberate oversized allocation.
+    async with KernelManager(KernelConfig(root=tmp_path, memory_limit_mb=2048)) as m:
+        r = await m.execute("a", "b = bytearray(8 * 1024**3)")
         assert r.status == "error" and r.error.startswith("MemoryError")
         assert (await m.execute("a", "1")).ok  # the kernel survives
 
@@ -314,6 +330,32 @@ def test_memory_limit_is_skipped_off_linux():
     assert set_memory_limit(0) is False
     if not LINUX:
         assert set_memory_limit(1024) is False
+
+
+@pytest.mark.skipif(not LINUX, reason="cgroup v2 is Linux-only")
+async def test_cgroup_memory_max_matches_configured_limit(tmp_path):
+    # ensure_kernels_base() is what actually proves cgroup v2 is writable here (it may need to
+    # relocate this process into a `daemon` leaf first -- see kernels/cgroups.py for why): a
+    # mounted cgroup v2 with a memory controller (own_base_dir() not None) is necessary but not
+    # sufficient (read-only /sys/fs/cgroup in an unprivileged container, no permission to
+    # enable subtree_control, ...), and this is the same check `launch.set_memory_limit`
+    # effectively makes before ever trying to create a per-kernel cgroup.
+    base = cgroups.ensure_kernels_base()
+    if base is None:
+        pytest.skip("cgroup v2 memory controller not writable by this process")
+    # 2048MB, not some arbitrary small number: see test_memory_bomb_is_limited_on_linux above
+    # for why a too-tight budget here is its own (unrelated) source of flakiness -- the
+    # preamble's forced numpy import needs real headroom under whatever cap is configured.
+    memory_limit_mb = 2048
+    async with KernelManager(KernelConfig(root=tmp_path, memory_limit_mb=memory_limit_mb)) as m:
+        assert (await m.execute("a", "1")).ok
+        pid = m.kernel_pid("a")
+        assert pid is not None
+        cgroup_dir = cgroups.kernel_dir(base, str(pid))
+        expected = str(memory_limit_mb * 1024 * 1024)
+        assert cgroup_dir.joinpath("memory.max").read_text().strip() == expected
+        await m.shutdown("a")
+    assert not cgroup_dir.exists(), "cgroup was not cleaned up after shutdown"
 
 
 def test_output_keeps_head_and_tail():

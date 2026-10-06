@@ -12,7 +12,12 @@ Guarantees:
   stop. If it stops, the kernel and its state survive (`status="timeout"`,
   `restarted=False`); otherwise the kernel is killed and restarted (`restarted=True`).
 - Crash (os._exit, segfault, OOM kill): `status="crashed"`, kernel restarted, daemon unaffected.
-- Memory: RLIMIT_AS on Linux (`MemoryError` inside the cell); not enforced on macOS.
+- Memory (Linux only; neither mechanism is enforced on macOS): a cgroup v2 `memory.max`
+  (covers this kernel's whole subtree and real charged memory; harder to evade, but a breach
+  is an OOM kill -- `status="crashed"`) layered with RLIMIT_AS at the same budget (checked at
+  `mmap()` time, so a single oversized allocation fails first with a clean, catchable
+  `MemoryError` -- `status="error"`, kernel survives). See `kernels.cgroups` and
+  `kernels.launch.set_memory_limit`.
 - Idle kernels are shut down after `idle_timeout_s`, and starting a kernel shuts down the
   least recently used idle ones beyond `max_live` (hopping workspaces does not pile up
   kernels); `aclose()` kills all kernels (process groups, so user subprocesses too).
@@ -38,6 +43,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Self
 
+from telemetry_nerd.kernels import cgroups
 from telemetry_nerd.kernels.runtime import preamble
 
 if TYPE_CHECKING:
@@ -173,6 +179,15 @@ def _kill_group(pgid: int | None) -> None:
         return
     with contextlib.suppress(OSError):
         os.killpg(pgid, signal.SIGKILL)
+
+
+def _cleanup_cgroup(pid: int) -> None:
+    """Remove the per-kernel cgroup `launch.set_memory_limit` created for `pid`, if any (a
+    no-op if cgroup v2 isn't in use here). Blocking; run via an executor from async code."""
+    base = cgroups.ensure_kernels_base()  # cached: a no-op lookup once a kernel has started
+    if base is None:
+        return
+    cgroups.remove(cgroups.kernel_dir(base, str(pid)))
 
 
 _live_managers: weakref.WeakSet[KernelManager] = weakref.WeakSet()
@@ -402,6 +417,12 @@ class KernelManager:
         )
         log_path = self.config.root / f"kernel-{name}.log"
         rotate_log(log_path, self.config.log_max_bytes)
+        if self.config.memory_limit_mb > 0:
+            # One-time (cached), before the first kernel ever spawns: relocates us into a
+            # `daemon` leaf so a `kernels` sibling can be delegated the memory controller for
+            # kernel subprocesses to subdivide further (see kernels.cgroups). A spawned kernel
+            # inherits whatever cgroup we are in at that moment, so this must happen first.
+            await asyncio.get_running_loop().run_in_executor(None, cgroups.ensure_kernels_base)
         logf = open(log_path, "ab")  # noqa: ASYNC230, SIM115
         try:
             await km.start_kernel(
@@ -431,12 +452,15 @@ class KernelManager:
         k = self._kernels.pop(workspace_id, None)
         if k is None:
             return
+        pid = k.km.provisioner.pid if k.km.provisioner else None  # type: ignore[union-attr]
         k.kc.stop_channels()
         try:
             await k.km.shutdown_kernel(now=True)  # SIGKILL to the process group
         except Exception:
             log.warning("kernels: shutdown of %s failed; killing", workspace_id, exc_info=True)
         _kill_group(k.pgid)  # anything left in the group (user subprocesses)
+        if pid is not None:
+            await asyncio.get_running_loop().run_in_executor(None, _cleanup_cgroup, pid)
         with contextlib.suppress(OSError):
             Path(k.km.connection_file).unlink(missing_ok=True)
 
