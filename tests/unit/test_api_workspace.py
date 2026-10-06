@@ -24,6 +24,23 @@ def test_health(client):
     assert body["ok"] is True
     assert body["version"]
     assert body["last_seq"] == 0
+    # this repo is a git checkout in CI and in dev, so the real lookup succeeds there; only an
+    # installed wheel / container without .git falls back to "unknown" (exercised separately)
+    assert body["commit"] and body["commit"] != "unknown"
+
+
+def test_health_commit_is_unknown_outside_a_git_checkout(client, monkeypatch):
+    from telemetry_nerd.api import app as app_module
+
+    def no_git(*a, **k):
+        raise FileNotFoundError("git not found")
+
+    app_module._daemon_commit.cache_clear()
+    monkeypatch.setattr(app_module.subprocess, "run", no_git)
+    try:
+        assert client.get("/api/health").json()["commit"] == "unknown"
+    finally:
+        app_module._daemon_commit.cache_clear()
 
 
 def test_annotation_create_delete_and_snapshot(client):

@@ -90,6 +90,7 @@ a.obj-id:hover { text-decoration: underline; }
 
 .header-controls { display: flex; align-items: center; gap: 8px; }
 .build-sha { font-size: 10px; font-family: ui-monospace, monospace; color: var(--muted); cursor: help; }
+.build-sha.mismatch { color: var(--warn); font-weight: 600; }
 
 /* Connection pill: daemon + Claude presence; the label carries the state, color only echoes it */
 .connection { position: relative; }

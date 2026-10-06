@@ -6,7 +6,9 @@ import asyncio
 import contextlib
 import json
 import logging
+import subprocess
 from collections.abc import Awaitable, Callable, Sequence
+from functools import cache
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -114,6 +116,22 @@ def _optional(body: dict, key: str, typ: type):
     if value is not None and not isinstance(value, typ):
         raise _BadRequest(f"invalid field {key!r}", f"{key!r} must be a {typ.__name__} or null")
     return value
+
+
+@cache
+def _daemon_commit() -> str:
+    """Short git commit this process runs from (same idea as the UI's build-time __GIT_SHA__:
+    api/health reports it so the two can be compared). "unknown" outside a git checkout (an
+    installed wheel, a container without .git) -- cached since it never changes mid-process."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True, text=True, timeout=2, check=True,
+        )  # fmt: skip
+        return out.stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
 
 
 def _int_param(request: Request, name: str, default: int) -> int:
@@ -735,7 +753,9 @@ def create_app(
             ver = version("telemetry-nerd")
         except PackageNotFoundError:
             ver = "unknown"
-        return {"ok": True, "version": ver, "last_seq": service.log.last_seq}
+        return {
+            "ok": True, "version": ver, "commit": _daemon_commit(), "last_seq": service.log.last_seq,
+        }  # fmt: skip
 
     @_api
     async def workspace(request: Request) -> object:

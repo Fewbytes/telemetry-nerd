@@ -357,6 +357,9 @@ export const postJSON = <T>(path: string, body: unknown = {}) =>
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   }).then((r) => json<T>(r));
 
+export interface Health { ok: boolean; version: string; commit: string; last_seq: number }
+export const fetchHealth = () => fetch("/api/health").then((r) => json<Health>(r));
+
 export const fetchWorkspace = () => fetch("/api/workspace").then((r) => json<Snapshot>(r));
 export interface WorkspaceList { active: string; workspaces: WorkspaceInfo[]; more: number }
 export const fetchWorkspaces = (archived = false) =>

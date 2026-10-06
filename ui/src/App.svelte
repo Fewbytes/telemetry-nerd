@@ -14,7 +14,7 @@
   import WorkspaceSwitcher from "./components/WorkspaceSwitcher.svelte";
   import CatalogView from "./components/CatalogView.svelte";
   import ProposalsView from "./components/ProposalsView.svelte";
-  import { fetchProposals, type Proposals } from "./lib/api";
+  import { fetchHealth, fetchProposals, type Proposals } from "./lib/api";
   import { setContext } from "svelte";
   import { refTargets } from "./lib/refs";
   import CodeView from "./components/CodeView.svelte";
@@ -35,6 +35,16 @@
   const openCode = (id: string): void => { codeOpen = id; };
   setContext("openCode", openCode);
   $effect(() => ws.start());
+
+  // the UI and the daemon are built/deployed separately (bead: "ui version and server/daemon
+  // version... could be they don't match"): fetched once, shown next to the UI's own build sha
+  // so a mismatch is visible instead of silently confusing a freshness check
+  let daemonCommit = $state<string | null>(null);
+  $effect(() => {
+    fetchHealth()
+      .then((h) => (daemonCommit = h.commit))
+      .catch(() => {}); // the connection pill already reports daemon reachability
+  });
 
   // accent every highlighted target; re-runs on snapshot change so re-rendered DOM keeps it
   let seen = new Map<string, Highlight>();
@@ -132,7 +142,13 @@
         onclick={exportPdf}
       >{exportBusy ? "Exporting…" : "Export PDF"}</button>
       <ConnectionPill daemon={ws.daemon} presence={ws.presence} />
-      <span class="build-sha" data-build-sha title="UI build commit — confirms what you're looking at is current">{__GIT_SHA__}</span>
+      <span
+        class="build-sha"
+        class:mismatch={daemonCommit !== null && daemonCommit !== "unknown" && daemonCommit !== __GIT_SHA__}
+        data-build-sha
+        data-daemon-commit={daemonCommit}
+        title="UI build {__GIT_SHA__} · daemon build {daemonCommit ?? '…'}{daemonCommit && daemonCommit !== __GIT_SHA__ ? ' — these differ' : ''}"
+      >ui {__GIT_SHA__} · daemon {daemonCommit ?? "…"}</span>
       <select
         class="theme-toggle"
         value={theme.setting}
