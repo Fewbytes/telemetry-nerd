@@ -8,9 +8,10 @@
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { SeasonalPanelData } from "../lib/api";
 
-  let { data, series, width, height = 220, onRendered }: {
+  let { data, series, width, height = 220, onRendered, onPlot }: {
     data: SeasonalPanelData; series: SeasonalPanelData["series"][number]; width: number; height?: number;
     onRendered: (ms: number, points: number) => void;
+    onPlot?: (u: uPlot) => void;
   } = $props();
 
   let el = $state<HTMLDivElement | null>(null);
@@ -52,9 +53,9 @@
             : (_u: uPlot, ts: (number | null)[]) => ts.map((t) => (t == null ? "" : fmtSI(t, unit))),
         }),
         legend: { show: false },
-        cursor: { drag: { x: false, y: false } },
+        cursor: { drag: { setScale: false, x: true, y: false } },
         hooks: {
-          draw: [(p: uPlot) => drawDots(p, marks, FLAG)],
+          draw: [(p: uPlot) => drawDots(p, marks, FLAG), (p: uPlot) => onPlot?.(p)],
         },
       },
       m.data, host,

@@ -8,9 +8,10 @@
   import type { SpcPanelData } from "../lib/api";
   import ChartTip from "./ChartTip.svelte";
 
-  let { data, series, width, height = 220, onRendered }: {
+  let { data, series, width, height = 220, onRendered, onPlot }: {
     data: SpcPanelData; series: SpcPanelData["series"][number]; width: number; height?: number;
     onRendered: (ms: number, points: number) => void;
+    onPlot?: (u: uPlot) => void;
   } = $props();
 
   let el = $state<HTMLDivElement | null>(null);
@@ -58,7 +59,7 @@
         bands: m.bands.map((b, k) => ({ ...b, fill: fills[k] })),
         legend: { show: false },
         axes: plotAxes(stroke, grid),
-        cursor: { drag: { x: false, y: false }, points: { show: false } },
+        cursor: { drag: { setScale: false, x: true, y: false }, points: { show: false } },
         hooks: {
           drawClear: [
             (p: uPlot) => {
@@ -77,6 +78,7 @@
           ],
           draw: [
             (p: uPlot) => drawDots(p, drawn, VIOLATION, (mk) => mk.deciding),
+            (p: uPlot) => onPlot?.(p),
           ],
           setCursor: [
             (p: uPlot) => {

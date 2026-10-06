@@ -8,9 +8,10 @@
   import type { LittlesPanelData } from "../lib/api";
   import ChartTip from "./ChartTip.svelte";
 
-  let { data, series, width, height = 200, onRendered }: {
+  let { data, series, width, height = 200, onRendered, onPlot }: {
     data: LittlesPanelData; series: LittlesPanelData["series"][number]; width: number; height?: number;
     onRendered: (ms: number, points: number) => void;
+    onPlot?: (u: uPlot) => void;
   } = $props();
 
   const RATIO_H = 150; // the discrepancy strip leads: it is what the check is about
@@ -92,7 +93,12 @@
     const m = toLittlesUplot(series);
     const r = toRatioUplot(series);
     const gutter = axisGutterSize();
-    const cursor = { drag: { x: false, y: false }, points: { show: false }, sync: { key: `littles-${data.panel.id}-${series.id}` } };
+    // the strip and the main chart share a sync key (crosshair follows across both); only the
+    // main chart offers brush-select (mark region/event) -- the strip is read-only, sized too
+    // short to drop a menu onto usefully
+    const syncKey = { sync: { key: `littles-${data.panel.id}-${series.id}` } };
+    const cursor = { drag: { x: false, y: false }, points: { show: false }, ...syncKey };
+    const mainCursor = { drag: { setScale: false, x: true, y: false }, points: { show: false }, ...syncKey };
     const u2 = new uPlot(
       {
         width, height: RATIO_H,
@@ -141,8 +147,8 @@
         scales: { y: { range: (_u, lo, hi) => [Math.min(0, lo ?? 0), (hi ?? 1) * 1.05] } },
         legend: { show: false },
         axes: plotAxes(stroke, grid, { label: "requests in flight", size: gutter }),
-        cursor,
-        hooks: { drawClear: [(p: uPlot) => shade(p, mode)], setCursor: [hover] },
+        cursor: mainCursor,
+        hooks: { drawClear: [(p: uPlot) => shade(p, mode)], setCursor: [hover], draw: [(p: uPlot) => onPlot?.(p)] },
       },
       m.data, a,
     );

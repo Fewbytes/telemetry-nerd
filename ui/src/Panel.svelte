@@ -85,6 +85,51 @@
   };
   const linkedX = (ms: number): number | null =>
     link && area ? xAt(Math.min(Math.max(ms, link.domain[0]), link.domain[1]), link.domain, area.left, area.width) : null;
+
+  // Brush-select + annotation rendering for a chart kind that renders its own uPlot instance
+  // (fleet, seasonal, spc, littles -- "time" wires both of these itself inline below, and
+  // heatmap/percentile wire brush-select via their own onBrush prop but draw no annotations,
+  // their x-axis being a derived tile/window index). The child component only needs cursor.drag
+  // enabled for x; setSelect reads the selection the same way "time"'s own inline hook does,
+  // correcting for the child's own position within .plot via live getBoundingClientRect (never a
+  // guessed offset -- the fleet badge bug today was exactly that mistake). draw re-renders
+  // whatever this panel's annotations resolve to against the live scale on every redraw, same as
+  // "time"'s own draw hook; pushed hooks run from the next redraw on, so one is forced
+  // immediately so a region marked just now doesn't wait for an unrelated redraw to appear.
+  const brushed = new WeakSet<uPlot>();
+  const attachBrush = (u: uPlot): void => {
+    if (brushed.has(u) || !plotEl) return;
+    brushed.add(u);
+    const dpr = window.devicePixelRatio || 1;
+    u.hooks.setSelect = u.hooks.setSelect ?? [];
+    u.hooks.setSelect.push((uu: uPlot) => {
+      const s = uu.select;
+      if (s.width < 3 || !plotEl) return;
+      const host = plotEl.getBoundingClientRect(), root = uu.root.getBoundingClientRect();
+      const dx = root.left - host.left, dy = root.top - host.top;
+      selection = {
+        x0: uu.posToVal(s.left, "x"),
+        x1: uu.posToVal(s.left + s.width, "x"),
+        left: dx + s.left + uu.bbox.left / dpr,
+        top: dy + uu.bbox.top / dpr + 4,
+        width: s.width,
+      };
+    });
+    u.hooks.draw = u.hooks.draw ?? [];
+    u.hooks.draw.push((uu: uPlot) => {
+      const ops = drawOps(
+        panelAnns,
+        { min: uu.scales.x.min ?? 0, max: uu.scales.x.max ?? 0 },
+        { min: uu.scales.y.min ?? 0, max: uu.scales.y.max ?? 0 },
+      );
+      annCount = ops.length;
+      drawAnnotations(uu, ops, readAnnotationColors(uu.root), window.devicePixelRatio || 1);
+    });
+    // attachBrush is itself called from inside a draw hook (onPlot): redraw synchronously here
+    // would re-enter uPlot's own draw cycle, so defer one tick -- just far enough that the hook
+    // just pushed is in place for it, so a region marked now doesn't wait for an unrelated redraw
+    queueMicrotask(() => u.redraw(false));
+  };
   // opens the read-only code view of the node that produced this panel's data (provided by App)
   const openCode = getContext<((id: string) => void) | undefined>("openCode");
   const panelAnns = $derived(
@@ -817,14 +862,14 @@
       {@const sc = data}
       {#each sc.series as s, i (s.id)}
         <SpcPlot data={sc} series={s} width={fetchWidth}
-          onRendered={(ms, pts) => onFacetRendered(i, sc.series.length, ms, pts, 220)} />
+          onRendered={(ms, pts) => onFacetRendered(i, sc.series.length, ms, pts, 220)} onPlot={attachBrush} />
       {/each}
     {/if}
     {#if data && data.kind === "littles"}
       {@const lt = data}
       {#each lt.series as s, i (s.id)}
         <LittlesPlot data={lt} series={s} width={fetchWidth}
-          onRendered={(ms, pts) => onFacetRendered(i, lt.series.length, ms, pts, 300)} />
+          onRendered={(ms, pts) => onFacetRendered(i, lt.series.length, ms, pts, 300)} onPlot={attachBrush} />
       {/each}
       {#if lt.unmatched.length}
         <div class="legend" data-littles-unmatched>Not judged — missing from some signals: {lt.unmatched.map((u) => `${Object.entries(u.labels).map(([k, v]) => `${k}=${v}`).join(", ") || "total"} (no ${u.missing_in.join(", ")})`).join("; ")}</div>
@@ -835,12 +880,13 @@
       {@const sz = data}
       {#each sz.series as s, i (s.id)}
         <SeasonalPlot data={sz} series={s} width={fetchWidth}
-          onRendered={(ms, pts) => onFacetRendered(i, sz.series.length, ms, pts, 220)} />
+          onRendered={(ms, pts) => onFacetRendered(i, sz.series.length, ms, pts, 220)} onPlot={attachBrush} />
       {/each}
     {/if}
     {#if data && data.kind === "fleet"}
       <FleetPlot data={data} width={fetchWidth} range={yres?.range ?? null} unit={panel.spec.y.unit ?? null} bind:view={fleetView} onRendered={(ms, pts, h) => onFacetRendered(0, 1, ms, pts, h ?? 260, true)}
-        xRange={link ? [link.domain[0] / 1000, link.domain[1] / 1000] : null} gutter={link ? GROUP_GUTTER_PX : null} onPlot={link ? areaOf : undefined} />
+        xRange={link ? [link.domain[0] / 1000, link.domain[1] / 1000] : null} gutter={link ? GROUP_GUTTER_PX : null}
+        onPlot={(u) => { if (link) areaOf(u); attachBrush(u); }} />
       <!-- fleet puts a view switcher + encoding/key text ahead of its chart, at a height that
            varies with the view and the key's own content: floating the badge/strip at a fixed
            top offset (as "time" panels do, where the chart is the first thing in .plot) always

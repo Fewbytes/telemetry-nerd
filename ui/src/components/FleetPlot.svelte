@@ -87,7 +87,7 @@
           ...(xRange ? { x: { time: true, range: (): [number, number] => xRange } } : {}),
         },
         ...(gutter ? { padding: [10, 0, 0, 0] as uPlot.Padding } : {}),
-        cursor: { drag: { x: false, y: false } },
+        cursor: { drag: { setScale: false, x: true, y: false } },
         hooks: {
           setCursor: [
             (p: uPlot) => {
