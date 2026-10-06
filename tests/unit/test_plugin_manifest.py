@@ -102,3 +102,95 @@ def test_launcher_falls_back_to_source_checkout(tmp_path):
     (b / "uv").chmod(0o755)
     r = _run("bridge", path=f"{b}:/usr/bin:/bin")
     assert r.stdout == f"uv run --directory {ROOT} telemetry-nerd bridge\n"
+
+
+@pytest.fixture
+def fake_runtime(tmp_path):
+    """A fake `podman` (or `docker`) that just echoes its argv, like fake_bin for telemetry-nerd."""
+
+    def _make(name):
+        b = tmp_path / "bin"
+        b.mkdir(exist_ok=True)
+        rt = b / name
+        rt.write_text('#!/bin/sh\necho "$0 $*"\n')
+        rt.chmod(0o755)
+        return b
+
+    return _make
+
+
+def test_launcher_falls_back_to_container_exec_bridge(fake_runtime, tmp_path):
+    b = fake_runtime("podman")
+    env = {
+        "PATH": f"{b}:/usr/bin:/bin",
+        "CLAUDE_PLUGIN_ROOT": str(tmp_path),  # no pyproject.toml here: no source checkout
+        "TN_CONTAINER": "telemetry-nerd",
+    }
+    r = subprocess.run(
+        [shutil.which("sh"), str(LAUNCH), "bridge"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode == 0
+    assert (
+        r.stdout
+        == f"{b}/podman exec -i telemetry-nerd telemetry-nerd bridge --daemon-url http://127.0.0.1:7070\n"
+    )
+
+
+def test_launcher_container_exec_passes_through_non_bridge_commands(fake_runtime, tmp_path):
+    b = fake_runtime("podman")
+    env = {
+        "PATH": f"{b}:/usr/bin:/bin",
+        "CLAUDE_PLUGIN_ROOT": str(tmp_path),
+        "TN_CONTAINER": "telemetry-nerd",
+    }
+    r = subprocess.run(
+        [shutil.which("sh"), str(LAUNCH), "ensure"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode == 0
+    assert r.stdout == f"{b}/podman exec -i telemetry-nerd telemetry-nerd ensure\n"
+
+
+def test_launcher_container_exec_respects_container_env_for_docker(fake_runtime, tmp_path):
+    b = fake_runtime("docker")
+    env = {
+        "PATH": f"{b}:/usr/bin:/bin",
+        "CLAUDE_PLUGIN_ROOT": str(tmp_path),
+        "TN_CONTAINER": "telemetry-nerd",
+        "CONTAINER": "docker",
+    }
+    r = subprocess.run(
+        [shutil.which("sh"), str(LAUNCH), "bridge"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode == 0
+    assert "docker exec -i telemetry-nerd telemetry-nerd bridge" in r.stdout
+
+
+def test_launcher_ignores_tn_container_without_runtime(tmp_path):
+    # TN_CONTAINER set but neither podman nor docker on PATH: falls through to the normal
+    # fail-loudly path, not a crash.
+    env = {
+        "PATH": "/usr/bin:/bin",
+        "CLAUDE_PLUGIN_ROOT": str(tmp_path),
+        "TN_CONTAINER": "telemetry-nerd",
+    }
+    r = subprocess.run(
+        [shutil.which("sh"), str(LAUNCH), "bridge"],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert r.returncode == 127
+    assert "uv tool install" in r.stderr

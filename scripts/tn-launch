@@ -6,9 +6,14 @@
 #   1. TN_USE_SOURCE=1 and a source checkout at the plugin root -> `uv run --directory <root>`
 #   2. `telemetry-nerd` on PATH (uv tool install; also the pip/venv case)
 #   3. source checkout at the plugin root (pyproject.toml + uv) -> `uv run --directory <root>`
-#   4. fail loudly.
+#   4. TN_CONTAINER=<name> set -> `podman exec -i <name> telemetry-nerd ...` (or docker; see
+#      container_runtime() below). Lets the plugin run with nothing installed on the host at all:
+#      the daemon container already has the telemetry-nerd CLI, so we exec into it instead.
+#   5. fail loudly.
 # A daemon running elsewhere (container image): set TN_DAEMON_URL=http://127.0.0.1:7070; the
-# bridge and hooks then talk to it and never autostart a local one.
+# bridge and hooks then talk to it and never autostart a local one. That alone still runs the
+# bridge on the host, so it still needs the CLI there -- TN_CONTAINER (step 4) is for when it
+# doesn't.
 #
 # stdout is the MCP stdio channel (bridge) / hook context, so diagnostics go to stderr, except
 # that the `ensure` hook reports on stdout (session context) and always exits 0.
@@ -21,11 +26,19 @@ is_source_checkout() {
     [ -f "$root/pyproject.toml" ] && [ -d "$root/src/telemetry_nerd" ] && command -v uv >/dev/null 2>&1
 }
 
+# Mirrors the justfile's docker-build recipe: ${CONTAINER:-podman}, overridable with
+# CONTAINER=docker. Prints the runtime to use, or nothing if it isn't on PATH.
+container_runtime() {
+    rt="${CONTAINER:-podman}"
+    command -v "$rt" >/dev/null 2>&1 && echo "$rt"
+}
+
 fail() {
     msg="telemetry-nerd launcher: cannot find telemetry-nerd. Install it with
   uv tool install git+https://github.com/Fewbytes/telemetry-nerd
-(or run a source checkout with uv installed, or point TN_DAEMON_URL at a running daemon -- the
-bridge still needs the telemetry-nerd CLI). See docs/install.md."
+(or run a source checkout with uv installed, or set TN_CONTAINER=<name> to exec into a running
+telemetry-nerd container, or point TN_DAEMON_URL at a running daemon -- the bridge still needs
+the telemetry-nerd CLI somewhere). See docs/install.md."
     case "$cmd" in
         ensure) echo "Telemetry Nerd daemon not running: $msg" ;;
         pending) echo "$msg" >&2 ;;
@@ -40,5 +53,14 @@ elif command -v telemetry-nerd >/dev/null 2>&1; then
     exec telemetry-nerd "$@"
 elif is_source_checkout; then
     exec uv run --directory "$root" telemetry-nerd "$@"
+elif [ -n "${TN_CONTAINER:-}" ] && runtime="$(container_runtime)" && [ -n "$runtime" ]; then
+    # bridge is the only subcommand that takes --daemon-url; ensure/pending just run as-is and
+    # read TN_DAEMON_URL themselves (default already matches the container's own loopback).
+    if [ "$cmd" = bridge ]; then
+        exec "$runtime" exec -i "$TN_CONTAINER" telemetry-nerd bridge \
+            --daemon-url "${TN_DAEMON_URL:-http://127.0.0.1:7070}"
+    else
+        exec "$runtime" exec -i "$TN_CONTAINER" telemetry-nerd "$@"
+    fi
 fi
 fail

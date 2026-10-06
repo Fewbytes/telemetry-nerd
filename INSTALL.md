@@ -181,10 +181,12 @@ repo's `.mcp.json`:
 
 `scripts/tn-launch` resolves, in order: (1) `TN_USE_SOURCE=1` + a source checkout at
 the plugin root, (2) `telemetry-nerd` on `PATH` (the path A install satisfies this),
-(3) a source checkout with `uv` available, (4) fails loudly with an install hint on
-stderr/exit 127. So for path A, the plugin works immediately after `uv tool install`.
-For path B (container-only, no local `telemetry-nerd` CLI), you still need the CLI
-locally for the bridge — see "Plugin against a container daemon" below.
+(3) a source checkout with `uv` available, (4) `TN_CONTAINER=<name>` set + `podman`
+or `docker` on `PATH`, execs `telemetry-nerd bridge`/`ensure`/`pending` inside that
+container instead, (5) fails loudly with an install hint on stderr/exit 127. So for
+path A, the plugin works immediately after `uv tool install`. For path B
+(container-only, no local `telemetry-nerd` CLI), set `TN_CONTAINER` instead of
+installing the CLI locally — see "Plugin against a container daemon" below.
 
 ### 3b. Manual registration (no plugin)
 
@@ -204,17 +206,32 @@ Expected: a line containing `telemetry-nerd` with the command shown above.
 
 ### Plugin against a container daemon (path B + plugin)
 
-The MCP bridge is a stdio process and still needs the `telemetry-nerd` CLI even when
-the daemon itself runs in a container (install it with path A alongside path B, or run
-the bridge from a source checkout). Point the bridge at the container's daemon instead
-of autostarting a local one:
+The MCP bridge is a stdio process, so it needs the `telemetry-nerd` CLI to run
+somewhere. Two ways to give it one when the daemon itself runs in a container:
 
-```bash
-export TN_DAEMON_URL=http://127.0.0.1:7070
-```
-Set this in the environment Claude Code is launched from before registering/using the
-MCP server. With it set, the bridge never autostarts a local daemon; if the container
-isn't healthy yet, the bridge exits with an actionable stderr message instead of hanging.
+- **CLI also on the host** (install it with path A alongside path B, or run the
+  bridge from a source checkout). Point it at the container's daemon instead of
+  autostarting a local one:
+  ```bash
+  export TN_DAEMON_URL=http://127.0.0.1:7070
+  ```
+  Set this in the environment Claude Code is launched from before
+  registering/using the MCP server. With it set, the bridge never autostarts a
+  local daemon; if the container isn't healthy yet, the bridge exits with an
+  actionable stderr message instead of hanging.
+
+- **No CLI on the host at all**: point the launcher at the running container by
+  name and it execs into it instead (`podman exec -i <name> telemetry-nerd ...`,
+  or `docker` — `CONTAINER=docker` picks it, mirroring the justfile):
+  ```bash
+  export TN_CONTAINER=telemetry-nerd
+  ```
+  Set this in the environment Claude Code is launched from before
+  registering/using the MCP server. The container must already be running (e.g.
+  `just docker-run` or `docker run -d --name telemetry-nerd ...` from step 2B).
+  `TN_DAEMON_URL` is not needed in this mode (the bridge inside the container
+  already defaults to its own loopback); set it too only if the daemon inside the
+  container listens elsewhere.
 
 ---
 

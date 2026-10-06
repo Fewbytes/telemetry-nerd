@@ -129,7 +129,9 @@ launcher, `scripts/tn-launch`, which picks the first install it finds:
 1. `TN_USE_SOURCE=1` and a source checkout at the plugin root: `uv run --directory <root>`.
 2. `telemetry-nerd` on `PATH` (`uv tool install ...`).
 3. A source checkout at the plugin root (needs `uv`): `uv run --directory <root>`.
-4. Otherwise it fails loudly (exit 127, stderr: how to install). The `ensure` hook reports the
+4. `TN_CONTAINER=<name>` set and `podman` or `docker` on `PATH`: execs into that container
+   (`podman exec -i <name> telemetry-nerd ...`) instead of running anything on the host.
+5. Otherwise it fails loudly (exit 127, stderr: how to install). The `ensure` hook reports the
    same message as session context and never blocks the session.
 
 So for a marketplace install, `uv tool install` first, then `/plugin marketplace add
@@ -196,9 +198,11 @@ testing against a client build that supports it but doesn't advertise it yet.
 
 ### Plugin against a container daemon
 
-The bridge is a small stdio process that still needs the `telemetry-nerd` CLI (install 2 above);
-the daemon it talks to can be the container. Set `TN_DAEMON_URL` in the environment Claude Code
-starts with:
+The bridge is a small stdio process. Either it runs on the host and just talks to a daemon
+container, or (no CLI on the host at all) `tn-launch` execs it inside the container directly.
+
+**CLI on the host** (install 2 above), daemon in the container: set `TN_DAEMON_URL` in the
+environment Claude Code starts with:
 
 ```bash
 export TN_DAEMON_URL=http://127.0.0.1:7070   # container published with -p 127.0.0.1:7070:7070
@@ -207,3 +211,16 @@ export TN_DAEMON_URL=http://127.0.0.1:7070   # container published with -p 127.0
 With it set, the bridge and hooks use that daemon and never autostart a local one; if it is not
 healthy the bridge exits with an actionable error. Equivalent manual form:
 `telemetry-nerd bridge --daemon-url http://127.0.0.1:7070`.
+
+**No CLI on the host**: set `TN_CONTAINER` to the running container's name instead (resolution
+step 4 above). `tn-launch` execs `telemetry-nerd bridge`/`ensure`/`pending` inside it via
+`podman exec -i` (or `docker exec -i`; `CONTAINER=docker` picks it, same convention as the
+justfile's `docker-build`):
+
+```bash
+export TN_CONTAINER=telemetry-nerd   # the container's --name, e.g. from `just docker-run`
+```
+
+The container must already be running. `TN_DAEMON_URL` isn't needed here — inside the
+container the bridge's default (`http://127.0.0.1:7070`) already reaches the daemon over its
+own loopback.
