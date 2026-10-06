@@ -36,6 +36,22 @@ main { max-width: 1200px; margin: 0 auto; padding: 16px; }
 a.obj-id:hover { text-decoration: underline; }
 .panel header .question { flex: 1; }
 .panel .badge { display: inline-block; background: var(--badge); font-size: 12px; padding: 2px 6px; border-radius: 4px; }
+/* in-progress request (b0jz): "still working" must read differently from stalled/empty */
+.panel .loading-tag { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+.panel .skeleton {
+  /* no chart has laid out yet (nothing to overlay), so this sets its own height rather than
+     filling a parent that is still 0px tall */
+  height: 260px; border-radius: 4px;
+  background: linear-gradient(90deg, var(--badge) 25%, var(--border) 50%, var(--badge) 75%);
+  background-size: 200% 100%; animation: skeleton-sweep 1.4s ease-in-out infinite;
+}
+@keyframes skeleton-sweep { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.panel .plot-overlay {
+  position: absolute; top: 8px; right: 8px; z-index: 3;
+  display: flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 50%; background: var(--bg);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.2);
+}
 /* what the graph shows, then the query (folded), then warnings: three distinct blocks */
 .panel .shown { margin-top: 8px; font-size: 13px; }
 .panel .shown p { margin: 0; }

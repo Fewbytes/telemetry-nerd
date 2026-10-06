@@ -12,6 +12,7 @@
   import { drawRug, facetTop, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, rugMoreLabel, type RugCell } from "./chart/rug";
   import { describeShown, intervalLegend, panelNotes, provenanceParts, provenanceText } from "./lib/panelNotes";
   import { sourceText } from "./lib/sources";
+  import { panelLoadingState } from "./lib/loading";
   import { getContext } from "svelte";
   import { windowBadge } from "./lib/coverage";
   import { focusRects, hasFocus, notesAt, unknownReasons } from "./chart/focus";
@@ -118,6 +119,10 @@
   let fetchWidth = $state(0);
   let error = $state<string | null>(null);
   let render = $state<{ ms: number; exceeded: boolean } | null>(null);
+  // in flight from first load to the latest reload (b0jz): drives the skeleton/overlay below,
+  // so "still fetching" never looks like "stalled" or "no data"
+  let loading = $state(false);
+  const loadState = $derived(panelLoadingState(loading, !!data));
 
   const fmtTime = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z");
 
@@ -125,6 +130,7 @@
   const load = (width: number) => {
     const id = ++requestId;
     fetchWidth = width;
+    loading = true;
     fetchPanelData(panel.id, width)
       .then((d) => {
         if (id !== requestId) return;
@@ -133,7 +139,8 @@
         activeNotes = [];
         data = d;
       })
-      .catch((e) => { if (id === requestId) error = String(e); });
+      .catch((e) => { if (id === requestId) error = String(e); })
+      .finally(() => { if (id === requestId) loading = false; });
   };
 
   $effect(() => {
@@ -667,6 +674,7 @@
     {:else}
       <span class="status {panel.status}">{panel.status}</span>
     {/if}
+    {#if loading}<span class="loading-tag" data-panel-loading><span class="spinner" aria-hidden="true"></span>{data ? "updating" : "loading"}</span>{/if}
     <PinButton object={panel.id} />
     <button class="close" type="button" aria-label="Close panel" onclick={close}>×</button>
   </header>
@@ -674,6 +682,11 @@
   <!-- svelte-ignore a11y_no_static_element_interactions (pointer tracking for the linked crosshair; the plot itself is the interactive element) -->
   <div bind:this={plotEl} class="plot" style="position: relative"
     onmousemove={link ? onLinkedMove : undefined} onmouseleave={link ? () => link.hover(null) : undefined}>
+    {#if loadState === "skeleton"}
+      <div class="skeleton" data-panel-skeleton aria-hidden="true"></div>
+    {:else if loadState === "overlay"}
+      <div class="plot-overlay" data-panel-refetching aria-hidden="true"><span class="spinner"></span></div>
+    {/if}
     {#if link && area}
       {@const hx = link.hoverMs != null ? xAt(link.hoverMs, link.domain, area.left, area.width) : null}
       {#if hx != null}
