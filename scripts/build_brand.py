@@ -2,7 +2,8 @@
 # requires-python = ">=3.12"
 # dependencies = ["resvg-py>=0.2", "pillow>=11"]
 # ///
-"""Render brand PNGs and favicon.ico from the SVG sources in assets/brand, and sync web icons into ui/public."""
+"""Render brand PNGs and favicon.ico from the SVG sources in assets/brand, and sync web icons into
+ui/public and the Hugo site's static/img."""
 
 import argparse
 import io
@@ -15,6 +16,7 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent.parent
 BRAND = ROOT / "assets" / "brand"
 UI_PUBLIC = ROOT / "ui" / "public"
+SITE_IMG = ROOT / "site" / "static" / "img"
 
 # (source svg, output png, pixel size). favicon.svg is drawn for 16/32 px;
 # icon.svg carries the full detail for larger sizes.
@@ -44,20 +46,26 @@ def main() -> None:
     parser.add_argument("--out", type=Path, default=BRAND / "dist")
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
+    written: list[Path] = []
 
     for src, name, size in PNGS:
-        (args.out / name).write_bytes(render(BRAND / src, size))
+        out = args.out / name
+        out.write_bytes(render(BRAND / src, size))
+        written.append(out)
 
     frames = [Image.open(io.BytesIO(render(BRAND / "favicon.svg", s))) for s in ICO_SIZES]
-    frames[-1].save(
-        args.out / "favicon.ico", sizes=[(s, s) for s in ICO_SIZES], append_images=frames[:-1]
-    )
+    ico = args.out / "favicon.ico"
+    frames[-1].save(ico, sizes=[(s, s) for s in ICO_SIZES], append_images=frames[:-1])
+    written.append(ico)
 
-    (args.out / "og.png").write_bytes(render(BRAND / "og.svg", 1200, 630))
-    (args.out / "wordmark.png").write_bytes(render(BRAND / "wordmark.svg", 744, 144))
-    (args.out / "wordmark-stacked.png").write_bytes(
-        render(BRAND / "wordmark-stacked.svg", 480, 300)
-    )
+    for svg, (w, h) in {
+        "og.svg": (1200, 630),
+        "wordmark.svg": (744, 144),
+        "wordmark-stacked.svg": (480, 300),
+    }.items():
+        out = args.out / f"{svg.removesuffix('.svg')}.png"
+        out.write_bytes(render(BRAND / svg, w, h))
+        written.append(out)
 
     # Vite copies ui/public to the dist root, which the daemon serves at /.
     UI_PUBLIC.mkdir(exist_ok=True)
@@ -67,9 +75,26 @@ def main() -> None:
         args.out / "favicon.ico",
         args.out / "apple-touch-icon.png",
     ]:
-        shutil.copyfile(src, UI_PUBLIC / src.name)
+        dest = UI_PUBLIC / src.name
+        shutil.copyfile(src, dest)
+        written.append(dest)
 
-    for path in sorted([*args.out.iterdir(), *UI_PUBLIC.iterdir()]):
+    # The Hugo site references these by path too; keep its copies from drifting.
+    SITE_IMG.mkdir(parents=True, exist_ok=True)
+    for src in [
+        BRAND / "favicon.svg",
+        BRAND / "icon.svg",
+        BRAND / "logo.svg",
+        BRAND / "wordmark.svg",
+        BRAND / "wordmark-stacked.svg",
+        args.out / "favicon.ico",
+        args.out / "og.png",
+    ]:
+        dest = SITE_IMG / src.name
+        shutil.copyfile(src, dest)
+        written.append(dest)
+
+    for path in sorted(set(written)):
         print(path.relative_to(ROOT))
 
 
