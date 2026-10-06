@@ -40,7 +40,9 @@ a:hover { text-decoration: underline; }
   align-items: center;
   gap: 0.5rem;
   color: var(--ink);
-  font-weight: 600;
+  font-family: "Avenir Next", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 .site-header nav { display: flex; flex-wrap: wrap; gap: 0.6rem 1.25rem; align-items: center; }
 .site-header nav a { color: var(--ink-soft); font-size: 0.95rem; }

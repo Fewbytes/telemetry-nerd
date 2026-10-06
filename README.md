@@ -1,8 +1,6 @@
 <p align="center">
-  <img src="assets/brand/logo.svg" alt="Telemetry Nerd" width="180">
+  <img src="assets/brand/wordmark-stacked.svg" alt="Telemetry Nerd" width="200">
 </p>
-
-<h1 align="center">Telemetry Nerd</h1>
 
 <p align="center"><b>Evidence-first telemetry analysis for you and your agent.</b></p>
 

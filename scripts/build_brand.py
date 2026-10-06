@@ -54,6 +54,10 @@ def main() -> None:
     )
 
     (args.out / "og.png").write_bytes(render(BRAND / "og.svg", 1200, 630))
+    (args.out / "wordmark.png").write_bytes(render(BRAND / "wordmark.svg", 744, 144))
+    (args.out / "wordmark-stacked.png").write_bytes(
+        render(BRAND / "wordmark-stacked.svg", 480, 300)
+    )
 
     # Vite copies ui/public to the dist root, which the daemon serves at /.
     UI_PUBLIC.mkdir(exist_ok=True)

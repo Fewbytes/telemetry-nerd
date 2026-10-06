@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 372 72" width="372" height="72">
+  <title>Telemetry Nerd</title>
+  <image href="icon.svg" x="0" y="0" width="72" height="72"/>
+  <text x="84" y="46" font-family="Avenir Next, Helvetica Neue, Helvetica, Arial, sans-serif"
+        font-size="40" font-weight="700" letter-spacing="-0.5" fill="#1b2124">Telemetry Nerd</text>
+</svg>

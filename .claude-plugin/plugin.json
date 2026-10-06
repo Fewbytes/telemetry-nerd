@@ -8,6 +8,7 @@
   },
   "homepage": "https://github.com/Fewbytes/telemetry-nerd",
   "repository": "https://github.com/Fewbytes/telemetry-nerd",
+  "icon": "./assets/brand/dist/icon-512.png",
   "keywords": [
     "telemetry",
     "observability",
