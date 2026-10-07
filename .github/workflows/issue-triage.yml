@@ -1,0 +1,71 @@
+name: Issue Triage
+
+# Auto-triage new/edited issues with Claude: classify as bug/enhancement/question/
+# documentation, and flag "needs-info" (+ comment) when the report lacks enough detail to
+# act on (repro steps, expected vs actual, logs). For bugs with enough info, also try to
+# reproduce with a failing test and push it to a repro/issue-<n> branch for whoever
+# implements the fix.
+on:
+  issues:
+    types: [opened, reopened, edited]
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: |
+          git config user.name "claude[bot]"
+          git config user.email "claude[bot]@users.noreply.github.com"
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Issue #${{ github.event.issue.number }}: ${{ github.event.issue.title }}
+
+            ${{ github.event.issue.body }}
+
+            Classify this issue as exactly one of: bug, enhancement, question, documentation.
+
+            Then:
+            1. Add the label: gh issue edit ${{ github.event.issue.number }} --add-label <label>
+            2. Judge whether there is enough information to act on without asking the
+               reporter anything further (for a bug: repro steps, expected vs actual
+               behavior, version/environment, logs/error text; for an enhancement: the
+               problem it solves and a rough shape of the desired behavior).
+            3. If information is missing, also add "needs-info"
+               (gh issue edit ${{ github.event.issue.number }} --add-label needs-info) and
+               post one comment (gh issue comment ${{ github.event.issue.number }} --body
+               "...") naming exactly what's missing. If information is already sufficient,
+               do not comment and do not add "needs-info".
+            4. Only if classified as "bug" AND there was enough information (step 2):
+               attempt to reproduce it.
+               a. Check first: git ls-remote --exit-code --heads origin repro/issue-${{ github.event.issue.number }}
+                  If that branch already exists upstream, skip reproduction entirely (someone
+                  already handled it) and stop here.
+               b. Read the relevant code and write the smallest reasonable failing test that
+                  reproduces the reported bug (follow this repo's existing test conventions
+                  and layout; use `just lint` / `uv run pytest` per CLAUDE.md, never invent a
+                  new test framework or structure).
+               c. Run just that test and confirm it actually fails for the reported reason
+                  (not an error in the test itself, not an unrelated failure).
+               d. If and only if you have a confirmed failing test: create branch
+                  repro/issue-${{ github.event.issue.number }} off the default branch, commit
+                  ONLY the new/modified test file(s) (no fix, no unrelated changes), push it
+                  (git push origin HEAD:refs/heads/repro/issue-${{ github.event.issue.number }}),
+                  then post one comment on the issue naming the branch and the failing test,
+                  e.g. "Reproduced on branch `repro/issue-N` ($test path::name); fails with:
+                  <short reason>."
+               e. If you cannot reproduce it confidently within reasonable effort, do not
+                  guess or force a test: skip this step silently (no comment, no branch, no
+                  label change) and leave reproduction to whoever implements the fix.
+          claude_args: |
+            --allowedTools "Read,Write,Edit,Bash(git:*),Bash(gh issue edit:*),Bash(gh issue comment:*),Bash(just:*),Bash(uv run:*)"
