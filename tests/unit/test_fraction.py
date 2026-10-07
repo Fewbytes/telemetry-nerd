@@ -2,7 +2,7 @@ import math
 
 import pytest
 
-from telemetry_nerd.analysis.fraction import fraction_over, wilson
+from telemetry_nerd.analysis.fraction import comparison, fraction_over, wilson
 
 INF = math.inf
 LO = [-INF, 0.1, 1.0]
@@ -33,3 +33,14 @@ def test_wilson_interval_brackets_the_proportion_and_narrows_with_n():
     assert wilson(0, 0) == (0.0, 1.0)
     assert wilson(0, 50)[0] == 0.0
     assert wilson(50, 50)[1] == pytest.approx(1.0)
+
+
+def test_a_bucket_starting_at_x_counts_as_at_or_above_x():
+    # linear [lo, hi) buckets: [10, 20) holds values >= 10, so the edge result is P(X >= 10)
+    r = fraction_over([0.0, 10.0], [10.0, 20.0], [3.0, 1.0], 10.0)
+    assert r is not None and r.exact and r.lo == 0.25
+
+
+def test_comparison_follows_the_bucket_edge_closure():
+    assert comparison(lower_inclusive=True) == ">="
+    assert comparison(lower_inclusive=False) == ">"

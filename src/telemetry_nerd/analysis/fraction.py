@@ -3,6 +3,9 @@
 Exact when the threshold is a source bucket edge; otherwise bounded by the bucket that
 contains it. Never interpolated. The sampling uncertainty (Wilson interval) is separate
 from the bucket bound.
+
+On lower-inclusive buckets ([lo, hi), the Elasticsearch `linear` scheme) a bucket starting at x
+holds values >= x, so the same counting yields P(X >= x); `comparison` names which one it is.
 """
 
 from __future__ import annotations
@@ -62,3 +65,8 @@ def fraction_over(
             inside += c
             bucket = (lo, hi)
     return Over(n=n, above=above, inside=inside, bucket=bucket)
+
+
+def comparison(lower_inclusive: bool) -> str:
+    """The comparison `fraction_over` answers on a scheme: ">=" on [lo, hi) buckets, else ">"."""
+    return ">=" if lower_inclusive else ">"

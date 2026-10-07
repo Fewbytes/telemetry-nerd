@@ -23,7 +23,7 @@ DIST_N_MIN = 20
 VM_PER_DECADE = 18  # VictoriaMetrics vmrange buckets: log-uniform, 18 per decade
 _LIST_EDGES = 16
 
-SchemeKind = Literal["none", "classic", "native", "vmrange", "custom"]
+SchemeKind = Literal["none", "classic", "native", "vmrange", "custom", "linear"]
 
 
 @dataclass(frozen=True)
@@ -32,6 +32,8 @@ class BucketScheme:
     edges: tuple[float, ...] = ()  # classic/custom: finite edges, ascending
     schema: int | None = None  # native exponential schema: growth 2^(2^-schema)
     per_decade: int | None = None  # vmrange
+    width: float | None = None  # linear: bucket width chosen by the query (edges unbounded)
+    offset: float | None = None  # linear: edges are offset + k * width
 
     @property
     def growth(self) -> float | None:
@@ -41,7 +43,18 @@ class BucketScheme:
             return 10.0 ** (1 / self.per_decade)
         return None
 
+    @property
+    def lower_inclusive(self) -> bool:
+        """[lo, hi) buckets (Elasticsearch histogram) vs Prometheus' (lo, hi]: a bucket starting
+        at x holds values >= x, so counts at an edge read P(X >= x), not P(X > x)."""
+        return self.kind == "linear"
+
     def describe(self) -> str:
+        if self.kind == "linear" and self.width is not None:
+            return (
+                f"fixed-width buckets of {self.width:g} (offset {self.offset or 0:g}), chosen by "
+                "the query; each [lo, hi)"
+            )
         if self.kind == "native" and self.schema is not None:
             return f"native exponential, schema {self.schema} (each bucket x{self.growth:.3g})"
         if self.kind == "vmrange":
@@ -62,6 +75,8 @@ class BucketScheme:
             "edges": list(self.edges),
             "schema": self.schema,
             "per_decade": self.per_decade,
+            "width": self.width,
+            "offset": self.offset,
             "description": self.describe(),
         }
 
@@ -69,7 +84,10 @@ class BucketScheme:
     def from_dict(cls, d: dict | None) -> BucketScheme:
         if not d:
             return cls("none")
-        return cls(d["kind"], tuple(d.get("edges") or ()), d.get("schema"), d.get("per_decade"))
+        return cls(
+            d["kind"], tuple(d.get("edges") or ()), d.get("schema"), d.get("per_decade"),
+            d.get("width"), d.get("offset"),
+        )  # fmt: skip
 
 
 @dataclass(frozen=True)

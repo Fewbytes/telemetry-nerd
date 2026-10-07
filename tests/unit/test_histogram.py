@@ -212,3 +212,43 @@ def test_vmrange_columns_sum_the_present_ranges():
         (1790864400000, 60.0), (1790864700000, 60.0), (1790865000000, 60.0)
     ]  # fmt: skip
     assert d.caveats == ()
+
+
+def test_linear_scheme_describes_query_chosen_lower_inclusive_buckets():
+    s = BucketScheme("linear", width=25.0, offset=5.0)
+    assert (
+        s.describe() == "fixed-width buckets of 25 (offset 5), chosen by the query; each [lo, hi)"
+    )
+    assert s.growth is None and s.edges == () and s.lower_inclusive
+
+
+def test_linear_scheme_without_offset_says_offset_0():
+    assert (
+        BucketScheme("linear", width=0.5)
+        .describe()
+        .startswith("fixed-width buckets of 0.5 (offset 0)")
+    )
+
+
+def test_prometheus_kinds_are_upper_inclusive_and_describe_as_before():
+    classic = BucketScheme("classic", (0.1, 1.0))
+    assert not classic.lower_inclusive
+    assert classic.describe() == "classic le buckets: 0.1, 1"
+    assert not BucketScheme("vmrange", per_decade=18).lower_inclusive
+
+
+def test_linear_scheme_round_trips_through_its_dict():
+    s = BucketScheme("linear", width=25.0, offset=5.0)
+    d = s.to_dict()
+    assert (d["kind"], d["width"], d["offset"], d["description"]) == (
+        "linear",
+        25.0,
+        5.0,
+        s.describe(),
+    )
+    assert BucketScheme.from_dict(d) == s
+
+
+def test_a_stored_scheme_without_width_still_loads():
+    stored = {"kind": "classic", "edges": [0.1, 1.0], "schema": None, "per_decade": None}
+    assert BucketScheme.from_dict(stored) == BucketScheme("classic", (0.1, 1.0))
