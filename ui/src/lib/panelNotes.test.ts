@@ -210,3 +210,31 @@ describe("binding views (czt.3)", () => {
     expect(provenanceParts({ source: "vm", producer, parents: [] })).toBeNull();
   });
 });
+
+describe("query-chosen (linear) bucket schemes", () => {
+  const desc = "fixed-width buckets of 25 (offset 0), chosen by the query; each [lo, hi)";
+  const scheme = { kind: "linear", edges: [], schema: null, per_decade: null, width: 25, offset: 0, description: desc };
+  const classic = { kind: "classic", edges: [0.1, 1], schema: null, per_decade: null, description: "classic le buckets: 0.1, 1" };
+  const dist = { representation: "distribution", quantile: null } as const;
+
+  it("says heatmap bins are chosen by the query", () => {
+    expect(describeShown({ ...dist, scheme }, "1m", "heatmap")).toBe(
+      `Document counts per 1m column and value bucket (colour); bins chosen by the query (${desc}).`,
+    );
+  });
+  it("says histogram bars are the query's buckets", () => {
+    expect(describeShown({ ...dist, scheme }, "1m", "histogram")).toContain(`bars are the query's buckets (${desc})`);
+  });
+  it("words the CCDF as at or above on lower-inclusive buckets", () => {
+    expect(describeShown({ ...dist, scheme }, "1m", "histogram", "ccdf")).toMatch(/^Share of observations at or above each value, P\(X ≥ x\)/);
+  });
+  it("keeps the Prometheus wording for source buckets", () => {
+    expect(describeShown({ ...dist, scheme: classic }, "1m", "heatmap")).toContain("from increase() of the histogram; bins are the source buckets");
+    expect(describeShown({ ...dist, scheme: classic }, "1m", "histogram", "ccdf")).toMatch(/^Share of observations above each value/);
+  });
+  it("explains the Elasticsearch caveats in plain words", () => {
+    expect(caveatText("zero_is_no_documents")).toContain("no traffic");
+    expect(caveatText("approximate_percentile")).toContain("TDigest");
+    expect(caveatText("query_chosen_buckets")).toContain("smaller interval");
+  });
+});

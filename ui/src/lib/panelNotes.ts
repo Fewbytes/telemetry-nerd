@@ -86,6 +86,12 @@ const CAVEATS: Record<string, Describe> = {
   counts_unknown: () => "The code gave no sample counts: coverage is unknown (not zero) and a coarser view averages the bucket values unweighted.",
   failed_spans: () => "An input of the code had spans the source could not return.",
   series_cut: () => "More series than a line chart draws: the most outstanding are lines, the rest one grey 'others' band (their median and min–max); none is dropped.",
+  zero_is_no_documents: () =>
+    "A query bucket with no matching documents reads as 0 per second: Elasticsearch cannot tell no traffic from documents that were never ingested.",
+  approximate_percentile: () =>
+    "Elasticsearch/OpenSearch percentiles are TDigest estimates (approximate), not exact order statistics.",
+  query_chosen_buckets: () =>
+    "The value buckets were chosen by the query (its interval), not by the source: re-query with a smaller interval for more detail.",
 };
 
 /** Plain-language caveat; unknown keys are shown as-is rather than hidden. */
@@ -238,6 +244,9 @@ export function provenanceParts(d: Pick<DatasetMeta, "source" | "producer" | "pa
   return [text.slice(0, at), p.node, text.slice(at + p.node.length)];
 }
 
+/** Elasticsearch histogram buckets: chosen by the query, edges [lo, hi). */
+const isLinear = (d: { scheme?: DatasetMeta["scheme"] }): boolean => d.scheme?.kind === "linear";
+
 /** One sentence on what the plotted lines are. */
 export function describeShown(
   d: Pick<DatasetMeta, "representation" | "quantile"> & {
@@ -268,10 +277,13 @@ export function describeShown(
     return "Value at each quantile, as source-bucket boxes [F(lo), F(hi)]; the dashed line marks where n stops supporting a quantile (faded beyond it).";
   }
   if (mark === "ccdf") {
-    return "Share of observations above each value (log-log), exact at bucket edges and bounded inside a bucket; hover reads a threshold, click pins it.";
+    return isLinear(d)
+      ? "Share of observations at or above each value, P(X ≥ x) (log-log; the query's buckets are [lo, hi)), exact at bucket edges and bounded inside a bucket; hover reads a threshold, click pins it."
+      : "Share of observations above each value (log-log), exact at bucket edges and bounded inside a bucket; hover reads a threshold, click pins it.";
   }
   if (kind === "histogram") {
-    return `Share of observations per value bucket, summed over each selected time range (whole ${step} query buckets); bars are the source buckets (${d.scheme?.description ?? "unknown scheme"}).`;
+    const bars = isLinear(d) ? "the query's buckets" : "the source buckets";
+    return `Share of observations per value bucket, summed over each selected time range (whole ${step} query buckets); bars are ${bars} (${d.scheme?.description ?? "unknown scheme"}).`;
   }
   if (d.producer?.kind === "binding" && d.producer.op === "error_ratio" && kind === "time" && !mark) {
     const band = intervalLegend(d);
@@ -287,7 +299,9 @@ export function describeShown(
     return `Counts per ${step} column and value bucket (colour), as output by code node ${code.node}; bins: ${d.scheme?.description ?? "unknown scheme"}.`;
   }
   if (d.representation === "distribution") {
-    return `Counts per ${step} column and value bucket (colour), from increase() of the histogram; bins are the source buckets (${d.scheme?.description ?? "unknown scheme"}).`;
+    return isLinear(d)
+      ? `Document counts per ${step} column and value bucket (colour); bins chosen by the query (${d.scheme?.description ?? "unknown scheme"}).`
+      : `Counts per ${step} column and value bucket (colour), from increase() of the histogram; bins are the source buckets (${d.scheme?.description ?? "unknown scheme"}).`;
   }
   if (d.representation === "quantile") {
     const q = d.quantile != null ? `p${Number((d.quantile * 100).toFixed(2))}` : "Percentile";

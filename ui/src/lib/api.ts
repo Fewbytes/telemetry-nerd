@@ -136,7 +136,10 @@ export interface WindowHist {
   source?: { lo: (number | null)[]; hi: (number | null)[]; c: number[] };
 }
 export interface BucketSchemeInfo {
-  kind: string; edges: number[]; schema: number | null; per_decade: number | null; description: string;
+  kind: string; edges: number[]; schema: number | null; per_decade: number | null;
+  /** linear (Elasticsearch): bucket width and offset chosen by the query */
+  width?: number | null; offset?: number | null;
+  description: string;
 }
 export interface BucketStatePayload { id: string; ts: number[]; state: number[]; observed: number[]; expected: number[]; flags: number[] }
 export interface Where { spans?: [number, number][] | null; series?: string[] | null }
