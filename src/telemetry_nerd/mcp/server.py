@@ -652,6 +652,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         latency_unit: str | None = None,
         arrivals: str = "auto",
         source: str = "default",
+        concurrency_source: str | None = None,
         detail: bool = False,
         group: str | None = None,
     ) -> str:
@@ -663,6 +664,15 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         summary base name with _sum/_count (W = rate(_sum)/rate(_count), a MEAN; a percentile-only
         latency is refused with a hint); concurrency = the in-flight gauge. Metric names or
         selectors `name{job="api"}`; the check writes the rates and `sum by (by)`.
+        concurrency_source: the source the concurrency gauge is read from (default `source`).
+        Elasticsearch / OpenSearch access logs give arrivals and latency, never concurrency:
+        source=<the ES source>, arrival_rate = a query with no aggs (documents per second, e.g.
+        {"query": {"query_string": {"query": "service.name:checkout"}}}), latency = the same
+        query with a stats aggregation on the duration field ({"query": ..., "aggs": {"lat":
+        {"stats": {"field": "event.duration"}}}}; W = its mean), concurrency = the in-flight
+        gauge name, concurrency_source = the Prometheus source it lives in. by is refused when
+        the signals span two sources; binding is refused on an ES source; latency_unit comes
+        from the field's catalog unit (mapping meta.unit) when known.
         window: judged span (default ~range/12); warmup: excluded from the start (e.g. "10m");
         latency_unit: s|ms|us|ns when the catalog does not know it (else ASSUMED s, flagged);
         arrivals: auto|arrivals|completions — what the counter counts (stated in assumptions).
@@ -698,7 +708,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         group in full (`group`)."""
         try:
             out = await service.check_littles_law(
-                source=source, binding=binding, arrival_rate=arrival_rate, latency=latency,
+                source=source, concurrency_source=concurrency_source, binding=binding,
+                arrival_rate=arrival_rate, latency=latency,
                 concurrency=concurrency, by=by, start=start, end=end, window=window,
                 warmup=warmup, latency_unit=latency_unit, arrivals=arrivals,
             )  # fmt: skip

@@ -241,3 +241,49 @@ class SimSource:
 
     async def discover(self):
         return self.discovery
+
+
+class EsSimSource(SimSource):
+    """The arrival and latency signals as an Elasticsearch access-log index serves them: the
+    rate form (documents per second) and the stats form (mean latency and count of the requests
+    completing in each query bucket), from the same simulation as SimSource."""
+
+    query_language = "es_dsl"
+
+    def __init__(self, sims: dict[str, dict], start_ms: int, **kw) -> None:
+        super().__init__(sims, start_ms, **kw)
+        self.identity = "es-sim"
+
+    async def fetch(self, expr, rng, step_ms):
+        import pyarrow as pa
+
+        from telemetry_nerd.model.series import (
+            BUCKET_SCHEMA,
+            SERIES_SCHEMA,
+            FetchResult,
+            labels_json,
+            series_id,
+        )
+
+        assert step_ms == self.resolution_ms, "the sim serves the scrape step only"
+        self.exprs.append(expr)
+        stats = '"stats"' in expr
+        d = lambda key: sum(np.diff(np.r_[0.0, m[key]]) for m in self.sims.values())
+        count = d("count")
+        values = d("sum") / np.where(count > 0, count, 1) if stats else d("counter") / self.scrape_s
+        sid = series_id(self.name, {})
+        rows = []
+        for k in range(count.size):
+            ts = self.start_ms + int((k + 1) * self.scrape_s * 1000)
+            if not rng.start_ms <= ts <= rng.end_ms or (stats and count[k] == 0):
+                continue
+            rows.append((ts, float(values[k]), int(count[k]) if stats else 1))
+        vals = [r[1] for r in rows]
+        buckets = pa.table(
+            {"ts_ms": [r[0] for r in rows], "series_id": [sid] * len(rows), "avg": vals,
+             "min": vals, "max": vals, "count": [r[2] for r in rows]},
+            schema=BUCKET_SCHEMA,
+        )  # fmt: skip
+        series = pa.table({"series_id": [sid] if rows else [], "labels": [labels_json({})] if rows else []},
+                          schema=SERIES_SCHEMA)  # fmt: skip
+        return FetchResult(buckets, series)

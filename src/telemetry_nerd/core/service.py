@@ -339,6 +339,7 @@ class TelemetryService:
             lambda s: bool(self.ws.catalog.names(s, None, 1)), self._littles_binding, self.clock,
             self._histogram_family, lambda s: getattr(self._source(s), "flavor", None),
             lambda s, sel, at: self._source(s).scrape_interval(sel, at),
+            lambda s: language_of(self._source(s)),
         )  # fmt: skip
         self.code = CodeOps(
             self.datasets, self.ws, self.log, self.kernels,
@@ -371,6 +372,8 @@ class TelemetryService:
     async def check_littles_law(self, actor: Actor = "claude", **kw) -> dict:
         """L vs lambda W per window and group, with a propagated interval (czt.2)."""
         await self.ensure_resolution(kw.get("source", "default"))
+        if kw.get("concurrency_source"):
+            await self.ensure_resolution(kw["concurrency_source"])
         return await self.littles.check(actor=actor, **kw)
 
     def _profile_periods(self, source: str, expr: str) -> list[str]:

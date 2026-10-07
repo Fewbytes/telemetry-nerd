@@ -36,6 +36,8 @@ from telemetry_nerd.core.uncertainty import mark_statistics
 from telemetry_nerd.core.wire import Memo, sig, sig_pair, statistic
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.time import TimeRange, format_duration, iso, parse_duration, parse_time
+from telemetry_nerd.sources.base import SourceError
+from telemetry_nerd.sources.esquery import EsQuery
 
 #: windows aimed for over the range when `window` is auto
 TARGET_WINDOWS = 12
@@ -243,6 +245,7 @@ class LittlesOps:
         family: Callable[[str, str], list[str] | None] = lambda s, m: None,
         flavor: Callable[[str], str | None] = lambda s: None,
         scrape: Callable[[str, str, int], Awaitable[int | None]] | None = None,
+        language: Callable[[str], str] = lambda s: "promql",
     ) -> None:
         self._datasets = datasets
         self._query = query
@@ -255,6 +258,7 @@ class LittlesOps:
         self._family = family  # histogram family members of a catalogued base name, or None
         self._flavor = flavor  # the source's query language: victoriametrics | prometheus
         self._scrape = scrape  # a series' sample spacing (ms) around a time, or None
+        self._language = language  # the source's query language: promql | es_dsl
         self._last: dict[str, dict] = {}
         self._memo: Memo[dict] = Memo()
 
@@ -309,6 +313,36 @@ class LittlesOps:
             "selector": sel,
             "native": self.native_histogram(source, base, refusal),
         }
+
+    def _es_roles(self, arrival: str, latency: str) -> tuple[EsQuery, EsQuery]:
+        """arrival_rate and latency as native Elasticsearch queries: the rate form (documents per
+        second) and the stats form (W = the mean of the documents' duration field)."""
+        try:
+            arr, lat = EsQuery.parse(arrival), EsQuery.parse(latency)
+        except SourceError as e:
+            raise ValueError(f"{e} (hint: {e.hint})") from e
+        if lat.form == "percentile":
+            raise ValueError(
+                f"latency={latency!r} looks like a percentile: Little's law needs the MEAN "
+                "latency W; a percentile is not a mean (hint: a stats aggregation on the duration "
+                'field, e.g. {"aggs": {"lat": {"stats": {"field": "event.duration"}}}})'
+            )
+        if lat.form != "stats":
+            raise ValueError(
+                f"latency on an Elasticsearch source is a stats aggregation on the duration "
+                f"field (got the {lat.form} form)"
+            )
+        if arr.form != "rate":
+            raise ValueError(
+                "arrival_rate on an Elasticsearch source is the rate form: a query with no aggs "
+                f"(documents per second); got the {arr.form} form"
+            )
+        if arr.group is not None or lat.group is not None:
+            raise ValueError(
+                "terms grouping in arrival_rate/latency is not supported: the check runs on one "
+                "total when its signals span two sources"
+            )
+        return arr, lat
 
     def native_histogram(self, source: str, base: str, refusal: str | None = None) -> bool:
         """True for a native histogram (no _bucket/_sum/_count series). With a catalog, a base
@@ -392,6 +426,7 @@ class LittlesOps:
         arrival_rate: str | None = None,
         latency: str | None = None,
         concurrency: str | None = None,
+        concurrency_source: str | None = None,
         by: list[str] | None = None,
         start: str = "now-6h",
         end: str = "now",
@@ -403,6 +438,25 @@ class LittlesOps:
     ) -> dict:
         if arrivals not in ("auto", "arrivals", "completions"):
             raise ValueError("arrivals is auto, arrivals or completions")
+        conc_source = concurrency_source or source
+        es = self._language(source) == "es_dsl"
+        if self._language(conc_source) == "es_dsl":
+            raise ValueError(
+                f"concurrency_source={conc_source!r} is an Elasticsearch/OpenSearch source: the "
+                "in-flight gauge is read from a PromQL source in v1 (hint: "
+                "concurrency_source=<the Prometheus source with the gauge>)"
+            )
+        if es and binding:
+            raise ValueError(
+                "binding is not supported on an Elasticsearch/OpenSearch source (bindings come "
+                "from PromQL rules): pass arrival_rate, latency and concurrency"
+            )
+        if conc_source != source and by:
+            raise ValueError(
+                "by is not supported when the signals come from two sources (an Elasticsearch "
+                "field and a Prometheus label are different names; joining them needs a label "
+                "mapping, later work): drop by"
+            )
         roles, by, bound = self._roles(
             source, binding,
             {"arrival_rate": arrival_rate, "latency": latency, "concurrency": concurrency}, by,
@@ -410,50 +464,83 @@ class LittlesOps:
         for b in by:
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", b):
                 raise ValueError(f"by: {b!r} is not a label name")
-        lat = self._latency(source, roles["latency"])
-        arr_name, arr_sel = _parse("arrival_rate", roles["arrival_rate"])
         conc_name, conc_sel = _parse("concurrency", roles["concurrency"])
-        arr_type = getattr(self._facts(source, arr_name), "type", None)
-        if getattr(self._facts(source, conc_name), "type", None) == "counter":
+        if getattr(self._facts(conc_source, conc_name), "type", None) == "counter":
             raise ValueError(
                 f"concurrency={conc_name!r} is a counter: L is the number in flight, a gauge "
                 "(hint: bind an in-flight / active-requests gauge)"
             )
+        if es:
+            _, lat_q = self._es_roles(roles["arrival_rate"], roles["latency"])
+            lat = {"base": str(lat_q.field), "selector": "", "native": False}
+        else:
+            lat = self._latency(source, roles["latency"])
+            arr_name, arr_sel = _parse("arrival_rate", roles["arrival_rate"])
+            arr_type = getattr(self._facts(source, arr_name), "type", None)
         factor, unit, unit_basis = self._unit(source, lat["base"], latency_unit)
-        res = self._resolution(source)
+        res = max(self._resolution(source), self._resolution(conc_source))
         scrape_ms, scrape_note = await self._probe_scrape(
-            source, f"{conc_name}{conc_sel}", res, start, end
+            conc_source, f"{conc_name}{conc_sel}", res, start, end
         )
         rng, win, step, k = _windows(start, end, window, res, self._clock(), scrape_note)
         skip = 1 + (-(-parse_duration(warmup) // step) if warmup else 0)
-        arr_is_rate = arr_type == "gauge"
-        # a histogram named as the arrival signal: its count (classic _count, native
-        # histogram_count) counts completions
-        arr_hist = arr_type == "histogram" or arr_name == lat["base"]
-        arr_native = arr_hist and self.native_histogram(source, arr_name)
-        if arr_is_rate:
-            arr_form = "gauge"
-        elif arr_native:
-            arr_form = "native"
-        elif arr_hist:
-            arr_form = "classic"
+        if es:
+            # one stats fetch feeds both latency roles (sum = avg x count); query buckets are
+            # tiles [t - step, t): no lookback, per-bucket counts divided by the step
+            arr_is_rate = True
+            exprs = {
+                "arrival_rate": roles["arrival_rate"], "latency_sum": roles["latency"],
+                "latency_count": roles["latency"], "concurrency": f"sum ({conc_name}{conc_sel})",
+            }  # fmt: skip
+            counter_form, lookback_ms, tile_s = "es_buckets", 0, step / 1000
+            matchers = {"concurrency": _matchers(conc_sel)}
+            if arrivals == "auto":
+                arrivals = "unknown"
         else:
-            arr_form = "counter"
-        tiled = self._flavor(source) == "victoriametrics"
-        exprs = _exprs(
-            by, lat, arr_name, arr_sel, arr_form, f"{conc_name}{conc_sel}",
-            format_duration(res) if tiled else None,
-        )  # fmt: skip
-        ds = {}
-        for role, expr in exprs.items():
-            out = await self._query(
-                expr, start=str(rng.start_ms), end=str(rng.end_ms),
-                step=format_duration(step), source=source, actor=actor,
+            arr_is_rate = arr_type == "gauge"
+            # a histogram named as the arrival signal: its count (classic _count, native
+            # histogram_count) counts completions
+            arr_hist = arr_type == "histogram" or arr_name == lat["base"]
+            arr_native = arr_hist and self.native_histogram(source, arr_name)
+            if arr_is_rate:
+                arr_form = "gauge"
+            elif arr_native:
+                arr_form = "native"
+            elif arr_hist:
+                arr_form = "classic"
+            else:
+                arr_form = "counter"
+            tiled = self._flavor(source) == "victoriametrics"
+            exprs = _exprs(
+                by, lat, arr_name, arr_sel, arr_form, f"{conc_name}{conc_sel}",
+                format_duration(res) if tiled else None,
             )  # fmt: skip
-            ds[role] = out["dataset"]
-        if arrivals == "auto":
-            same = arr_name == f"{lat['base']}_count" or arr_name == lat["base"]
-            arrivals = "completions" if same else "unknown"
+            # how much further back the counters' window reaches than the gauge reading it is
+            # compared with: 0 with increase() tiles (VM); rate(x[ri]) at t covers (t - ri, t]
+            # (VM also takes the sample before it), the gauge is read at the last scrape <= t,
+            # on average half a scrape back: (ri - scrape) / 2 (measured on VM v1.137: ri / 2
+            # behind the bucket's middle at sub-steps of 5s-60s)
+            counter_form = "increase_tiles" if tiled else "rate_interval"
+            lookback_ms = 0 if tiled else max(0, (rate_interval_ms(step, res) - res) // 2)
+            tile_s = res / 1000 if tiled else None
+            matchers = {
+                "arrival_rate": _matchers(arr_sel), "latency": _matchers(lat["selector"]),
+                "concurrency": _matchers(conc_sel),
+            }  # fmt: skip
+            if arrivals == "auto":
+                same = arr_name == f"{lat['base']}_count" or arr_name == lat["base"]
+                arrivals = "completions" if same else "unknown"
+        ds: dict[str, str] = {}
+        fetched: dict[tuple[str, str], str] = {}
+        for role, expr in exprs.items():
+            role_source = conc_source if role == "concurrency" else source
+            if (role_source, expr) not in fetched:
+                out = await self._query(
+                    expr, start=str(rng.start_ms), end=str(rng.end_ms),
+                    step=format_duration(step), source=role_source, actor=actor,
+                )  # fmt: skip
+                fetched[(role_source, expr)] = out["dataset"]
+            ds[role] = fetched[(role_source, expr)]
         cfg = {
             "source": source, "datasets": ds, "by": by, "step_ms": step, "window_ms": win,
             "k": int(k), "skip": int(skip), "start_ms": rng.start_ms, "end_ms": rng.end_ms,
@@ -463,16 +550,15 @@ class LittlesOps:
             # (VM also takes the sample before it), the gauge is read at the last scrape <= t,
             # on average half a scrape back: (ri - scrape) / 2 (measured on VM v1.137: ri / 2
             # behind the bucket's middle at sub-steps of 5s-60s)
-            "lookback_ms": 0 if tiled else max(0, (rate_interval_ms(step, res) - res) // 2),
-            "counter_form": "increase_tiles" if tiled else "rate_interval",
-            "tile_s": res / 1000 if tiled else None,
+            "lookback_ms": lookback_ms,
+            "counter_form": counter_form,
+            "tile_s": tile_s,
+            "latency_from_stats": es,
+            "sources": {"signals": source, "concurrency": conc_source},
             "scrape_ms": scrape_ms, "scrape_probe": scrape_note,
             "resolution_ms": res, "arrivals": arrivals, "arrival_is_rate": arr_is_rate,
             "roles": roles, "binding": bound, "exprs": exprs, "warmup": warmup,
-            "matchers": {
-                "arrival_rate": _matchers(arr_sel), "latency": _matchers(lat["selector"]),
-                "concurrency": _matchers(conc_sel),
-            },
+            "matchers": matchers,
         }  # fmt: skip
         self._last[ds["concurrency"]] = cfg
         return self.summary(cfg)
@@ -486,7 +572,9 @@ class LittlesOps:
             )
         return cfg
 
-    def _grouped(self, dataset_id: str, by: list[str], grid: np.ndarray, step: int) -> tuple:
+    def _grouped(
+        self, dataset_id: str, by: list[str], grid: np.ndarray, step: int, value: str = "avg"
+    ) -> tuple:
         """Per group key: (values on the grid, sample counts, labels); labels missing a `by`."""
         _, result = self._datasets.get(dataset_id)
         labels = {r["series_id"]: json.loads(r["labels"]) for r in result.series.to_pylist()}
@@ -504,7 +592,9 @@ class LittlesOps:
             v = np.full(grid.size, np.nan)
             n = np.zeros(grid.size)
             avg = g["avg"].to_numpy().astype(float)
-            v[idx[keep]] = avg[keep]
+            cnt = g["count"].to_numpy().astype(float)
+            vals = {"avg": avg, "sum": avg * cnt, "count": cnt}[value]
+            v[idx[keep]] = vals[keep]
             n[idx[keep]] = g["count"].to_numpy()[keep]
             if key in out:  # two series fold into one key (a by label missing): add them up
                 pv, pn = out[key]
@@ -521,8 +611,14 @@ class LittlesOps:
         step, by = cfg["step_ms"], cfg["by"]
         grid = np.arange(cfg["start_ms"], cfg["end_ms"] + 1, step, dtype=np.int64)
         per_role, names, lacking = {}, {}, {}
+        stats = cfg.get("latency_from_stats")
         for role, did in cfg["datasets"].items():
-            per_role[role], nm, lacking[role] = self._grouped(did, by, grid, step)
+            value = (
+                {"latency_sum": "sum", "latency_count": "count"}.get(role, "avg")
+                if stats
+                else "avg"
+            )
+            per_role[role], nm, lacking[role] = self._grouped(did, by, grid, step, value)
             names.update(nm)
         keys = sorted(set().union(*(set(v) for v in per_role.values())))
         nan = np.full(grid.size, np.nan)
@@ -645,26 +741,30 @@ class LittlesOps:
             "detail": (
                 f"latency in {cfg['unit']} ({cfg['unit_basis'] or 'no unit known: ASSUMED seconds'})"
                 ", converted to seconds; lambda per second"
-                + (" (the arrival signal is a gauge, used as a rate)" if cfg["arrival_is_rate"] else
-                   " from the counter's increase")
+                + (" (documents per second per query bucket)" if cfg.get("counter_form") == "es_buckets"
+                   else " (the arrival signal is a gauge, used as a rate)" if cfg["arrival_is_rate"]
+                   else " from the counter's increase")
                 + "; L in requests"
             ),
         })  # fmt: skip
-        tiles = cfg.get("counter_form") == "increase_tiles"
+        form = cfg.get("counter_form")
+        counters = (
+            "arrivals and latency as document counts per query bucket [t − step, t) (tiles: no "
+            "lookback)" if form == "es_buckets" else
+            f"counters as increase() over {format_duration(cfg['resolution_ms'])} tiles "
+            "that partition them exactly and end at the scrape the gauge is read at: no "
+            "lookback" if form == "increase_tiles" else
+            "rate() looks back "
+            f"{format_duration(cfg['lookback_ms']) if cfg['lookback_ms'] else '0s'} further "
+            "than the gauge reading: a bias bound in the interval"
+        )  # fmt: skip
         out.append({
             "name": "window_alignment", "status": "ok",
             "detail": (
                 f"all four signals on one {format_duration(cfg['step_ms'])} grid, windows anchored "
                 "at the requested start (the range is not widened); sub-steps missing any signal "
                 "are dropped from all; "
-                + (
-                    f"counters as increase() over {format_duration(cfg['resolution_ms'])} tiles "
-                    "that partition them exactly and end at the scrape the gauge is read at: no "
-                    "lookback" if tiles else
-                    "rate() looks back "
-                    f"{format_duration(cfg['lookback_ms']) if cfg['lookback_ms'] else '0s'} further "
-                    "than the gauge reading: a bias bound in the interval"
-                )
+                + counters
                 + "; the gauge's end-of-interval reading is corrected (trapezoid); a load episode "
                 "that starts and ends inside one window balances over it (Little's law holds over "
                 "that window): use windows shorter than the episodes to see them"
@@ -694,6 +794,17 @@ class LittlesOps:
             out.append({
                 "name": "window_vs_latency", "status": "flagged",
                 "detail": f"W > window/10 in {len(sh)} window(s): edge effects are large (longer window)",
+            })  # fmt: skip
+        srcs = cfg.get("sources") or {}
+        if srcs and srcs["signals"] != srcs["concurrency"]:
+            out.append({
+                "name": "sources", "status": "assumed",
+                "detail": (
+                    f"arrivals and latency from {srcs['signals']}"
+                    + (" (documents, query buckets [t − step, t))"
+                       if cfg.get("counter_form") == "es_buckets" else "")
+                    + f", concurrency from {srcs['concurrency']} (gauge read at the last scrape ≤ t)"
+                ),
             })  # fmt: skip
         return out
 
