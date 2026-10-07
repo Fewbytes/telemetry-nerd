@@ -160,6 +160,8 @@ def is_selector(expr: str) -> bool:
 
 
 class PromQLSource:
+    query_language: Literal["promql"] = "promql"  # MetricsQL is a PromQL superset
+
     def __init__(
         self,
         name: str,

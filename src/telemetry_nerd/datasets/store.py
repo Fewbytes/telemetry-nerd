@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 
 import duckdb
@@ -47,6 +47,9 @@ class DatasetMeta:
     # None = undeclared (a code output then carries the no_uncertainty caveat)
     uncertainty: dict | None = None
     fit: dict | None = None  # representation "estimate": {model, method, params, ...}
+    #: the language `expr` is written in, so show, notes and analysis never re-parse an
+    #: Elasticsearch expr as PromQL (even after the source is disconnected)
+    query_language: str = "promql"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -126,6 +129,8 @@ class DatasetStore:
         derived: dict | None = None,
         semantics_flags: dict | None = None,
         lineage: Lineage | None = None,
+        caveats: Sequence[str] = (),
+        query_language: str = "promql",
     ) -> DatasetMeta:
         meta = DatasetMeta(
             id=self._new_id("d"),
@@ -144,8 +149,11 @@ class DatasetStore:
             derived=derived,
             failed_spans=[list(f) for f in result.failed],
             semantics_flags=dict(semantics_flags or {}),
+            query_language=query_language,
             source_caveats=_union(
-                lineage.caveats if lineage else (), [f"source_warning:{n}" for n in result.notes]
+                lineage.caveats if lineage else (),
+                caveats,
+                [f"source_warning:{n}" for n in result.notes],
             ),
             **(lineage.fields() if lineage else {}),
         )
@@ -246,6 +254,7 @@ class DatasetStore:
         histogram: dict | None,
         n_min: int,
         lineage: Lineage | None = None,
+        query_language: str = "promql",
     ) -> DatasetMeta:
         if lineage and lineage.uncertainty and not lineage.uncertainty.get("exact"):
             raise ValueError("a distribution has no lo/hi columns: only exact or undeclared")
@@ -263,6 +272,7 @@ class DatasetStore:
             scheme=dist.scheme.to_dict(),
             histogram=histogram,
             failed_spans=[list(f) for f in dist.failed],
+            query_language=query_language,
             source_caveats=_union(dist.caveats, lineage.caveats if lineage else ()),
             **(lineage.fields() if lineage else {}),
         )

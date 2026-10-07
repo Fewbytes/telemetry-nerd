@@ -134,3 +134,45 @@ def test_old_meta_without_failed_spans_loads(store):
         result=result(),
     )
     assert store.meta(meta.id).failed_spans == []
+
+
+import json
+
+
+def test_query_language_and_extra_caveats_are_recorded(store):
+    meta = store.put(
+        source="es", expr='{"query": {"match_all": {}}}', rng=TimeRange(60_000, 120_000),
+        step_ms=60_000, resolution_ms=1_000, result=result(),
+        caveats=["zero_is_no_documents"], query_language="es_dsl",
+    )  # fmt: skip
+    got = store.meta(meta.id)
+    assert got.query_language == "es_dsl"
+    assert got.source_caveats == ["zero_is_no_documents"]
+
+
+def test_datasets_stored_before_query_language_existed_read_as_promql(store):
+    meta = store.put(
+        source="vm", expr="up", rng=TimeRange(60_000, 120_000), step_ms=60_000,
+        resolution_ms=15_000, result=result(),
+    )  # fmt: skip
+    old = {k: v for k, v in meta.to_dict().items() if k != "query_language"}
+    store._con.execute("UPDATE datasets SET meta = $m WHERE id = $id",
+                       {"m": json.dumps(old), "id": meta.id})  # fmt: skip
+    assert store.meta(meta.id).query_language == "promql"
+
+
+def test_distribution_records_its_query_language(store):
+    from telemetry_nerd.model.distribution import (
+        COLUMN_SCHEMA,
+        DIST_SCHEMA,
+        BucketScheme,
+        DistResult,
+    )
+
+    dist = DistResult(DIST_SCHEMA.empty_table(), COLUMN_SCHEMA.empty_table(),
+                      SERIES_SCHEMA.empty_table(), BucketScheme("linear", width=5.0), "{}")  # fmt: skip
+    meta = store.put_distribution(
+        source="es", rng=TimeRange(60_000, 120_000), step_ms=60_000, resolution_ms=1_000,
+        dist=dist, histogram=None, n_min=20, query_language="es_dsl",
+    )  # fmt: skip
+    assert store.meta(meta.id).query_language == "es_dsl"

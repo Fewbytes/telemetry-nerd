@@ -40,6 +40,9 @@ class Discovery:
     #: True when any step was cut short or failed (see caveats)
     partial: bool
     origin: str = ORIGIN
+    #: how metric names are formed: Prometheus naming conventions (name rules, families and
+    #: knowledge packs apply) or document field paths (Elasticsearch: declared metadata only)
+    naming: Literal["prometheus", "fields"] = "prometheus"
 
 
 def with_histogram_bases(d: Discovery) -> Discovery:

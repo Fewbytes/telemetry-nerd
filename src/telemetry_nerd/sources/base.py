@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 from telemetry_nerd.model.discovery import Discovery
 from telemetry_nerd.model.distribution import DistResult
 from telemetry_nerd.model.series import FetchResult
 from telemetry_nerd.model.time import TimeRange
 from telemetry_nerd.sources.semantics import MissingDataSemantics
+
+QueryLanguage = Literal["promql", "es_dsl"]
 
 
 class SourceError(Exception):
@@ -44,6 +46,9 @@ class Source(Protocol):
     resolution_ms: int
     #: what the backend does at the edges of its data; None for sources without a profile
     semantics: MissingDataSemantics | None
+    #: the backend's native language `expr` is written in (promql: Prometheus, Thanos, Mimir,
+    #: VictoriaMetrics; es_dsl: Elasticsearch/OpenSearch request bodies)
+    query_language: QueryLanguage
 
     async def fetch(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult: ...
 
@@ -58,3 +63,8 @@ class Source(Protocol):
     async def discover(self) -> Discovery: ...
 
     async def scrape_interval(self, selector: str, at_ms: int | None = None) -> int | None: ...
+
+
+def language_of(src: object) -> QueryLanguage:
+    """The source's query language; replay and fake sources that predate it speak PromQL."""
+    return getattr(src, "query_language", "promql")

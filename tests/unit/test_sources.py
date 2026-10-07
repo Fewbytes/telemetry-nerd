@@ -54,3 +54,18 @@ def test_measurement_items_come_from_caveats():
     assert {i["source"] for i in items} == {"measurement_system"}
     with pytest.raises(ValueError):
         sources.item("noise", "x")
+
+
+from telemetry_nerd.model.discovery import Discovery
+from telemetry_nerd.sources.base import language_of
+from telemetry_nerd.sources.promql import PromQLSource
+
+
+def test_promql_sources_speak_promql_and_sources_without_the_attribute_default_to_it():
+    assert PromQLSource("p", "http://vm.test").query_language == "promql"
+    assert language_of(PromQLSource("p", "http://vm.test")) == "promql"
+    assert language_of(object()) == "promql"
+
+
+def test_discovery_naming_defaults_to_prometheus_conventions():
+    assert Discovery((), (), {}, None, 1.0, (), False).naming == "prometheus"
