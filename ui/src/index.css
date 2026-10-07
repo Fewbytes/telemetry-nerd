@@ -70,6 +70,8 @@ a.obj-id:hover { text-decoration: underline; }
 .empty { color: var(--muted); }
 .panel a.answered-by { color: var(--muted); font-size: 0.85em; text-decoration: none; }
 .panel a.answered-by:hover { text-decoration: underline; }
+.panel button.collapse { background: none; border: none; font-size: 0.9em; cursor: pointer; color: var(--muted); padding: 0 2px; }
+.panel button.collapse:hover { color: var(--fg); }
 .panel button.close { margin-left: auto; background: none; border: none; font-size: 1.2em; cursor: pointer; color: var(--muted); }
 .panel .export-group { display: inline-flex; gap: 2px; margin-left: 8px; }
 .panel button.export {

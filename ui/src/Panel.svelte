@@ -49,6 +49,7 @@
   import { GROUP_GUTTER_PX, GROUP_LABEL_PX, type GroupLink } from "./lib/groupLink.svelte";
   import { msAt, xAt } from "./lib/groups";
   import { exportPanelPdf, exportPanelPng } from "./chart/exportPanel";
+  import { collapsedPanels } from "./lib/collapsed.svelte";
 
   let { panel, annotations = [], threads = [] }: {
     panel: Panel; annotations?: Annotation[]; threads?: Thread[];
@@ -489,6 +490,12 @@
 
   const close = () => closePanel(panel.id).catch((e) => (error = String(e)));
 
+  // collapse (telemetry-nerd-y5j4): fold the chart/notes away, keeping just the header. The body
+  // below is a bare {#if}, so collapsing unmounts plotEl, which stops the fetch effect that's
+  // keyed on it (see the ResizeObserver $effect above) — no separate pause/resume needed.
+  const collapsed = $derived(collapsedPanels.has(panel.id));
+  const toggleCollapsed = () => collapsedPanels.toggle(panel.id);
+
   // export (telemetry-nerd-ulh9): save this panel's chart as a PNG or a one-page PDF, for sharing
   // a single finding outside the app. See chart/exportPanel.ts for how the capture works. The PDF
   // also carries the panel's question, provenance and notes/caveats (bead 71qs): a chart without
@@ -727,8 +734,14 @@
   data-percentile-bands={data?.kind === "heatmap" && heatView === "percentiles" ? heatCells : undefined}
   data-render-ms={render ? render.ms.toFixed(1) : undefined}
   data-budget-exceeded={render ? String(render.exceeded) : undefined}
+  data-collapsed={collapsed}
 >
   <header>
+    <button
+      type="button" class="collapse" data-collapse aria-pressed={collapsed} aria-expanded={!collapsed}
+      title={collapsed ? "Expand panel" : "Collapse panel"} aria-label={collapsed ? "Expand panel" : "Collapse panel"}
+      onclick={toggleCollapsed}
+    >{collapsed ? "▸" : "▾"}</button>
     <a class="obj-id" href="#/panel/{panel.id}" title="Panel {panel.id}">{panel.id}</a>
     <span class="question">Q: {panel.question}</span>
     {#if panel.answered_by}
@@ -740,18 +753,19 @@
     <PinButton object={panel.id} />
     <span class="export-group" role="group" aria-label="Export panel">
       <button
-        type="button" class="export" data-export="png" disabled={!!exportBusy}
-        title="Save this panel's chart as a PNG image" aria-label="Export panel as PNG"
+        type="button" class="export" data-export="png" disabled={!!exportBusy || collapsed}
+        title={collapsed ? "Expand the panel to export" : "Save this panel's chart as a PNG image"} aria-label="Export panel as PNG"
         onclick={() => doExport("png")}
       >{exportBusy === "png" ? "…" : "PNG"}</button>
       <button
-        type="button" class="export" data-export="pdf" disabled={!!exportBusy}
-        title="Save this panel's chart as a one-page PDF" aria-label="Export panel as PDF"
+        type="button" class="export" data-export="pdf" disabled={!!exportBusy || collapsed}
+        title={collapsed ? "Expand the panel to export" : "Save this panel's chart as a one-page PDF"} aria-label="Export panel as PDF"
         onclick={() => doExport("pdf")}
       >{exportBusy === "pdf" ? "…" : "PDF"}</button>
     </span>
     <button class="close" type="button" aria-label="Close panel" onclick={close}>×</button>
   </header>
+  {#if !collapsed}
   {#if error}<div class="error">{error}</div>{/if}
   <!-- svelte-ignore a11y_no_static_element_interactions (pointer tracking for the linked crosshair; the plot itself is the interactive element) -->
   <div bind:this={plotEl} class="plot" style="position: relative"
@@ -1099,5 +1113,6 @@
         <PanelThread {thread} />
       {/each}
     </div>
+  {/if}
   {/if}
 </section>
