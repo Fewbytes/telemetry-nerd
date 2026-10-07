@@ -42,6 +42,16 @@ def test_describe_verdict_and_status():
     ) == ("user set h1 proposed → refuted")
 
 
+def test_describe_hypothesis_hidden():
+    assert (
+        describe_event(
+            ev(6, "hypothesis.hidden", "h3", {"hidden": True, "reason": "duplicate of h1"})
+        )
+        == "user hid h3: duplicate of h1"
+    )
+    assert describe_event(ev(7, "hypothesis.hidden", "h3", {"hidden": False})) == "user unhid h3"
+
+
 def test_format_channel_meta_and_ambient_digest():
     content, meta = format_channel(
         [

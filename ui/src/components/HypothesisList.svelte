@@ -1,17 +1,26 @@
 <script lang="ts">
-  import { postJSON, type Finding, type Hypothesis } from "../lib/api";
+  import { postJSON, setHypothesisHidden, type Finding, type Hypothesis } from "../lib/api";
   import { isSendKey } from "../lib/keys";
-  import { hypothesisScopeText, hypothesisView, STATUS_FLOW, type FindingEntry } from "../lib/findings";
+  import { hypothesisScopeText, hypothesisView, STATUS_FLOW, visibleHypotheses, type FindingEntry } from "../lib/findings";
   import PinButton from "./PinButton.svelte";
 
   let { hypotheses = [], findings = [] }: { hypotheses?: Hypothesis[]; findings?: Finding[] } = $props();
 
   let notes = $state<Record<string, string>>({});
+  // hide has its own reason, separate from the status note above (fygk): a housekeeping note
+  // about putting a hypothesis aside must never land in `status_reason` (an evidence claim)
+  // just because the same button area was used, and vice versa
+  let hideReasons = $state<Record<string, string>>({});
   let busy = $state<string | null>(null);
   let error = $state<string | null>(null);
+  // hidden hypotheses (fygk) are put aside, not deleted; off by default so they don't clutter
+  // the board, shown again with this toggle (still citable, never a verdict)
+  let showHidden = $state(false);
 
-  const active = $derived(hypotheses.filter((h) => h.status !== "refuted"));
-  const ruledOut = $derived(hypotheses.filter((h) => h.status === "refuted"));
+  const view = $derived(visibleHypotheses(hypotheses, showHidden, findings));
+  const active = $derived(view.active);
+  const ruledOut = $derived(view.ruledOut);
+  const hiddenCount = $derived(view.hiddenCount);
 
   const setStatus = (h: Hypothesis, status: Hypothesis["status"]) => {
     busy = h.id;
@@ -21,6 +30,18 @@
     if (note) body.note = note;
     postJSON(`/api/hypotheses/${h.id}/status`, body)
       .then(() => (notes[h.id] = ""))
+      .catch((e) => (error = String(e)))
+      .finally(() => (busy = null));
+  };
+
+  const setHidden = (h: Hypothesis, hidden: boolean) => {
+    busy = h.id;
+    error = null;
+    const reason = (hideReasons[h.id] ?? "").trim();
+    setHypothesisHidden(h.id, hidden, hidden && reason ? reason : undefined)
+      // only clear the field that was actually used: unhiding never reads a reason, so any
+      // half-typed text in it (for a later hide) is left alone
+      .then(() => { if (hidden) hideReasons[h.id] = ""; })
       .catch((e) => (error = String(e)))
       .finally(() => (busy = null));
   };
@@ -65,6 +86,12 @@
     {#if h.status_reason && (h.status === "refuted" || h.status === "inconclusive")}
       <p class="status-reason"><span class="sub">Why</span> {h.status_reason}</p>
     {/if}
+    {#if h.hidden}
+      <div class="status-line">
+        <span class="chip hidden-chip">hidden</span>
+        {#if h.hidden_reason}<span class="hidden-reason">{h.hidden_reason}</span>{/if}
+      </div>
+    {/if}
     <div class="evidence-groups">
       {@render group(h, "for", "For", v.for)}
       {@render group(h, "against", "Against", v.against)}
@@ -80,6 +107,21 @@
           aria-label="Mark {h.id} {s}"
           onclick={() => h.status !== s && setStatus(h, s)}>{s}</button>
       {/each}
+      <button
+        type="button"
+        class="step hide"
+        disabled={busy === h.id}
+        aria-pressed={h.hidden}
+        aria-label="{h.hidden ? 'Unhide' : 'Hide'} {h.id}"
+        onclick={() => setHidden(h, !h.hidden)}>{h.hidden ? "Unhide" : "Hide"}</button>
+      {#if !h.hidden}
+        <input
+          bind:value={hideReasons[h.id]}
+          placeholder="Reason for hiding (optional)"
+          aria-label="Hide reason for {h.id}"
+          class="hide-reason-input"
+        />
+      {/if}
       <input
         bind:value={notes[h.id]}
         placeholder="Optional note"
@@ -96,6 +138,10 @@
   </li>
 {/snippet}
 
+<label class="show-hidden">
+  <input type="checkbox" bind:checked={showHidden} />
+  Show hidden{#if hiddenCount} ({hiddenCount}){/if}
+</label>
 <ul class="hypotheses" aria-label="Hypotheses">
   {#each active as h (h.id)}
     {@render item(h)}

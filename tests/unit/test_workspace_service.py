@@ -142,6 +142,67 @@ def test_hypothesis_update_records_transition_and_stays_visible(svc):
         svc.ws.hypothesis_update("h99", "refuted", "user")
 
 
+def test_hypothesis_hide_and_unhide_logs_event_and_leaves_status(svc):
+    h = svc.ws.hypothesis_create("cache cold", "claude")
+    hidden = svc.ws.hypothesis_hide(h.id, True, "user", reason="duplicate of h4")
+    assert (hidden.hidden, hidden.hidden_reason, hidden.status) == (
+        True,
+        "duplicate of h4",
+        "proposed",
+    )
+    e = events(svc)[-1]
+    assert (e.type, e.object_id, e.klass, e.actor) == (
+        "hypothesis.hidden",
+        h.id,
+        "intentional",
+        "user",
+    )
+    assert e.payload == {"hidden": True, "reason": "duplicate of h4"}
+
+    shown = svc.ws.hypothesis_hide(h.id, False, "user")
+    assert (shown.hidden, shown.hidden_reason) == (False, None)
+    assert events(svc)[-1].payload == {"hidden": False}
+
+
+def test_unhide_never_stores_or_logs_a_reason(svc):
+    # a reason only ever describes why something is hidden; passing one while unhiding must
+    # not be persisted (set_hypothesis_hidden clears it) or shown in the event, which would
+    # otherwise misleadingly describe a reason that was never actually recorded
+    h = svc.ws.hypothesis_hide(svc.ws.hypothesis_create("cache cold", "claude").id, True, "user")
+    unhidden = svc.ws.hypothesis_hide(h.id, False, "user", reason="ignored")
+    assert unhidden.hidden_reason is None
+    assert events(svc)[-1].payload == {"hidden": False}
+
+    with pytest.raises(NotFound):
+        svc.ws.hypothesis_hide("h99", True, "user")
+    with pytest.raises(ValueError, match="reason"):
+        svc.ws.hypothesis_hide(h.id, True, "user", reason="  ")
+
+
+def test_hidden_hypothesis_excluded_from_brief_but_counted(svc):
+    h1 = svc.ws.hypothesis_create("cache cold", "claude")
+    svc.ws.hypothesis_create("GC pause", "claude")
+    svc.ws.hypothesis_hide(h1.id, True, "user", reason="duplicate")
+    b = svc.ws.brief()
+    assert [x["id"] for x in b["hypotheses"]] == ["h2"]
+    assert b["hypotheses_hidden"] == 1
+    # still fully listed (citable) in the snapshot the UI reads, with its own filter toggle
+    snap_ids = [x["id"] for x in svc.ws.snapshot()["hypotheses"]]
+    assert snap_ids == ["h1", "h2"]
+
+
+def test_hidden_but_cited_hypothesis_stays_in_brief(svc, panel):
+    h = svc.ws.hypothesis_create("cache cold", "claude")
+    svc.ws.finding_create(finding_in(svc, hypothesis=h.id, stance="against"), "claude")
+    svc.ws.hypothesis_hide(h.id, True, "user", reason="duplicate of h4")
+    b = svc.ws.brief()
+    # hiding must never break a citation (fygk): a cited hypothesis stays in the active list,
+    # just flagged, and the hidden count only covers the uncited rest
+    assert [x["id"] for x in b["hypotheses"]] == [h.id]
+    assert b["hypotheses"][0]["hidden"] is True
+    assert "hypotheses_hidden" not in b
+
+
 def test_gap_create(svc):
     g = svc.ws.gap_create(
         GapIn(

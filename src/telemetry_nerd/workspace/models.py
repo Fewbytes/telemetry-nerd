@@ -231,6 +231,13 @@ class Hypothesis(_Strict):
     #: why the hypothesis was refuted or left inconclusive when no finding against it says so
     #: (aiy): stated explicitly, never inferred from a note
     status_reason: str | None = None
+    #: put aside without a verdict (fygk): duplicate, off-topic, superseded, a decoy that no
+    #: longer matters. Reversible, never a claim about the hypothesis's truth value (that is
+    #: `status`); evidence links to it keep working and it is never deleted.
+    hidden: bool = False
+    #: why it was hidden, when given; cleared when unhidden (a reason belongs to the hide it
+    #: was given with, like `status_reason` belongs to the status)
+    hidden_reason: str | None = None
     scope: HypothesisScope | None = None
     created_at_ms: int
     updated_at_ms: int

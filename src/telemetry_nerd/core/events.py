@@ -26,6 +26,7 @@ INTENTIONAL_TYPES = frozenset(
         "thread.message",
         "finding.verdict",
         "hypothesis.status_changed",
+        "hypothesis.hidden",
         "annotation.created",
         "catalog.claimed",  # a user's catalog edit is a correction Claude must know about
         "relation.claimed",

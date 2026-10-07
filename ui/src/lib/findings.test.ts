@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { CodeBrief, Finding, Hypothesis, Panel } from "./api";
-import { evidenceViews, hypothesisScopeText, hypothesisView, scopeFields, scopeNotice, verdictText } from "./findings";
+import {
+  citedHypothesisIds, evidenceViews, hypothesisScopeText, hypothesisView, scopeFields, scopeNotice, verdictText,
+  visibleHypotheses,
+} from "./findings";
 
 const scope = {
   source: "default", selector: "tn_demo_latency_seconds",
@@ -86,6 +89,35 @@ describe("hypothesisView", () => {
   });
   it("skips evidence ids that no longer resolve", () => {
     expect(hypothesisView(h, []).for).toEqual([]);
+  });
+});
+
+describe("visibleHypotheses (fygk)", () => {
+  const hyps = [
+    { id: "h1", status: "proposed", hidden: false } as Hypothesis,
+    { id: "h2", status: "refuted", hidden: false } as Hypothesis,
+    { id: "h3", status: "proposed", hidden: true } as Hypothesis,
+    { id: "h4", status: "refuted", hidden: true } as Hypothesis,
+  ];
+  it("leaves hidden hypotheses out of active and ruled-out by default, but counts them", () => {
+    const v = visibleHypotheses(hyps, false);
+    expect(v.active.map((h) => h.id)).toEqual(["h1"]);
+    expect(v.ruledOut.map((h) => h.id)).toEqual(["h2"]);
+    expect(v.hiddenCount).toBe(2);
+  });
+  it("shows hidden hypotheses, still split by status, when toggled on", () => {
+    const v = visibleHypotheses(hyps, true);
+    expect(v.active.map((h) => h.id)).toEqual(["h1", "h3"]);
+    expect(v.ruledOut.map((h) => h.id)).toEqual(["h2", "h4"]);
+    expect(v.hiddenCount).toBe(2);
+  });
+  it("keeps a hidden hypothesis a finding still cites on the board even with the toggle off", () => {
+    const findings = [fnd({ id: "f9", hypotheses: [{ id: "h3", stance: "against" }] })];
+    expect(citedHypothesisIds(findings)).toEqual(new Set(["h3"]));
+    const v = visibleHypotheses(hyps, false, findings);
+    expect(v.active.map((h) => h.id)).toEqual(["h1", "h3"]); // h3 is hidden but cited
+    expect(v.ruledOut.map((h) => h.id)).toEqual(["h2"]); // h4 is hidden and uncited: stays out
+    expect(v.hiddenCount).toBe(2); // the total count is unaffected by citation or the toggle
   });
 });
 

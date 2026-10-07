@@ -53,6 +53,22 @@ describe("refTargets", () => {
   });
 });
 
+describe("hidden hypotheses (fygk)", () => {
+  it("points a hidden, uncited hypothesis nowhere, like a closed panel", () => {
+    const t = refTargets(snap({ hypotheses: [{ id: "h3", statement: "decoy", hidden: true }] } as never));
+    expect(t.get("h3")).toMatchObject({ domId: null, closed: true });
+  });
+  it("still renders a hidden hypothesis a finding cites: hiding never breaks a citation", () => {
+    const t = refTargets(
+      snap({
+        hypotheses: [{ id: "h3", statement: "decoy", hidden: true }],
+        findings: [{ id: "f2", claim: "p99 doubled", hypotheses: [{ id: "h3", stance: "against" }] }],
+      } as never),
+    );
+    expect(t.get("h3")).toMatchObject({ domId: "hypothesis-h3", closed: false });
+  });
+});
+
 describe("splitRefs", () => {
   const t = refTargets(snap());
   const refs = (s: string) => splitRefs(s, t).flatMap((x) => ("ref" in x ? [x.ref] : []));

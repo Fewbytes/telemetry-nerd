@@ -99,6 +99,22 @@ def test_link_evidence_stances(store):
     assert store.get_hypothesis(h.id).evidence_against == ["f2"]
 
 
+def test_hypothesis_hidden_roundtrip(store):
+    h = store.create_hypothesis("DB pool saturated", "claude")
+    hidden = store.set_hypothesis_hidden(h.id, True, "duplicate of h4")
+    assert (hidden.hidden, hidden.hidden_reason) == (True, "duplicate of h4")
+    assert hidden.status == "proposed"  # hiding is not a verdict
+    shown = store.set_hypothesis_hidden(h.id, False)
+    assert (shown.hidden, shown.hidden_reason) == (False, None)  # reason clears on unhide
+
+
+def test_rehiding_without_a_new_reason_keeps_the_old_one(store):
+    h = store.create_hypothesis("DB pool saturated", "claude")
+    store.set_hypothesis_hidden(h.id, True, "duplicate of h4")
+    again = store.set_hypothesis_hidden(h.id, True)  # no reason given this time
+    assert again.hidden_reason == "duplicate of h4"  # not silently wiped
+
+
 def test_bad_status_and_verdict_raise(store):
     h = store.create_hypothesis("x", "claude")
     with pytest.raises(ValueError):

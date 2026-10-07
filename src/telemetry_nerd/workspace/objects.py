@@ -164,6 +164,25 @@ class ObjectStore:
         self._update(updated)
         return h.status, updated
 
+    def set_hypothesis_hidden(
+        self, obj_id: str, hidden: bool, reason: str | None = None
+    ) -> Hypothesis:
+        """Put a hypothesis aside (or bring it back): never a verdict, never deleted, evidence
+        links keep working (fygk). `reason` is stored only while hidden (cleared on unhide, like
+        `status_reason` belongs to the status it was given with); re-hiding an already-hidden
+        one without a new reason keeps the one it already had, rather than silently wiping it."""
+        h = self.get_hypothesis(obj_id)
+        stored_reason = (reason if reason is not None else h.hidden_reason) if hidden else None
+        updated = h.model_copy(
+            update={
+                "hidden": hidden,
+                "hidden_reason": stored_reason,
+                "updated_at_ms": self._clock(),
+            }
+        )
+        self._update(updated)
+        return updated
+
     def link_evidence(
         self, obj_id: str, finding_id: str, stance: Literal["for", "against"]
     ) -> Hypothesis:

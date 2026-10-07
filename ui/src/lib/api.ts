@@ -229,6 +229,10 @@ export interface Hypothesis {
   alternatives_considered?: string | null;
   /** why it was refuted / left inconclusive, when stated (aiy) */
   status_reason?: string | null;
+  /** put aside without a verdict (fygk): reversible, never a claim about its truth value */
+  hidden: boolean;
+  /** why it was hidden, when given; cleared on unhide */
+  hidden_reason?: string | null;
   scope?: HypothesisScope | null;
   created_at_ms: number; updated_at_ms: number;
 }
@@ -370,6 +374,8 @@ export const openWorkspace = (id: string) =>
   postJSON<{ workspace: WorkspaceInfo }>(`/api/workspaces/${encodeURIComponent(id)}/open`);
 export const updateWorkspace = (id: string, patch: { title?: string; question?: string; archived?: boolean }) =>
   postJSON<WorkspaceInfo>(`/api/workspaces/${encodeURIComponent(id)}/update`, patch);
+export const setHypothesisHidden = (id: string, hidden: boolean, reason?: string) =>
+  postJSON<Hypothesis>(`/api/hypotheses/${encodeURIComponent(id)}/hidden`, reason ? { hidden, reason } : { hidden });
 
 export const pinHighlight = (object: string, note?: string) =>
   postJSON<unknown>("/api/highlights", note ? { object, note } : { object });

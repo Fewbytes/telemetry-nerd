@@ -9,7 +9,7 @@ const panel = (id: string, closed = false): Panel => ({
 
 const hypothesis = (id: string): Hypothesis => ({
   id, statement: `${id} statement`, status: "proposed", author: "claude",
-  evidence_for: [], evidence_against: [], created_at_ms: 0, updated_at_ms: 0,
+  evidence_for: [], evidence_against: [], created_at_ms: 0, updated_at_ms: 0, hidden: false,
 });
 
 const finding = (id: string, verdict: Finding["verdict"] = null): Finding => ({

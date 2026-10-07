@@ -44,6 +44,9 @@ def describe_event(e: Event) -> str:
                 + (f": {p['note']}" if p.get("note") else "")
                 + (f" (reason: {p['reason']})" if p.get("reason") else "")
             )
+        case "hypothesis.hidden":
+            why = f": {p['reason']}" if p.get("reason") else ""
+            return f"{who} {'hid' if p['hidden'] else 'unhid'} {e.object_id}{why}"
         case "annotation.created":
             on = f" on {p['panel']}" if p.get("panel") else ""
             label = f' "{p["label"]}"' if p.get("label") else ""

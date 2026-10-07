@@ -95,6 +95,10 @@ class _HypothesisUpdate(BaseModel):
     status: HypothesisStatus
 
 
+class _HypothesisHidden(BaseModel):
+    hidden: bool
+
+
 class _VerdictIn(BaseModel):
     verdict: Verdict
 
@@ -890,6 +894,17 @@ def create_app(
         ).model_dump()
 
     @_api
+    async def hypothesis_hidden(request: Request) -> object:
+        body = await _body(request, hidden=bool)
+        reason = body.get("reason")
+        if reason is not None and not isinstance(reason, str):
+            raise _BadRequest("invalid field 'reason'", "'reason' must be a string")
+        model = _validated(_HypothesisHidden, {"hidden": body["hidden"]})
+        return ws.hypothesis_hide(
+            request.path_params["id"], model.hidden, "user", reason=reason
+        ).model_dump()
+
+    @_api
     async def finding_verdict(request: Request) -> object:
         body = await _body(request, verdict=str)
         comment = body.get("comment")
@@ -1000,6 +1015,7 @@ def create_app(
         Route("/api/annotations", annotation_create, methods=["POST"]),
         Route("/api/annotations/{id}/delete", annotation_delete, methods=["POST"]),
         Route("/api/hypotheses/{id}/status", hypothesis_status, methods=["POST"]),
+        Route("/api/hypotheses/{id}/hidden", hypothesis_hidden, methods=["POST"]),
         Route("/api/findings/{id}/verdict", finding_verdict, methods=["POST"]),
         Route("/api/threads", thread_create, methods=["POST"]),
         Route("/api/threads/{id}/messages", thread_message, methods=["POST"]),

@@ -32,8 +32,16 @@ export function refTargets(snap: Snapshot): Map<string, RefTarget> {
     const domId = a.panel === null ? null : open.has(a.panel) ? `panel-${a.panel}` : `annotation-${a.id}`;
     add({ id: a.id, kind: "annotation", domId, label: short(a.label), closed: false });
   }
+  // a hidden hypothesis that no finding cites has no card on the board (showHidden is off by
+  // default); one a finding still cites always renders (fygk: hiding must never break a
+  // citation), so only an uncited hidden one points nowhere
+  const citedHyps = new Set(snap.findings.flatMap((f) => (f.hypotheses ?? []).map((x) => x.id)));
   for (const h of snap.hypotheses) {
-    add({ id: h.id, kind: "hypothesis", domId: `hypothesis-${h.id}`, label: short(h.statement), closed: false });
+    const uncitedHidden = h.hidden && !citedHyps.has(h.id);
+    add({
+      id: h.id, kind: "hypothesis", domId: uncitedHidden ? null : `hypothesis-${h.id}`,
+      label: short(h.statement), closed: uncitedHidden,
+    });
   }
   for (const f of snap.findings) {
     add({ id: f.id, kind: "finding", domId: `finding-${f.id}`, label: short(f.claim), closed: false });

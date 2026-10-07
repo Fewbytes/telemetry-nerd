@@ -16,7 +16,7 @@
       class="ref-chip obj-id"
       class:closed={seg.closed}
       data-ref={seg.ref}
-      title={seg.closed ? `${seg.label} (panel closed)` : seg.label}
+      title={seg.closed ? `${seg.label} (${seg.kind === "hypothesis" ? "hidden" : "panel closed"})` : seg.label}
       onmouseenter={() => hoverOn(seg.domId)}
       onmouseleave={() => hoverOff(seg.domId)}
       onfocus={() => hoverOn(seg.domId)}

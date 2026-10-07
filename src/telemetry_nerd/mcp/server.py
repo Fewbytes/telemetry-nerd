@@ -132,6 +132,8 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
   subject, a finding with stance=for backs it, and an alternative was considered (another
   hypothesis refuted/inconclusive, or `alternatives_considered`: which ones, how ruled out).
   `refuted` needs a finding against it (or `reason`: what rules it out, citing findings).
+  `hypothesis_update(hidden=true, hidden_reason=...)` puts a duplicate/off-topic/superseded/
+  decoy hypothesis aside without a verdict; reversible (`hidden=false`), never deletes it.
 - A finding links several hypotheses, one stance each: `finding_create(hypotheses=[{"id":
   "h1", "stance": "for"}, {"id": "h2", "stance": "against"}], ...)`. A thread reply cannot be
   evidence: when data or a user reply contradicts a hypothesis, record the data as a finding
@@ -1964,12 +1966,14 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
     @mcp.tool()
     def hypothesis_update(
-        status: str,
+        status: str | None = None,
         hypothesis: str | None = None,
         note: str | None = None,
         alternatives_considered: str | None = None,
         id: str | None = None,
         reason: str | None = None,
+        hidden: bool | None = None,
+        hidden_reason: str | None = None,
     ) -> str:
         """Change a hypothesis status (proposed, supported, refuted, inconclusive), e.g.
         hypothesis_update(hypothesis="h1", status="refuted") (`id` works for `hypothesis`).
@@ -1980,7 +1984,17 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         `refuted` is refused unless a finding with stance=against is linked to it, or `reason`
         says what rules it out (cite the findings); `inconclusive` needs a linked finding, a
         reason or a note saying why. The reason is stored with the status.
-        Returns {hypothesis, status}."""
+
+        `hidden` (fygk) puts a hypothesis aside without a verdict, e.g. hypothesis_update(
+        hypothesis="h3", hidden=true, hidden_reason="duplicate of h1") — a duplicate, off-topic,
+        superseded or decoy hypothesis you want off the active board without claiming it is
+        true or false (that is `status`). Reversible (hidden=false brings it back); it is never
+        deleted, evidence links to it keep working, and workspace_get's hypothesis count still
+        includes it (just not in the active list, unless a finding still cites it). `status` and
+        `hidden` may be given together or separately; `hidden_reason` is never read as (and
+        never satisfies) the evidence-based `reason` a refuted/inconclusive status needs, and
+        vice versa — a housekeeping note is not evidence (principle 13).
+        Returns {hypothesis, status?, hidden?}."""
         if hypothesis is not None and id is not None and hypothesis != id:
             raise ToolError(f"hypothesis={hypothesis!r} and id={id!r} disagree: give one, e.g. "
                             'hypothesis_update(hypothesis="h1", status="refuted")')  # fmt: skip
@@ -1988,13 +2002,22 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         if hypothesis is None:
             raise ToolError('hypothesis is required: e.g. hypothesis_update(hypothesis="h1", '
                             'status="refuted")')  # fmt: skip
+        if status is None and hidden is None:
+            raise ToolError('give status or hidden: e.g. hypothesis_update(hypothesis="h1", '
+                            'status="refuted") or hypothesis_update(hypothesis="h1", hidden=true)')  # fmt: skip
+        out: dict[str, Any] = {"hypothesis": hypothesis}
         try:
-            st = TypeAdapter(HypothesisStatus).validate_python(status.strip().lower())
-            h = ws.hypothesis_update(
-                hypothesis, st, "claude", note=note,
-                alternatives_considered=alternatives_considered, reason=reason,
-            )  # fmt: skip
-            return _dump({"hypothesis": h.id, "status": h.status})
+            if status is not None:
+                st = TypeAdapter(HypothesisStatus).validate_python(status.strip().lower())
+                h = ws.hypothesis_update(
+                    hypothesis, st, "claude", note=note,
+                    alternatives_considered=alternatives_considered, reason=reason,
+                )  # fmt: skip
+                out["status"] = h.status
+            if hidden is not None:
+                h = ws.hypothesis_hide(hypothesis, hidden, "claude", reason=hidden_reason)
+                out["hidden"] = h.hidden
+            return _dump(out)
         except ValidationError as e:
             raise ToolError(f"status must be one of proposed, supported, refuted, inconclusive; "
                             f"got {status!r}") from e  # fmt: skip

@@ -139,6 +139,42 @@ async def test_hypothesis_create_and_update(tmp_path):
     assert bad.is_error
 
 
+async def test_hypothesis_hide_and_unhide(tmp_path):
+    svc = make_service(tmp_path)
+    mcp = build_mcp(svc, "http://x")
+    h = json.loads(text_of(await call(mcp, "hypothesis_create", {"statement": "cache cold"})))
+    assert h["hypothesis"] == "h1"
+    r = await call(
+        mcp, "hypothesis_update",
+        {"hypothesis": "h1", "hidden": True, "hidden_reason": "dup of h4"},
+    )  # fmt: skip
+    assert json.loads(text_of(r)) == {"hypothesis": "h1", "hidden": True}
+    assert svc.ws.objects.get_hypothesis("h1").hidden_reason == "dup of h4"
+    r = await call(mcp, "hypothesis_update", {"hypothesis": "h1", "hidden": False})
+    assert json.loads(text_of(r)) == {"hypothesis": "h1", "hidden": False}
+    assert svc.ws.objects.get_hypothesis("h1").hidden_reason is None
+    bad = await call(mcp, "hypothesis_update", {"hypothesis": "h1"})
+    assert bad.is_error and "status or hidden" in text_of(bad)
+
+
+async def test_hypothesis_update_status_and_hidden_reasons_never_conflate(tmp_path):
+    svc = make_service(tmp_path)
+    mcp = build_mcp(svc, "http://x")
+    await call(mcp, "hypothesis_create", {"statement": "cache cold"})
+    r = await call(
+        mcp, "hypothesis_update",
+        {
+            "hypothesis": "h1", "status": "refuted", "reason": "hit ratio unchanged",
+            "hidden": True, "hidden_reason": "duplicate of h4",
+        },
+    )  # fmt: skip
+    assert json.loads(text_of(r)) == {"hypothesis": "h1", "status": "refuted", "hidden": True}
+    h = svc.ws.objects.get_hypothesis("h1")
+    # a hide note is never evidence, and a refutation's evidence note is never a hide note
+    # (principle 13): the two reasons stay on their own fields, never swapped or merged
+    assert (h.status_reason, h.hidden_reason) == ("hit ratio unchanged", "duplicate of h4")
+
+
 async def test_finding_create_valid(tmp_path):
     _, mcp = await _finding_setup(tmp_path)
     r = await call(

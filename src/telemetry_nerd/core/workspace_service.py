@@ -280,6 +280,24 @@ class WorkspaceService:
         self.log.append(actor, "hypothesis.status_changed", h.id, payload)
         return h
 
+    @atomic
+    def hypothesis_hide(
+        self, hypothesis_id: str, hidden: bool, actor: Actor, reason: str | None = None
+    ) -> Hypothesis:
+        """Put a hypothesis aside, or bring it back (fygk): reversible, never a verdict (that is
+        `status`), never deletes it or its evidence links. `reason` is free text (e.g. "duplicate
+        of h4", "off-topic", "superseded by h7") and is stored only while hidden."""
+        if reason is not None and not reason.strip():
+            raise ValueError("reason must not be empty")
+        h = self.objects.set_hypothesis_hidden(hypothesis_id, hidden, reason)
+        payload: dict = {"hidden": hidden}
+        # a reason is only ever stored while hidden (set_hypothesis_hidden clears it on unhide):
+        # the event must not claim one was given when nothing was actually persisted
+        if hidden and reason:
+            payload["reason"] = reason
+        self.log.append(actor, "hypothesis.hidden", h.id, payload)
+        return h
+
     def _check_ruled_out(
         self, hypothesis_id: str, status: HypothesisStatus, reason: str | None, note: str | None
     ) -> None:
@@ -2062,9 +2080,22 @@ class WorkspaceService:
 
     def brief(self) -> dict:
         """Compact state for Claude: newest first, truncated to BRIEF_BUDGET_BYTES."""
+        all_findings = self.objects.list_findings()
+        # a hidden hypothesis a finding still cites stays in the active list (fygk): hiding
+        # must never break a citation, only declutter the uncited rest (spec: a cited object
+        # is never hidden)
+        cited_hyp_ids = {link.id for f in all_findings for link in f.hypotheses}
+        all_hyps = list(reversed(self.objects.list_hypotheses()))
+        hidden_count = sum(1 for h in all_hyps if h.hidden and h.id not in cited_hyp_ids)
         hyps = [
-            {"id": h.id, "status": h.status, "statement": h.statement}
-            for h in reversed(self.objects.list_hypotheses())
+            {
+                "id": h.id,
+                "status": h.status,
+                "statement": h.statement,
+                **({"hidden": True} if h.hidden else {}),
+            }
+            for h in all_hyps
+            if not h.hidden or h.id in cited_hyp_ids
         ]
         finds = [
             {
@@ -2086,7 +2117,7 @@ class WorkspaceService:
                     else {}
                 ),
             }
-            for f in reversed(self.objects.list_findings())
+            for f in reversed(all_findings)
         ]
         open_threads = self.open_threads()
         panels = [
@@ -2120,6 +2151,9 @@ class WorkspaceService:
             **({"workspace": self.current()} if self.current else {}),
             "panels": panels,
             "hypotheses": hyps,
+            # hidden hypotheses are never a verdict or a deletion: kept, citable, counted here
+            # (fygk) so the brief never looks like they vanished; just not in the active list
+            **({"hypotheses_hidden": hidden_count} if hidden_count else {}),
             "findings": finds,
             "open_threads": open_threads,
             "code": code,

@@ -142,6 +142,39 @@ export const verdictText = (v: Finding["verdict"]): string => (v ? VERDICT_TEXT[
 
 export const STATUS_FLOW: Hypothesis["status"][] = ["proposed", "supported", "refuted", "inconclusive"];
 
+export interface VisibleHypotheses {
+  active: Hypothesis[];
+  ruledOut: Hypothesis[];
+  hiddenCount: number;
+}
+
+/** The hypotheses at least one finding cites (for/against/linked, any stance): hiding must
+ * never break a citation (fygk), so these stay on the board regardless of `showHidden`. */
+export function citedHypothesisIds(findings: Finding[]): Set<string> {
+  const ids = new Set<string>();
+  for (const f of findings) for (const link of f.hypotheses ?? []) ids.add(link.id);
+  return ids;
+}
+
+/** Which hypotheses show on the board, split active / ruled-out (fygk). Hidden ones are put
+ * aside without a verdict, reversible, never deleted: left out unless `showHidden` OR a finding
+ * still cites them (a citation is never broken by hiding: a cited hypothesis stays visible, and
+ * is still flagged `hidden` on the card so it's clear why it's there). `hiddenCount` is the
+ * total hidden, for the toggle's label, regardless of how many are shown via a citation. */
+export function visibleHypotheses(
+  hypotheses: Hypothesis[],
+  showHidden: boolean,
+  findings: Finding[] = [],
+): VisibleHypotheses {
+  const cited = citedHypothesisIds(findings);
+  const visible = hypotheses.filter((h) => showHidden || !h.hidden || cited.has(h.id));
+  return {
+    active: visible.filter((h) => h.status !== "refuted"),
+    ruledOut: visible.filter((h) => h.status === "refuted"),
+    hiddenCount: hypotheses.filter((h) => h.hidden).length,
+  };
+}
+
 export interface FindingEntry {
   id: string;
   claim: string;
