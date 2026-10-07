@@ -19,6 +19,17 @@
 // computes per-theme colors with a 3:1 contrast guarantee (theme.svelte.ts), so a light-only
 // export would need a second render pass. If dark exports turn out to print badly, that's a
 // follow-up, not a reason to add render-pass complexity here.
+//
+// PDF content (bead 71qs): the PDF additionally carries the panel's question, provenance
+// ("shown"/"where") line, query expression and full notes/caveats list, scraped from the same
+// rendered DOM Panel.svelte shows them in (see panelText.ts) rather than recomputed, so the
+// export can never diverge from what the viewer saw. The PNG stays chart-only by design (its
+// button is explicitly "save this panel's chart as a PNG image"); only the PDF claims to be a
+// shareable, self-contained record of the panel.
+
+import { jsPDF } from "jspdf";
+import { ensureSpace, MARGIN, writeImage, writeSection, writeWrapped } from "../lib/pdfLayout";
+import { extractPanelText, type PanelText } from "./panelText";
 
 export interface CapturedPanel {
   canvas: HTMLCanvasElement;
@@ -95,99 +106,42 @@ export async function exportPanelPng(panelId: string, root: HTMLElement): Promis
   triggerDownload(blob, `${exportBaseName(panelId)}.png`);
 }
 
-/** Capture `root` and download it as a one-page PDF. Throws if there's nothing to capture yet. */
-export async function exportPanelPdf(panelId: string, root: HTMLElement): Promise<void> {
-  const cap = capturePlot(root);
+/** A captured chart, as a data URL (not a live canvas): what buildPanelPdf lays out, so it stays
+ * DOM/canvas-free and unit-testable, mirroring exportPdf.ts's CapturedPanel. */
+export interface CapturedImage { dataUrl: string; width: number; height: number }
+
+/** Lay out one panel's PDF: title/question, the chart image, then its provenance line, query and
+ * notes/caveats — pure (no DOM), so this is the part unit tests exercise directly. */
+export function buildPanelPdf(panelId: string, image: CapturedImage, info: PanelText): jsPDF {
+  const pdf = new jsPDF({ unit: "pt", format: "a4" });
+  let y = MARGIN;
+  pdf.setFontSize(14);
+  y = writeWrapped(pdf, `${panelId}: ${info.question}`, y);
+  y += 4;
+  pdf.setFontSize(10);
+  if (info.shown) y = writeWrapped(pdf, info.shown, y);
+  if (info.where) y = writeWrapped(pdf, info.where, y);
+  y += 6;
+
+  y = ensureSpace(pdf, y, 60);
+  y = writeImage(pdf, y, image.dataUrl, image.width, image.height);
+
+  if (info.query) {
+    pdf.setFontSize(9);
+    y = writeWrapped(pdf, `Query: ${info.query}`, y);
+    y += 10;
+  }
+  writeSection(pdf, "Notes & caveats", info.notes.map((n) => `[${n.kind}] ${n.text}`), y);
+  return pdf;
+}
+
+/** Capture `plotEl` and `sectionEl`'s rendered notes/question/provenance and download a PDF.
+ * Throws if there's nothing to capture yet. */
+export async function exportPanelPdf(panelId: string, plotEl: HTMLElement, sectionEl: HTMLElement): Promise<void> {
+  const cap = capturePlot(plotEl);
   if (!cap) throw new Error("nothing to export yet — the chart hasn't drawn");
-  const blob = await canvasToPdfBlob(cap.canvas);
-  triggerDownload(blob, `${exportBaseName(panelId)}.pdf`);
-}
-
-// --- minimal PDF writer -----------------------------------------------------------------------
-//
-// Why not a dependency (e.g. jsPDF): a jsPDF-class library pulls in a general-purpose PDF
-// document model (text layout, fonts, vector drawing) to solve a problem that, here, is just
-// "wrap one raster image in a one-page PDF so the user gets a real file". A canvas can export
-// straight to baseline JPEG bytes (canvas.toBlob("image/jpeg")) and the PDF spec can embed a JPEG
-// verbatim via the /DCTDecode filter — no re-encoding, no image codec of our own. That reduces
-// the whole feature to ~40 lines of PDF object scaffolding around bytes the browser already
-// produced, with no new dependency and no bundle-size cost. This is the standard trick small
-// "image to PDF" tools use; it stops being the simplest option only if we later need multi-page
-// output, text, or vector content, at which point reaching for a real PDF library would be
-// justified.
-
-const te = new TextEncoder();
-
-function concatBytes(parts: (Uint8Array | string)[]): Uint8Array {
-  const chunks = parts.map((p) => (typeof p === "string" ? te.encode(p) : p));
-  const total = chunks.reduce((n, c) => n + c.length, 0);
-  const out = new Uint8Array(total);
-  let off = 0;
-  for (const c of chunks) {
-    out.set(c, off);
-    off += c.length;
-  }
-  return out;
-}
-
-/** Wrap a canvas's rendered pixels in a minimal single-page PDF (image fills the page, scaled to
- * a comfortable print size at ~144 "px per inch" so the PDF's physical page size is sane). */
-export async function canvasToPdfBlob(canvas: HTMLCanvasElement, quality = 0.92): Promise<Blob> {
-  const jpegBlob = await canvasToBlob(canvas, "image/jpeg", quality);
-  const jpeg = new Uint8Array(await jpegBlob.arrayBuffer());
-  return new Blob([buildPdfBytes(jpeg, canvas.width, canvas.height) as BlobPart], { type: "application/pdf" });
-}
-
-/** Pure byte-assembly for the single-page JPEG-in-PDF wrapper: no DOM/canvas involved, so this is
- * the part unit tests exercise directly (the canvas-dependent half is a thin, untestable-without-
- * a-browser shell around it). */
-export function buildPdfBytes(jpeg: Uint8Array, width: number, height: number): Uint8Array {
-  // PDF points are 1/72"; treat the image's device pixels as 144 dpi so pages print at a
-  // reasonable physical size instead of one point per pixel (which would yield enormous pages).
-  const PPI = 144;
-  const pageW = (width / PPI) * 72;
-  const pageH = (height / PPI) * 72;
-
-  const content = `q ${pageW.toFixed(2)} 0 0 ${pageH.toFixed(2)} 0 0 cm /Im0 Do Q`;
-  const contentBytes = te.encode(content);
-
-  const objects: Uint8Array[] = [];
-  objects.push(te.encode("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"));
-  objects.push(te.encode("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"));
-  objects.push(
-    te.encode(
-      `3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageW.toFixed(2)} ${pageH.toFixed(2)}] ` +
-        `/Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>\nendobj\n`,
-    ),
-  );
-  objects.push(
-    concatBytes([
-      `4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${width} /Height ${height} ` +
-        `/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`,
-      jpeg,
-      "\nendstream\nendobj\n",
-    ]),
-  );
-  objects.push(
-    concatBytes([`5 0 obj\n<< /Length ${contentBytes.length} >>\nstream\n`, contentBytes, "\nendstream\nendobj\n"]),
-  );
-
-  const header = te.encode("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
-  const parts: Uint8Array[] = [header];
-  const offsets: number[] = [];
-  let pos = header.length;
-  for (const obj of objects) {
-    offsets.push(pos);
-    parts.push(obj);
-    pos += obj.length;
-  }
-  const xrefStart = pos;
-  let xref = `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (const off of offsets) xref += `${String(off).padStart(10, "0")} 00000 n \n`;
-  const trailer =
-    `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
-  parts.push(te.encode(xref));
-  parts.push(te.encode(trailer));
-
-  return concatBytes(parts);
+  const info = extractPanelText(sectionEl);
+  const image: CapturedImage = { dataUrl: cap.canvas.toDataURL("image/png"), width: cap.width, height: cap.height };
+  const pdf = buildPanelPdf(panelId, image, info);
+  triggerDownload(pdf.output("blob"), `${exportBaseName(panelId)}.pdf`);
 }

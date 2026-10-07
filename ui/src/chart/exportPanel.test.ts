@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildPdfBytes, exportBaseName } from "./exportPanel";
+import { buildPanelPdf, exportBaseName, type CapturedImage } from "./exportPanel";
+import type { PanelText } from "./panelText";
 
 describe("exportBaseName", () => {
   it("prefixes the panel id for a predictable, shareable filename", () => {
@@ -7,49 +8,55 @@ describe("exportBaseName", () => {
   });
 });
 
-describe("buildPdfBytes", () => {
-  const td = new TextDecoder("latin1"); // byte-for-byte, no UTF-8 reinterpretation
-  // a 2x2 all-black JPEG (handcrafted-enough to be a plausible stand-in for canvas.toBlob output);
-  // the PDF writer never looks inside it, just wraps it, so content doesn't matter here
-  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xdb, 0, 0, 0, 0, 0xff, 0xd9]);
+const image: CapturedImage = {
+  dataUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  width: 400,
+  height: 260,
+};
 
-  it("produces a well-formed single-page PDF wrapping the JPEG via DCTDecode", () => {
-    const bytes = buildPdfBytes(jpeg, 200, 100);
-    const text = td.decode(bytes);
+const info = (overrides: Partial<PanelText> = {}): PanelText => ({
+  question: "is p99 latency elevated?",
+  shown: "Average per 1m bucket (line) with its min–max envelope (band).",
+  where: "default · 10:00 – 11:00 · step 1m",
+  query: "histogram_quantile(0.99, rate(latency_seconds_bucket[5m]))",
+  notes: [],
+  ...overrides,
+});
 
-    expect(text.startsWith("%PDF-1.4")).toBe(true);
-    expect(text).toContain("/Type /Catalog");
-    expect(text).toContain("/Type /Page");
-    expect(text).toContain("/Subtype /Image");
-    expect(text).toContain("/Filter /DCTDecode");
-    expect(text).toContain("/Width 200 /Height 100");
-    expect(text.trimEnd().endsWith("%%EOF")).toBe(true);
-
-    // the JPEG bytes are embedded verbatim (no re-encoding)
-    const jpegText = td.decode(jpeg);
-    expect(text).toContain(jpegText);
-
-    // the page is sized from the image at 144 "px per inch": 200px -> 100pt, 100px -> 50pt
-    expect(text).toContain("/MediaBox [0 0 100.00 50.00]");
+describe("buildPanelPdf", () => {
+  it("is a single-page PDF with a non-trivial size", () => {
+    const pdf = buildPanelPdf("p3", image, info());
+    expect(pdf.getNumberOfPages()).toBe(1);
+    expect(pdf.output("blob").size).toBeGreaterThan(200);
   });
 
-  it("points startxref at the actual byte offset of the xref table", () => {
-    const bytes = buildPdfBytes(jpeg, 10, 10);
-    const text = td.decode(bytes);
-    const m = text.match(/startxref\n(\d+)\n/);
-    expect(m).not.toBeNull();
-    const offset = Number(m![1]);
-    expect(text.slice(offset, offset + 4)).toBe("xref");
+  it("includes the panel id, question, provenance line and query", () => {
+    const pdf = buildPanelPdf("p3", image, info());
+    const text = pdf.output("datauristring");
+    const decoded = atob(text.slice(text.indexOf(",") + 1));
+    for (const needle of ["p3", "is p99 latency elevated?", "default", "histogram_quantile"]) {
+      expect(decoded).toContain(needle);
+    }
   });
 
-  it("gives every xref entry an offset that lands exactly on its object's header", () => {
-    const bytes = buildPdfBytes(jpeg, 10, 10);
-    const text = td.decode(bytes);
-    const xrefBlock = text.slice(text.indexOf("xref\n"), text.indexOf("trailer"));
-    const entries = [...xrefBlock.matchAll(/(\d{10}) 00000 n \n/g)].map((m) => Number(m[1]));
-    expect(entries).toHaveLength(5); // objects 1..5
-    entries.forEach((off, i) => {
-      expect(text.slice(off, off + 7)).toBe(`${i + 1} 0 obj`);
-    });
+  it("lists every note/caveat, tagged by kind", () => {
+    const pdf = buildPanelPdf(
+      "p3",
+      image,
+      info({ notes: [{ kind: "caveat", text: "Some buckets have too few observations." }, { kind: "info", text: "The y-axis is scaled to the data." }] }),
+    );
+    const text = pdf.output("datauristring");
+    const decoded = atob(text.slice(text.indexOf(",") + 1));
+    expect(decoded).toContain("Notes & caveats");
+    expect(decoded).toContain("[caveat] Some buckets have too few observations.");
+    expect(decoded).toContain("[info] The y-axis is scaled to the data.");
+  });
+
+  it("says '(none)' when there are no notes, rather than omitting the section", () => {
+    const pdf = buildPanelPdf("p3", image, info({ notes: [] }));
+    const text = pdf.output("datauristring");
+    const decoded = atob(text.slice(text.indexOf(",") + 1));
+    expect(decoded).toContain("Notes & caveats");
+    expect(decoded).toContain("none"); // "(none)"; PDF content streams escape literal parens
   });
 });

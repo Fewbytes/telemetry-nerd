@@ -5,7 +5,8 @@ import { FIXTURE, mcpTool, seedPanel } from "./helpers";
 // pin/close. Both trigger a real browser download — assert on the download event (filename,
 // suggested type) and on the saved file's own magic bytes, not just that a click handler ran.
 test("export: PNG and PDF buttons each save a real file for the panel's chart", async ({ page }) => {
-  const panel = await seedPanel(page.request, "export: does this panel save as an image?");
+  const question = "export: does this panel save as an image?";
+  const panel = await seedPanel(page.request, question);
   await page.goto("/");
   const el = page.locator(`[data-panel-id="${panel.id}"]`);
   await expect(el.locator("canvas").first()).toBeVisible();
@@ -29,9 +30,12 @@ test("export: PNG and PDF buttons each save a real file for the panel's chart", 
   const pdfPath = await pdfDownload.path();
   expect(pdfPath).not.toBeNull();
   const pdfBytes = await (await import("node:fs/promises")).readFile(pdfPath!, "latin1");
-  expect(pdfBytes.startsWith("%PDF-1.4")).toBe(true);
+  expect(pdfBytes.startsWith("%PDF-")).toBe(true);
   expect(pdfBytes.trimEnd().endsWith("%%EOF")).toBe(true);
-  expect(pdfBytes).toContain("/Filter /DCTDecode");
+  // bead 71qs: the PDF carries the panel's question/provenance/notes, not just the bare chart
+  expect(pdfBytes).toContain(panel.id);
+  expect(pdfBytes).toContain(question);
+  expect(pdfBytes).toContain("Notes & caveats");
 });
 
 // littles panels draw a discrepancy strip AND a main chart as separate <canvas> elements (two

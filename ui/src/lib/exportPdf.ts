@@ -1,50 +1,17 @@
 import { jsPDF } from "jspdf";
 import type { Finding, Hypothesis, Panel, Snapshot } from "./api";
+import { MARGIN, writeImage, writeSection, writeWrapped } from "./pdfLayout";
 
-/** One panel captured as a raster image, ready to drop into the PDF. */
+/** One panel captured as a raster image, ready to drop into the PDF. Captured from the panel's
+ * whole `#panel-{id}` element (see captureFromDom below), so its notes/caveats/question are
+ * already baked into the picture — this export is a visual record, not a text one. For a
+ * text-searchable, chart-only PDF of a single panel, see chart/exportPanel.ts's exportPanelPdf. */
 export interface CapturedPanel { dataUrl: string; width: number; height: number }
 /** How a panel's chart becomes an image; swappable so the layout logic below is DOM-free and testable. */
 export type PanelCapture = (panel: Panel) => Promise<CapturedPanel | null>;
 
-const MARGIN = 36;
-const LINE_H = 14;
-
-function ensureSpace(pdf: jsPDF, y: number, needed: number): number {
-  const pageH = pdf.internal.pageSize.getHeight();
-  if (y + needed > pageH - MARGIN) {
-    pdf.addPage();
-    return MARGIN;
-  }
-  return y;
-}
-
-function writeWrapped(pdf: jsPDF, text: string, y: number): number {
-  const pageW = pdf.internal.pageSize.getWidth();
-  const lines = pdf.splitTextToSize(text, pageW - MARGIN * 2) as string[];
-  for (const line of lines) {
-    y = ensureSpace(pdf, y, LINE_H);
-    pdf.text(line, MARGIN, y);
-    y += LINE_H;
-  }
-  return y;
-}
-
 export const hypothesisLine = (h: Hypothesis): string => `${h.id} [${h.status}] ${h.statement}`;
 export const findingLine = (f: Finding): string => `${f.id} [${f.verdict ?? "open"}] ${f.claim}`;
-
-function writeSection(pdf: jsPDF, title: string, lines: string[], y: number): number {
-  y = ensureSpace(pdf, y, 24);
-  pdf.setFontSize(13);
-  pdf.text(title, MARGIN, y);
-  y += 18;
-  pdf.setFontSize(10);
-  if (lines.length === 0) {
-    y = writeWrapped(pdf, "(none)", y);
-  } else {
-    for (const line of lines) y = writeWrapped(pdf, `- ${line}`, y);
-  }
-  return y + 10;
-}
 
 /**
  * One PDF for the whole workspace: a summary page (question, hypotheses, findings) followed by
@@ -54,7 +21,6 @@ function writeSection(pdf: jsPDF, title: string, lines: string[], y: number): nu
 export async function buildWorkspacePdf(snapshot: Snapshot, capture: PanelCapture): Promise<jsPDF> {
   const panels = (snapshot.panels ?? []).filter((p) => !p.closed);
   const pdf = new jsPDF({ unit: "pt", format: "a4" });
-  const pageW = pdf.internal.pageSize.getWidth();
 
   let y = MARGIN;
   pdf.setFontSize(18);
@@ -76,12 +42,7 @@ export async function buildWorkspacePdf(snapshot: Snapshot, capture: PanelCaptur
     py += 6;
     const shot = await capture(panel);
     if (shot && shot.width > 0 && shot.height > 0) {
-      const maxW = pageW - MARGIN * 2;
-      const maxH = pdf.internal.pageSize.getHeight() - py - MARGIN;
-      const scale = Math.min(maxW / shot.width, maxH / shot.height, 1);
-      const w = shot.width * scale;
-      const h = shot.height * scale;
-      pdf.addImage(shot.dataUrl, "PNG", MARGIN, py, w, h);
+      writeImage(pdf, py, shot.dataUrl, shot.width, shot.height);
     } else {
       pdf.setFontSize(10);
       pdf.text("(chart not available for capture)", MARGIN, py);

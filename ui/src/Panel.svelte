@@ -160,6 +160,7 @@
   });
 
   let plotEl = $state<HTMLDivElement | null>(null);
+  let sectionEl = $state<HTMLElement | null>(null);
   let previewEl = $state<HTMLDivElement | null>(null);
   let data = $state.raw<PanelData | null>(null);
   let fetchWidth = $state(0);
@@ -489,13 +490,15 @@
   const close = () => closePanel(panel.id).catch((e) => (error = String(e)));
 
   // export (telemetry-nerd-ulh9): save this panel's chart as a PNG or a one-page PDF, for sharing
-  // a single finding outside the app. See chart/exportPanel.ts for how the capture works and why
-  // PDF is a hand-rolled wrapper instead of a dependency.
+  // a single finding outside the app. See chart/exportPanel.ts for how the capture works. The PDF
+  // also carries the panel's question, provenance and notes/caveats (bead 71qs): a chart without
+  // them is misleading once it leaves the app, so the PNG (a bare chart image by design) is the
+  // only export that's chart-only.
   let exportBusy = $state<"png" | "pdf" | null>(null);
   const doExport = (kind: "png" | "pdf") => {
-    if (!plotEl || exportBusy) return;
+    if (!plotEl || !sectionEl || exportBusy) return;
     exportBusy = kind;
-    (kind === "png" ? exportPanelPng(panel.id, plotEl) : exportPanelPdf(panel.id, plotEl))
+    (kind === "png" ? exportPanelPng(panel.id, plotEl) : exportPanelPdf(panel.id, plotEl, sectionEl))
       .catch((e) => (error = String(e)))
       .finally(() => (exportBusy = null));
   };
@@ -715,6 +718,7 @@
 
 <section
   class="panel"
+  bind:this={sectionEl}
   id="panel-{panel.id}"
   data-panel-id={panel.id}
   data-annotation-count={annCount}
@@ -1080,7 +1084,7 @@
           >
             <span class="tag">{note.kind === "caveat" ? "Caveat" : "Note"}</span>
             {#if note.source}<span class="tag source" title="source of variation (spec §5.4)">{sourceText(note.source)}</span>{/if}
-            {note.text}
+            <span class="note-text">{note.text}</span>
           </li>
         {/each}
       </ul>
