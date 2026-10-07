@@ -271,3 +271,11 @@ def test_spec_rejects_nothing_new():
         {"name": "x", "url": "https://g.example/api/datasources/proxy/uid/u"}
     )
     assert spec.url == "https://g.example/api/datasources/proxy/uid/u"
+
+
+def test_an_elasticsearch_datasource_points_at_the_direct_connection():
+    from telemetry_nerd.sources.grafana import UNSUPPORTED_HINT
+
+    assert "not Prometheus" in UNSUPPORTED_HINT
+    assert 'source_connect(url=..., flavor="elasticsearch"' in UNSUPPORTED_HINT
+    assert "index_pattern" in UNSUPPORTED_HINT and "time_field" in UNSUPPORTED_HINT

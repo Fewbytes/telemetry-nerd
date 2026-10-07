@@ -98,3 +98,46 @@ async def test_unknown_argument_is_rejected_not_ignored(tmp_path):
     async with Client(mcp) as client:
         tools = (await client.list_tools()).tools
     assert all(t.input_schema.get("additionalProperties") is False for t in tools)
+
+
+from telemetry_nerd.core.bootstrap import source_factory
+from telemetry_nerd.sources.elasticsearch import ElasticsearchSource
+
+
+async def test_connect_an_elasticsearch_source_with_an_api_key(tmp_path, monkeypatch):
+    async def ok(self) -> dict:
+        return {"reachable": True, "distribution": "elasticsearch", "version": "8.15.3"}
+
+    monkeypatch.setattr(ElasticsearchSource, "probe", ok)
+    monkeypatch.setenv("ES_API_KEY", "abc==")
+    svc = make_service(tmp_path, factory=source_factory)
+    r = await call(build_mcp(svc, "http://x"), "source_connect", {
+        "name": "logs", "url": "https://es.example:9200", "flavor": "elasticsearch",
+        "index_pattern": "access-logs-*", "time_field": "@timestamp",
+        "auth_env": "ES_API_KEY", "auth_scheme": "apikey",
+    })  # fmt: skip
+    assert not r.is_error, text(r)
+    out = json.loads(text(r))
+    assert (out["source"]["flavor"], out["source"]["index_pattern"]) == (
+        "elasticsearch",
+        "access-logs-*",
+    )
+    assert out["source"]["auth"]["scheme"] == "apikey"
+    assert isinstance(svc.sources["logs"], ElasticsearchSource)
+
+
+async def test_an_es_source_without_time_field_is_refused_with_the_reason(tmp_path):
+    svc = make_service(tmp_path, factory=source_factory)
+    r = await call(build_mcp(svc, "http://x"), "source_connect", {
+        "name": "logs", "url": "https://es.example:9200", "flavor": "elasticsearch",
+        "index_pattern": "access-logs-*",
+    })  # fmt: skip
+    assert r.is_error and "time_field" in text(r)
+
+
+async def test_source_connect_documents_the_es_flavors(tmp_path):
+    async with Client(build_mcp(make_service(tmp_path), "http://x")) as c:
+        tools = {t.name: t for t in (await c.list_tools()).tools}
+    doc = tools["source_connect"].description or ""
+    for word in ("elasticsearch", "opensearch", "index_pattern", "time_field", "apikey"):
+        assert word in doc, word

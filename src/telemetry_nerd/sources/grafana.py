@@ -33,8 +33,9 @@ Backend = Literal["prometheus", "thanos", "mimir", "victoriametrics"]
 Flavor = Literal["prometheus", "victoriametrics"]
 
 UNSUPPORTED_HINT = (
-    "not Prometheus/MetricsQL-compatible; only PromQL sources are supported "
-    "(see telemetry-nerd-sgb for log/other adapters)"
+    "not Prometheus/MetricsQL-compatible, so it cannot be queried through Grafana yet; "
+    'Elasticsearch/OpenSearch connect directly: source_connect(url=..., flavor="elasticsearch", '
+    "index_pattern=..., time_field=...) (see telemetry-nerd-sgb for other adapters)"
 )
 
 

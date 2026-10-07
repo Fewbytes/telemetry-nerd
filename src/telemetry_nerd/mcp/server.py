@@ -844,8 +844,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         replace: bool = False,
         profile_source: str | None = None,
         timezone: str = "UTC",
+        index_pattern: str | None = None,
+        time_field: str | None = None,
     ) -> str:
-        """Connect a Prometheus-compatible source at runtime (no daemon restart).
+        """Connect a source at runtime (no daemon restart): Prometheus-compatible (Prometheus,
+        Thanos, Mimir, VictoriaMetrics) or an Elasticsearch / OpenSearch cluster.
 
         Public demo sources connect by name alone, e.g. source_connect(name="grafana-play"):
         url, flavor, resolution (series interval) and politeness come from the registry (see public_sources);
@@ -858,15 +861,24 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         uid="grafanacloud-prom")), without building the proxy url yourself. The datasource's
         own buildinfo (through Grafana's proxy) decides `flavor` (e.g. VictoriaMetrics ->
         victoriametrics); the given `flavor` argument is ignored. Mutually exclusive with url.
-        flavor: "victoriametrics" (MetricsQL rollup) or "prometheus" (also works on VM,
-        Thanos, Mimir); ignored when grafana+uid detect it.
+        flavor: "victoriametrics" (MetricsQL rollup), "prometheus" (also works on VM, Thanos,
+        Mimir), "elasticsearch" or "opensearch" (one adapter serves both; flavor only changes how
+        the version is read); ignored when grafana+uid detect it.
+        Elasticsearch / OpenSearch: url = the cluster base URL (e.g. https://es.example:9200, or
+        a reverse-proxy path prefix); index_pattern (required) = the indices this source reads,
+        e.g. "access-logs-*" (lowercase; a comma-separated list may use *; never bare * or
+        _all); time_field (required, no default) = the date field documents are bucketed by,
+        e.g. "@timestamp". resolution: the finest query step accepted (default 1s; documents have
+        no series interval). Through Grafana (grafana+uid) is not supported yet.
         resolution: the series interval. "auto" (default): measured from the sample spacing
         (median spacing per job, i.e. the scrape interval for scraped metrics; the coarsest
         job's when they differ), re-measured by source_learn; or
         a duration (e.g. 15s, 60s) that overrides the measurement. source_status shows both.
         Secrets: NEVER pass a token. Ask the user to put it in a file (auth_file, absolute
         path; picked up immediately) or an env var of the daemon (auth_env, the variable
-        NAME; needs a daemon restart if set later). auth_scheme: bearer | basic ("user:pass").
+        NAME; needs a daemon restart if set later).
+        auth_scheme: bearer | basic ("user:pass") | apikey (an Elasticsearch API key as
+        Elasticsearch/Kibana hand it out, the encoded id:api_key, sent as "ApiKey <key>").
         With grafana+uid, this is Grafana's own token (the proxy forwards it); it needs
         access to that datasource.
         Politeness for shared/public servers: lower max_concurrency, set min_interval
@@ -896,6 +908,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                     },
                     "profile_source": profile_source,
                     "timezone": timezone,
+                    "index_pattern": index_pattern,
+                    "time_field": time_field,
                 }
             )
 

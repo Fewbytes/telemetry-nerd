@@ -25,3 +25,31 @@ async def test_runtime_sources_survive_rebuild(tmp_path, monkeypatch):
     rebuilt = build_service(settings)
     assert set(rebuilt.sources) == {"default", "play"}
     assert rebuilt.sources["play"].base_url == "https://play.test/prom"
+
+
+from telemetry_nerd.core.bootstrap import source_factory
+from telemetry_nerd.sources.elasticsearch import ElasticsearchSource
+from telemetry_nerd.sources.promql import PromQLSource
+from telemetry_nerd.sources.spec import SourceSpec
+
+
+def test_the_factory_dispatches_on_flavor():
+    es = source_factory(SourceSpec(name="logs", url="http://es:9200", flavor="opensearch",
+                                   index_pattern="access-*", time_field="@timestamp"))  # fmt: skip
+    assert isinstance(es, ElasticsearchSource) and es.flavor == "opensearch"
+    prom = source_factory(SourceSpec(name="vm", url="http://vm:8428", flavor="victoriametrics"))
+    assert isinstance(prom, PromQLSource)
+
+
+async def test_runtime_es_sources_survive_rebuild(tmp_path, monkeypatch):
+    settings = Settings(data_dir=tmp_path / "data")
+    svc = build_service(settings)
+
+    async def ok(self) -> dict:
+        return {"reachable": True}
+
+    monkeypatch.setattr(ElasticsearchSource, "probe", ok)
+    await svc.source_connect(SourceSpec(name="logs", url="http://es:9200", flavor="elasticsearch",
+                                        index_pattern="access-*", time_field="@timestamp"))  # fmt: skip
+    rebuilt = build_service(settings)
+    assert isinstance(rebuilt.sources["logs"], ElasticsearchSource)
