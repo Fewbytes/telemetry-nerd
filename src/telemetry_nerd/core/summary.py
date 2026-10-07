@@ -358,6 +358,7 @@ def summarize_distribution(
     (bucket bounds, only where n is enough). Never a percentile value."""
     caveats = _base_caveats(meta, now_ms, settle_ms)
     caveats += [c for c in meta.source_caveats if c not in caveats]
+    linear = (meta.scheme or {}).get("kind") == "linear"
     base = {
         "dataset": meta.id,
         "expr": meta.expr,
@@ -369,7 +370,18 @@ def summarize_distribution(
         "counts": (
             "as produced by the code; additive over time and adjacent buckets"
             if meta.code_node
+            else "doc_count per step (documents per value bucket); additive over time and "
+            "adjacent buckets"
+            if linear
             else "increase() per step; additive over time and adjacent buckets"
+        ),
+        **(
+            {
+                "bucket_resolution": "the query's bucket width (re-query with a smaller interval "
+                "for more detail)"
+            }
+            if linear
+            else {}
         ),
         **produced_by(meta),
     }

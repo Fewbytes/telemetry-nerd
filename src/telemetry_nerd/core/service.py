@@ -32,7 +32,7 @@ from telemetry_nerd.analysis.exprkind import (
     min_samples,
 )
 from telemetry_nerd.analysis.filters import FilterSpec
-from telemetry_nerd.analysis.fraction import fraction_over, wilson
+from telemetry_nerd.analysis.fraction import comparison, fraction_over, wilson
 from telemetry_nerd.analysis.outcome import OUTCOME_LABELS, add_matcher, candidate_labels, classify
 from telemetry_nerd.analysis.profile_reference import describe, hourly_means, matched_hours
 from telemetry_nerd.analysis.quantile import attach_counts
@@ -158,7 +158,14 @@ from telemetry_nerd.model.time import (
     parse_duration,
     parse_time,
 )
-from telemetry_nerd.sources.base import LimitExceeded, Source, SourceError, SourceUnavailable
+from telemetry_nerd.sources.base import (
+    LimitExceeded,
+    Source,
+    SourceError,
+    SourceUnavailable,
+    language_of,
+)
+from telemetry_nerd.sources.esquery import EsQuery
 from telemetry_nerd.sources.registry import SourceRegistry
 from telemetry_nerd.sources.spec import RESERVED_NAMES, SourceSpec
 from telemetry_nerd.workspace.models import PanelGroup
@@ -486,6 +493,8 @@ class TelemetryService:
         start = start or self.get_default_range()
         end = end or "now"
         src = self._source(source)
+        if language_of(src) == "es_dsl":
+            return await self._query_es(src, source, expr, start, end, step, actor)
         await self.ensure_resolution(source)
         expr = self._expand_families(expr, source, src)
         now = self.clock()
@@ -573,6 +582,59 @@ class TelemetryService:
         self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
         return {"dataset": meta.id, "summary": summary}
 
+    async def _query_es(
+        self, src: Source, source: str, expr: str, start: str, end: str, step: str, actor: Actor
+    ) -> dict:
+        """An Elasticsearch/OpenSearch query: the native request body, no PromQL pipeline (no
+        family or $__rate_interval expansion, no PromQL analyze, no mergeability checks, no
+        settle_unobserved: query buckets are exact tiles with no lookback fill)."""
+        q = EsQuery.parse(expr)  # an unsupported shape is a SourceError listing the forms
+        if q.form == "histogram":
+            raise SourceError(
+                "a histogram aggregation is a distribution, not a time series",
+                hint="use query_distribution(selector=<this expr>, source=...) for counts per "
+                "value bucket",
+            )
+        now = self.clock()
+        rng = TimeRange(parse_time(start, now), parse_time(end, now))
+        step_ms = auto_step(rng, src.resolution_ms) if step == "auto" else parse_duration(step)
+        if step_ms < src.resolution_ms:
+            raise SourceError(
+                f"step {format_duration(step_ms)} is finer than source {src.name!r} accepts "
+                f"({format_duration(src.resolution_ms)})",
+                hint=f"use step >= {format_duration(src.resolution_ms)} or auto",
+            )
+        rng = _align_within_limit(rng, step_ms, "buckets")
+        caveats: list[str] = []
+        representation, qv, n_min = "bucket_agg", None, None
+        if q.form == "percentile":
+            # a percentile is per query bucket, never rolled up; n is the adapter's value_count
+            representation, qv = "quantile", q.q
+            n_min = min_samples(q.q) if q.q is not None else None
+            caveats.append("approximate_percentile")
+            result = await self.cache.get(
+                src.identity, f"values|{expr}", rng, step_ms,
+                lambda r: src.fetch_values(expr, r, step_ms),
+            )  # fmt: skip
+        else:
+            if q.form in ("rate", "field_rate"):
+                caveats.append("zero_is_no_documents")
+            result = await self.cache.get(
+                src.identity, expr, rng, step_ms, lambda r: src.fetch(expr, r, step_ms)
+            )
+        meta = self.datasets.put(
+            source=src.name, expr=expr, rng=rng, step_ms=step_ms,
+            resolution_ms=src.resolution_ms, result=result, representation=representation,
+            quantile=qv, n_min=n_min, semantics_flags=_semantics_flags(src), caveats=caveats,
+            query_language="es_dsl",
+        )  # fmt: skip
+        summary = self._time_summary(meta, result, now)
+        if summary.get("series_count") == 0:
+            summary["empty_result"] = absence_note(src.name, expr, summary.get("range"))
+        self.workspaces.note_source(source)  # only once the query succeeded
+        self.log.append(actor, "dataset.created", meta.id, {"expr": expr})
+        return {"dataset": meta.id, "summary": summary}
+
     def get_default_range(self) -> str:
         """The `start` new panels default to when the caller doesn't say (bead aqk)."""
         return self.workspace.get_setting("default_range", "now-1h")
@@ -612,21 +674,26 @@ class TelemetryService:
         await self.ensure_resolution(source)
         now = self.clock()
         rng = TimeRange(parse_time(start, now), parse_time(end, now))
-        floor = 2 * src.resolution_ms  # increase() needs two samples per window
+        es = language_of(src) == "es_dsl"
+        # increase() needs two samples per window; document counts need none
+        floor = src.resolution_ms if es else 2 * src.resolution_ms
         step_ms = (
             auto_step(rng, floor, DIST_TARGET_COLUMNS) if step == "auto" else parse_duration(step)
         )
         if step_ms < floor:
             raise SourceError(
-                f"step {format_duration(step_ms)} is shorter than two series intervals "
-                f"({format_duration(floor)})",
-                hint=f"counts come from increase() per step; use step >= {format_duration(floor)} or auto",
-            )
+                f"step {format_duration(step_ms)} is shorter than "
+                + (f"the finest query step ({format_duration(floor)})" if es
+                   else f"two series intervals ({format_duration(floor)})"),
+                hint=f"use step >= {format_duration(floor)} or auto"
+                + ("" if es else "; counts come from increase() per step"),
+            )  # fmt: skip
         rng = _align_within_limit(rng, step_ms, "columns")
         dist = await src.fetch_histogram(selector, tuple(by), rng, step_ms)
         meta = self.datasets.put_distribution(
             source=src.name, rng=rng, step_ms=step_ms, resolution_ms=src.resolution_ms,
             dist=dist, histogram={"selector": selector.strip(), "by": list(by)}, n_min=DIST_N_MIN,
+            query_language=language_of(src),
         )  # fmt: skip
         summary = summarize_distribution(meta, dist, now_ms=now, settle_ms=self.cache.settle_ms)
         self.workspaces.note_source(source)  # only once the query succeeded
@@ -758,8 +825,10 @@ class TelemetryService:
                 res["inside_bucket"] = [_edge_text(r.bucket[0]), _edge_text(r.bucket[1])]
             out.append(res)
         return mark_statistics(
-            {"dataset": dataset_id, "x": x, "series": out}, self.datasets, [dataset_id]
-        )
+            {"dataset": dataset_id, "x": x, "compare": comparison(dist.scheme.lower_inclusive),
+             "series": out},
+            self.datasets, [dataset_id],
+        )  # fmt: skip
 
     async def scan_metrics(
         self,

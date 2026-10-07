@@ -11,6 +11,7 @@ from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.db import open_duckdb
 from telemetry_nerd.datasets.store import DatasetStore
 from telemetry_nerd.model.discovery import Discovery
+from telemetry_nerd.model.distribution import COLUMN_SCHEMA, DIST_SCHEMA, BucketScheme, DistResult
 from telemetry_nerd.model.series import (
     BUCKET_SCHEMA,
     SERIES_SCHEMA,
@@ -188,3 +189,65 @@ def make_service(
         kernels=kernels,
         runs_root=runs_root,
     )
+
+
+class FakeEsSource:
+    """An Elasticsearch-like source (query_language es_dsl) serving fixed rows for service
+    tests: fetch -> a varying documents-per-second line, fetch_values -> a percentile with n=40,
+    fetch_histogram -> [0, 25) x30 and [25, 50) x10 per column (a linear scheme)."""
+
+    semantics = None
+    query_language = "es_dsl"
+
+    def __init__(self, name: str = "es", resolution_ms: int = 15_000) -> None:
+        self.name = name
+        self.identity = f"fake-es|{name}|{resolution_ms}"
+        self.resolution_ms = resolution_ms
+        self.calls: list[tuple[str, str]] = []
+
+    async def probe(self) -> dict:
+        return {"reachable": True, "distribution": "elasticsearch", "version": "8.15.3"}
+
+    async def discover(self) -> Discovery:
+        return Discovery(
+            (), (), {}, None, 1.0, ("cardinality_unavailable",), False, naming="fields"
+        )
+
+    async def scrape_interval(self, selector: str, at_ms: int | None = None) -> int | None:
+        return None
+
+    def _line(self, rng: TimeRange, step_ms: int, values, count: int) -> FetchResult:
+        ts = list(range(rng.start_ms, rng.end_ms + 1, step_ms))
+        vals = [values(i) for i in range(len(ts))]
+        sid = series_id(self.name, {})
+        buckets = pa.table(
+            {"ts_ms": ts, "series_id": [sid] * len(ts), "avg": vals, "min": vals, "max": vals,
+             "count": [count] * len(ts)},
+            schema=BUCKET_SCHEMA,
+        )  # fmt: skip
+        series = pa.table({"series_id": [sid], "labels": [labels_json({})]}, schema=SERIES_SCHEMA)
+        return FetchResult(buckets, series)
+
+    async def fetch(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
+        self.calls.append(("fetch", expr))
+        return self._line(rng, step_ms, lambda i: 2.0 + (i % 7) * 0.1, 1)
+
+    async def fetch_values(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
+        self.calls.append(("fetch_values", expr))
+        return self._line(rng, step_ms, lambda i: 0.25, 40)
+
+    async def fetch_histogram(self, selector, by, rng: TimeRange, step_ms: int) -> DistResult:
+        self.calls.append(("fetch_histogram", selector))
+        ts = list(range(rng.start_ms, rng.end_ms + 1, step_ms))
+        sid = series_id(self.name, {})
+        k = len(ts)
+        rows = pa.table(
+            {"ts_ms": ts * 2, "series_id": [sid] * (2 * k), "bucket_lo": [0.0] * k + [25.0] * k,
+             "bucket_hi": [25.0] * k + [50.0] * k, "count": [30.0] * k + [10.0] * k},
+            schema=DIST_SCHEMA,
+        )  # fmt: skip
+        cols = pa.table({"ts_ms": ts, "series_id": [sid] * k, "n": [40.0] * k},
+                        schema=COLUMN_SCHEMA)  # fmt: skip
+        series = pa.table({"series_id": [sid], "labels": [labels_json({})]}, schema=SERIES_SCHEMA)
+        return DistResult(rows, cols, series, BucketScheme("linear", width=25.0, offset=0.0),
+                          selector, ("query_chosen_buckets",))  # fmt: skip

@@ -422,7 +422,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         allow_nonmergeable: bool = False,
         question: str | None = None,
     ) -> str:
-        """Fetch a PromQL/MetricsQL expression as a dataset of min/max/avg/count buckets.
+        """Fetch a query as a dataset of min/max/avg/count buckets: PromQL/MetricsQL, or an
+        Elasticsearch/OpenSearch request body.
 
         question: optional, the question this data should answer; echoed back with the
         `show(dataset, question)` call that draws it (a panel needs its question).
@@ -452,6 +453,21 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         $__rate_interval expands to max(4 x series interval, step + series interval) (the series
         interval is the scrape interval for scraped metrics); prefer it over a fixed [1m]/[5m] as
         the query window of every rate (a query window spanning many steps cuts the effective n).
+
+        Elasticsearch / OpenSearch sources: expr is the native request body (JSON), shown
+        verbatim, with no time range in it (time is start/end/step; the adapter adds the
+        date_histogram). Forms: {"query": {...}} alone = documents per second, e.g.
+        {"query": {"query_string": {"query": "service.name:checkout AND NOT url.path:\"/healthz\""}}};
+        "aggs" with ONE of value_count (a field's values per second), stats (mean/min/max and
+        count per query bucket: latency, e.g. {"aggs": {"lat": {"stats": {"field":
+        "event.duration"}}}}), percentiles with exactly one "percents" value (a quantile,
+        TDigest-approximate, never rolled up); optionally inside ONE terms aggregation (one
+        series per term; documents without the field are in no series unless terms sets
+        `missing`; a too-small size is refused, never truncated). Query buckets are
+        [t - step, t): a document on a boundary lands one bucket later than a Prometheus
+        sample. An empty interior bucket reads as 0/s (caveat zero_is_no_documents). Rate forms
+        carry no unit: pass unit (e.g. req/s) to show when you know it.
+
         Returns {dataset, summary}. The summary is compact; raw series stay on the server.
         """
         try:
@@ -790,6 +806,13 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         Counts are increase() over a query window equal to the query step (tiles; never from
         quantiles), so they add up over time and across adjacent buckets. step: auto (~300
         columns), never shorter than two series intervals.
+
+        Elasticsearch / OpenSearch: the request body with ONE histogram aggregation, e.g.
+        {"query": {...}, "aggs": {"lat": {"histogram": {"field": "event.duration",
+        "interval": 25}}}}; group with by (at most one field), not terms. Its buckets are
+        chosen by the query (interval, offset), edges [lo, hi): re-query with a smaller
+        interval for more detail. Counts are doc_count per query bucket (exact).
+
         Returns {dataset, summary}: n per series, columns with/without data, low-n columns,
         the bucket scheme (the resolution limit) and the BUCKET holding p50/p90/p99 where n
         is large enough. Draw it with `show` (heatmap), or `show(mark="histogram",
@@ -821,6 +844,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         bucket containing x (`inside_bucket`), never interpolated. `ci95` is the Wilson interval
         for sampling noise. n is the number of observations; `low_count` means too few to trust.
         Each series carries an `evidence` statistic you can pass to finding_create as is.
+        On query-chosen buckets (Elasticsearch, [lo, hi) edges) the answer is the fraction at
+        or above x: compare is ">=" (">" otherwise).
         """
         try:
             return _dump(service.fraction_over(dataset, x, start, end, by_series))
