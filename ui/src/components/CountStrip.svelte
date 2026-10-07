@@ -46,10 +46,10 @@
 
 <div class="count-strip">
   <canvas bind:this={canvas}></canvas>
-  <span class="label">n per {Math.round(data.effective_step_ms / 1000)}s column · max {Number(nMax.toPrecision(3))}{nMin ? ` · muted: n < ${nMin}` : ""}</span>
+  <span class="label" style="margin-left: {AXIS_LEFT + 4}px">n per {Math.round(data.effective_step_ms / 1000)}s column · max {Number(nMax.toPrecision(3))}{nMin ? ` · muted: n < ${nMin}` : ""}</span>
 </div>
 
 <style>
-  .count-strip { position: relative; margin-bottom: 4px; }
-  .label { position: absolute; left: 68px; top: 0; font-size: 10px; color: var(--muted); }
+  .count-strip { display: flex; flex-direction: column; margin-bottom: 4px; }
+  .label { font-size: 10px; color: var(--muted); margin-top: 2px; white-space: nowrap; }
 </style>
