@@ -20,6 +20,7 @@ from typing import Any, Literal
 import httpx
 import pyarrow as pa
 
+from telemetry_nerd.model.discovery import Discovery, MetricInfo
 from telemetry_nerd.model.distribution import COLUMN_SCHEMA, DIST_SCHEMA, BucketScheme, DistResult
 from telemetry_nerd.model.series import (
     BUCKET_SCHEMA,
@@ -62,6 +63,27 @@ def _no_index(pattern: str) -> SourceError:
         f"index pattern {pattern} matches no index",
         hint="check index_pattern (source_connect(..., index_pattern=..., replace=true))",
     )
+
+
+_UNITS = {"micros": "us", "nanos": "ns", "byte": "B"}  # mapping meta.unit -> catalog unit
+
+
+def _meta(info: dict, key: str) -> str | None:
+    """A mapping `meta` value; _field_caps returns each as a list (merged across indices)."""
+    v = (info.get("meta") or {}).get(key)
+    if isinstance(v, list):
+        v = v[0] if v else None
+    return str(v) if v else None
+
+
+def _field_unit(info: dict) -> str | None:
+    u = _meta(info, "unit")
+    return _UNITS.get(u, u) if u else None
+
+
+def _field_type(info: dict) -> str | None:
+    t = info.get("time_series_metric") or _meta(info, "metric_type")
+    return t if t in ("gauge", "counter") else None
 
 
 def _causes(err: object) -> list[tuple[str, str]]:
@@ -409,6 +431,70 @@ class ElasticsearchSource:
         )
         fields = caps.get("fields") if isinstance(caps.get("fields"), dict) else {}
         return sorted(f for f, t in fields.items() if not f.startswith("_") and set(t) & DATE_TYPES)
+
+    async def discover(self) -> Discovery:
+        """One _field_caps call: numeric aggregatable fields fill the metric role, aggregatable
+        keyword/ip/boolean fields are the candidate `by` / terms fields."""
+        self._caps.clear()  # field checks re-read the mapping after a discover
+        caps = await self._request(
+            "GET", f"/{self.index_pattern}/_field_caps",
+            params={"fields": "*", "include_unmapped": "false"},
+            timeout_s=self.limits.discover_timeout_s,
+        )  # fmt: skip
+        fields = caps.get("fields")
+        if not isinstance(fields, dict):
+            raise _malformed("field_caps response has no fields")
+        nested = [f for f, t in fields.items() if isinstance(t, dict) and "nested" in t]
+        numeric: list[MetricInfo] = []
+        labels: list[str] = []
+        conflicts = nested_skipped = histogram_skipped = 0
+        for name, types in sorted(fields.items()):
+            if name.startswith("_") or not isinstance(types, dict):
+                continue  # metadata fields (_id, _index, ...)
+            kinds = set(types) - {"object", "nested"}
+            if not kinds:
+                continue
+            if any(name.startswith(p + ".") for p in nested):
+                nested_skipped += 1  # needs a nested aggregation (not a v1 form)
+                continue
+            if len(kinds) > 1:
+                conflicts += 1  # mapped with different types across the pattern's indices
+                continue
+            [kind] = kinds
+            info = types[kind]
+            if kind == "histogram":
+                histogram_skipped += 1  # pre-aggregated histogram field: later work
+                continue
+            if not info.get("aggregatable"):
+                continue
+            if kind in NUMERIC_TYPES:
+                numeric.append(MetricInfo(name, _field_type(info), None, _field_unit(info)))  # type: ignore[arg-type]
+            elif kind in LABEL_TYPES:
+                labels.append(name)
+        caveats = ["cardinality_unavailable"]
+        partial = False
+        for count, code in ((conflicts, "mapping_conflict"), (nested_skipped, "nested_fields_skipped"),
+                            (histogram_skipped, "histogram_fields_skipped")):  # fmt: skip
+            if count:
+                caveats.append(f"{code}:{count}")
+                partial = True
+        coverage = sum(1 for m in numeric if m.unit or m.type) / len(numeric) if numeric else 1.0
+        if len(numeric) > self.limits.max_metrics:
+            caveats.append(f"metrics_truncated:{self.limits.max_metrics}/{len(numeric)}")
+            numeric = numeric[: self.limits.max_metrics]
+            partial = True
+        if not numeric:
+            caveats.append("no_numeric_fields")  # not an error: the rate form needs no field
+        return Discovery(
+            metrics=tuple(numeric),
+            label_names=tuple(labels),
+            histograms={},
+            cardinality=None,
+            metadata_coverage=coverage,
+            caveats=tuple(caveats),
+            partial=partial,
+            naming="fields",
+        )
 
     async def fetch(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
         q = EsQuery.parse(expr)

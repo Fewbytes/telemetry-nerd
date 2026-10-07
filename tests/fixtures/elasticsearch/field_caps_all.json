@@ -1,0 +1,26 @@
+{
+  "indices": ["tn-access-1", "tn-access-2"],
+  "fields": {
+    "_id": {"_id": {"type": "_id", "metadata_field": true, "searchable": true, "aggregatable": false}},
+    "_index": {"_index": {"type": "_index", "metadata_field": true, "searchable": true, "aggregatable": true}},
+    "@timestamp": {"date": {"type": "date", "searchable": true, "aggregatable": true}},
+    "event.duration": {"long": {"type": "long", "searchable": true, "aggregatable": true, "meta": {"unit": ["nanos"]}}},
+    "http.response.status_code": {"long": {"type": "long", "searchable": true, "aggregatable": true}},
+    "http.response.bytes": {"long": {"type": "long", "searchable": true, "aggregatable": true, "meta": {"unit": ["byte"], "metric_type": ["counter"]}}},
+    "host.cpu.pct": {"scaled_float": {"type": "scaled_float", "searchable": true, "aggregatable": true, "time_series_metric": "gauge"}},
+    "service.name": {"keyword": {"type": "keyword", "searchable": true, "aggregatable": true}},
+    "host.ip": {"ip": {"type": "ip", "searchable": true, "aggregatable": true}},
+    "is_bot": {"boolean": {"type": "boolean", "searchable": true, "aggregatable": true}},
+    "tier": {"constant_keyword": {"type": "constant_keyword", "searchable": true, "aggregatable": true}},
+    "message": {"text": {"type": "text", "searchable": true, "aggregatable": false}},
+    "message.keyword": {"keyword": {"type": "keyword", "searchable": true, "aggregatable": true}},
+    "http": {"object": {"type": "object", "searchable": false, "aggregatable": false}},
+    "latency": {
+      "long": {"type": "long", "searchable": true, "aggregatable": true, "indices": ["tn-access-1"]},
+      "keyword": {"type": "keyword", "searchable": true, "aggregatable": true, "indices": ["tn-access-2"]}
+    },
+    "spans": {"nested": {"type": "nested", "searchable": false, "aggregatable": false}},
+    "spans.duration": {"long": {"type": "long", "searchable": true, "aggregatable": true}},
+    "latency_hist": {"histogram": {"type": "histogram", "searchable": false, "aggregatable": true}}
+  }
+}
