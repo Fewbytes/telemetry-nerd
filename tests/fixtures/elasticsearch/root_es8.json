@@ -1,0 +1,14 @@
+{
+  "name": "es01",
+  "cluster_name": "docker-cluster",
+  "cluster_uuid": "3pQ1bq0JQwWq0p1h3j1vZg",
+  "version": {
+    "number": "8.15.3",
+    "build_flavor": "default",
+    "build_type": "docker",
+    "lucene_version": "9.11.1",
+    "minimum_wire_compatibility_version": "7.17.0",
+    "minimum_index_compatibility_version": "7.0.0"
+  },
+  "tagline": "You Know, for Search"
+}

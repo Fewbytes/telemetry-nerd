@@ -1,0 +1,14 @@
+{
+  "name": "os01",
+  "cluster_name": "docker-cluster",
+  "cluster_uuid": "Zc2b7m1qR3e8xvM4kY9n0A",
+  "version": {
+    "distribution": "opensearch",
+    "number": "2.17.1",
+    "build_type": "tar",
+    "lucene_version": "9.11.1",
+    "minimum_wire_compatibility_version": "7.10.0",
+    "minimum_index_compatibility_version": "7.0.0"
+  },
+  "tagline": "The OpenSearch Project: https://opensearch.org/"
+}
