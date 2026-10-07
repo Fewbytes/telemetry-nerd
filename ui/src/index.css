@@ -284,6 +284,11 @@ ul.gaps { list-style: none; margin: 0; padding: 0; }
 .panel .marginal { position: absolute; top: 0; right: 0; }
 .panel .marginal-head { position: absolute; top: -2px; right: 2px; width: 80px; font-size: 10px; line-height: 11px; color: var(--muted); display: flex; flex-direction: column; text-align: right; }
 .panel .plot:has(.marginal) .y-badge, .panel .plot:has(.marginal) .y-strip { right: 88px; }
+
+/* Panel chart height resize handle (bead telemetry-nerd-z0mq) */
+.panel .resize-handle { height: 8px; margin: 2px 0 -4px; cursor: row-resize; border-radius: 4px; touch-action: none; }
+.panel .resize-handle:hover, .panel .resize-handle.resizing { background: var(--border); }
+.panel .resize-handle::after { content: ""; display: block; width: 32px; height: 3px; margin: 2.5px auto; border-radius: 2px; background: var(--muted); opacity: 0.5; }
 /* fleet's own badge (Panel.svelte): flows after its view switcher + encoding/key text instead of
    floating at a fixed top offset, since that header's height varies with the view and the key's
    own content and a fixed guess always ends up colliding with it somewhere */

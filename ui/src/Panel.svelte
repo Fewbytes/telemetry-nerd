@@ -50,6 +50,7 @@
   import { msAt, xAt } from "./lib/groups";
   import { exportPanelPdf, exportPanelPng } from "./chart/exportPanel";
   import { collapsedPanels } from "./lib/collapsed.svelte";
+  import { DEFAULT_PANEL_HEIGHT, MAX_PANEL_HEIGHT, MIN_PANEL_HEIGHT, readPanelHeight, resizedHeight, writePanelHeight } from "./chart/panelHeight";
 
   let { panel, annotations = [], threads = [] }: {
     panel: Panel; annotations?: Annotation[]; threads?: Thread[];
@@ -148,6 +149,45 @@
   let annCount = $state(0);
   const RESIZE_MIN_PX = 8;
   let plot: uPlot | null = null;
+  // chart height (telemetry-nerd-z0mq): a resizable, per-panel, per-viewer preference —
+  // persisted in localStorage like the theme choice, not in the workspace/panel spec.
+  let chartHeight = $state(untrack(() => readPanelHeight(panel.id) ?? DEFAULT_PANEL_HEIGHT));
+  let resizingHeight = $state(false);
+  let resizeStartY = 0;
+  let resizeStartHeight = 0;
+  const KEY_RESIZE_STEP = 20;
+  const applyChartHeight = (next: number) => {
+    chartHeight = next;
+    if (plot) plot.setSize({ width: plot.width, height: next });
+  };
+  // pointer capture on the handle itself: every subsequent pointermove/up/cancel for this
+  // pointerId retargets here regardless of where the pointer physically is, so dragging off
+  // the thin strip (or off the window) cannot drop the move handler or leave it dangling —
+  // no window-level listeners to forget to remove on unmount or on a pointercancel with no
+  // matching pointerup (OS gesture takeover, context menu, window blur mid-drag).
+  const startResize = (e: PointerEvent) => {
+    if (e.button !== 0) return; // primary button / touch / pen only
+    e.preventDefault();
+    resizingHeight = true;
+    resizeStartY = e.clientY;
+    resizeStartHeight = chartHeight;
+    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+  };
+  const onResizeMove = (e: PointerEvent) => {
+    if (!resizingHeight) return;
+    applyChartHeight(resizedHeight(resizeStartHeight, e.clientY - resizeStartY));
+  };
+  const endResize = () => {
+    if (!resizingHeight) return;
+    resizingHeight = false;
+    writePanelHeight(panel.id, chartHeight);
+  };
+  const onHandleKeydown = (e: KeyboardEvent) => {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    e.preventDefault();
+    applyChartHeight(resizedHeight(chartHeight, e.key === "ArrowUp" ? -KEY_RESIZE_STEP : KEY_RESIZE_STEP));
+    writePanelHeight(panel.id, chartHeight);
+  };
 
   const cancelSelection = () => {
     selection = null;
@@ -200,7 +240,7 @@
       if (w <= 0) return;
       if (Math.abs(w - fetchWidth) / Math.max(fetchWidth, 1) > 0.1) load(w);
       // ignore sub-threshold jitter (scrollbars, sub-pixel layout): each setSize redraws the plot
-      else if (plot && Math.abs(w - margW - plot.width) >= RESIZE_MIN_PX) plot.setSize({ width: w - margW, height: 260 });
+      else if (plot && Math.abs(w - margW - plot.width) >= RESIZE_MIN_PX) plot.setSize({ width: w - margW, height: chartHeight });
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -583,7 +623,7 @@
       (onDraw) =>
         new uPlot(
           {
-            width, height: 260, series: model.series, bands: model.bands,
+            width, height: untrack(() => chartHeight), series: model.series, bands: model.bands,
             tzDate: (ts: number) => uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"),
             scales: {
               x: link ? { time: true, range: (): [number, number] => [link.domain[0] / 1000, link.domain[1] / 1000] } : { time: true },
@@ -641,7 +681,7 @@
                   originOff = nonZeroOrigin(u.scales.y.min ?? 0, u.scales.y.max ?? 0, !!yr?.log);
                   if (m && margEl) {
                     const top = u.bbox.top / dpr, bottom = top + u.bbox.height / dpr;
-                    const mctx = setupCanvas(margEl, MARGINAL_W, el.clientHeight || 260);
+                    const mctx = setupCanvas(margEl, MARGINAL_W, el.clientHeight || chartHeight);
                     if (mctx) drawMarginal(mctx, m.windows, m.n_min, { toPx: (v) => u.valToPos(v, "y"), top, bottom, width: MARGINAL_W, fg: stroke, muted: grid });
                   }
                   if (rugEl && d.bucket_state?.length) {
@@ -902,7 +942,7 @@
       {/each}
     {/if}
     {#if data && data.kind === "fleet"}
-      <FleetPlot data={data} width={fetchWidth} range={yres?.range ?? null} unit={panel.spec.y.unit ?? null} bind:view={fleetView} onRendered={(ms, pts, h) => onFacetRendered(0, 1, ms, pts, h ?? 260, true)}
+      <FleetPlot data={data} width={fetchWidth} height={chartHeight} range={yres?.range ?? null} unit={panel.spec.y.unit ?? null} bind:view={fleetView} onRendered={(ms, pts, h) => onFacetRendered(0, 1, ms, pts, h ?? chartHeight, true)}
         xRange={link ? [link.domain[0] / 1000, link.domain[1] / 1000] : null} gutter={link ? GROUP_GUTTER_PX : null}
         onPlot={(u) => { if (link) areaOf(u); attachBrush(u); }} />
       <!-- fleet puts a view switcher + encoding/key text ahead of its chart, at a height that
@@ -918,8 +958,8 @@
     {#if data && data.kind === "spectrogram"}
       {@const sg = data}
       {#each sg.series as s, i (s.id)}
-        <SpectrogramPlot data={sg} series={s} width={fetchWidth} height={260}
-          onRendered={(ms, cells) => onFacetRendered(i, sg.series.length, ms, cells, 260)} />
+        <SpectrogramPlot data={sg} series={s} width={fetchWidth} height={chartHeight}
+          onRendered={(ms, cells) => onFacetRendered(i, sg.series.length, ms, cells, chartHeight)} />
       {/each}
       <div class="legend">window {fmtStep(sg.segment_ms)} · hop {fmtStep(sg.hop_ms)} ({Math.round(sg.overlap * 100)}% overlap): each column summarizes one window · period resolution 1/{fmtStep(sg.segment_ms)}, rows show the max within the row · periods {Math.round(sg.limits.shortest_s)}s–{Math.round(sg.limits.longest_s)}s · colour: share of window variance, linear 0–1 · faint: below the 1% false-alarm level · hatched: window under 50% covered</div>
     {/if}
@@ -958,6 +998,19 @@
       {/key}
     {/if}
   </div>
+  {#if data?.kind === "time" || data?.kind === "spectrogram" || (data?.kind === "fleet" && (fleetView === "band" || fleetView === "quantiles"))}
+    <!-- svelte-ignore a11y_no_static_element_interactions (pointer-drag resize handle; ArrowUp/ArrowDown is the keyboard path) -->
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex (a focusable splitter: role=separator is not in svelte-check's interactive-role list) -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions (same: the role communicates it to assistive tech even though svelte-check does not recognise it) -->
+    <div
+      class="resize-handle" class:resizing={resizingHeight}
+      role="separator" aria-orientation="horizontal" aria-label="Resize panel height"
+      aria-valuenow={chartHeight} aria-valuemin={MIN_PANEL_HEIGHT} aria-valuemax={MAX_PANEL_HEIGHT}
+      tabindex={0}
+      onpointerdown={startResize} onpointermove={onResizeMove} onpointerup={endResize}
+      onpointercancel={endResize} onlostpointercapture={endResize} onkeydown={onHandleKeydown}
+    ></div>
+  {/if}
   {#if data?.kind === "time" && data.bucket_state_more}
     <div class="rug-more">{rugMoreLabel(data.bucket_state_more)}</div>
   {/if}
