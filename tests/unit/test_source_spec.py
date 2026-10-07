@@ -92,3 +92,86 @@ def test_public_view_never_contains_the_secret():
     assert view["auth"] == {"env": "TN_T", "file": None, "scheme": "bearer", "set": True}
     assert spec.public({})["auth"]["set"] is False
     assert view["name"] == "x" and view["url"] == GRAFANA
+
+
+ES = "https://es.example:9200"
+
+
+def es_spec(**kw):
+    base = {
+        "name": "logs",
+        "url": ES,
+        "flavor": "elasticsearch",
+        "index_pattern": "access-logs-*",
+        "time_field": "@timestamp",
+    }
+    return SourceSpec.model_validate({**base, **kw})
+
+
+@pytest.mark.parametrize("flavor", ["elasticsearch", "opensearch"])
+def test_es_flavors_take_index_pattern_and_time_field(flavor):
+    spec = es_spec(flavor=flavor)
+    assert (spec.flavor, spec.index_pattern, spec.time_field) == (
+        flavor,
+        "access-logs-*",
+        "@timestamp",
+    )
+    assert spec.public()["index_pattern"] == "access-logs-*"
+
+
+@pytest.mark.parametrize("missing", ["index_pattern", "time_field"])
+def test_es_flavors_require_both_fields(missing):
+    with pytest.raises(ValidationError, match=missing):
+        es_spec(**{missing: None})
+
+
+def test_promql_flavors_refuse_es_fields():
+    with pytest.raises(ValidationError, match="elasticsearch/opensearch only"):
+        SourceSpec(name="p", url=GRAFANA, index_pattern="x-*")
+    with pytest.raises(ValidationError, match="elasticsearch/opensearch only"):
+        SourceSpec(name="p", url=GRAFANA, time_field="@timestamp")
+
+
+def test_es_flavors_refuse_profile_source():
+    with pytest.raises(ValidationError, match="PromQL-only"):
+        es_spec(profile_source="other")
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "*",
+        "_all",
+        "logs-*,*",
+        "Access-*",
+        "has space",
+        "a/b",
+        'a"b',
+        "a<b",
+        "a|b",
+        "a#b",
+        "x" * 256,
+        "",
+    ],
+)
+def test_index_pattern_rules(pattern):
+    with pytest.raises(ValidationError):
+        es_spec(index_pattern=pattern)
+
+
+@pytest.mark.parametrize("pattern", ["access-logs-*", "logs-a,logs-b", "esnet_*", "a" * 255])
+def test_index_pattern_accepts_names_lists_and_wildcards(pattern):
+    assert es_spec(index_pattern=pattern).index_pattern == pattern
+
+
+@pytest.mark.parametrize("field", ["", " ", "has space"])
+def test_time_field_must_be_a_field_path(field):
+    with pytest.raises(ValidationError):
+        es_spec(time_field=field)
+
+
+def test_apikey_scheme_sends_the_encoded_key_verbatim():
+    ref = AuthRef(env="ES_API_KEY", scheme="apikey")
+    assert ref.headers(
+        {"ES_API_KEY": "VnVhQ2ZHY0JDZGJrUW0tZTVhT3g6dWkybHAyYXhUTm1zeWFrdzl0dk5udw=="}
+    ) == {"Authorization": "ApiKey VnVhQ2ZHY0JDZGJrUW0tZTVhT3g6dWkybHAyYXhUTm1zeWFrdzl0dk5udw=="}

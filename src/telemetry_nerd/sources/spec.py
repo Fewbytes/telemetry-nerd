@@ -22,6 +22,8 @@ from telemetry_nerd.sources.base import SourceError
 NAME_PATTERN = r"^[a-z][a-z0-9_-]{0,31}$"
 RESERVED_NAMES = frozenset({"default"})
 _ENV_VAR = re.compile(r"^[A-Z_][A-Z0-9_]{0,127}$")
+ES_FLAVORS = frozenset({"elasticsearch", "opensearch"})
+_INDEX_FORBIDDEN = re.compile(r'[\s/\\"<>|#]')
 
 
 class MissingSecret(SourceError):
@@ -33,7 +35,7 @@ class AuthRef(BaseModel):
 
     env: str | None = None
     file: str | None = None
-    scheme: Literal["bearer", "basic"] = "bearer"
+    scheme: Literal["bearer", "basic", "apikey"] = "bearer"
 
     @field_validator("env")
     @classmethod
@@ -80,6 +82,9 @@ class AuthRef(BaseModel):
                     "in the daemon's environment (env vars need a daemon restart; files do not)"
                 ),
             )
+        if self.scheme == "apikey":
+            # the encoded key Elasticsearch hands out (base64 of id:api_key), used as is
+            return {"Authorization": f"ApiKey {secret}"}
         if self.scheme == "basic":
             return {"Authorization": "Basic " + base64.b64encode(secret.encode()).decode()}
         return {"Authorization": f"Bearer {secret}"}
@@ -106,7 +111,7 @@ class SourceSpec(BaseModel):
 
     name: str = Field(pattern=NAME_PATTERN)
     url: str
-    flavor: Literal["prometheus", "victoriametrics"] = "prometheus"
+    flavor: Literal["prometheus", "victoriametrics", "elasticsearch", "opensearch"] = "prometheus"
     #: None: learned from the series' scrape spacing (PromQLSource.learn_resolution); a value
     #: overrides what is learned
     resolution_ms: int | None = Field(None, ge=1_000, le=3_600_000)
@@ -121,16 +126,67 @@ class SourceSpec(BaseModel):
     #: IANA timezone the operating profile counts hours in: human-driven load follows local time
     #: and shifts an hour across DST, which UTC buckets smear (bead 2as.24)
     timezone: str = "UTC"
+    #: Elasticsearch/OpenSearch: the index pattern this source reads (one source = one pattern)
+    index_pattern: str | None = None
+    #: Elasticsearch/OpenSearch: the date field documents are bucketed by; no default (indices
+    #: use @timestamp, timestamp, metadata.timestamp, ...: any guess is wrong somewhere)
+    time_field: str | None = None
 
     @field_validator("timezone")
     @classmethod
     def _known_timezone(cls, v: str) -> str:
         return check_timezone(v)
 
+    @field_validator("index_pattern")
+    @classmethod
+    def _index_pattern(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if not 1 <= len(v) <= 255:
+            raise ValueError("index_pattern must be 1-255 characters")
+        if v != v.lower():
+            raise ValueError("index_pattern must be lowercase (index names are)")
+        if _INDEX_FORBIDDEN.search(v):
+            raise ValueError('index_pattern must not contain whitespace or / \\ " < > | #')
+        if any(part in ("*", "_all") for part in v.split(",")):
+            raise ValueError(
+                "index_pattern '*' / '_all' includes system indices: name the pattern, "
+                "e.g. access-logs-*"
+            )
+        return v
+
+    @field_validator("time_field")
+    @classmethod
+    def _time_field(cls, v: str | None) -> str | None:
+        if v is not None and (not v or re.search(r"\s", v)):
+            raise ValueError("time_field must be a field path like @timestamp")
+        return v
+
     @model_validator(mode="after")
     def _profile_source_is_another(self) -> SourceSpec:
         if self.profile_source == self.name:
             raise ValueError("profile_source must name another source, not the source itself")
+        return self
+
+    @model_validator(mode="after")
+    def _flavor_fields(self) -> SourceSpec:
+        if self.flavor in ES_FLAVORS:
+            missing = [f for f in ("index_pattern", "time_field") if getattr(self, f) is None]
+            if missing:
+                raise ValueError(
+                    f"flavor {self.flavor} needs {' and '.join(missing)} (e.g. "
+                    "index_pattern='access-logs-*', time_field='@timestamp'; there is no default "
+                    "time field)"
+                )
+            if self.profile_source is not None:
+                raise ValueError(
+                    "profile_source is PromQL-only: operating profiles are not available on "
+                    "Elasticsearch/OpenSearch sources"
+                )
+        elif self.index_pattern is not None or self.time_field is not None:
+            raise ValueError(
+                "index_pattern and time_field are for flavor elasticsearch/opensearch only"
+            )
         return self
 
     @field_validator("url")
