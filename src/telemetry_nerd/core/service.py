@@ -44,6 +44,7 @@ from telemetry_nerd.catalog.family_query import SLOT, FamilyQueryRefused
 from telemetry_nerd.catalog.family_query import rewrite as rewrite_families
 from telemetry_nerd.catalog.mergeability import NONMERGEABLE_CAVEAT
 from telemetry_nerd.catalog.profiles import ProfileStore
+from telemetry_nerd.catalog.rules import facts_from_claims
 from telemetry_nerd.charts.context_lines import (
     ContextSpec,
     headroom,
@@ -656,7 +657,11 @@ class TelemetryService:
             meta, result, now_ms=now, settle_ms=self.cache.settle_ms,
             states=STATE_SCHEMA.empty_table() if states is None else states,
         )  # fmt: skip
-        if meta.representation == "bucket_agg" and looks_like_histogram(meta.expr):
+        if (
+            meta.representation == "bucket_agg"
+            and meta.query_language == "promql"
+            and looks_like_histogram(meta.expr)
+        ):
             summary["caveats"].append("histogram_as_lines")
         return summary
 
@@ -1063,6 +1068,7 @@ class TelemetryService:
             and not meta.derived
             and meta.representation == "bucket_agg"
             and meta.code_node is None  # fixed data: drawn as produced, never re-queried
+            and meta.query_language == "promql"
             and selector_parts(meta.expr) is not None
         )
         if auto_ok:
@@ -1767,9 +1773,10 @@ class TelemetryService:
             "window as an input",
         )  # fmt: skip
         ref = await self.diagnostics.fetch_reference(dataset_id, baseline, cycles, tz, actor)
-        for d in [dataset_id, *(r["dataset"] for r in ref["refs"])]:
-            await self.diagnostics.fetch_sibling(d, actor)
-            await self.diagnostics.fetch_ratio(d, actor)
+        if self.datasets.meta(dataset_id).query_language == "promql":
+            for d in [dataset_id, *(r["dataset"] for r in ref["refs"])]:
+                await self.diagnostics.fetch_sibling(d, actor)
+                await self.diagnostics.fetch_ratio(d, actor)
 
         def run() -> dict:
             out = self.diagnostics.summary(dataset_id, ref=ref, now_ms=self.clock())
@@ -1787,8 +1794,9 @@ class TelemetryService:
         """analyze, computing the operating profile first when the SPC centre needs its
         seasonal shape and none is cached (telemetry-nerd-3af). A counter series born on its
         first event gets its live sibling fetched first (absence read as 0 where it reports)."""
-        await self.diagnostics.fetch_sibling(dataset_id, "claude")
-        await self.diagnostics.fetch_ratio(dataset_id, "claude")
+        if self.datasets.meta(dataset_id).query_language == "promql":
+            await self.diagnostics.fetch_sibling(dataset_id, "claude")
+            await self.diagnostics.fetch_ratio(dataset_id, "claude")
         out = self.analyze(dataset_id, baseline_start, baseline_end)
         return await self._seasonal_centre(
             dataset_id, out, lambda: self.analyze(dataset_id, baseline_start, baseline_end)
@@ -2066,9 +2074,12 @@ class TelemetryService:
             unit, provenance, unit_warning = self._verify_unit(meta, unit, provenance)
         if not unit and meta.code_node and meta.unit:
             unit, provenance = meta.unit, f"declared by code node {meta.code_node}"
+        es = meta.query_language == "es_dsl"
+        if not unit and es:
+            unit, provenance = self._es_unit(meta)
         spec = auto_spec(
             dataset_id,
-            expr=None if meta.code_node else meta.expr,
+            expr=None if (meta.code_node or es) else meta.expr,
             unit=unit,
             unit_provenance=provenance,
             representation=meta.representation,
@@ -2160,7 +2171,10 @@ class TelemetryService:
         issues += cut
         counters = (
             raw_counters(meta.expr, lambda m: self.ws.catalog_facts(meta.source, m))
-            if spec.layers[0].mark == "line+envelope" and not meta.derived and not meta.code_node
+            if spec.layers[0].mark == "line+envelope"
+            and not meta.derived
+            and not meta.code_node
+            and not es
             else []
         )
         if counters and not (auto or raw_ok):
@@ -2204,9 +2218,23 @@ class TelemetryService:
             and spec.layers[0].mark == "line+envelope"
             and not meta.derived
             and not meta.code_node
+            and not es
         ):
             self.profiles.request(meta.source, meta.expr)  # lazy T1 profile on first view
         return ShowResult(panel, [i for i in issues if i.severity == "warning"])
+
+    def _es_unit(self, meta: DatasetMeta) -> tuple[str | None, str | None]:
+        """The unit of an Elasticsearch dataset: the aggregated field's catalog unit for the
+        stats, percentile and histogram forms; none for the rate forms (a document is not
+        necessarily a request: the caller passes unit, e.g. req/s)."""
+        q = EsQuery.parse(meta.expr)
+        if q.form in ("rate", "field_rate") or q.field is None:
+            return None, None
+        # the catalog's claims only: catalog_facts falls back to Prometheus name rules, which
+        # must never be applied to a field path (spec: name-based inference is skipped)
+        claims = self.ws.catalog.claims_for(meta.source, q.field)
+        unit = facts_from_claims(claims).unit if claims else None
+        return (unit, f"catalog unit of field {q.field}") if unit else (None, None)
 
     def _verify_unit(
         self, meta: DatasetMeta, unit: str, provenance: str | None
@@ -2214,7 +2242,9 @@ class TelemetryService:
         """An asserted y unit, checked against what the catalog (or a derived-bounds rule) says
         the expression returns and against the data range (telemetry-nerd-lei). A scale or
         dimension conflict is refused; an unverifiable unit is kept, flagged in its provenance."""
-        if meta.representation == "distribution":
+        if meta.query_language == "es_dsl":
+            expected, why = self._es_unit(meta)
+        elif meta.representation == "distribution":
             expected, why = None, None  # the unit labels the value axis of buckets, not a line
         else:
             derived = self._derived_bounds(meta)
@@ -2271,9 +2301,16 @@ class TelemetryService:
                 "flags": ov.model_dump(), "normal": off, "limit": off,
                 "ghost": {**off, "loaded": False, "label": "last week"},
             }  # fmt: skip
-        profile = self.profiles.cached(meta.source, meta.expr)
-        window = format_duration(profile.window_ms) if profile else ""
-        normal = normal_payload(profile, series, step_ms, window)
+        if meta.query_language == "es_dsl":
+            normal = {
+                "available": False,
+                "reason": "operating profiles are PromQL-only (v1): no normal band on an "
+                "Elasticsearch/OpenSearch source",
+            }
+        else:
+            profile = self.profiles.cached(meta.source, meta.expr)
+            window = format_duration(profile.window_ms) if profile else ""
+            normal = normal_payload(profile, series, step_ms, window)
         limit = limit_payload(self.datasets, spec.y.context, meta, labels, width_px)
         ghost = ghost_payload(self.datasets, spec, meta, width_px) if ov.ghost else {
             "available": True, "loaded": "week" in spec.references, "label": "last week",

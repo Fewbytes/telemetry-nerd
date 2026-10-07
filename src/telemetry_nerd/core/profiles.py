@@ -41,7 +41,7 @@ from telemetry_nerd.datasets.cache import SeriesCache
 from telemetry_nerd.datasets.store import is_code_expr
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.time import TimeRange, format_duration, now_ms, parse_duration
-from telemetry_nerd.sources.base import Source, SourceError, SourceUnavailable
+from telemetry_nerd.sources.base import Source, SourceError, SourceUnavailable, language_of
 from telemetry_nerd.sources.promql import is_selector
 from telemetry_nerd.sources.registry import SourceRegistry
 
@@ -253,6 +253,12 @@ class ProfileService:
             raise SourceError(
                 f"{expr.strip()} is a code output (fixed data): it has no operating profile",
                 hint="profile the code's input expression instead",
+            )
+        if language_of(self.sources.get(source)) == "es_dsl":
+            raise SourceError(
+                "operating profiles are PromQL-only (v1): not available on an "
+                "Elasticsearch/OpenSearch source",
+                hint="compare time ranges with compare_seasonal or analyze(baseline=...) instead",
             )
         psrc, caveats = self._profile_source(source)
         t = profile_target(

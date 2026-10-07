@@ -119,3 +119,61 @@ async def test_tool_descriptions_document_the_es_forms(tmp_path):
     d = tools["query_distribution"].description or ""
     assert "Elasticsearch" in d and "[lo, hi)" in d
     assert ">=" in (tools["fraction_over"].description or "")
+
+
+from telemetry_nerd.model.discovery import Discovery, MetricInfo
+
+
+def learn_duration_unit(svc, unit="ms"):
+    svc.ws.catalog_learn("es", Discovery(
+        metrics=(MetricInfo("event.duration", None, None, unit),), label_names=(), histograms={},
+        cardinality=None, metadata_coverage=1.0, caveats=(), partial=False, naming="fields",
+    ))  # fmt: skip
+
+
+async def test_show_takes_the_unit_of_the_aggregated_field_from_the_catalog(svc_es):
+    svc, _ = svc_es
+    learn_duration_unit(svc)
+    out = await svc.query(STATS, start="now-1h", step="1m", source="es")
+    res = svc.show(out["dataset"], "How slow is checkout?")
+    assert res.panel.spec["y"]["unit"] == "ms"
+    assert "event.duration" in res.panel.spec["y"]["unit_provenance"]
+
+
+async def test_show_leaves_rate_forms_unitless_and_accepts_a_given_unit(svc_es):
+    svc, _ = svc_es
+    out = await svc.query(RATE, start="now-1h", step="1m", source="es")
+    assert svc.show(out["dataset"], "How busy is checkout?").panel.spec["y"].get("unit") is None
+    given = svc.show(out["dataset"], "How busy is checkout?", unit="req/s")
+    assert given.panel.spec["y"]["unit"] == "req/s"
+    assert not [i for i in given.issues if i.rule == "raw_counter"]
+
+
+async def test_show_auto_never_rewrites_an_es_query_as_a_rate(svc_es):
+    svc, es = svc_es
+    out = await svc.query(RATE, start="now-1h", step="1m", source="es")
+    calls = len(es.calls)
+    res = await svc.show_auto(out["dataset"], "How busy is checkout?")
+    assert res.panel.spec.get("auto") is None and len(es.calls) == calls
+
+
+async def test_operating_profiles_are_refused_on_es_sources(svc_es):
+    svc, _ = svc_es
+    with pytest.raises(SourceError, match="PromQL-only"):
+        await svc.operating_profile(RATE, source="es")
+
+
+async def test_the_normal_band_overlay_is_unavailable_with_a_reason(svc_es):
+    svc, _ = svc_es
+    out = await svc.query(RATE, start="now-1h", step="1m", source="es")
+    panel = svc.show(out["dataset"], "How busy is checkout?").panel
+    normal = svc.panel_data(panel.id, 800)["overlays"]["normal"]
+    assert normal["available"] is False and "PromQL-only" in normal["reason"]
+
+
+async def test_analyze_on_an_es_dataset_says_no_profile_can_shape_the_centre(svc_es):
+    svc, _ = svc_es
+    out = await svc.query(RATE, start="now-1h", step="1m", source="es")
+    res = await svc.analyze_profiled(out["dataset"])
+    assert res["seasonal_centre"]["status"] == "unavailable"
+    assert "PromQL-only" in res["seasonal_centre"]["reason"]
