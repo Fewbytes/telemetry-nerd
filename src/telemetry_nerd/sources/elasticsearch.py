@@ -14,15 +14,24 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from typing import Any, Literal
 
 import httpx
+import pyarrow as pa
 
-from telemetry_nerd.model.time import format_duration
+from telemetry_nerd.model.series import (
+    BUCKET_SCHEMA,
+    SERIES_SCHEMA,
+    FetchResult,
+    labels_json,
+    series_id,
+)
+from telemetry_nerd.model.time import TimeRange, format_duration
 from telemetry_nerd.sources.base import LimitExceeded, Limits, SourceError, SourceUnavailable
+from telemetry_nerd.sources.esquery import COUNT_AGG, TIME_AGG, EsQuery
 from telemetry_nerd.sources.gate import Gate
-from telemetry_nerd.sources.promql import USER_AGENT
+from telemetry_nerd.sources.promql import MAX_STEPS_PER_QUERY, USER_AGENT
 from telemetry_nerd.sources.spec import SourceSpec
 
 EsFlavor = Literal["elasticsearch", "opensearch"]
@@ -111,6 +120,87 @@ def _raise_for(status: int, body: dict, pattern: str) -> None:
         f"query failed: {first}",
         hint="check the Query DSL / Lucene syntax and the field names; source_learn lists the fields",
     )
+
+
+Cell = tuple[float, float, float, int]  # avg, min, max, count
+Failed = tuple[tuple[int, int, str], ...]
+
+
+def _time_buckets(resp: dict) -> list[dict]:
+    buckets = ((resp.get("aggregations") or {}).get(TIME_AGG) or {}).get("buckets")
+    if not isinstance(buckets, list):
+        raise _malformed("response has no time buckets (aggregations.__tn_time.buckets)")
+    return buckets
+
+
+def _interior(buckets: list[dict]) -> list[dict]:
+    """First..last non-empty time bucket: before the first document is the retention edge and
+    after the last the future, unknown, never zero (min_doc_count 0 fills only between them)."""
+    full = [i for i, b in enumerate(buckets) if (b.get("doc_count") or 0) > 0]
+    return buckets[full[0] : full[-1] + 1] if full else []
+
+
+def _bucket_ts(b: dict, step_ms: int) -> int:
+    try:
+        return int(b["key"]) + step_ms  # keys are bucket starts; a query bucket carries its end
+    except (KeyError, TypeError, ValueError) as e:
+        raise _malformed(f"malformed time bucket {b!r}") from e
+
+
+def _groups(q: EsQuery, b: dict) -> Iterator[tuple[dict[str, str], dict]]:
+    """(labels, the bucket holding the metric) per series in one time bucket."""
+    if q.group_name is None or q.group_field is None:
+        yield {}, b
+        return
+    agg = b.get(q.group_name)
+    if not isinstance(agg, dict) or not isinstance(agg.get("buckets"), list):
+        raise _malformed(f"time bucket without its terms aggregation {q.group_name!r}")
+    other = agg.get("sum_other_doc_count") or 0
+    if other > 0:
+        size = (q.group or {}).get("size", 10)
+        raise LimitExceeded(
+            f"terms on {q.group_field} returned only the top {size} terms in a query bucket "
+            f"({other} documents fell in other terms)",
+            hint="raise the terms size (up to the 500-series limit) or narrow the query",
+        )
+    for tb in agg["buckets"]:
+        key = tb.get("key_as_string", tb.get("key"))
+        yield {q.group_field: str(key)}, tb
+
+
+def _percentile_value(agg: dict) -> float | None:
+    values = agg.get("values")
+    if isinstance(values, dict):
+        v = next(iter(values.values()), None)
+    elif isinstance(values, list) and values:
+        v = values[0].get("value")
+    else:
+        v = None
+    return None if v is None else float(v)
+
+
+def _cell(q: EsQuery, parent: dict, step_s: float) -> Cell | None:
+    """One query bucket's value of the form, or None when it holds no observation."""
+    try:
+        if q.form == "rate":
+            v = float(parent["doc_count"]) / step_s
+            return v, v, v, 1
+        agg = parent[q.metric_name]
+        if q.form == "field_rate":
+            v = float(agg.get("value") or 0) / step_s
+            return v, v, v, 1
+        if q.form == "stats":
+            n = int(agg.get("count") or 0)
+            if n == 0:
+                return None
+            return float(agg["avg"]), float(agg["min"]), float(agg["max"]), n
+        n = int((parent.get(COUNT_AGG) or {}).get("value") or 0)
+        v = _percentile_value(agg)
+        if n == 0 or v is None:
+            return None
+        return v, v, v, n
+    except (KeyError, TypeError, ValueError) as e:
+        raise _malformed(f"malformed {q.form} bucket {parent!r}") from e
 
 
 class ElasticsearchSource:
@@ -318,3 +408,137 @@ class ElasticsearchSource:
         )
         fields = caps.get("fields") if isinstance(caps.get("fields"), dict) else {}
         return sorted(f for f, t in fields.items() if not f.startswith("_") and set(t) & DATE_TYPES)
+
+    async def fetch(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
+        q = EsQuery.parse(expr)
+        if q.form == "percentile":
+            raise SourceError(
+                "a percentile is read per query bucket, never rolled up",
+                hint="query() routes a percentiles aggregation to fetch_values",
+            )
+        return await self._fetch(q, rng, step_ms)
+
+    async def fetch_values(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
+        """Every non-histogram form, one value per query bucket (percentiles included)."""
+        return await self._fetch(EsQuery.parse(expr), rng, step_ms)
+
+    async def _fetch(self, q: EsQuery, rng: TimeRange, step_ms: int) -> FetchResult:
+        if q.form == "histogram":
+            raise SourceError(
+                "a histogram aggregation is a distribution, not a time series",
+                hint="use query_distribution(selector=<this expr>, source=...) for counts per "
+                "value bucket",
+            )
+        resp, failed = await self._search(q, rng, step_ms)
+        step_s = step_ms / 1000
+        cells: dict[tuple[str, int], Cell] = {}
+        labels_by_sid: dict[str, dict[str, str]] = {}
+        interior = _interior(_time_buckets(resp))
+        for b in interior:
+            ts = _bucket_ts(b, step_ms)
+            for labels, parent in _groups(q, b):
+                sid = series_id(self.name, labels)
+                labels_by_sid[sid] = labels
+                if (cell := _cell(q, parent, step_s)) is not None:
+                    cells[(sid, ts)] = cell
+        if len(labels_by_sid) > self.limits.max_series:
+            raise LimitExceeded(
+                f"query returned {len(labels_by_sid)} series (limit {self.limits.max_series})",
+                hint="group by a field with fewer values, or narrow the query",
+            )
+        if q.form in ("rate", "field_rate") and q.group is not None:
+            # a term absent from an interior query bucket had no matching documents there
+            for sid in labels_by_sid:
+                for b in interior:
+                    cells.setdefault((sid, _bucket_ts(b, step_ms)), (0.0, 0.0, 0.0, 1))
+        keys = sorted(cells)
+        sids = sorted({sid for sid, _ in keys})
+        buckets = pa.table(
+            {
+                "ts_ms": [ts for _, ts in keys],
+                "series_id": [sid for sid, _ in keys],
+                "avg": [cells[k][0] for k in keys],
+                "min": [cells[k][1] for k in keys],
+                "max": [cells[k][2] for k in keys],
+                "count": [cells[k][3] for k in keys],
+            },
+            schema=BUCKET_SCHEMA,
+        )
+        series = pa.table(
+            {"series_id": sids, "labels": [labels_json(labels_by_sid[s]) for s in sids]},
+            schema=SERIES_SCHEMA,
+        )
+        return FetchResult(buckets, series, failed=failed)
+
+    async def _search(self, q: EsQuery, rng: TimeRange, step_ms: int) -> tuple[dict, Failed]:
+        steps = (rng.end_ms - rng.start_ms) // step_ms + 1
+        if steps > MAX_STEPS_PER_QUERY:
+            raise LimitExceeded(
+                f"{steps} steps exceeds {MAX_STEPS_PER_QUERY} per query",
+                hint="use a coarser step or a shorter range",
+            )
+        await self._check_fields(q)
+        body = q.body(rng, step_ms, self.time_field, self.limits.timeout_s)
+        resp = await self._request("POST", f"/{self.index_pattern}/_search", body=body)
+        shards = resp.get("_shards") if isinstance(resp.get("_shards"), dict) else {}
+        if shards.get("total") == 0:  # a wildcard that matches nothing answers 200
+            raise _no_index(self.index_pattern)
+        reasons: list[str] = []
+        if resp.get("timed_out") is True:
+            reasons.append(
+                f"the cluster timed out after {self.limits.timeout_s:g}s and returned partial results"
+            )
+        if (shards.get("failed") or 0) > 0:
+            fails = shards.get("failures") or []
+            why = _causes(fails[0].get("reason")) if fails and isinstance(fails[0], dict) else []
+            reasons.append(
+                f"{shards['failed']} of {shards.get('total')} shards failed"
+                + (f" ({why[0][0]}: {why[0][1]})" if why else "")
+            )
+        failed: Failed = (
+            ((rng.start_ms, rng.end_ms, "PartialResponse: " + "; ".join(reasons)),)
+            if reasons
+            else ()
+        )
+        return resp, failed
+
+    async def _field_types(self, field: str) -> dict[str, dict]:
+        if field not in self._caps:
+            caps = await self._request(
+                "GET", f"/{self.index_pattern}/_field_caps", params={"fields": field}
+            )
+            if isinstance(caps.get("indices"), list) and not caps["indices"]:
+                raise _no_index(self.index_pattern)
+            fields = caps.get("fields") if isinstance(caps.get("fields"), dict) else {}
+            types = fields.get(field) or {}
+            self._caps[field] = {t: i for t, i in types.items() if t != "unmapped"}
+        return self._caps[field]
+
+    async def _check_fields(self, q: EsQuery) -> None:
+        """Elasticsearch answers an aggregation on an unmapped field with empty results, which
+        would read as "no data": every aggregated field is checked against the mapping first."""
+        for field, need in q.fields():
+            types = await self._field_types(field)
+            if not types:
+                raise SourceError(
+                    f"field {field} is not in the mapping of {self.index_pattern}",
+                    hint="source_learn lists the fields (then catalog_search)",
+                )
+            if len(types) > 1:
+                raise SourceError(
+                    f"field {field} is mapped as {', '.join(sorted(types))} across the indices "
+                    f"of {self.index_pattern}",
+                    hint="narrow index_pattern to indices that agree, or aggregate another field",
+                )
+            [(kind, info)] = types.items()
+            if need == "numeric" and kind not in NUMERIC_TYPES:
+                raise SourceError(
+                    f"field {field} is {kind}, not numeric",
+                    hint="stats, percentiles and histogram need a numeric field; source_learn "
+                    "lists the numeric fields as metrics",
+                )
+            if need == "aggregatable" and not info.get("aggregatable"):
+                raise SourceError(
+                    f"field {field} ({kind}) is not aggregatable",
+                    hint=f"use its keyword sub-field, e.g. {field}.keyword",
+                )

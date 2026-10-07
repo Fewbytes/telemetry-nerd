@@ -1,0 +1,25 @@
+{
+  "took": 5,
+  "timed_out": false,
+  "_shards": {"total": 1, "successful": 1, "skipped": 0, "failed": 0},
+  "hits": {"hits": []},
+  "aggregations": {"__tn_time": {"buckets": [
+    {"key_as_string": "1699999980000", "key": 1699999980000, "doc_count": 0,
+     "by_status": {"doc_count_error_upper_bound": 0, "sum_other_doc_count": 0, "buckets": []}},
+    {"key_as_string": "1700000040000", "key": 1700000040000, "doc_count": 12,
+     "by_status": {"doc_count_error_upper_bound": 0, "sum_other_doc_count": 0, "buckets": [
+       {"key": 200, "doc_count": 10, "lat": {"count": 10, "min": 40.0, "max": 40.0, "avg": 40.0, "sum": 400.0}},
+       {"key": 500, "doc_count": 2, "lat": {"count": 2, "min": 90.0, "max": 110.0, "avg": 100.0, "sum": 200.0}}
+     ]}},
+    {"key_as_string": "1700000100000", "key": 1700000100000, "doc_count": 10,
+     "by_status": {"doc_count_error_upper_bound": 0, "sum_other_doc_count": 0, "buckets": [
+       {"key": 200, "doc_count": 10, "lat": {"count": 10, "min": 30.0, "max": 50.0, "avg": 41.0, "sum": 410.0}}
+     ]}},
+    {"key_as_string": "1700000160000", "key": 1700000160000, "doc_count": 3,
+     "by_status": {"doc_count_error_upper_bound": 0, "sum_other_doc_count": 0, "buckets": [
+       {"key": 500, "doc_count": 3, "lat": {"count": 0, "min": null, "max": null, "avg": null, "sum": 0.0}}
+     ]}},
+    {"key_as_string": "1700000220000", "key": 1700000220000, "doc_count": 0,
+     "by_status": {"doc_count_error_upper_bound": 0, "sum_other_doc_count": 0, "buckets": []}}
+  ]}}
+}
