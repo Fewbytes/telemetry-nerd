@@ -536,20 +536,26 @@ Follows the project's test tiers (`CLAUDE.md`): unit tests and e2e never touch a
   `naming="fields"` writing no rule or pack claims; Little's law with an ES source and a
   PromQL concurrency source (fixture datasets, cross-source `by` refusal).
 - **Integration** (`-m integration`, CI-required, testcontainers like the VictoriaMetrics
-  tests): one Elasticsearch 8.x and one OpenSearch 2.x container, a small access-log index
-  written by the test (known per-bucket counts and latencies), checked end to end through the
-  service: each form, grouping, `query_distribution`, `probe` on both flavors, `discover`.
-- **Live** (`-m network`, non-blocking): the CERN Elasticsearch/OpenSearch indices catalogued in
-  `2026-10-01-public-test-sources.md` (e.g. `esnet` `esnet_*` with `timestamp`;
-  `monit_es_fts_agg` `monit_prod_fts_agg*` with `metadata.timestamp`; the OpenSearch 3.4
-  `monit_os_wlcgops_*` indices), the way that spec validated against live public endpoints.
-  They are only reachable through CERN's Grafana datasource proxy, connected here as a plain
-  `url` (`https://monit-grafana-open.cern.ch/api/datasources/proxy/uid/<uid>`). The spike
-  verified only `_mapping` through that proxy; whether it forwards `_search` and `_field_caps` is
-  unknown. **The first live step is a probe of those two paths** (one request each, politeness as
-  for CERN in the public-test-sources spec). If the proxy refuses them, live validation of this
-  epic is the integration containers only, and CERN moves to the Grafana-proxied follow-up (the
-  adapter is not changed to suit Grafana's proxy in v1).
+  tests; this is the epic's primary validation tier, not the live/CERN tier below): one
+  Elasticsearch 8.x and one OpenSearch 2.x container, seeded with a synthetic access-log index
+  using ECS-shaped field names (`@timestamp`, `http.response.status_code`, `event.duration`,
+  `service.name`, `url.path`) and known per-bucket counts/latencies, checked end to end through
+  the service: each form, grouping, `query_distribution`, `probe` on both flavors, `discover`.
+  Using ECS field names here (even though the ECS catalog pack itself is a later-work follow-up,
+  not built in this epic) costs nothing and means the adapter is exercised against the field
+  shape real deployments are most likely to actually use.
+- **Live** (`-m network`, non-blocking, best-effort — not required for this epic to be done): the
+  CERN Elasticsearch/OpenSearch indices catalogued in `2026-10-01-public-test-sources.md` (e.g.
+  `esnet` `esnet_*` with `timestamp`; `monit_es_fts_agg` `monit_prod_fts_agg*` with
+  `metadata.timestamp`; the OpenSearch 3.4 `monit_os_wlcgops_*` indices), the way that spec
+  validated against live public endpoints. They are only reachable through CERN's Grafana
+  datasource proxy, connected here as a plain `url`
+  (`https://monit-grafana-open.cern.ch/api/datasources/proxy/uid/<uid>`). The spike verified only
+  `_mapping` through that proxy; whether it forwards `_search` and `_field_caps` is unknown. If a
+  quick probe of those two paths (one request each, politeness as for CERN in the
+  public-test-sources spec) succeeds, add the live test; if the proxy refuses them, skip this
+  tier entirely — the integration containers above are sufficient on their own, and CERN moves to
+  the Grafana-proxied follow-up (the adapter is not changed to suit Grafana's proxy in v1).
 - **UI** (vitest): panel-note text for `linear` schemes and the `>=` CCDF wording. No new e2e
   spec: the UI changes are text only, and the Query expander already renders any string.
 
