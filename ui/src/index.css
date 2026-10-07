@@ -133,12 +133,19 @@ a.obj-id:hover { text-decoration: underline; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* Two-column layout: panels | sidebar; one column under 900px */
+/* Two-column layout: panels | sidebar; one column under 900px. Once every sidebar section is
+   folded (telemetry-nerd-prli), the sidebar itself hides and the panel grid reclaims the column. */
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+.layout:has(.sidebar.all-collapsed) { grid-template-columns: 1fr; }
 @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
 
 /* Sidebar */
+.sidebar.all-collapsed { display: none; }
 .sidebar section { border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 16px; }
+.sidebar section header { display: flex; align-items: baseline; gap: 6px; margin-bottom: 8px; }
+.sidebar section header h2 { margin: 0; }
+.sidebar button.collapse { background: none; border: none; font-size: 0.9em; cursor: pointer; color: var(--muted); padding: 0 2px; }
+.sidebar button.collapse:hover { color: var(--fg); }
 .sidebar h2 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 .sidebar .none { color: var(--muted); font-size: 13px; margin: 4px 0; }
 .sidebar button, .sidebar input, .sidebar select {

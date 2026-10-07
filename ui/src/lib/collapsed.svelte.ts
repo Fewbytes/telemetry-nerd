@@ -6,11 +6,9 @@
 // DOM guards keep the module importable in node-environment vitest tests (no localStorage
 // there); tests stub it.
 
-const KEY = "tn-collapsed-panels";
-
-function readSaved(): Set<string> {
+function readSaved(key: string): Set<string> {
   try {
-    const raw = window.localStorage.getItem(KEY);
+    const raw = window.localStorage.getItem(key);
     const ids = raw ? JSON.parse(raw) : [];
     return new Set(Array.isArray(ids) ? ids.filter((v) => typeof v === "string") : []);
   } catch {
@@ -19,7 +17,13 @@ function readSaved(): Set<string> {
 }
 
 export class CollapsedStore {
-  ids = $state<Set<string>>(typeof window === "undefined" ? new Set() : readSaved());
+  #key: string;
+  ids = $state<Set<string>>(new Set());
+
+  constructor(key = "tn-collapsed-panels") {
+    this.#key = key;
+    this.ids = typeof window === "undefined" ? new Set() : readSaved(key);
+  }
 
   has(id: string): boolean {
     return this.ids.has(id);
@@ -31,11 +35,12 @@ export class CollapsedStore {
     else next.add(id);
     this.ids = next;
     try {
-      window.localStorage.setItem(KEY, JSON.stringify([...next]));
+      window.localStorage.setItem(this.#key, JSON.stringify([...next]));
     } catch {
       /* private mode etc. — preference still applies for this session */
     }
   }
 }
 
-export const collapsedPanels = new CollapsedStore();
+export const collapsedPanels = new CollapsedStore("tn-collapsed-panels");
+export const collapsedSidebar = new CollapsedStore("tn-collapsed-sidebar");
