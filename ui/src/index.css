@@ -73,6 +73,12 @@ a.obj-id:hover { text-decoration: underline; }
 .panel button.collapse { background: none; border: none; font-size: 0.9em; cursor: pointer; color: var(--muted); padding: 0 2px; }
 .panel button.collapse:hover { color: var(--fg); }
 .panel button.close { margin-left: auto; background: none; border: none; font-size: 1.2em; cursor: pointer; color: var(--muted); }
+.panel button.refresh {
+  font-size: 13px; line-height: 1; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px;
+  background: none; color: var(--muted); cursor: pointer; margin-left: 8px;
+}
+.panel button.refresh:hover:not(:disabled) { color: var(--fg); border-color: var(--fg); }
+.panel button.refresh:disabled { opacity: 0.5; cursor: not-allowed; }
 .panel .export-group { display: inline-flex; gap: 2px; margin-left: 8px; }
 .panel button.export {
   font-size: 11px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px;

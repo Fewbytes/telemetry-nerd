@@ -550,6 +550,10 @@
       .finally(() => (exportBusy = null));
   };
 
+  // manual refresh (telemetry-nerd-no5u): re-trigger the same load() the plotEl effect runs,
+  // for a present-bounded window where new data landed but nothing retriggered a refetch
+  const doRefresh = () => load(fetchWidth || 800);
+
   // reference layers (2as.11): switching one changes the payload, so fetch it again
   let overlayBusy = $state(false);
   const toggleOverlay = (key: "normal" | "limit" | "ghost", on: boolean) => {
@@ -791,6 +795,11 @@
     {/if}
     {#if loading}<span class="loading-tag" data-panel-loading><span class="spinner" aria-hidden="true"></span>{data ? "updating" : "loading"}</span>{/if}
     <PinButton object={panel.id} />
+    <button
+      type="button" class="refresh" data-refresh disabled={collapsed || loading}
+      title={collapsed ? "Expand the panel to refresh" : "Reload this panel's data"} aria-label="Refresh panel"
+      onclick={doRefresh}
+    >⟳</button>
     <span class="export-group" role="group" aria-label="Export panel">
       <button
         type="button" class="export" data-export="png" disabled={!!exportBusy || collapsed}
