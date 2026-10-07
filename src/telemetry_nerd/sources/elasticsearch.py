@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import os
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, Literal
 
 import httpx
 import pyarrow as pa
 
+from telemetry_nerd.model.distribution import COLUMN_SCHEMA, DIST_SCHEMA, BucketScheme, DistResult
 from telemetry_nerd.model.series import (
     BUCKET_SCHEMA,
     SERIES_SCHEMA,
@@ -421,6 +422,92 @@ class ElasticsearchSource:
     async def fetch_values(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
         """Every non-histogram form, one value per query bucket (percentiles included)."""
         return await self._fetch(EsQuery.parse(expr), rng, step_ms)
+
+    async def fetch_histogram(
+        self, selector: str, by: Sequence[str], rng: TimeRange, step_ms: int
+    ) -> DistResult:
+        """Document counts per value bucket per query bucket. The value buckets are chosen by the
+        query (interval, offset), not by the source: a finer interval can always be asked for."""
+        q = EsQuery.parse(selector)
+        if q.form != "histogram":
+            raise SourceError(
+                "query_distribution needs a histogram aggregation",
+                hint='selector = {"query": {...}, "aggs": {"lat": {"histogram": {"field": '
+                '"<numeric field>", "interval": 25}}}}; group with by',
+            )
+        if len(by) > 1:
+            raise SourceError(
+                f"by takes at most one field on an Elasticsearch source, got {list(by)}",
+                hint="one terms level in v1 (multi-field grouping is later work)",
+            )
+        if by:
+            q = q.with_group(by[0], self.limits.max_series + 1)
+        resp, failed = await self._search(q, rng, step_ms)
+        width = float(q.interval or 0)
+        rows: list[tuple[int, str, float, float, float]] = []
+        cols: dict[tuple[str, int], float] = {}
+        labels_by_sid: dict[str, dict[str, str]] = {}
+        interior = _interior(_time_buckets(resp))
+        for b in interior:
+            ts = _bucket_ts(b, step_ms)
+            for labels, parent in _groups(q, b):
+                sid = series_id(self.name, labels)
+                labels_by_sid[sid] = labels
+                leaves = (parent.get(q.metric_name) or {}).get("buckets")
+                if not isinstance(leaves, list):
+                    raise _malformed(f"bucket without its histogram {q.metric_name!r}")
+                n = 0.0
+                for leaf in leaves:
+                    c = float(leaf.get("doc_count") or 0)
+                    if c > 0:
+                        lo = float(leaf["key"])
+                        rows.append((ts, sid, lo, lo + width, c))
+                        n += c
+                cols[(sid, ts)] = n
+        if len(labels_by_sid) > self.limits.max_series:
+            raise LimitExceeded(
+                f"histogram has {len(labels_by_sid)} series (limit {self.limits.max_series})",
+                hint="group by a field with fewer values (by=[...]) or narrow the query",
+            )
+        for sid in labels_by_sid:  # a group absent from an interior query bucket: zero documents
+            for b in interior:
+                cols.setdefault((sid, _bucket_ts(b, step_ms)), 0.0)
+        if len(rows) > self.limits.max_points:
+            raise LimitExceeded(
+                f"histogram has {len(rows)} non-empty cells (limit {self.limits.max_points})",
+                hint="use a coarser step, a shorter range or a larger interval",
+            )
+        rows.sort(key=lambda r: (r[1], r[0], r[2]))
+        ckeys = sorted(cols)
+        sids = sorted(labels_by_sid)
+        return DistResult(
+            rows=pa.table(
+                {
+                    "ts_ms": [r[0] for r in rows],
+                    "series_id": [r[1] for r in rows],
+                    "bucket_lo": [r[2] for r in rows],
+                    "bucket_hi": [r[3] for r in rows],
+                    "count": [r[4] for r in rows],
+                },
+                schema=DIST_SCHEMA,
+            ),
+            columns=pa.table(
+                {
+                    "ts_ms": [ts for _, ts in ckeys],
+                    "series_id": [sid for sid, _ in ckeys],
+                    "n": [cols[k] for k in ckeys],
+                },
+                schema=COLUMN_SCHEMA,
+            ),
+            series=pa.table(
+                {"series_id": sids, "labels": [labels_json(labels_by_sid[s]) for s in sids]},
+                schema=SERIES_SCHEMA,
+            ),
+            scheme=BucketScheme("linear", width=width, offset=q.offset),
+            expr=selector,
+            caveats=("query_chosen_buckets",),
+            failed=failed,
+        )
 
     async def _fetch(self, q: EsQuery, rng: TimeRange, step_ms: int) -> FetchResult:
         if q.form == "histogram":
