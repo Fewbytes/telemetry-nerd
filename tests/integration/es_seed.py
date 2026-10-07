@@ -24,15 +24,16 @@ MAPPING = {"mappings": {"properties": {
 }}}  # fmt: skip
 
 
-#: the series cache fetches in chunks of 720 query buckets (12 h at a 1 m step, aligned to the
-#: epoch): a chunk edge next to GAP_MINUTE would make that interior zero a chunk's leading or
-#: trailing bucket (no row). Seeding 1 h into a 12 h chunk keeps the 30 minutes in one chunk on
-#: every run, so the tests never depend on the wall clock.
+#: ES fetches bypass the series cache (core/service.py: _query_es calls src.fetch/fetch_values
+#: directly), so there is no 720-bucket chunking to land GAP_MINUTE away from: one request covers
+#: the whole requested range regardless of where GAP_MINUTE falls. CHUNK_MS is kept only so
+#: base_ms() lands on a stable, wall-clock-independent offset across runs (arbitrary otherwise).
 CHUNK_MS = 720 * 60_000
 
 
 def base_ms() -> int:
-    """Start of the first seeded minute: 1 h into the 12 h cache chunk that began 24-36 h ago."""
+    """Start of the first seeded minute: a stable offset (not tied to any cache chunking, which
+    no longer applies to ES fetches) so the tests never depend on the wall clock."""
     return (now_ms() - 24 * 3_600_000) // CHUNK_MS * CHUNK_MS + 3_600_000
 
 

@@ -52,6 +52,20 @@ def test_es_arrivals_and_latency_with_a_prometheus_gauge_are_consistent(tmp_path
     assert assumptions["label_sets"]["status"] == "ok"
 
 
+def test_label_sets_flags_when_arrival_rate_and_latency_queries_differ(tmp_path):
+    """_es_roles used to discard arrival_rate's parsed query, so the check never compared it
+    against latency's: two ES queries filtering different services would still claim "the same
+    selectors". With both kept, a real mismatch is now flagged by name."""
+    svc, _, _ = _setup(tmp_path)
+    other_qs = {"query_string": {"query": "service.name:search"}}
+    other_arrivals = json.dumps({"query": other_qs})
+    out = _run(svc, arrival_rate=other_arrivals)
+    label_sets = {a["name"]: a for a in out["assumptions"]}["label_sets"]
+    assert label_sets["status"] == "flagged"
+    assert "arrival_rate and latency queries differ" in label_sets["detail"]
+    assert str(other_qs) in label_sets["detail"] and str(QS) in label_sets["detail"]
+
+
 def test_concurrency_is_never_read_from_an_es_source(tmp_path):
     svc, _, _ = _setup(tmp_path)
     with pytest.raises(ValueError, match="PromQL source"):

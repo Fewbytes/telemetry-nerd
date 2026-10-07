@@ -7,6 +7,7 @@ import pytest
 from telemetry_nerd.analysis.exprkind import min_samples
 from telemetry_nerd.sources.base import SourceError
 
+from .es_fake import FakeEs, search_response, tb
 from .fakes import FakeEsSource, make_service
 
 QS = {"query_string": {"query": "service.name:checkout"}}
@@ -34,6 +35,39 @@ async def test_a_rate_query_is_a_bucket_agg_dataset_in_es_dsl(svc_es):
     assert "zero_is_no_documents" in meta.source_caveats
     assert {c for c in es.calls} == {("fetch", RATE)}
     assert out["summary"]["series_count"] == 1
+
+
+async def test_a_wide_query_is_not_split_into_cache_chunks_so_a_boundary_zero_survives(tmp_path):
+    """Before this fix, _query_es routed ES fetches through SeriesCache.get, which splits any
+    requested range into fixed 720-bucket chunks and fetches each as its own Elasticsearch
+    request: a real interior zero sitting at what would have been a chunk edge became a fake
+    leading/trailing bucket for `_interior`'s zero-fill rule and was silently dropped instead of
+    reported as 0/s. Bypassing the cache (src.fetch called directly) sends one request for the
+    whole range, so the zero is read as a genuine observation and the request count no longer
+    scales with the number of 720-bucket chunks the old cache would have used."""
+    step_ms = 60_000
+    chunk_span_ms = step_ms * 720  # the series cache's old chunk width (12h at a 1m step)
+    zero_ts = chunk_span_ms  # would have been the trailing edge of the first old-style chunk
+
+    def handle(body: dict) -> dict:
+        window = body["query"]["bool"]["filter"][1]["range"]["@timestamp"]
+        gte, lt = window["gte"], window["lt"]
+        buckets = []
+        t = gte + step_ms
+        while t <= lt:
+            buckets.append(tb(t - step_ms, 0 if t == zero_ts else 1))
+            t += step_ms
+        return search_response(buckets)
+
+    fake = FakeEs(search=handle)
+    svc = make_service(tmp_path)
+    svc.sources.attach("es", fake.source())
+    end_ms = chunk_span_ms * 2 + 60 * step_ms  # spans would-be chunks on both sides of the zero
+    out = await svc.query(RATE, start="0", end=str(end_ms), step="1m", source="es")
+    assert len(fake.searches()) == 1  # one request for the whole range, not one per old chunk
+    _, result = svc.datasets.get(out["dataset"])
+    row = next(r for r in result.buckets.to_pylist() if r["ts_ms"] == zero_ts)
+    assert (row["avg"], row["count"]) == (0.0, 1)
 
 
 async def test_stats_has_no_zero_caveat(svc_es):

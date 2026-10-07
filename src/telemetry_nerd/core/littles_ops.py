@@ -470,9 +470,11 @@ class LittlesOps:
                 f"concurrency={conc_name!r} is a counter: L is the number in flight, a gauge "
                 "(hint: bind an in-flight / active-requests gauge)"
             )
+        es_queries = None
         if es:
-            _, lat_q = self._es_roles(roles["arrival_rate"], roles["latency"])
+            arr_q, lat_q = self._es_roles(roles["arrival_rate"], roles["latency"])
             lat = {"base": str(lat_q.field), "selector": "", "native": False}
+            es_queries = {"arrival_rate": arr_q.query, "latency": lat_q.query}
         else:
             lat = self._latency(source, roles["latency"])
             arr_name, arr_sel = _parse("arrival_rate", roles["arrival_rate"])
@@ -558,7 +560,7 @@ class LittlesOps:
             "scrape_ms": scrape_ms, "scrape_probe": scrape_note,
             "resolution_ms": res, "arrivals": arrivals, "arrival_is_rate": arr_is_rate,
             "roles": roles, "binding": bound, "exprs": exprs, "warmup": warmup,
-            "matchers": matchers,
+            "matchers": matchers, "es_queries": es_queries,
         }  # fmt: skip
         self._last[ds["concurrency"]] = cfg
         return self.summary(cfg)
@@ -727,6 +729,16 @@ class LittlesOps:
             issues.append(
                 "selectors differ across roles: "
                 + "; ".join(f"{k} {{{', '.join(v)}}}" for k, v in m.items())
+            )
+        # ES queries are JSON filter dicts, not PromQL label matchers: `matchers` only ever holds
+        # concurrency's selector on this path (arrival_rate/latency are native queries, not
+        # selectors), so `differ` above can never catch a mismatch between them. Compare the two
+        # parsed Query DSL filter clauses directly instead.
+        es_queries = cfg.get("es_queries")
+        if es_queries and es_queries["arrival_rate"] != es_queries["latency"]:
+            issues.append(
+                f"arrival_rate and latency queries differ: {es_queries['arrival_rate']} vs "
+                f"{es_queries['latency']}"
             )
         out.append({
             "name": "label_sets", "status": "flagged" if issues else "ok",

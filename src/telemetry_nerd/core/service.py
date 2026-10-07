@@ -611,21 +611,23 @@ class TelemetryService:
         rng = _align_within_limit(rng, step_ms, "buckets")
         caveats: list[str] = []
         representation, qv, n_min = "bucket_agg", None, None
+        # No series cache: the cache splits a range into fixed 720-bucket chunks, each fetched as
+        # its own Elasticsearch request, which (1) turns every chunk edge into a fake leading/
+        # trailing edge for _interior's zero-fill rule (a real interior zero near a chunk
+        # boundary would be dropped as if it were missing) and (2) multiplies search.max_buckets
+        # pressure by the number of chunks regardless of the actual requested range/step. ES
+        # buckets are exact tiles with no lookback to settle, so there is nothing a cache buys
+        # here (query_distribution already fetches ES directly for the same reason).
         if q.form == "percentile":
             # a percentile is per query bucket, never rolled up; n is the adapter's value_count
             representation, qv = "quantile", q.q
             n_min = min_samples(q.q) if q.q is not None else None
             caveats.append("approximate_percentile")
-            result = await self.cache.get(
-                src.identity, f"values|{expr}", rng, step_ms,
-                lambda r: src.fetch_values(expr, r, step_ms),
-            )  # fmt: skip
+            result = await src.fetch_values(expr, rng, step_ms)
         else:
             if q.form in ("rate", "field_rate"):
                 caveats.append("zero_is_no_documents")
-            result = await self.cache.get(
-                src.identity, expr, rng, step_ms, lambda r: src.fetch(expr, r, step_ms)
-            )
+            result = await src.fetch(expr, rng, step_ms)
         meta = self.datasets.put(
             source=src.name, expr=expr, rng=rng, step_ms=step_ms,
             resolution_ms=src.resolution_ms, result=result, representation=representation,
