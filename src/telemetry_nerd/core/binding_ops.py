@@ -97,7 +97,7 @@ def _gap_role(b: Resolved, role: str) -> GroupRole:
             type=u.get("type") or h.type,
             labels=list(u.get("labels") or h.labels),
         ),
-        why=u.get("why") or h.why, gap=u.get("gap"),
+        why=u.get("why") or h.why, gap=u.get("gap"), where=u.get("where") or f"the {b.key} entity",
     )  # fmt: skip
 
 
@@ -145,7 +145,7 @@ class BindingOps:
                 + ". Use binding_suggest and pass its id as `suggestion`, or confirm one first."
             )
         w = found[0].winner
-        hints, native = self._hints_for(source, kind, w.roles)
+        hints, native, ranked = self._hints_for(source, kind, w.roles)
         gaps = ws.relations.binding_gaps("catalog", source, kind, key)
         unfilled = {}
         for role, metric in w.roles.items():
@@ -154,6 +154,7 @@ class BindingOps:
                 unfilled[role] = {
                     "name": h.metric_name(key), "type": h.type,
                     "labels": list(h.labels), "why": h.why, "gap": gaps.get(role),
+                    "where": self._where_for(ranked, role, key),
                 }  # fmt: skip
         return Resolved(
             kind=kind, key=key, roles=dict(w.roles), join_on=list(w.join_on), hints=hints,
@@ -162,13 +163,15 @@ class BindingOps:
 
     def _hints_for(
         self, source: str, kind: str, roles: Mapping[str, str | None]
-    ) -> tuple[dict[str, Hint], frozenset[str]]:
+    ) -> tuple[dict[str, Hint], frozenset[str], list[dict]]:
         """Forms and expr hints for a confirmed binding's metrics, from the suggestions that
-        propose the same metrics (most roles in common first)."""
+        propose the same metrics (most roles in common first); the same ranked suggestions are
+        returned so an unfilled role can reuse one's `where` (scope, and a code citation when
+        catalog_context has one) instead of only the bare entity name (telemetry-nerd-012)."""
         try:
             sugg = self.svc.ws.binding_suggest(source, kind=kind, limit=1000)["suggestions"]
         except ValueError:
-            return {}, frozenset()
+            return {}, frozenset(), []
 
         def overlap(s: dict) -> int:
             return sum(
@@ -177,9 +180,10 @@ class BindingOps:
                 if m and any(c["metric"] == m for c in role_candidates(s, r))
             )
 
+        ranked = sorted(sugg, key=overlap, reverse=True)
         hints: dict[str, Hint] = {}
         native: set[str] = set()
-        for s in sorted(sugg, key=overlap, reverse=True):
+        for s in ranked:
             for role, metric in roles.items():
                 if metric is None or role in hints:
                     continue
@@ -189,7 +193,21 @@ class BindingOps:
                         if c.get("histogram") == "native":
                             native.add(metric)
                         break
-        return hints, frozenset(native)
+        return hints, frozenset(native), ranked
+
+    @staticmethod
+    def _where_for(ranked: list[dict], role: str, key: str) -> str:
+        """The `where` of the best-overlapping suggestion that also names `role` unfilled (the
+        same scope/citation lookup `binding_suggest` computed), else the bare entity name."""
+        return next(
+            (
+                u["suggest_instrumentation"]["where"]
+                for s in ranked
+                for u in s["unfilled"]
+                if u["role"] == role
+            ),
+            f"the {key} entity",
+        )
 
     def _info(self, source: str, metric: str, native: frozenset[str]) -> MetricInfo:
         """Type and histogram kind of a role's metric. A classic histogram's base name is not a

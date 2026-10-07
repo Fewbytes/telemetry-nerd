@@ -136,6 +136,7 @@ async def test_spanmetrics_littles_law_lists_the_missing_concurrency(play):
     assert ll["roles"]["concurrency"] is None
     (u,) = ll["unfilled"]
     assert u["role"] == "concurrency" and u["suggest_instrumentation"]["type"] == "gauge"
+    assert "spanmetrics" in u["suggest_instrumentation"]["where"]
     assert (
         "histogram_count" in ll["detail"]["latency"]["expr"]
         or ll["detail"]["latency"]["histogram"] == "native"
@@ -156,6 +157,10 @@ async def test_node_exporter_use_per_resource(play):
     alts = [a["metric"] for a in cpu["detail"]["saturation"]["alternatives"]]
     assert alts[:2] == ["node_schedstat_waiting_seconds_total", "node_load1"]
     assert [u["role"] for u in cpu["unfilled"]] == ["errors"]
+    # telemetry-nerd-012: an unfilled role names where (the entity/scope) to add it, even with
+    # no code citation on file for a sibling metric of this scope
+    where = cpu["unfilled"][0]["suggest_instrumentation"]["where"]
+    assert "node:cpu" in where and "node_exporter" in where
 
     mem = got["USE:node_memory"]
     assert mem["roles"] == {
@@ -175,6 +180,65 @@ async def test_node_exporter_use_per_resource(play):
     }
     assert net["detail"]["utilization"]["alternatives"]  # rx vs tx: ambiguous, both listed
     assert got["USE:node_filesystem"]["roles"]["utilization"] == "node_filesystem_avail_bytes"
+
+
+async def test_unfilled_role_where_cites_a_siblings_code_registration(play):
+    """telemetry-nerd-012: when catalog_context has already located a sibling metric of the
+    same scope in the repo's code, the unfilled role's `where` points near it as a place to
+    register the new metric too, not just the entity."""
+    svc, _ = play
+    svc.ws.catalog_context(
+        "default",
+        [
+            {
+                "path": "node_exporter.py",
+                "text": "from prometheus_client import Counter\n"
+                'C = Counter("node_cpu_seconds", "CPU seconds.")\n',
+            }
+        ],
+    )
+    got = by_id(svc.ws.binding_suggest("default", "USE", limit=100))
+    cpu = got["USE:node_cpu"]
+    where = cpu["unfilled"][0]["suggest_instrumentation"]["where"]
+    assert "near code: node_exporter.py:2" in where and "is registered" in where
+
+
+async def test_unfilled_role_where_never_calls_a_docs_mention_a_code_registration(play):
+    """telemetry-nerd-012 review: a markdown docs table or dashboard citation describes the
+    metric, it is not a place to add code; `where` must say so honestly, never phrase it as
+    "registered" the way an actual code citation is."""
+    svc, _ = play
+    svc.ws.catalog_context(
+        "default",
+        [{"path": "METRICS.md", "text": "| node_cpu_seconds_total | counter | CPU seconds |"}],
+    )
+    got = by_id(svc.ws.binding_suggest("default", "USE", limit=100))
+    cpu = got["USE:node_cpu"]
+    where = cpu["unfilled"][0]["suggest_instrumentation"]["where"]
+    assert "documented at docs: METRICS.md:1" in where and "not a code location" in where
+    assert "registered" not in where
+
+
+async def test_unfilled_role_where_prefers_a_code_citation_over_a_docs_one(play):
+    """telemetry-nerd-012: when the same sibling metric has both a docs mention and a real code
+    registration (e.g. a markdown table plus the actual prometheus_client call), the code one
+    is the useful lead and wins, never the docs mention."""
+    svc, _ = play
+    svc.ws.catalog_context(
+        "default",
+        [
+            {"path": "METRICS.md", "text": "| node_cpu_seconds_total | counter | CPU seconds |"},
+            {
+                "path": "node_exporter.py",
+                "text": "from prometheus_client import Counter\n"
+                'C = Counter("node_cpu_seconds", "CPU seconds.")\n',
+            },
+        ],
+    )
+    got = by_id(svc.ws.binding_suggest("default", "USE", limit=100))
+    cpu = got["USE:node_cpu"]
+    where = cpu["unfilled"][0]["suggest_instrumentation"]["where"]
+    assert "near code: node_exporter.py:2" in where and "documented at" not in where
 
 
 async def test_k8s_cpu_throttling_is_saturation(play):

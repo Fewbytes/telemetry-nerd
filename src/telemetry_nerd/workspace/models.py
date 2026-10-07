@@ -486,6 +486,9 @@ class GroupRole(_Strict):
     #: unfilled role: what to instrument (and the Gap object, for a confirmed binding)
     suggestion: MetricSuggestion | None = None
     why: str | None = None
+    #: unfilled role (telemetry-nerd-012): which service/component to instrument, and a code
+    #: citation when catalog_context already located a sibling metric of the same scope
+    where: str | None = None
     gap: str | None = None
     error: str | None = None
     #: binding_verdict (czt.4): {status, direction, pattern, text, at_capacity, onset?}

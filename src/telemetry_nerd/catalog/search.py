@@ -7,11 +7,29 @@ from collections import defaultdict
 from collections.abc import Collection, Iterable
 
 from telemetry_nerd.catalog.models import CatalogEntry
+from telemetry_nerd.catalog.relations import SUGGESTIONS
 
 #: fields shown per row (with the origin that wins each)
 KEY_FIELDS = ("type", "unit", "role", "bounds")
 #: origins that have actually interpreted a metric (rule/metadata only restate its name/HELP)
 INTERPRETING = frozenset({"pack", "claude", "user"})
+#: question words that read like a USE/RED/Little's law role's vocabulary (telemetry-nerd-012):
+#: a lead on what to instrument when a free-form question matches nothing in the catalog, never
+#: a claim that the signal is truly absent from the source
+_SIGNAL_WORDS: tuple[tuple[frozenset[str], str, str], ...] = (
+    (frozenset({"latency", "duration", "slow", "elapsed"}), "RED", "duration"),
+    (frozenset({"error", "failure", "fault"}), "RED", "errors"),
+    (frozenset({"rate", "throughput", "traffic"}), "RED", "rate"),
+    (frozenset({"queue", "backlog", "lag", "wait"}), "USE", "saturation"),
+    (frozenset({"utilization", "usage", "busy", "capacity"}), "USE", "utilization"),
+    (frozenset({"concurrency", "inflight", "active"}), "littles_law", "concurrency"),
+)
+_INSTRUMENTATION_WHERE = (
+    'name the service or component this question is about (entities(kind="service") lists '
+    "candidates) and add the metric in its instrumentation; check binding_suggest first in case "
+    "an existing metric already fills this role under another name. `name_template`'s {key} "
+    "is a placeholder for that service/instance name, slugified (lower_snake_case)"
+)
 
 
 def family_prefix(metric: str) -> str:
@@ -142,6 +160,19 @@ def _score(entry: CatalogEntry, q: str, terms: list[str]) -> tuple[int, int]:
     return matched, weight
 
 
+def _signal_guesses(terms: Iterable[str]) -> list[tuple[str, str, str]]:
+    """(kind, role, matched_word) for every USE/RED/Little's law role whose vocabulary a query
+    word resembles, each role at most once (first matching word wins)."""
+    seen: set[tuple[str, str]] = set()
+    out: list[tuple[str, str, str]] = []
+    for t in terms:
+        for words, kind, role in _SIGNAL_WORDS:
+            if t in words and (kind, role) not in seen:
+                seen.add((kind, role))
+                out.append((kind, role, t))
+    return out
+
+
 def search(
     entries: Iterable[CatalogEntry],
     hot: Collection[str],
@@ -208,6 +239,29 @@ def search(
             "prefix, `entities` for which services report which metric families, or "
             "source_learn if the catalog may be stale."
         )
+        # a filter (prefix, needs_review) hiding a real match is not "nothing exists": the hint
+        # is only for a query that matches nothing in the catalog at all (telemetry-nerd-012)
+        if q and not prefix and not needs_review and (guesses := _signal_guesses(terms)):
+            out["suggest_instrumentation"] = {
+                "candidates": [
+                    {
+                        "model": f"{kind}.{role}",
+                        "matched_word": term,
+                        # {key} is a placeholder: no entity is known from free-form words alone
+                        # (unlike case 1's binding_suggest, which names a scope); the caller
+                        # substitutes the real service/instance slug (telemetry-nerd-012)
+                        "name_template": SUGGESTIONS[(kind, role)].name,
+                        "type": SUGGESTIONS[(kind, role)].type,
+                        "why": SUGGESTIONS[(kind, role)].why,
+                    }
+                    for kind, role, term in guesses
+                ],
+                "where": _INSTRUMENTATION_WHERE,
+            }
+            out["note"] += (
+                " The words resemble a model signal (see `suggest_instrumentation`), worth "
+                "instrumenting if nothing already covers it under another name."
+            )
     return out
 
 

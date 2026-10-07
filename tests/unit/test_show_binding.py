@@ -306,11 +306,41 @@ async def test_a_confirmed_binding_with_a_null_role_shows_a_gap_card(tmp_path):
         assert gap.view == "gap" and gap.panel is None and gap.suggestion is not None
         assert gap.gap and gap.gap.startswith("g")  # the Gap the binding raised
     assert roles["saturation"].suggestion.type == "gauge"
+    # telemetry-nerd-012: "errors" is genuinely unfilled in the catalog (unlike "saturation",
+    # null only because of this test's override), so binding_suggest's own USE:node_cpu
+    # suggestion already names a real `where` (scope label "node_exporter CPU") for it; the
+    # confirmed-binding path reuses that, not only the bare entity key the fallback alone would
+    # produce - this string cannot come from `f"the {key} entity"`
+    assert roles["errors"].where and "node_exporter" in roles["errors"].where
     p = svc.workspace.get_panel(roles["utilization"].panel)
     ab = p.spec["y"].get("asserted_bounds")
     ctx = p.spec["y"]["context"]
     # a share of capacity: 0..1, from a derivation rule or from the role itself
     assert (ctx["natural_lo"], ctx["natural_hi"]) == (0.0, 1.0) or (ab and ab["hi"] == 1.0)
+
+
+async def test_a_confirmed_bindings_gap_card_cites_a_siblings_code_location(tmp_path):
+    """telemetry-nerd-012: once catalog_context has located a sibling metric of the same scope
+    (node_cpu_seconds_total, the filled utilization role) in the repo, a confirmed USE:node_cpu
+    binding's gap card for the genuinely unfilled `errors` role cites it too - reusing
+    binding_suggest's own suggestion, not only a bare entity name."""
+    svc, _ = await _svc(tmp_path)
+    svc.ws.catalog_context(
+        "default",
+        [
+            {
+                "path": "node_exporter.py",
+                "text": (
+                    "from prometheus_client import Counter\n"
+                    'C = Counter("node_cpu_seconds", "CPU seconds.")\n'
+                ),
+            }
+        ],
+    )
+    svc.ws.binding_accept("default", "USE:node_cpu", basis="test")
+    g = await svc.show_binding(source="default", kind="USE", key="node:cpu")
+    where = {r.role: r for r in g.roles}["errors"].where
+    assert "near code: node_exporter.py:2" in where
 
 
 async def test_no_binding_is_an_error_that_points_at_binding_suggest(tmp_path):

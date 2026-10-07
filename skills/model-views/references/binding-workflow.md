@@ -6,8 +6,9 @@
 
 - `id` (`RED:otel_http`, `USE:node_cpu`, `littles_law:otel_http`): what `binding_accept` and
   `show_binding(suggestion=...)` take. `kind`, `key` (`http.server`), `scope`, `confidence`.
-- `roles`: `{role: metric | null}`; `null` roles are listed in `unfilled`, each with the
-  instrumentation that would fill it.
+- `roles`: `{role: metric | null}`; `null` roles are listed in `unfilled`, each with
+  `suggest_instrumentation` (name, type, why) and `where` (the entity/scope, plus a code
+  citation near a sibling metric when `catalog_context` already located one).
 - `detail[role]`: `confidence`, `basis` (a list of `pack`, `naming`, `relation`), `form`
   (`counter_rate`, `histogram_count`, `label_split`, `histogram`, ...), an `expr` hint,
   `alternatives` (each with its own confidence and expr) and `ambiguous`.

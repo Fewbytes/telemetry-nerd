@@ -792,6 +792,24 @@ class _Meta:
     type: str | None
     role: str | None
     native: bool
+    #: a repo location catalog_context already found for this metric (telemetry-nerd-012): a
+    #: lead on where a sibling, unfilled role of the same scope probably belongs too
+    citation: str | None = None
+
+
+def _citation(e: CatalogEntry) -> str | None:
+    """A `context`-origin claim's citation: catalog_context writes citations regardless of
+    whether that origin's value wins the field, so every claim is checked, not only the winner.
+    A `code:`-sourced one (an actual registration site) is preferred over a `docs:`/`dashboard:`
+    one (a description of the metric, not a place to add instrumentation): telemetry-nerd-012's
+    review found the two were being worded alike, which misleads on where to add code."""
+    cites = [
+        c.citation
+        for field in sorted(e.claims)
+        for c in e.claims[field]
+        if c.origin == "context" and c.citation
+    ]
+    return next((c for c in cites if c.startswith("code:")), cites[0] if cites else None)
 
 
 def _metas(entries: Iterable[CatalogEntry]) -> dict[str, _Meta]:
@@ -805,6 +823,7 @@ def _metas(entries: Iterable[CatalogEntry]) -> dict[str, _Meta]:
             t.value if t else None,
             r.value if r else None,
             h is not None and native_family(h.value),
+            _citation(e),
         )
     return out
 
@@ -1005,7 +1024,7 @@ def suggest_bindings(
                 for cs in roles.values():
                     _apply_bounded_by(cs, rels)
                     cs.sort(key=lambda x: (-x["confidence"], x["metric"]))
-                s = _assemble(sc, k, p, roles, key, key_matches_scope, existing)
+                s = _assemble(sc, k, p, roles, key, key_matches_scope, existing, metas)
                 if s is not None:
                     out.append(s)
     out.sort(key=lambda s: (-s["score"], s["id"]))
@@ -1019,6 +1038,27 @@ def suggest_bindings(
     }
 
 
+def _where(entity: str, scope: Scope, detail: Mapping[str, Any], metas: Mapping[str, _Meta]) -> str:
+    """Which service/component this unfilled role belongs to, and (telemetry-nerd-012) a lead
+    on where in the code if catalog_context already located a sibling metric of the same scope:
+    unverified metrics have no citation of their own to check, but a sibling in the same
+    instrumentation family is a reasonable place to look first."""
+    where = f"{entity} ({scope.label})"
+    cite = next(
+        (
+            metas[d["metric"]].citation
+            for d in detail.values()
+            if metas.get(d["metric"]) and metas[d["metric"]].citation
+        ),
+        None,
+    )
+    if cite and cite.startswith("code:"):
+        where += f"; near {cite}, where a sibling metric of this scope is registered"
+    elif cite:
+        where += f"; a sibling metric of this scope is documented at {cite} (not a code location)"
+    return where
+
+
 def _assemble(
     sc: Scope,
     kind: str,
@@ -1027,26 +1067,15 @@ def _assemble(
     key_arg: str | None,
     key_is_scope: bool,
     existing: Mapping[tuple[str, str], ResolvedBinding],
+    metas: Mapping[str, _Meta],
 ) -> dict[str, Any] | None:
     chosen: dict[str, str | None] = {}
     detail: dict[str, Any] = {}
-    unfilled: list[dict[str, Any]] = []
     ambiguous: list[str] = []
     for role in BINDING_ROLES[kind]:
         cs = roles.get(role) or []
         if not cs:
             chosen[role] = None
-            hint = SUGGESTIONS[(kind, role)]
-            unfilled.append(
-                {
-                    "role": role,
-                    "suggest_instrumentation": {
-                        "name": hint.metric_name(prefix or sc.key),
-                        "type": hint.type,
-                        "why": hint.why,
-                    },
-                }
-            )
             continue
         best, rest = cs[0], cs[1:]
         chosen[role] = best["metric"]
@@ -1062,6 +1091,19 @@ def _assemble(
         return None  # generic names alone must show two different metrics
     entity = prefix or sc.key
     key = key_arg if key_arg and not key_is_scope else entity
+    unfilled: list[dict[str, Any]] = [
+        {
+            "role": role,
+            "suggest_instrumentation": {
+                "name": (hint := SUGGESTIONS[(kind, role)]).metric_name(prefix or sc.key),
+                "type": hint.type,
+                "why": hint.why,
+                "where": _where(entity, sc, detail, metas),
+            },
+        }
+        for role in BINDING_ROLES[kind]
+        if chosen[role] is None
+    ]
     n = len(BINDING_ROLES[kind])
     score = sum(d["confidence"] for d in filled) / n
     out: dict[str, Any] = {

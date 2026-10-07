@@ -1037,7 +1037,12 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         """Find catalogued metrics. `query` matches name or description; `prefix` is a name
         prefix (a family, e.g. node_cpu). `needs_review` keeps metrics nobody has interpreted yet
         (no role from pack/claude/user) or whose claims conflict. Metrics this workspace already
-        queried come first (hot). Rows carry the winning type/unit/role/bounds and their origin."""
+        queried come first (hot). Rows carry the winning type/unit/role/bounds and their origin.
+        A genuinely empty result (no match at all, not even partial) that still reads like a
+        USE/RED/Little's law role (telemetry-nerd-012: "latency", "errors", "queue depth", ...)
+        carries `suggest_instrumentation`: candidate roles, the metric name/type to add, and
+        `where` to add it. Not evidence the signal is absent (see the note); check `entities`
+        and `binding_suggest` before assuming nothing already covers it."""
         try:
             return _dump(service.ws.catalog_search(source, query, prefix, needs_review, limit))
         except (NotFound, ValueError) as e:
@@ -1437,9 +1442,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         ranked suggestions: id, kind, key, roles {role: metric|null}, per-role `detail` (confidence,
         basis [pack|naming|relation], form, expr hint: rate() for counters, histogram _sum/_count
         and _bucket for latency, never a precomputed percentile while a histogram exists, plus
-        `alternatives` and `ambiguous`), `unfilled` roles with the instrumentation that would fill
-        them, and join_on label hints (conventions: verify against the series). Check the picks,
-        then confirm with `binding_accept(id, basis)` or `catalog_bind`."""
+        `alternatives` and `ambiguous`), `unfilled` roles with `suggest_instrumentation` (name,
+        type, why, and `where`: the entity/scope, plus a citation near a sibling metric's known
+        code location when catalog_context has found one), and join_on label hints (conventions:
+        verify against the series). Check the picks, then confirm with `binding_accept(id, basis)`
+        or `catalog_bind`."""
         try:
             return _dump(service.ws.binding_suggest(source, kind, key, limit))
         except ValueError as e:

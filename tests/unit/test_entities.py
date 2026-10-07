@@ -78,6 +78,32 @@ async def test_catalog_search_empty_result_says_what_was_searched(demo):
     assert "names and descriptions of" in note
 
 
+async def test_catalog_search_empty_result_suggests_instrumentation_for_model_words(demo):
+    """telemetry-nerd-012: no catalogued metric answers "kafka consumer lag", but "lag" reads
+    like a USE saturation signal (queue/backlog), so the empty result names it as a lead,
+    with where to add it, instead of only saying nothing matched."""
+    _, mcp, _ = demo
+    out, _ = await call(mcp, "catalog_search", {"query": "kafka consumer lag"})
+    assert out["total"] == 0
+    hint = out["suggest_instrumentation"]
+    models = {c["model"] for c in hint["candidates"]}
+    assert "USE.saturation" in models
+    sat = next(c for c in hint["candidates"] if c["model"] == "USE.saturation")
+    assert sat["matched_word"] == "lag" and sat["type"] == "gauge"
+    # {key} is an unsubstituted placeholder (telemetry-nerd-012 review): no entity is known from
+    # free-form words, so the raw template is named as such, never emitted as a literal name
+    assert sat["name_template"] == "{key}_queue_depth"
+    assert "entities" in hint["where"] and "binding_suggest" in hint["where"]
+    assert "suggest_instrumentation" in out["note"]
+
+
+async def test_catalog_search_hit_never_gets_an_instrumentation_hint(demo):
+    """The hint is for genuinely empty results only: a real match is not a lead to add anything."""
+    _, mcp, _ = demo
+    out, _ = await call(mcp, "catalog_search", {"query": "http server request duration"})
+    assert out["total"] > 0 and "suggest_instrumentation" not in out
+
+
 async def test_catalog_family_lists_a_name_group(demo):
     _, mcp, _ = demo
     learned, _ = await call(mcp, "source_learn", {"source": "default"})

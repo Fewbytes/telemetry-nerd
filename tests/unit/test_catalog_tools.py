@@ -258,6 +258,21 @@ async def test_search_filters_and_overview(svc):
     assert not any(reviewed(e) for e in entries if e.metric == "app_queue_seconds")
 
 
+async def test_needs_review_filtering_a_real_match_to_empty_never_suggests_instrumenting(svc):
+    """telemetry-nerd-012: `app_queue_seconds` is a real, catalogued queue metric. Once it is
+    reviewed, `needs_review=True` filters it out of the results (by design), but that is a
+    filter hiding a real match, not "nothing in the catalog answers this" - the instrumentation
+    hint must not fire and claim a queue metric needs adding when one already exists."""
+    await svc.learn("default")
+    svc.ws.catalog_claim("default", "app_queue_seconds", "role", "saturation", "claude", "claude",
+                          confidence=0.5, verified_by="basis")  # fmt: skip
+    entries = svc.ws.catalog.list_entries("default")
+    assert any(e.metric == "app_queue_seconds" and reviewed(e) for e in entries)
+    out = search(entries, set(), query="queue", needs_review=True)
+    assert out["total"] == 0
+    assert "suggest_instrumentation" not in out
+
+
 # plugin text ---------------------------------------------------------------------------------
 async def registered_tools(svc):
     async with Client(build_mcp(svc, "http://x")) as c:
