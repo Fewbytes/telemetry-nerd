@@ -38,6 +38,7 @@ _DECLARED_UNITS = {
     "ns": "ns",
     "nanoseconds": "ns",
     "by": "B",
+    "b": "B",
     "byte": "B",
     "bytes": "B",
     "hz": "Hz",

@@ -1,5 +1,6 @@
 import pytest
 
+from telemetry_nerd.catalog.rules import normalize_unit
 from telemetry_nerd.model.discovery import Discovery, MetricInfo
 
 from .fakes import FakeSource, make_service
@@ -144,3 +145,40 @@ async def test_histogram_base_listed_by_the_source_is_not_duplicated(tmp_path):
     assert out["metrics"] == 4
     e = svc.ws.catalog_entry("default", "lat_seconds")
     assert e.fields["type"].origin == "metadata" and e.fields["description"].value == "latency"
+
+
+ES_DISCOVERY = Discovery(
+    metrics=(
+        MetricInfo("event.duration", None, None, "ns"),
+        MetricInfo("requests_total"),  # a field name, not a counter by naming rule
+        MetricInfo("http.response.bytes", "counter", None, "B"),
+        MetricInfo("http_request_duration_seconds"),  # no _seconds rule, no pack claim
+    ),
+    label_names=("service.name",),
+    histograms={},
+    cardinality=None,
+    metadata_coverage=0.5,
+    caveats=("cardinality_unavailable",),
+    partial=False,
+    naming="fields",
+)
+
+
+async def test_field_paths_get_declared_metadata_claims_only(tmp_path):
+    svc = make_service(tmp_path, FakeSource(name="default", discovery=ES_DISCOVERY))
+    out = await svc.learn("default")
+    assert (out["metrics"], out["families"], out["family_members"]) == (4, 0, 0)
+    assert out["relations_changed"] == 0
+    dur = svc.ws.catalog_entry("default", "event.duration").fields["unit"]
+    assert (dur.value, dur.origin) == ("ns", "metadata")
+    assert svc.ws.catalog_entry("default", "requests_total").fields == {}
+    assert svc.ws.catalog_entry("default", "http_request_duration_seconds").fields == {}
+    b = svc.ws.catalog_entry("default", "http.response.bytes")
+    assert (b.fields["type"].value, b.fields["unit"].value) == ("counter", "B")
+    origins = {c.origin for e in svc.ws.catalog_list("default")
+               for cs in e.claims.values() for c in cs}  # fmt: skip
+    assert origins == {"metadata"}
+
+
+def test_declared_byte_unit_symbol_normalizes():
+    assert normalize_unit("B") == "B"

@@ -1016,42 +1016,56 @@ class WorkspaceService:
         complete = not any(c.startswith("metrics_truncated") for c in discovery.caveats)
         diff = self.catalog.relearn(source, names, self.clock(), complete=complete)
         ts = self.clock()
-        # names that encode a dimension (airflow_ti_finish_<dag>_<task>) collapse into families;
-        # a histogram base is a metric, not a dimension value
-        bases = {b for b, k in discovery.histograms.items() if k == "classic"}
-        detection = detect_families([n for n in names if n not in bases])
-        rejected = self.families.rejected(source)
-        assignment = {n: ta for n, ta in detection.assignment.items() if ta[0] not in rejected}
-        fam = self.families.apply(source, detection, ts)
-        rows = [
-            (m.name, spec.to_claim(ts))
-            for m in discovery.metrics
-            if m.name not in assignment  # a family speaks for its members
-            for spec in [
-                *derive_claims(m.name, m, discovery.histograms),
-                *self.packs.claims_for(m.name),
+        if discovery.naming == "fields":
+            # document field paths (Elasticsearch/OpenSearch) are not Prometheus names:
+            # name-template families, T0 naming rules (_total -> counter, _seconds -> s) and
+            # knowledge packs would misread them, so only declared metadata is claimed
+            fam = {"families": 0, "members": 0}
+            rows = [
+                (m.name, spec.to_claim(ts))
+                for m in discovery.metrics
+                for spec in derive_claims(m.name, m, {})
+                if spec.origin == "metadata"
             ]
-        ]
-        rows += family_claims(discovery.metrics, assignment, detection, rejected, ts)
-        changed = self.catalog.put_claims_bulk(source, rows)
-        name_set = set(names)
-        pack_relations = [
-            RelationClaim(
-                source=source,
-                subject=m.name,
-                kind=spec.kind,  # type: ignore[arg-type]
-                object=spec.object,
-                origin="pack",
-                confidence=spec.confidence,
-                basis=spec.basis,
-                params=spec.params,
-                ts_ms=ts,
-            )
-            for m in discovery.metrics
-            for spec in self.packs.relations_for(m.name)
-            if spec.needs <= name_set and spec.object != m.name
-        ]
-        relations_changed = self.relations.put_relations(pack_relations)
+            changed = self.catalog.put_claims_bulk(source, rows)
+            relations_changed = 0
+        else:
+            # names that encode a dimension (airflow_ti_finish_<dag>_<task>) collapse into
+            # families; a histogram base is a metric, not a dimension value
+            bases = {b for b, k in discovery.histograms.items() if k == "classic"}
+            detection = detect_families([n for n in names if n not in bases])
+            rejected = self.families.rejected(source)
+            assignment = {n: ta for n, ta in detection.assignment.items() if ta[0] not in rejected}
+            fam = self.families.apply(source, detection, ts)
+            rows = [
+                (m.name, spec.to_claim(ts))
+                for m in discovery.metrics
+                if m.name not in assignment  # a family speaks for its members
+                for spec in [
+                    *derive_claims(m.name, m, discovery.histograms),
+                    *self.packs.claims_for(m.name),
+                ]
+            ]
+            rows += family_claims(discovery.metrics, assignment, detection, rejected, ts)
+            changed = self.catalog.put_claims_bulk(source, rows)
+            name_set = set(names)
+            pack_relations = [
+                RelationClaim(
+                    source=source,
+                    subject=m.name,
+                    kind=spec.kind,  # type: ignore[arg-type]
+                    object=spec.object,
+                    origin="pack",
+                    confidence=spec.confidence,
+                    basis=spec.basis,
+                    params=spec.params,
+                    ts_ms=ts,
+                )
+                for m in discovery.metrics
+                for spec in self.packs.relations_for(m.name)
+                if spec.needs <= name_set and spec.object != m.name
+            ]
+            relations_changed = self.relations.put_relations(pack_relations)
         summary = {
             "source": source,
             "metrics": len(names),
