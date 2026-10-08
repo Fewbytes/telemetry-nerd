@@ -234,6 +234,28 @@ async def test_refresh_failure_raises_missing_secret(tmp_path):
         await provider.headers()
 
 
+async def test_transient_refresh_failure_keeps_the_token_file(tmp_path):
+    responses = [httpx.Response(503, text="service unavailable")]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if responses:
+            return responses.pop(0)
+        return httpx.Response(
+            200, json={"access_token": "AT1", "refresh_token": "RT1", "expires_in": 3600}
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path, client=client)
+    _seed_token(provider, expires_in_s=30)
+
+    with pytest.raises(MissingSecret, match="HTTP 503"):
+        await provider.headers()
+    assert load_token(provider._path) is not None  # the token survives a transient IdP outage
+
+    # the IdP has recovered: a later refresh succeeds without a fresh interactive login
+    assert await provider.headers() == {"Authorization": "Bearer AT1"}
+
+
 async def test_concurrent_refresh_calls_hit_the_token_endpoint_once(tmp_path):
     calls = []
 

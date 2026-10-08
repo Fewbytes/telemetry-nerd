@@ -173,10 +173,12 @@ class TokenProvider:
                 hint="check token_url and that the IdP is reachable",
             ) from e
         if resp.status_code != 200:
-            raise MissingSecret(
+            exc = MissingSecret(
                 f"OAuth token exchange failed: HTTP {resp.status_code}",
                 hint="re-run source_connect to log in again",
             )
+            exc.status_code = resp.status_code
+            raise exc
         try:
             body = resp.json()
             access = body["access_token"]
@@ -238,10 +240,15 @@ class TokenProvider:
                 data["client_secret"] = secret
             try:
                 new_state = await self._exchange(data, prior_refresh_token=state.refresh_token)
-            except MissingSecret:
-                # a dead refresh token leaves no recovery path otherwise: delete the token
-                # file so the next source_connect logs in again instead of repeating this
-                self._path.unlink(missing_ok=True)
+            except MissingSecret as e:
+                # only a real rejection (invalid_grant: 400/401) means the refresh token is
+                # dead with no recovery path otherwise; a transient IdP failure (5xx, 429, a
+                # momentarily malformed response) must not force a fresh interactive login
+                if getattr(e, "status_code", None) in (400, 401):
+                    # a dead refresh token leaves no recovery path otherwise: delete the
+                    # token file so the next source_connect logs in again instead of
+                    # repeating this
+                    self._path.unlink(missing_ok=True)
                 raise
             save_token(self._path, new_state)
             return new_state
