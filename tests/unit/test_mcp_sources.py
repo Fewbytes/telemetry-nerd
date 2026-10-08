@@ -81,6 +81,24 @@ async def test_missing_secret_is_a_tool_error_with_hint(tmp_path):
     assert "TN_SURELY_UNSET_VAR" in text(r) and "hint:" in text(r)
 
 
+async def test_oauth_and_auth_env_together_is_a_tool_error(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    r = await call(
+        mcp,
+        "source_connect",
+        {
+            "name": "sso",
+            "url": URL,
+            "auth_env": "TN_SURELY_UNSET_VAR",
+            "oauth_authorize_url": "https://idp.example.com/authorize",
+            "oauth_token_url": "https://idp.example.com/token",
+            "oauth_client_id": "tn-client",
+        },
+    )
+    assert r.is_error
+    assert "oauth_*" in text(r) or "not both" in text(r)
+
+
 async def test_status_unknown_source_is_tool_error(tmp_path):
     mcp = build_mcp(make_service(tmp_path), "http://x")
     r = await call(mcp, "source_status", {"name": "ghost"})

@@ -250,7 +250,9 @@ async def test_concurrent_refresh_calls_hit_the_token_endpoint_once(tmp_path):
 
 async def test_oauth_login_completes_against_a_fake_idp_and_callback(tmp_path):
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"access_token": "AT0", "refresh_token": "RT0", "expires_in": 3600})
+        return httpx.Response(
+            200, json={"access_token": "AT0", "refresh_token": "RT0", "expires_in": 3600}
+        )
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     async with CallbackListener() as listener:
@@ -260,7 +262,9 @@ async def test_oauth_login_completes_against_a_fake_idp_and_callback(tmp_path):
         async def fire():
             params = dict(httpx.QueryParams(httpx.URL(url).params))
             async with httpx.AsyncClient() as c:
-                await c.get(listener.redirect_uri, params={"code": "code123", "state": params["state"]})
+                await c.get(
+                    listener.redirect_uri, params={"code": "code123", "state": params["state"]}
+                )
 
         task = asyncio.create_task(fire())
         await login.complete()  # phase 2: drive the exchange to completion

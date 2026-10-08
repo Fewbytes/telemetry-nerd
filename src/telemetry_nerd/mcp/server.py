@@ -874,6 +874,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         auth_env: str | None = None,
         auth_file: str | None = None,
         auth_scheme: str = "bearer",
+        oauth_authorize_url: str | None = None,
+        oauth_token_url: str | None = None,
+        oauth_client_id: str | None = None,
+        oauth_client_secret_env: str | None = None,
+        oauth_scopes: list[str] | None = None,
         max_concurrency: int = 4,
         min_interval: str = "0s",
         timeout: str = "30s",
@@ -917,6 +922,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         Elasticsearch/Kibana hand it out, the encoded id:api_key, sent as "ApiKey <key>").
         With grafana+uid, this is Grafana's own token (the proxy forwards it); it needs
         access to that datasource.
+        OAuth (interactive SSO login, e.g. Okta): give oauth_authorize_url, oauth_token_url,
+        oauth_client_id (and oauth_client_secret_env / oauth_scopes if the IdP app needs
+        them) instead of auth_env/auth_file. The first source_connect call drives an
+        interactive login (it returns once you, the user, finish logging in at the URL
+        Claude shows you) and then connects; mutually exclusive with auth_env/auth_file.
         Politeness for shared/public servers: lower max_concurrency, set min_interval
         (e.g. 500ms), raise timeout (e.g. 60s).
         profile_source: name of another source with downsampled data of the same series (e.g. a
@@ -927,7 +937,18 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         The source is probed before it is saved; it persists across daemon restarts.
         Returns {source, status} (plus {backend} when detected via grafana+uid).
         """
-        auth = _auth_ref(auth_env, auth_file, auth_scheme)
+        if oauth_authorize_url is not None and (auth_env is not None or auth_file is not None):
+            raise ToolError("pass either oauth_* or auth_env/auth_file, not both")
+        oauth = None
+        if oauth_authorize_url is not None:
+            oauth = {
+                "authorize_url": oauth_authorize_url,
+                "token_url": oauth_token_url,
+                "client_id": oauth_client_id,
+                "client_secret_env": oauth_client_secret_env,
+                "scopes": oauth_scopes or [],
+            }
+        auth = oauth or _auth_ref(auth_env, auth_file, auth_scheme)
 
         def spec(source_url: str, source_flavor: str) -> SourceSpec:
             return SourceSpec.model_validate(
