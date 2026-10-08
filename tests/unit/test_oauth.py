@@ -9,6 +9,7 @@ import pytest
 from telemetry_nerd.sources.oauth import (
     CallbackListener,
     OAuthLoginFailed,
+    OAuthLoginTimeout,
     TokenProvider,
     TokenState,
     generate_pkce,
@@ -309,6 +310,35 @@ async def test_concurrent_refresh_calls_hit_the_token_endpoint_once(tmp_path):
     assert len(calls) == 1
 
 
+async def test_two_providers_on_the_same_path_share_the_refresh_lock(tmp_path):
+    a = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path)
+    b = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path)
+    assert a._lock is b._lock
+
+
+async def test_staggered_401s_against_two_providers_dedupe_to_one_refresh(tmp_path):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(
+            200, json={"access_token": "AT1", "refresh_token": "RT1", "expires_in": 3600}
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    a = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path, client=client)
+    b = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path, client=client)
+    _seed_token(a, expires_in_s=3600)  # both share the token file too
+
+    async def staggered_401(provider: TokenProvider, delay: float) -> bool:
+        await asyncio.sleep(delay)
+        return await provider.on_401("AT0")
+
+    results = await asyncio.gather(staggered_401(a, 0), staggered_401(b, 0.01))
+    assert results == [True, True]
+    assert len(calls) == 1
+
+
 async def test_oauth_login_completes_against_a_fake_idp_and_callback(tmp_path):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -333,6 +363,25 @@ async def test_oauth_login_completes_against_a_fake_idp_and_callback(tmp_path):
 
     provider = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path)
     assert await provider.headers() == {"Authorization": "Bearer AT0"}
+
+
+async def test_token_with_a_different_issuer_key_is_treated_as_absent(tmp_path):
+    provider = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path)
+    save_token(
+        provider._path, TokenState("AT0", "RT0", time.time() + 3600, "a-different-issuer-key")
+    )
+    assert provider._load_current() is None
+    with pytest.raises(MissingSecret, match="no OAuth login"):
+        await provider.headers()
+
+
+async def test_login_timeout_message_includes_the_login_url(tmp_path):
+    async with CallbackListener() as listener:
+        login = oauth_login(_oauth_ref(), "sso", _SOURCE_URL, tmp_path, listener, timeout_s=0.05)
+        url = login.url()
+        with pytest.raises(OAuthLoginTimeout) as exc_info:
+            await login.complete()
+        assert url in str(exc_info.value)
 
 
 async def test_oauth_login_rejects_a_mismatched_callback_state(tmp_path):

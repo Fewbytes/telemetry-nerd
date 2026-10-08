@@ -156,6 +156,43 @@ async def test_5xx_is_source_unavailable():
         await _src(lambda r: es_error(503, "master_not_discovered_exception", "no master")).probe()
 
 
+async def test_retry_transport_error_maps_to_source_unavailable(tmp_path):
+    _seed_oauth_token(tmp_path)
+
+    def fake(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/token":
+            return httpx.Response(
+                200, json={"access_token": "AT1", "refresh_token": "RT1", "expires_in": 3600}
+            )
+        if request.headers.get("Authorization") == "Bearer AT0":
+            return es_error(401, "security_exception", "unauthorized")
+        raise httpx.ConnectError("boom")  # the retry request itself can't reach the cluster
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    src = ElasticsearchSource.from_spec(oauth_spec(), client=client, data_dir=tmp_path)
+    with pytest.raises(SourceUnavailable):
+        await src.probe()
+
+
+async def test_401_with_no_surviving_token_skips_the_retry(tmp_path):
+    _seed_oauth_token(tmp_path)
+    calls = {"query": 0}
+    token_file = token_path(tmp_path, "logs")
+
+    def fake(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/token":
+            raise AssertionError("on_401 must not refresh when there is no token at all")
+        calls["query"] += 1
+        token_file.unlink(missing_ok=True)  # revoked/deleted concurrently with this request
+        return es_error(401, "security_exception", "unauthorized")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    src = ElasticsearchSource.from_spec(oauth_spec(), client=client, data_dir=tmp_path)
+    with pytest.raises(SourceError, match="authentication failed"):
+        await src.probe()
+    assert calls["query"] == 1  # no second request after on_401() returned False
+
+
 async def test_static_auth_source_401_falls_through_to_the_generic_error_unchanged():
     def fake(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, text="Unauthorized")

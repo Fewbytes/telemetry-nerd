@@ -142,6 +142,52 @@ async def test_source_connect_with_oauth_and_a_valid_token_connects_without_logg
     assert out["source"]["auth"]["client_id"] == "tn-client"
 
 
+async def test_oauth_login_opens_the_browser_with_the_login_url(tmp_path, monkeypatch):
+    service = make_service(tmp_path, factory=_real_factory(tmp_path))
+    opened = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+
+    def fake_transport(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "idp.example.com":
+            return httpx.Response(
+                200, json={"access_token": "AT0", "refresh_token": "RT0", "expires_in": 3600}
+            )
+        return httpx.Response(
+            200, json={"status": "success", "data": {"resultType": "matrix", "result": []}}
+        )
+
+    real_async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "telemetry_nerd.sources.promql.httpx.AsyncClient",
+        lambda **kw: real_async_client(transport=httpx.MockTransport(fake_transport)),
+    )
+    monkeypatch.setattr(
+        "telemetry_nerd.sources.oauth.httpx.AsyncClient",
+        lambda **kw: real_async_client(transport=httpx.MockTransport(fake_transport)),
+    )
+
+    connect_task = asyncio.create_task(service.source_connect(_oauth_spec()))
+
+    async def fire_once_listening() -> None:
+        login_url = None
+        for _ in range(200):  # ~2s worst case
+            events = [e for e in service.log.tail(50) if e.type == "source.oauth_login_url"]
+            if events:
+                login_url = events[-1].payload["url"]
+                break
+            await asyncio.sleep(0.01)
+        assert login_url is not None
+        params = dict(httpx.QueryParams(httpx.URL(login_url).params))
+        redirect_uri = params["redirect_uri"]
+        async with real_async_client() as c:
+            await c.get(redirect_uri, params={"code": "code123", "state": params["state"]})
+
+    await asyncio.gather(connect_task, fire_once_listening())
+    assert len(opened) == 1
+    [event] = [e for e in service.log.tail(50) if e.type == "source.oauth_login_url"]
+    assert opened[0] == event.payload["url"]
+
+
 async def test_source_connect_with_oauth_and_no_token_drives_a_real_login(tmp_path, monkeypatch):
     service = make_service(tmp_path, factory=_real_factory(tmp_path))
 
@@ -183,6 +229,53 @@ async def test_source_connect_with_oauth_and_no_token_drives_a_real_login(tmp_pa
 
     await asyncio.gather(connect_task, fire_once_listening())
     assert service.sources.spec("sso") is not None
+
+
+async def test_disconnect_deletes_the_oauth_token_file(tmp_path, monkeypatch):
+    service = make_service(tmp_path, factory=_real_factory(tmp_path))
+
+    def fake_transport(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "idp.example.com":
+            return httpx.Response(
+                200, json={"access_token": "AT0", "refresh_token": "RT0", "expires_in": 3600}
+            )
+        return httpx.Response(
+            200, json={"status": "success", "data": {"resultType": "matrix", "result": []}}
+        )
+
+    real_async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "telemetry_nerd.sources.promql.httpx.AsyncClient",
+        lambda **kw: real_async_client(transport=httpx.MockTransport(fake_transport)),
+    )
+    monkeypatch.setattr(
+        "telemetry_nerd.sources.oauth.httpx.AsyncClient",
+        lambda **kw: real_async_client(transport=httpx.MockTransport(fake_transport)),
+    )
+
+    connect_task = asyncio.create_task(service.source_connect(_oauth_spec()))
+
+    async def fire_once_listening() -> None:
+        login_url = None
+        for _ in range(200):
+            events = [e for e in service.log.tail(50) if e.type == "source.oauth_login_url"]
+            if events:
+                login_url = events[-1].payload["url"]
+                break
+            await asyncio.sleep(0.01)
+        assert login_url is not None
+        params = dict(httpx.QueryParams(httpx.URL(login_url).params))
+        async with real_async_client() as c:
+            await c.get(
+                params["redirect_uri"], params={"code": "code123", "state": params["state"]}
+            )
+
+    await asyncio.gather(connect_task, fire_once_listening())
+    path = token_path(tmp_path, "sso")
+    assert path.exists()
+
+    await service.source_disconnect("sso")
+    assert not path.exists()
 
 
 async def test_oauth_full_lifecycle_refresh_then_relogin_after_revoke(tmp_path, monkeypatch):

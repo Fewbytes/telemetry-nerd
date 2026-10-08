@@ -60,7 +60,7 @@ def test_measurement_items_come_from_caveats():
 
 
 from telemetry_nerd.model.discovery import Discovery
-from telemetry_nerd.sources.base import SourceError, language_of
+from telemetry_nerd.sources.base import SourceError, SourceUnavailable, language_of
 from telemetry_nerd.sources.oauth import TokenState, issuer_key, save_token, token_path
 from telemetry_nerd.sources.promql import PromQLSource
 from telemetry_nerd.sources.spec import SourceSpec
@@ -150,6 +150,43 @@ async def test_oauth_source_raises_after_retry_still_401(tmp_path):
     src = PromQLSource.from_spec(_oauth_spec(tmp_path), client=client, data_dir=tmp_path)
     with pytest.raises(SourceError, match="401"):
         await src.probe()
+
+
+async def test_retry_transport_error_maps_to_source_unavailable(tmp_path):
+    _seed_oauth_token(tmp_path)
+
+    def fake(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/token":
+            return httpx.Response(
+                200, json={"access_token": "AT1", "refresh_token": "RT1", "expires_in": 3600}
+            )
+        if request.headers.get("Authorization") == "Bearer AT0":
+            return httpx.Response(401, json={"status": "error", "error": "unauthorized"})
+        raise httpx.ConnectError("boom")  # the retry request itself can't reach the server
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    src = PromQLSource.from_spec(_oauth_spec(tmp_path), client=client, data_dir=tmp_path)
+    with pytest.raises(SourceUnavailable):
+        await src.probe()
+
+
+async def test_401_with_no_surviving_token_skips_the_retry(tmp_path):
+    _seed_oauth_token(tmp_path)
+    calls = {"query": 0}
+    token_file = token_path(tmp_path, "sso")
+
+    def fake(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/token":
+            raise AssertionError("on_401 must not refresh when there is no token at all")
+        calls["query"] += 1
+        token_file.unlink(missing_ok=True)  # revoked/deleted concurrently with this request
+        return httpx.Response(401, json={"status": "error", "error": "unauthorized"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    src = PromQLSource.from_spec(_oauth_spec(tmp_path), client=client, data_dir=tmp_path)
+    with pytest.raises(SourceError, match="401"):
+        await src._get_json("/api/v1/query", {"query": "1"})
+    assert calls["query"] == 1  # no second request after on_401() returned False
 
 
 async def test_static_auth_source_401_falls_through_to_the_generic_error_unchanged():
