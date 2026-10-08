@@ -36,6 +36,7 @@ from telemetry_nerd.sources.esquery import COUNT_AGG, TIME_AGG, EsQuery
 from telemetry_nerd.sources.gate import Gate
 from telemetry_nerd.sources.oauth import TokenProvider
 from telemetry_nerd.sources.promql import MAX_STEPS_PER_QUERY, USER_AGENT
+from telemetry_nerd.sources.semantics import ELASTICSEARCH
 from telemetry_nerd.sources.spec import OAuthRef, SourceSpec
 
 EsFlavor = Literal["elasticsearch", "opensearch"]
@@ -230,8 +231,8 @@ def _cell(q: EsQuery, parent: dict, step_s: float) -> Cell | None:
 
 class ElasticsearchSource:
     query_language: Literal["es_dsl"] = "es_dsl"
-    #: no verified missing-data profile yet (spec: later work)
-    semantics = None
+    #: same profile for both flavors: Elasticsearch and OpenSearch speak the same search API
+    semantics = ELASTICSEARCH
 
     def __init__(
         self,

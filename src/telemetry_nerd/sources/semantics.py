@@ -446,6 +446,88 @@ VICTORIAMETRICS = MissingDataSemantics(
     ),
 )
 
+
+@dataclass(frozen=True)
+class ElasticsearchMissingDataSemantics:
+    """What an Elasticsearch/OpenSearch source does at its data edges (spec: later-work #6;
+    evidence in docs/data-source-quirks.md). Its query model is bucketed aggregation tiles, not
+    PromQL instant/range-vector evaluation, so it does not reuse `MissingDataSemantics`'s
+    PromQL-function fields (`gap_fill`, `rate_edge`, `subquery_fills_gaps`, ...): those describe
+    behaviors this backend's query language has no equivalent of, and forcing a value onto them
+    would misrepresent what was actually checked.
+
+    Evidence here is reproduced per-run against a real Elasticsearch/OpenSearch testcontainer
+    (`tests/integration/test_es_missing_data.py`), not static recorded fixtures: `Fact.evidence`
+    lists the test ids that reproduce it.
+    """
+
+    backend: Literal["elasticsearch"]
+    #: a query range entirely before the earliest document (or an index with no documents at all)
+    #: answers 200 with empty aggregation buckets, never an error
+    retention_edge: Fact[Literal["empty", "error"]]
+    #: a query bucket between the first and last non-empty one with no matching documents:
+    #: `rate`/`field_rate` forms report 0/s (a document count of zero is an exact observation);
+    #: `stats`/percentile forms report no row (absent). Leading/trailing empty buckets (before the
+    #: first document or after the last) never appear at all: `min_doc_count: 0` without
+    #: `extended_bounds` only fills gaps *between* non-empty buckets.
+    empty_window: Fact[Literal["zero_or_absent_by_form"]]
+    #: visibility lag: a document is not searchable until the index's next refresh
+    #: (`index.refresh_interval`, default 1s). The adapter does not read this setting, probe it,
+    #: or expose an ingest-lag number: a just-written document can be silently missing from the
+    #: newest query bucket until the next refresh, and this looks identical to "no data yet".
+    settling: Fact[Literal["refresh_interval_unobserved"]]
+    #: HTTP-visible marker of a partial response: `_shards.failed > 0` and/or `timed_out: true` in
+    #: the search response body; the adapter surfaces either as a `FetchResult.failed` /
+    #: `DistResult.failed` span ("PartialResponse: ..."). The field shapes are confirmed against
+    #: real clusters; an actual shard failure or query timeout was not reproduced (a healthy
+    #: single-node test cluster never produces one on demand without destructive fault injection,
+    #: and a synthetic low `timeout` did not reliably trigger `timed_out: true` either).
+    partial_response_signal: Fact[Literal["shards_failed_or_timed_out"]]
+    notes: tuple[str, ...] = field(default=())
+
+    def facts(self) -> dict[str, Fact]:
+        return {k: v for k, v in self.__dict__.items() if isinstance(v, Fact)}
+
+    def unverified(self) -> list[str]:
+        return [k for k, f in self.facts().items() if not f.trusted]
+
+
+_ES = "tests/integration/test_es_missing_data.py"
+_ES_RATE = "tests/integration/test_es_containers.py::test_rate_is_documents_per_second_with_an_interior_zero"
+_ES_STATS = "tests/integration/test_es_containers.py::test_stats_is_the_mean_latency_with_its_count"
+
+ELASTICSEARCH = ElasticsearchMissingDataSemantics(
+    backend="elasticsearch",
+    retention_edge=verified(
+        "empty",
+        f"{_ES}::test_retention_edge_is_empty_not_error",
+    ),
+    empty_window=verified(
+        "zero_or_absent_by_form",
+        _ES_RATE,
+        _ES_STATS,
+    ),
+    settling=verified(
+        "refresh_interval_unobserved",
+        f"{_ES}::test_document_is_invisible_until_the_next_refresh",
+    ),
+    partial_response_signal=documented(
+        "shards_failed_or_timed_out",
+        "https://www.elastic.co/guide/en/elasticsearch/reference/current/search-search.html",
+    ),
+    notes=(
+        (
+            "reproduced against Elasticsearch 8.15.3 and OpenSearch 2.17.1 single-node test "
+            "clusters; both speak the same search API so one profile serves both flavors"
+        ),
+        (
+            "a healthy single-node test cluster cannot be made to fail a shard or time out on "
+            "demand without destructive fault injection, so partial_response_signal's field "
+            "shapes are confirmed live but an actual partial response was not reproduced here"
+        ),
+    ),
+)
+
 PROFILES: dict[str, MissingDataSemantics] = {
     p.backend: p for p in (PROMETHEUS, THANOS, MIMIR, VICTORIAMETRICS)
 }

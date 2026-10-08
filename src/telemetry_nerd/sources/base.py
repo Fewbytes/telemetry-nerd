@@ -10,7 +10,7 @@ from telemetry_nerd.model.discovery import Discovery
 from telemetry_nerd.model.distribution import DistResult
 from telemetry_nerd.model.series import FetchResult
 from telemetry_nerd.model.time import TimeRange
-from telemetry_nerd.sources.semantics import MissingDataSemantics
+from telemetry_nerd.sources.semantics import ElasticsearchMissingDataSemantics, MissingDataSemantics
 
 QueryLanguage = Literal["promql", "es_dsl"]
 
@@ -45,7 +45,7 @@ class Source(Protocol):
     identity: str  # stable id of what this source reads (flavor, endpoint, resolution)
     resolution_ms: int
     #: what the backend does at the edges of its data; None for sources without a profile
-    semantics: MissingDataSemantics | None
+    semantics: MissingDataSemantics | ElasticsearchMissingDataSemantics | None
     #: the backend's native language `expr` is written in (promql: Prometheus, Thanos, Mimir,
     #: VictoriaMetrics; es_dsl: Elasticsearch/OpenSearch request bodies)
     query_language: QueryLanguage

@@ -2538,7 +2538,8 @@ class TelemetryService:
 def _semantics_flags(src) -> dict:
     """Source semantics the dataset needs when read back (only those that hold)."""
     sem = getattr(src, "semantics", None)
-    out = {"post_gap_increase_spike": True} if sem and sem.post_gap_increase_spike.value else {}
+    spike = getattr(sem, "post_gap_increase_spike", None)  # PromQL-only; ES has no such profile
+    out = {"post_gap_increase_spike": True} if spike is not None and spike.value else {}
     # the resolution was configured or measured: evidence of the series interval (bucket_state
     # confirms a cadence a little slower than the step with it); an assumed default is not
     if getattr(src, "resolution_origin", None) in ("configured", "learned"):

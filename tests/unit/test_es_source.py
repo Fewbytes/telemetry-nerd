@@ -24,7 +24,7 @@ def test_identity_changes_with_index_pattern_and_time_field():
     b = ElasticsearchSource.from_spec(spec(time_field="event.created"))
     assert a.identity == f"elasticsearch|{URL}|{PATTERN}|@timestamp|1000"
     assert a.identity != b.identity
-    assert a.query_language == "es_dsl" and a.semantics is None
+    assert a.query_language == "es_dsl" and a.semantics.backend == "elasticsearch"
 
 
 def test_resolution_is_assumed_1s_unless_configured():
