@@ -76,6 +76,8 @@ export interface DatasetMeta {
   scheme?: BucketSchemeInfo | null; histogram?: { selector: string; by: string[] } | null;
   source_caveats?: string[];
   producer?: Producer | null; parents?: string[]; unit?: string | null; uncertainty?: Uncertainty | null;
+  /** the language `expr` is written in ("promql" or "es_dsl"); distinguishes TDigest percentiles from Prometheus ones */
+  query_language?: string | null;
 }
 /** Distribution cells. lo === null means -Inf, hi === null means +Inf (JSON has no Infinity). */
 export interface FilterInfo {

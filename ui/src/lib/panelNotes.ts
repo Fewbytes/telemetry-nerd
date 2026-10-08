@@ -252,6 +252,7 @@ export function describeShown(
   d: Pick<DatasetMeta, "representation" | "quantile"> & {
     scheme?: DatasetMeta["scheme"]; histogram?: DatasetMeta["histogram"];
     producer?: DatasetMeta["producer"]; uncertainty?: DatasetMeta["uncertainty"];
+    query_language?: DatasetMeta["query_language"];
   },
   step: string,
   kind = "time",
@@ -271,10 +272,14 @@ export function describeShown(
   if (kind === "seasonal") return "Seasonal comparison: now against the same time range in previous cycles (faint), their median (dashed) and a 90% band from the spread across those cycles; dots are points too extreme for any previous cycle.";
   if (kind === "spectrogram") return "Spectrogram: how the periodicity changes over time, one analysis window (segment) per column; the segment length sets the period resolution.";
   if (mark === "percentiles") {
-    return `Per ${step} column, the source bucket holding each percentile (estimator: bucket-edge bounds, never interpolated), only where the column has n ≥ 10/(1−q).`;
+    return isLinear(d)
+      ? `Per ${step} column, the percentile as a TDigest estimate over the query's value tiles (approximate, not bucket-edge bounds), only where the column has n ≥ 10/(1−q).`
+      : `Per ${step} column, the source bucket holding each percentile (estimator: bucket-edge bounds, never interpolated), only where the column has n ≥ 10/(1−q).`;
   }
   if (mark === "quantile_curve") {
-    return "Value at each quantile, as source-bucket boxes [F(lo), F(hi)]; the dashed line marks where n stops supporting a quantile (faded beyond it).";
+    return isLinear(d)
+      ? "Value at each quantile, as a TDigest estimate over the query's value tiles (approximate, not bucket boxes); the dashed line marks where n stops supporting a quantile (faded beyond it)."
+      : "Value at each quantile, as source-bucket boxes [F(lo), F(hi)]; the dashed line marks where n stops supporting a quantile (faded beyond it).";
   }
   if (mark === "ccdf") {
     return isLinear(d)
@@ -305,6 +310,9 @@ export function describeShown(
   }
   if (d.representation === "quantile") {
     const q = d.quantile != null ? `p${Number((d.quantile * 100).toFixed(2))}` : "Percentile";
+    if (d.query_language === "es_dsl") {
+      return `${q} per ${step} query-defined tile, never aggregated; estimator: TDigest (approximate, not an exact order statistic).`;
+    }
     const est = d.histogram
       ? "estimator: histogram_quantile, linear interpolation within the bucket holding q (the source's definition)"
       : "estimator: as computed by the source (e.g. quantile_over_time or a summary's own quantile)";

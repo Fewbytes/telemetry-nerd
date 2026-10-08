@@ -143,6 +143,13 @@ describe("quantile estimator provenance", () => {
     expect(describeShown({ representation: "quantile", quantile: 0.95, histogram: { selector: "x", by: [] } }, "1m")).toContain("histogram_quantile, linear interpolation");
     expect(describeShown({ representation: "quantile", quantile: 0.95 }, "1m")).toContain("as computed by the source");
   });
+  it("words an Elasticsearch/OpenSearch percentile as a TDigest estimate over query-defined tiles, not a Prometheus query window", () => {
+    const text = describeShown({ representation: "quantile", quantile: 0.95, query_language: "es_dsl" }, "1m");
+    expect(text).toContain("TDigest");
+    expect(text).toContain("query-defined tile");
+    expect(text).not.toContain("query window");
+    expect(text).not.toContain("quantile_over_time");
+  });
 });
 
 describe("auto-charted panels (2as.14)", () => {
@@ -236,5 +243,17 @@ describe("query-chosen (linear) bucket schemes", () => {
     expect(caveatText("zero_is_no_documents")).toContain("no traffic");
     expect(caveatText("approximate_percentile")).toContain("TDigest");
     expect(caveatText("query_chosen_buckets")).toContain("smaller interval");
+  });
+  it("words the percentile-band and quantile-curve marks as TDigest estimates over query-defined tiles for a linear scheme", () => {
+    const percentiles = describeShown({ ...dist, scheme }, "1m", "heatmap", "percentiles");
+    expect(percentiles).toContain("TDigest");
+    expect(percentiles).not.toContain("source bucket");
+    const curve = describeShown({ ...dist, scheme }, "1m", "histogram", "quantile_curve");
+    expect(curve).toContain("TDigest");
+    expect(curve).not.toContain("source-bucket boxes");
+  });
+  it("keeps the Prometheus bucket-edge wording for the percentile-band and quantile-curve marks on a classic scheme", () => {
+    expect(describeShown({ ...dist, scheme: classic }, "1m", "heatmap", "percentiles")).toContain("the source bucket holding each percentile");
+    expect(describeShown({ ...dist, scheme: classic }, "1m", "histogram", "quantile_curve")).toContain("source-bucket boxes");
   });
 });

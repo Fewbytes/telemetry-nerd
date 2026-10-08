@@ -304,6 +304,20 @@ always be asked for (at a cost in buckets). Consequences, all explicit:
   `"compare": ">="` and its text says "at or above x"; the CCDF panel note says "P(X ≥ x)" for
   `linear`. Prometheus kinds keep `>`. A `BucketScheme.lower_inclusive` property (`kind ==
   "linear"`) is the single place this is decided.
+- **Percentile wording.** ES/OpenSearch percentiles are TDigest estimates over query-defined
+  tiles, not Prometheus bucket-edge estimates over a query window, so the percentile-band
+  (`mark: "percentiles"`) and percentile-curve (`mark: "quantile_curve"`) heatmap/histogram notes
+  branch the same way as the distribution/histogram/CCDF notes above (on the dataset's bucket
+  `scheme.kind === "linear"`): "the percentile as a TDigest estimate over the query's value tiles
+  (approximate, not bucket-edge bounds)" / "... as a TDigest estimate over the query's value tiles
+  (approximate, not bucket boxes)", instead of "the source bucket holding each percentile" /
+  "source-bucket boxes". The scalar quantile-representation note (a `percentile` form's own
+  panel, not a distribution) has no bucket scheme to key off, so it branches on
+  `DatasetMeta.query_language === "es_dsl"` instead (`ui/src/lib/api.ts` exposes this field to the
+  UI; it is already set at query time per [`Source.query_language`](#sourcequery_language)):
+  "p95 per 1m query-defined tile, never aggregated; estimator: TDigest (approximate, not an exact
+  order statistic)", replacing the Prometheus-only "p95 at each 1m query step (over the query
+  window), never aggregated; estimator: ... quantile_over_time ...".
 - Threshold snapping in `compare_seasonal` (to "the nearest shared edge") works unchanged: the
   edges are `offset + k·width`.
 - `DIST_SCHEMA`'s `count` comment ("increase() over one step") becomes "observations in the value
@@ -556,8 +570,9 @@ Follows the project's test tiers (`CLAUDE.md`): unit tests and e2e never touch a
   public-test-sources spec) succeeds, add the live test; if the proxy refuses them, skip this
   tier entirely — the integration containers above are sufficient on their own, and CERN moves to
   the Grafana-proxied follow-up (the adapter is not changed to suit Grafana's proxy in v1).
-- **UI** (vitest): panel-note text for `linear` schemes and the `>=` CCDF wording. No new e2e
-  spec: the UI changes are text only, and the Query expander already renders any string.
+- **UI** (vitest): panel-note text for `linear` schemes, the `>=` CCDF wording, and the TDigest
+  percentile/quantile-curve/quantile-representation wording. No new e2e spec: the UI changes are
+  text only, and the Query expander already renders any string.
 
 # Non-goals
 
@@ -621,5 +636,5 @@ by this design.
 | Wiring | `core/bootstrap.py` (factory dispatch), `mcp/server.py` (`source_connect`, `check_littles_law`, tool descriptions), `sources/grafana.py` (`UNSUPPORTED_HINT`) |
 | Service | `core/service.py` (`query` dispatch, `DatasetMeta.query_language`), `core/littles_ops.py` (ES roles, `concurrency_source`), `core/workspace_service.py` (`catalog_learn` naming) |
 | Models | `model/distribution.py` (`linear` kind, `width`, `offset`, `lower_inclusive`), `model/discovery.py` (`naming`), `analysis/fraction.py` (`>=` on `linear`) |
-| UI | `ui/src/lib/api.ts` (`BucketSchemeInfo`), `ui/src/lib/panelNotes.ts` (distribution / histogram / CCDF notes) |
+| UI | `ui/src/lib/api.ts` (`BucketSchemeInfo`, `DatasetMeta.query_language`), `ui/src/lib/panelNotes.ts` (distribution / histogram / CCDF / percentile / quantile-curve / quantile-representation notes) |
 | Tests | `tests/unit/...`, `tests/fixtures/elasticsearch/`, `tests/integration/...` (ES + OpenSearch containers), a `-m network` CERN probe |
