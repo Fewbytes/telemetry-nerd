@@ -65,6 +65,55 @@ def test_ensure_daemon_spawns_when_unhealthy(tmp_path, monkeypatch):
     assert kw["start_new_session"] is True
 
 
+def test_ensure_daemon_times_out_if_lock_holder_hangs(tmp_path, monkeypatch):
+    """telemetry-nerd-vrtd: ensure_daemon's flock wait must be bounded. A holder that never
+    releases the lock (e.g. a wedged spawn) must not block the caller forever; once the
+    deadline passes and no daemon is healthy, it raises instead of hanging."""
+    import fcntl
+
+    monkeypatch.setattr(daemon, "healthy", lambda url, timeout=1.0: False)
+    settings = Settings(data_dir=tmp_path, port=7997)
+
+    daemon.lock_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(daemon.lock_path(tmp_path), "a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            start = time.monotonic()
+            try:
+                daemon.ensure_daemon(settings, wait_s=0.3)
+                raised = False
+            except RuntimeError as e:
+                raised = True
+                assert "timed out" in str(e)
+            elapsed = time.monotonic() - start
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    assert raised
+    assert elapsed < 2.0
+
+
+def test_ensure_daemon_rechecks_health_after_lock_timeout(tmp_path, monkeypatch):
+    """telemetry-nerd-vrtd: if the lock wait times out but the holder's daemon is actually
+    healthy by then (it just hasn't released the lock yet), ensure_daemon returns its URL
+    instead of failing a caller that has no real problem."""
+    import fcntl
+
+    settings = Settings(data_dir=tmp_path, port=7996)
+    daemon.write_state(tmp_path, settings.daemon_url, 999)
+    monkeypatch.setattr(daemon, "healthy", lambda url, timeout=1.0: url == settings.daemon_url)
+
+    daemon.lock_path(tmp_path).parent.mkdir(parents=True, exist_ok=True)
+    with open(daemon.lock_path(tmp_path), "a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            url = daemon.ensure_daemon(settings, wait_s=0.3)
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    assert url == settings.daemon_url
+
+
 def test_ensure_daemon_concurrent_calls_spawn_only_once(tmp_path, monkeypatch):
     """Regression for the check-then-spawn race (telemetry-nerd-au99): N concurrent
     ensure_daemon() calls against a fresh data_dir must spawn exactly one daemon."""

@@ -56,6 +56,21 @@ def lock_path(data_dir: Path) -> Path:
     return Path(data_dir) / "daemon.lock"
 
 
+def _acquire_lock_nb(lock_file, wait_s: float, poll_s: float = 0.05) -> bool:
+    """Poll for the exclusive lock instead of blocking forever (telemetry-nerd-vrtd): a caller
+    whose own process hangs while holding the lock (e.g. a wedged spawn) must not wedge every
+    other ensure_daemon() caller along with it."""
+    deadline = time.monotonic() + wait_s
+    while True:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(poll_s)
+
+
 def ensure_daemon(settings: Settings, wait_s: float = 15.0) -> str:
     """Return the URL of a healthy daemon for this data dir, spawning one if needed.
 
@@ -64,10 +79,23 @@ def ensure_daemon(settings: Settings, wait_s: float = 15.0) -> str:
     observe "not healthy", but only the one that wins the lock spawns a daemon. The
     other blocks on the lock and, once it acquires it, re-checks health (now true,
     since the winner's daemon has finished starting) and returns without spawning.
+
+    The lock wait itself is bounded (telemetry-nerd-vrtd): if the holder doesn't release it
+    within `wait_s`, we give up waiting and do one final health re-check (the holder's daemon
+    may have come up fine even though it's still sitting on the lock) before failing.
     """
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     with open(lock_path(settings.data_dir), "a+") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        if not _acquire_lock_nb(lock_file, wait_s):
+            state = read_state(settings.data_dir)
+            if state is not None and healthy(state["url"]):
+                return state["url"]
+            if healthy(settings.daemon_url):
+                return settings.daemon_url
+            raise RuntimeError(
+                f"timed out waiting for daemon.lock in {settings.data_dir} "
+                "(the lock holder may be hung)"
+            )
         try:
             return _check_then_spawn(settings, wait_s)
         finally:

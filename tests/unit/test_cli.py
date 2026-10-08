@@ -71,6 +71,54 @@ def test_serve_exits_quietly_on_duckdb_lock_conflict(tmp_path, monkeypatch, capl
     assert any("already holds the lock" in r.message for r in caplog.records)
 
 
+def test_serve_reraises_non_lock_duckdb_errors(tmp_path):
+    """telemetry-nerd-vrtd: only the specific lock-conflict message is swallowed; a disk-full,
+    permission-denied, or corrupt-file IOException must propagate instead of being misreported
+    as a benign lock loss."""
+
+    def boom(settings):
+        raise duckdb.IOException("IO Error: Disk full")
+
+    import pytest
+
+    settings = cli.Settings.from_env()
+    settings.data_dir = tmp_path
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(cli, "build_service", boom)
+        with pytest.raises(duckdb.IOException, match="Disk full"):
+            anyio.run(cli._serve, settings)
+
+
+def test_serve_does_not_clobber_winners_state_when_it_loses_the_race(tmp_path, monkeypatch):
+    """telemetry-nerd-vrtd regression: two daemons started directly (bypassing ensure_daemon,
+    so `_already_running` can't see the winner's state yet) race for the same data dir. The
+    loser's build_service() raises the lock-conflict IOException.
+
+    Before the fix, `main()` wrote its own pid into daemon.json *before* calling
+    `anyio.run(_serve, ...)` -- i.e. before knowing whether it won the race -- clobbering
+    whatever the winner had just written, and then its `finally: remove_state` deleted that
+    clobbered (own-pid) entry on the way out, destroying the winner's state entirely.
+    """
+    from telemetry_nerd import daemon
+
+    winner_pid = 111
+    daemon.write_state(tmp_path, "http://127.0.0.1:7070", winner_pid)
+
+    def boom(settings):
+        raise duckdb.IOException("Could not set lock on file")
+
+    monkeypatch.setattr(cli, "build_service", boom)
+    # _already_running must not see the winner as healthy, or main() would refuse to start
+    # (sys.exit(1)) before ever reaching the racy code path we're testing.
+    monkeypatch.setattr(daemon, "healthy", lambda url, timeout=1.0: False)
+    loser_pid = 222
+    monkeypatch.setattr("os.getpid", lambda: loser_pid)
+
+    cli.main(["serve", "--data-dir", str(tmp_path)])
+
+    assert daemon.read_state(tmp_path) == {"url": "http://127.0.0.1:7070", "pid": winner_pid}
+
+
 def test_serve_refuses_when_healthy_daemon_same_data_dir(tmp_path, monkeypatch, capsys):
     import pytest
 

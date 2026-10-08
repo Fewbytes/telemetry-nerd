@@ -99,16 +99,29 @@ def _uvicorn_config(app: ASGIApp, settings: Settings) -> uvicorn.Config:
     )
 
 
+def _is_lock_conflict(e: duckdb.IOException) -> bool:
+    """DuckDB's message for a file already locked by another process/connection (observed on
+    duckdb 1.5.6): 'Could not set lock on file "...": Conflicting lock is held ...'. Matched
+    narrowly so unrelated IOExceptions (disk-full, permission-denied, corrupt file) propagate."""
+    msg = str(e)
+    return "Could not set lock on file" in msg or "Conflicting lock is held" in msg
+
+
 async def _serve(settings: Settings) -> None:
     try:
         service = build_service(settings)
-    except duckdb.IOException:
+    except duckdb.IOException as e:
+        if not _is_lock_conflict(e):
+            raise
         # telemetry-nerd-au99: ensure_daemon() holds an flock around check-then-spawn,
         # but a daemon started directly (bypassing ensure_daemon) can still lose this
         # race. Fail quietly instead of a full traceback; the winner already owns the
         # data dir.
         logging.getLogger(__name__).info("another daemon already holds the lock, exiting")
         return
+    # telemetry-nerd-vrtd: only claim daemon.json after the DuckDB open actually succeeded,
+    # so a loser never overwrites the winner's state file with its own (doomed) pid.
+    daemon.write_state(settings.data_dir, settings.daemon_url, os.getpid())
     mcp = build_mcp(service, settings.ui_url)
     app = create_app(service, settings.ui_dir, allowed_hosts=settings.allowed_hosts, mcp=mcp)
     server = uvicorn.Server(_uvicorn_config(app, settings))
@@ -296,7 +309,6 @@ def main(argv: list[str] | None = None) -> None:
             log.warning("UI not built: run `just ui-build`")
         log.info("workspace UI at %s, MCP at %s/mcp", settings.ui_url, settings.ui_url)
         pid = os.getpid()
-        daemon.write_state(settings.data_dir, settings.daemon_url, pid)
         try:
             anyio.run(_serve, settings)
         finally:
