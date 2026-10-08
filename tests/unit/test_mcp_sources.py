@@ -99,6 +99,35 @@ async def test_oauth_and_auth_env_together_is_a_tool_error(tmp_path):
     assert "oauth_*" in text(r) or "not both" in text(r)
 
 
+async def test_grafana_with_oauth_is_rejected_not_attempted(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    r = await call(
+        mcp,
+        "source_connect",
+        {
+            "name": "sso",
+            "grafana": "https://play.grafana.org",
+            "uid": "grafanacloud-prom",
+            "oauth_authorize_url": "https://idp.example.com/authorize",
+            "oauth_token_url": "https://idp.example.com/token",
+            "oauth_client_id": "tn-client",
+        },
+    )
+    assert r.is_error
+    assert "not yet supported" in text(r)
+
+
+async def test_partial_oauth_args_without_authorize_url_is_a_tool_error(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    r = await call(
+        mcp,
+        "source_connect",
+        {"name": "sso", "url": URL, "oauth_token_url": "https://idp.example.com/token"},
+    )
+    assert r.is_error
+    assert "oauth_token_url" in text(r) and "oauth_authorize_url" in text(r)
+
+
 async def test_status_unknown_source_is_tool_error(tmp_path):
     mcp = build_mcp(make_service(tmp_path), "http://x")
     r = await call(mcp, "source_status", {"name": "ghost"})

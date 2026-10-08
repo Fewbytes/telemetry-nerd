@@ -939,8 +939,22 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         """
         if oauth_authorize_url is not None and (auth_env is not None or auth_file is not None):
             raise ToolError("pass either oauth_* or auth_env/auth_file, not both")
+        other_oauth_args = {
+            "oauth_token_url": oauth_token_url,
+            "oauth_client_id": oauth_client_id,
+            "oauth_client_secret_env": oauth_client_secret_env,
+            "oauth_scopes": oauth_scopes,
+        }
+        if oauth_authorize_url is None and any(v is not None for v in other_oauth_args.values()):
+            given = ", ".join(k for k, v in other_oauth_args.items() if v is not None)
+            raise ToolError(f"{given} given without oauth_authorize_url: pass all OAuth params")
         oauth = None
         if oauth_authorize_url is not None:
+            if grafana is not None:
+                raise ToolError(
+                    "Grafana datasources with OAuth are not yet supported; connect with "
+                    "url= and oauth_* directly, or use a static auth_env/auth_file token"
+                )
             oauth = {
                 "authorize_url": oauth_authorize_url,
                 "token_url": oauth_token_url,
