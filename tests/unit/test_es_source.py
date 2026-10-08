@@ -1,10 +1,13 @@
 """ElasticsearchSource: construction, transport errors and probe (fixtures, MockTransport)."""
 
+import time
+
 import httpx
 import pytest
 
 from telemetry_nerd.sources.base import SourceError, SourceUnavailable
 from telemetry_nerd.sources.elasticsearch import ElasticsearchSource
+from telemetry_nerd.sources.oauth import TokenState, save_token, token_path
 from telemetry_nerd.sources.promql import USER_AGENT
 from telemetry_nerd.sources.spec import AuthRef, SourceSpec
 
@@ -151,3 +154,72 @@ async def test_a_non_json_body_is_not_an_es_endpoint():
 async def test_5xx_is_source_unavailable():
     with pytest.raises(SourceUnavailable, match="HTTP 503"):
         await _src(lambda r: es_error(503, "master_not_discovered_exception", "no master")).probe()
+
+
+async def test_static_auth_source_401_falls_through_to_the_generic_error_unchanged():
+    def fake(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, text="Unauthorized")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    src = ElasticsearchSource.from_spec(
+        spec(auth=AuthRef(env="ES_KEY", scheme="apikey")), environ={"ES_KEY": "abc=="},
+        client=client,
+    )  # fmt: skip
+    with pytest.raises(SourceError, match="authentication failed") as exc_info:
+        await src.probe()
+    assert "apikey" in exc_info.value.hint
+    assert "source_connect" not in exc_info.value.hint
+
+
+def oauth_spec(**kw) -> SourceSpec:
+    return spec(
+        auth={
+            "authorize_url": "https://idp.example.com/authorize",
+            "token_url": "https://idp.example.com/token",
+            "client_id": "tn-client",
+        },
+        **kw,
+    )
+
+
+def _seed_oauth_token(tmp_path, name: str = "logs") -> None:
+    save_token(token_path(tmp_path, name), TokenState("AT0", "RT0", time.time() + 3600))
+
+
+async def test_from_spec_requires_data_dir_for_oauth_sources(tmp_path):
+    with pytest.raises(AssertionError):
+        ElasticsearchSource.from_spec(oauth_spec())
+
+
+async def test_oauth_source_sends_bearer_token_per_request(tmp_path):
+    _seed_oauth_token(tmp_path)
+    fake = FakeEs()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    src = ElasticsearchSource.from_spec(oauth_spec(), client=client, data_dir=tmp_path)
+    await src.probe()
+    assert fake.requests[0].headers["Authorization"] == "Bearer AT0"
+
+
+async def test_oauth_source_refreshes_and_retries_once_on_401(tmp_path):
+    _seed_oauth_token(tmp_path)
+    calls = {"query": 0, "token": 0}
+    fake_es = FakeEs()
+
+    def fake(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/token":
+            calls["token"] += 1
+            return httpx.Response(
+                200,
+                json={"access_token": "AT1", "refresh_token": "RT1", "expires_in": 3600},
+            )
+        if request.url.path != "/":
+            return fake_es(request)
+        calls["query"] += 1
+        if request.headers.get("Authorization") == "Bearer AT0":
+            return es_error(401, "security_exception", "unauthorized")
+        return fake_es(request)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    src = ElasticsearchSource.from_spec(oauth_spec(), client=client, data_dir=tmp_path)
+    await src.probe()
+    assert calls["token"] == 1 and calls["query"] == 2

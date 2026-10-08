@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Iterator, Mapping, Sequence
+from pathlib import Path
 from typing import Any, Literal
 
 import httpx
@@ -33,8 +34,9 @@ from telemetry_nerd.model.time import TimeRange, format_duration
 from telemetry_nerd.sources.base import LimitExceeded, Limits, SourceError, SourceUnavailable
 from telemetry_nerd.sources.esquery import COUNT_AGG, TIME_AGG, EsQuery
 from telemetry_nerd.sources.gate import Gate
+from telemetry_nerd.sources.oauth import TokenProvider
 from telemetry_nerd.sources.promql import MAX_STEPS_PER_QUERY, USER_AGENT
-from telemetry_nerd.sources.spec import SourceSpec
+from telemetry_nerd.sources.spec import OAuthRef, SourceSpec
 
 EsFlavor = Literal["elasticsearch", "opensearch"]
 #: finest query step assumed when none is configured (documents have no series interval)
@@ -244,6 +246,7 @@ class ElasticsearchSource:
         client: httpx.AsyncClient | None = None,
         headers: Mapping[str, str] | None = None,
         gate: Gate | None = None,
+        token_provider: TokenProvider | None = None,
     ) -> None:
         self.name = name
         self.base_url = base_url.rstrip("/")
@@ -260,6 +263,7 @@ class ElasticsearchSource:
         self._client = client or httpx.AsyncClient()
         self._headers = {"User-Agent": USER_AGENT, **(headers or {})}
         self._gate = gate or Gate()
+        self._token_provider = token_provider
         self._caps: dict[str, dict[str, dict]] = {}  # field -> {type: info}, until discover()
 
     @classmethod
@@ -268,9 +272,19 @@ class ElasticsearchSource:
         spec: SourceSpec,
         environ: Mapping[str, str] = os.environ,
         client: httpx.AsyncClient | None = None,
+        data_dir: Path | None = None,
     ) -> ElasticsearchSource:
         """Build a live source; resolves the secret reference now (raises MissingSecret)."""
         assert spec.index_pattern is not None and spec.time_field is not None  # spec validates
+        token_provider = None
+        headers: Mapping[str, str] = {}
+        if isinstance(spec.auth, OAuthRef):
+            assert data_dir is not None, "OAuth sources need data_dir"
+            token_provider = TokenProvider(
+                spec.auth, spec.name, data_dir, client=client, environ=dict(environ)
+            )
+        elif spec.auth is not None:
+            headers = spec.auth.headers(environ)
         return cls(
             spec.name,
             spec.url,
@@ -280,11 +294,14 @@ class ElasticsearchSource:
             resolution_ms=spec.resolution_ms,
             limits=Limits(timeout_s=spec.politeness.timeout_s),
             client=client,
-            headers=spec.auth.headers(environ) if spec.auth else {},
+            headers=headers,
             gate=Gate(spec.politeness.max_concurrency, spec.politeness.min_interval_ms),
+            token_provider=token_provider,
         )
 
     async def aclose(self) -> None:
+        if self._token_provider is not None:
+            await self._token_provider.aclose()
         if self._owns_client:
             await self._client.aclose()
 
@@ -323,10 +340,13 @@ class ElasticsearchSource:
     ) -> dict:
         url = f"{self.base_url}{path}"
         timeout_s = timeout_s or self.limits.timeout_s
+        headers = self._headers
+        if self._token_provider is not None:
+            headers = {**headers, **(await self._token_provider.headers())}
         try:
             async with self._gate.slot():
                 resp = await self._client.request(
-                    method, url, params=params, json=body, headers=self._headers,
+                    method, url, params=params, json=body, headers=headers,
                     timeout=timeout_s,
                 )  # fmt: skip
         except httpx.TimeoutException as e:
@@ -339,6 +359,19 @@ class ElasticsearchSource:
                 f"cannot reach {self.base_url}: {e}",
                 hint="check the source url and that the cluster is up",
             ) from e
+        if resp.status_code == 401 and self._token_provider is not None:
+            await self._token_provider.on_401()
+            headers = {**self._headers, **(await self._token_provider.headers())}
+            async with self._gate.slot():
+                resp = await self._client.request(
+                    method, url, params=params, json=body, headers=headers,
+                    timeout=timeout_s,
+                )  # fmt: skip
+        if resp.status_code == 401 and self._token_provider is not None:
+            raise SourceError(
+                f"authentication failed (HTTP 401) querying {self.base_url}",
+                hint="re-run source_connect to log in again, or check the static credential",
+            )
         if resp.status_code == 401:
             raise SourceError(
                 "authentication failed",
