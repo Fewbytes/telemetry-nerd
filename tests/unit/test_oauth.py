@@ -7,11 +7,14 @@ import httpx
 import pytest
 
 from telemetry_nerd.sources.oauth import (
+    CallbackListener,
+    OAuthLoginFailed,
     TokenProvider,
     TokenState,
     generate_pkce,
     generate_state,
     load_token,
+    oauth_login,
     save_token,
     token_path,
 )
@@ -243,3 +246,40 @@ async def test_concurrent_refresh_calls_hit_the_token_endpoint_once(tmp_path):
     results = await asyncio.gather(*(provider.headers() for _ in range(5)))
     assert all(h == {"Authorization": "Bearer AT1"} for h in results)
     assert len(calls) == 1
+
+
+async def test_oauth_login_completes_against_a_fake_idp_and_callback(tmp_path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"access_token": "AT0", "refresh_token": "RT0", "expires_in": 3600})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    async with CallbackListener() as listener:
+        login = oauth_login(_oauth_ref(), "sso", tmp_path, listener, client=client)
+        url = login.url()  # phase 1: the login URL, before any network call
+
+        async def fire():
+            params = dict(httpx.QueryParams(httpx.URL(url).params))
+            async with httpx.AsyncClient() as c:
+                await c.get(listener.redirect_uri, params={"code": "code123", "state": params["state"]})
+
+        task = asyncio.create_task(fire())
+        await login.complete()  # phase 2: drive the exchange to completion
+        await task
+
+    provider = TokenProvider(_oauth_ref(), "sso", tmp_path)
+    assert await provider.headers() == {"Authorization": "Bearer AT0"}
+
+
+async def test_oauth_login_rejects_a_mismatched_callback_state(tmp_path):
+    async with CallbackListener() as listener:
+        login = oauth_login(_oauth_ref(), "sso", tmp_path, listener)
+        login.url()
+
+        async def fire():
+            async with httpx.AsyncClient() as c:
+                await c.get(listener.redirect_uri, params={"code": "code123", "state": "wrong"})
+
+        task = asyncio.create_task(fire())
+        with pytest.raises(OAuthLoginFailed, match="did not match"):
+            await login.complete()
+        await task

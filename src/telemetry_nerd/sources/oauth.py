@@ -269,3 +269,52 @@ class CallbackListener:
                 f"no OAuth callback received within {timeout_s:g}s",
                 hint="the login page was never completed; run source_connect again",
             ) from e
+
+
+class OAuthLogin:
+    """Drives one PKCE login against an already-open `CallbackListener`. Two-phase: `url()`
+    returns the login URL immediately (no network call), then `complete()` awaits the
+    callback and finishes the token exchange. Split so a caller (e.g. `source_connect`) can
+    hand the URL to the user before the slow, human-speed wait begins."""
+
+    def __init__(
+        self,
+        oauth: OAuthRef,
+        name: str,
+        data_dir: Path,
+        listener: CallbackListener,
+        *,
+        client: httpx.AsyncClient | None = None,
+        timeout_s: float = 300.0,
+    ) -> None:
+        self._provider = TokenProvider(oauth, name, data_dir, client=client)
+        self._listener = listener
+        self._timeout_s = timeout_s
+        self._url, self._state, self._verifier = self._provider.login_url(listener.redirect_uri)
+
+    def url(self) -> str:
+        return self._url
+
+    async def complete(self) -> None:
+        try:
+            code, got_state = await self._listener.wait_for_code(self._timeout_s)
+            if got_state != self._state:
+                raise OAuthLoginFailed(
+                    "OAuth callback state did not match (possible CSRF)",
+                    hint="run source_connect again to get a fresh login URL",
+                )
+            await self._provider.complete_login(code, self._verifier, self._listener.redirect_uri)
+        finally:
+            await self._provider.aclose()
+
+
+def oauth_login(
+    oauth: OAuthRef,
+    name: str,
+    data_dir: Path,
+    listener: CallbackListener,
+    *,
+    client: httpx.AsyncClient | None = None,
+    timeout_s: float = 300.0,
+) -> OAuthLogin:
+    return OAuthLogin(oauth, name, data_dir, listener, client=client, timeout_s=timeout_s)
