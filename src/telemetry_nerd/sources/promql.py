@@ -11,6 +11,7 @@ import time
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
 from typing import Literal, NamedTuple
 
 import httpx
@@ -29,13 +30,14 @@ from telemetry_nerd.model.series import (
 from telemetry_nerd.model.time import TimeRange, format_duration
 from telemetry_nerd.sources.base import LimitExceeded, Limits, SourceError, SourceUnavailable
 from telemetry_nerd.sources.gate import Gate
+from telemetry_nerd.sources.oauth import TokenProvider
 from telemetry_nerd.sources.observed import observed_count_query
 from telemetry_nerd.sources.semantics import (
     MissingDataSemantics,
     classify_limit_error,
     semantics_for,
 )
-from telemetry_nerd.sources.spec import SourceSpec
+from telemetry_nerd.sources.spec import OAuthRef, SourceSpec
 
 MAX_STEPS_PER_QUERY = 11_000
 #: resolution assumed until the source's scrape spacing is learned (and when it cannot be)
@@ -174,6 +176,7 @@ class PromQLSource:
         headers: Mapping[str, str] | None = None,
         gate: Gate | None = None,
         backend: str | None = None,
+        token_provider: TokenProvider | None = None,
     ) -> None:
         self.name = name
         self.backend = backend
@@ -191,6 +194,7 @@ class PromQLSource:
         self._client = client or httpx.AsyncClient()
         self._headers = {"User-Agent": USER_AGENT, **(headers or {})}
         self._gate = gate or Gate()
+        self._token_provider = token_provider
 
     @classmethod
     def from_spec(
@@ -198,9 +202,18 @@ class PromQLSource:
         spec: SourceSpec,
         environ: Mapping[str, str] = os.environ,
         client: httpx.AsyncClient | None = None,
+        data_dir: Path | None = None,
     ) -> PromQLSource:
         """Build a live source; resolves the secret reference now (raises MissingSecret)."""
-        headers = spec.auth.headers(environ) if spec.auth else {}
+        token_provider = None
+        headers: Mapping[str, str] = {}
+        if isinstance(spec.auth, OAuthRef):
+            assert data_dir is not None, "OAuth sources need data_dir"
+            token_provider = TokenProvider(
+                spec.auth, spec.name, data_dir, client=client, environ=dict(environ)
+            )
+        elif spec.auth is not None:
+            headers = spec.auth.headers(environ)
         return cls(
             spec.name,
             spec.url,
@@ -210,9 +223,12 @@ class PromQLSource:
             client=client,
             headers=headers,
             gate=Gate(spec.politeness.max_concurrency, spec.politeness.min_interval_ms),
+            token_provider=token_provider,
         )
 
     async def aclose(self) -> None:
+        if self._token_provider is not None:
+            await self._token_provider.aclose()
         if self._owns_client:
             await self._client.aclose()
 
@@ -389,10 +405,13 @@ class PromQLSource:
     ) -> dict:
         url = f"{self.base_url}{path}"
         timeout_s = timeout_s or self.limits.timeout_s
+        headers = self._headers
+        if self._token_provider is not None:
+            headers = {**headers, **(await self._token_provider.headers())}
         try:
             async with self._gate.slot():
                 resp = await self._client.get(
-                    url, params=params, headers=self._headers, timeout=timeout_s
+                    url, params=params, headers=headers, timeout=timeout_s
                 )
         except httpx.TimeoutException as e:
             raise SourceUnavailable(
@@ -404,6 +423,18 @@ class PromQLSource:
                 f"cannot reach {self.base_url}: {e}",
                 hint="check the source URL and that the server is running",
             ) from e
+        if resp.status_code == 401 and self._token_provider is not None:
+            await self._token_provider.on_401()
+            headers = {**self._headers, **(await self._token_provider.headers())}
+            async with self._gate.slot():
+                resp = await self._client.get(
+                    url, params=params, headers=headers, timeout=timeout_s
+                )
+        if resp.status_code == 401:
+            raise SourceError(
+                f"authentication failed (HTTP 401) querying {self.base_url}",
+                hint="re-run source_connect to log in again, or check the static credential",
+            )
         if resp.status_code == 429 or resp.status_code >= 500:
             raise SourceUnavailable(
                 f"source returned HTTP {resp.status_code}",
