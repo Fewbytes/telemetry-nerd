@@ -6,6 +6,11 @@ test:
     uv run pytest
 
 # Container tests (testcontainers: needs a Docker-compatible socket). Required in CI.
+# Rootless Podman/applehv (macOS): Ryuk's cleanup sidecar fails to start (socket-mount volume
+# rejected), so set TESTCONTAINERS_RYUK_DISABLED=true. Also point DOCKER_HOST at the podman
+# machine's API socket, e.g.:
+#   export DOCKER_HOST="unix://$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}')"
+#   export TESTCONTAINERS_RYUK_DISABLED=true
 test-integration:
     uv run pytest -m integration
 

@@ -75,6 +75,15 @@ Unit tests and e2e never depend on an external VictoriaMetrics (e2e reads
 `src/telemetry_nerd/devtools/promfixture`; specs import their own series into it). Only
 `tests/integration` uses real backends (containers or the public internet).
 
+On rootless Podman/applehv (macOS), `just test-integration` needs two env vars: Ryuk's
+cleanup-sidecar container fails to start (socket-mount volume rejected) unless
+`TESTCONTAINERS_RYUK_DISABLED=true`, and `DOCKER_HOST` must point at the podman machine's API
+socket:
+```bash
+export TESTCONTAINERS_RYUK_DISABLED=true
+export DOCKER_HOST="unix://$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}')"
+```
+
 ## Architecture Overview
 
 _Add a brief overview of your project architecture_
