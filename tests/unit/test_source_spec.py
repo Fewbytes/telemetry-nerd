@@ -150,6 +150,7 @@ def test_es_flavors_refuse_profile_source():
         "a<b",
         "a|b",
         "a#b",
+        "a?b",
         "x" * 256,
         "",
     ],

@@ -23,7 +23,7 @@ NAME_PATTERN = r"^[a-z][a-z0-9_-]{0,31}$"
 RESERVED_NAMES = frozenset({"default"})
 _ENV_VAR = re.compile(r"^[A-Z_][A-Z0-9_]{0,127}$")
 ES_FLAVORS = frozenset({"elasticsearch", "opensearch"})
-_INDEX_FORBIDDEN = re.compile(r'[\s/\\"<>|#]')
+_INDEX_FORBIDDEN = re.compile(r'[\s/\\"<>|#?]')
 
 
 class MissingSecret(SourceError):
@@ -147,7 +147,7 @@ class SourceSpec(BaseModel):
         if v != v.lower():
             raise ValueError("index_pattern must be lowercase (index names are)")
         if _INDEX_FORBIDDEN.search(v):
-            raise ValueError('index_pattern must not contain whitespace or / \\ " < > | #')
+            raise ValueError('index_pattern must not contain whitespace or / \\ " < > | # ?')
         if any(part in ("*", "_all") for part in v.split(",")):
             raise ValueError(
                 "index_pattern '*' / '_all' includes system indices: name the pattern, "
