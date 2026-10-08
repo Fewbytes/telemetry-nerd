@@ -98,6 +98,50 @@ class AuthRef(BaseModel):
         }
 
 
+class OAuthRef(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    authorize_url: str
+    token_url: str
+    client_id: str
+    #: NAME of an environment variable holding the client secret, never the secret itself
+    #: (same convention as AuthRef.env); None for a public PKCE client with no secret
+    client_secret_env: str | None = None
+    scopes: list[str] = Field(default_factory=list)
+
+    @field_validator("authorize_url", "token_url")
+    @classmethod
+    def _https_endpoint(cls, v: str) -> str:
+        parts = urlsplit(v)
+        if parts.scheme != "https" or not parts.hostname:
+            raise ValueError("OAuth endpoint urls must look like https://host[:port]/path")
+        return v
+
+    @field_validator("client_secret_env")
+    @classmethod
+    def _env_is_a_name(cls, v: str | None) -> str | None:
+        if v is not None and not _ENV_VAR.match(v):
+            raise ValueError(
+                "client_secret_env must be the NAME of an environment variable "
+                "(e.g. OKTA_CLIENT_SECRET) in the daemon's environment, never the secret itself"
+            )
+        return v
+
+    def client_secret(self, environ: Mapping[str, str] = os.environ) -> str | None:
+        if self.client_secret_env is None:
+            return None
+        return environ.get(self.client_secret_env) or None
+
+    def public(self) -> dict:
+        return {
+            "authorize_url": self.authorize_url,
+            "token_url": self.token_url,
+            "client_id": self.client_id,
+            "scopes": self.scopes,
+            "client_secret_env": self.client_secret_env,
+        }
+
+
 class Politeness(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -115,7 +159,7 @@ class SourceSpec(BaseModel):
     #: None: learned from the series' scrape spacing (PromQLSource.learn_resolution); a value
     #: overrides what is learned
     resolution_ms: int | None = Field(None, ge=1_000, le=3_600_000)
-    auth: AuthRef | None = None
+    auth: AuthRef | OAuthRef | None = None
     politeness: Politeness = Field(default_factory=Politeness)
     #: another registered source with downsampled data of the same series (e.g. Thanos
     #: downsample-1h) that serves long-window operating profiles (bead 2as.7). On Wikimedia this
@@ -207,5 +251,10 @@ class SourceSpec(BaseModel):
 
     def public(self, environ: Mapping[str, str] = os.environ) -> dict:
         out = self.model_dump()
-        out["auth"] = self.auth.public(environ) if self.auth else None
+        if isinstance(self.auth, OAuthRef):
+            out["auth"] = self.auth.public()
+        elif isinstance(self.auth, AuthRef):
+            out["auth"] = self.auth.public(environ)
+        else:
+            out["auth"] = None
         return out

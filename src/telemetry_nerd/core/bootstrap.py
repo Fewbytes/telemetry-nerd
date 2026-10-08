@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import functools
+from pathlib import Path
+
 from telemetry_nerd.catalog.relation_store import RelationStore
 from telemetry_nerd.catalog.sample_store import SampleStore
 from telemetry_nerd.catalog.store import CatalogStore, FamilyStore
@@ -25,11 +28,11 @@ from telemetry_nerd.workspace.scope import ActiveWorkspace
 from telemetry_nerd.workspace.store import WorkspaceStore
 
 
-def source_factory(spec: SourceSpec) -> Source:
+def source_factory(spec: SourceSpec, data_dir: Path) -> Source:
     """The live adapter for a spec (resolves its secret reference now: raises MissingSecret)."""
     if spec.flavor in ES_FLAVORS:
-        return ElasticsearchSource.from_spec(spec)
-    return PromQLSource.from_spec(spec)
+        return ElasticsearchSource.from_spec(spec, data_dir=data_dir)
+    return PromQLSource.from_spec(spec, data_dir=data_dir)
 
 
 def build_service(settings: Settings) -> TelemetryService:
@@ -43,7 +46,7 @@ def build_service(settings: Settings) -> TelemetryService:
     log = EventLog(wcon, scope=active)
     datasets = DatasetStore(con, workspace.next_id)
     objects = ObjectStore(wcon, workspace.next_id, scope=active)
-    sources = SourceRegistry(wcon, source_factory)
+    sources = SourceRegistry(wcon, functools.partial(source_factory, data_dir=settings.data_dir))
     sources.load()
     # `default` is owned by daemon settings: rebuilt from them on every start, never persisted.
     default = SourceSpec(
@@ -71,6 +74,7 @@ def build_service(settings: Settings) -> TelemetryService:
         ),
         active=active,
         registry=registry,
+        data_dir=settings.data_dir,
         auto_profile=True,
         kernels=KernelManager(KernelConfig.from_settings(settings)),
         runs_root=runs_root(settings.data_dir),

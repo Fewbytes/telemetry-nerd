@@ -155,18 +155,24 @@ async def discover_datasources(
     url: str,
     auth: AuthRef | None = None,
     *,
+    oauth_headers: Mapping[str, str] | None = None,
     client: httpx.AsyncClient | None = None,
     environ: Mapping[str, str] = os.environ,
 ) -> list[GrafanaDatasource]:
     """Datasources Grafana at `url` (its own origin, not a datasource proxy path) exposes.
 
-    With `auth` (a Grafana API token or service account token): /api/datasources, the
-    authoritative list (every datasource, including ones hidden from anonymous users).
-    Without it: /api/frontend/settings, what an anonymous visitor's own browser loads;
-    what is in it depends on the instance's anonymous-access setting."""
+    With `auth` (a Grafana API token or service account token) or `oauth_headers` (resolved
+    by the caller from an OAuth `TokenProvider`): /api/datasources, the authoritative list
+    (every datasource, including ones hidden from anonymous users). Without either:
+    /api/frontend/settings, what an anonymous visitor's own browser loads; what is in it
+    depends on the instance's anonymous-access setting."""
     base = url.rstrip("/")
-    headers = auth.headers(environ) if auth is not None else {}
-    if auth is not None:
+    headers = (
+        oauth_headers
+        if oauth_headers is not None
+        else (auth.headers(environ) if auth is not None else {})
+    )
+    if auth is not None or oauth_headers is not None:
         path, parse = "/api/datasources", _from_datasources_api
     else:
         path, parse = "/api/frontend/settings", _from_frontend_settings
@@ -225,6 +231,7 @@ async def probe_backend(
     proxy_url: str,
     auth: AuthRef | None = None,
     *,
+    oauth_headers: Mapping[str, str] | None = None,
     client: httpx.AsyncClient | None = None,
     environ: Mapping[str, str] = os.environ,
     timeout_s: float = 30.0,
@@ -235,7 +242,11 @@ async def probe_backend(
     that also answers Thanos and Mimir); source_connect still probes the resulting source
     for real (a trivial query) before saving it, so an actually-unreachable source still
     fails loudly there."""
-    headers = auth.headers(environ) if auth is not None else {}
+    headers = (
+        oauth_headers
+        if oauth_headers is not None
+        else (auth.headers(environ) if auth is not None else {})
+    )
     async with _client(client) as http:
         try:
             resp = await http.get(

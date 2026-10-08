@@ -1,5 +1,8 @@
 """Variation-source vocabulary (spec §5.4, bead gkk): shared constants, wire field, findings."""
 
+import time
+
+import httpx
 import pytest
 from pydantic import ValidationError
 
@@ -57,8 +60,10 @@ def test_measurement_items_come_from_caveats():
 
 
 from telemetry_nerd.model.discovery import Discovery
-from telemetry_nerd.sources.base import language_of
+from telemetry_nerd.sources.base import SourceError, language_of
+from telemetry_nerd.sources.oauth import TokenState, issuer_key, save_token, token_path
 from telemetry_nerd.sources.promql import PromQLSource
+from telemetry_nerd.sources.spec import SourceSpec
 
 
 def test_promql_sources_speak_promql_and_sources_without_the_attribute_default_to_it():
@@ -69,3 +74,90 @@ def test_promql_sources_speak_promql_and_sources_without_the_attribute_default_t
 
 def test_discovery_naming_defaults_to_prometheus_conventions():
     assert Discovery((), (), {}, None, 1.0, (), False).naming == "prometheus"
+
+
+def _oauth_spec(tmp_path, **kw) -> SourceSpec:
+    return SourceSpec.model_validate(
+        {
+            "name": "sso",
+            "url": "http://prom.example.com",
+            "auth": {
+                "authorize_url": "https://idp.example.com/authorize",
+                "token_url": "https://idp.example.com/token",
+                "client_id": "tn-client",
+            },
+            **kw,
+        }
+    )
+
+
+def _seed_oauth_token(tmp_path, name: str = "sso") -> None:
+    key = issuer_key(_oauth_spec(tmp_path).auth, _oauth_spec(tmp_path).url)
+    save_token(token_path(tmp_path, name), TokenState("AT0", "RT0", time.time() + 3600, key))
+
+
+async def test_from_spec_requires_data_dir_for_oauth_sources(tmp_path):
+    with pytest.raises(ValueError, match="data_dir"):
+        PromQLSource.from_spec(_oauth_spec(tmp_path))
+
+
+async def test_oauth_source_sends_the_bearer_token_per_request(tmp_path):
+    _seed_oauth_token(tmp_path)
+    seen = {}
+
+    def fake(request: httpx.Request) -> httpx.Response:
+        seen["auth"] = request.headers.get("Authorization")
+        return httpx.Response(200, json={"status": "success", "data": {}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    src = PromQLSource.from_spec(_oauth_spec(tmp_path), client=client, data_dir=tmp_path)
+    await src.probe()
+    assert seen["auth"] == "Bearer AT0"
+
+
+async def test_oauth_source_refreshes_and_retries_once_on_401(tmp_path):
+    _seed_oauth_token(tmp_path)
+    calls = {"query": 0, "token": 0}
+
+    def fake(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/token":
+            calls["token"] += 1
+            return httpx.Response(
+                200, json={"access_token": "AT1", "refresh_token": "RT1", "expires_in": 3600}
+            )
+        calls["query"] += 1
+        if request.headers.get("Authorization") == "Bearer AT0":
+            return httpx.Response(401, json={"status": "error", "error": "unauthorized"})
+        return httpx.Response(200, json={"status": "success", "data": {}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    src = PromQLSource.from_spec(_oauth_spec(tmp_path), client=client, data_dir=tmp_path)
+    await src.probe()
+    assert calls == {"query": 2, "token": 1}
+
+
+async def test_oauth_source_raises_after_retry_still_401(tmp_path):
+    _seed_oauth_token(tmp_path)
+
+    def fake(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/token":
+            return httpx.Response(
+                200, json={"access_token": "AT1", "refresh_token": "RT1", "expires_in": 3600}
+            )
+        return httpx.Response(401, json={"status": "error", "error": "unauthorized"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    src = PromQLSource.from_spec(_oauth_spec(tmp_path), client=client, data_dir=tmp_path)
+    with pytest.raises(SourceError, match="401"):
+        await src.probe()
+
+
+async def test_static_auth_source_401_falls_through_to_the_generic_error_unchanged():
+    def fake(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"status": "error", "error": "unauthorized"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    src = PromQLSource("s", "http://prom.example.com", client=client)
+    with pytest.raises(SourceError, match="query failed: unauthorized") as exc_info:
+        await src.probe()
+    assert "authentication failed" not in str(exc_info.value)

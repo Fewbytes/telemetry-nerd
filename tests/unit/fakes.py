@@ -185,6 +185,7 @@ def make_service(
         ),
         active=active,
         registry=registry,
+        data_dir=tmp_path,
         clock=clock,
         kernels=kernels,
         runs_root=runs_root,
