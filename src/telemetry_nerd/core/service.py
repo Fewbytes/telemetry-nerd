@@ -1683,6 +1683,7 @@ class TelemetryService:
             resolution_ms=profile.step_ms,
             result=result,
             derived={"op": "profile_reference", "from": profile.id, "label": label},
+            query_language=meta.query_language,
         )
         self.log.append(
             actor,
@@ -1920,6 +1921,7 @@ class TelemetryService:
             histogram=meta.histogram,
             derived=extra["derived"],
             lineage=lineage,
+            query_language=meta.query_language,
         )
         self.log.append(
             actor,

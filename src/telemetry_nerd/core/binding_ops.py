@@ -475,6 +475,7 @@ class BindingOps:
                     uncertainty={"method": RATIO_METHOD, "level": RATIO_LEVEL,
                                  "kind": "confidence"},
                 ),
+                query_language=dm.query_language,
             )  # fmt: skip
             svc.log.append(actor, "dataset.created", meta.id, {"expr": meta.expr})
             return {"dataset": meta.id, "notes": notes}

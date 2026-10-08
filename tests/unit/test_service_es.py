@@ -5,10 +5,13 @@ import json
 import pytest
 
 from telemetry_nerd.analysis.exprkind import min_samples
+from telemetry_nerd.catalog.models import Claim
 from telemetry_nerd.sources.base import SourceError
 
 from .es_fake import FakeEs, search_response, tb
 from .fakes import FakeEsSource, make_service
+
+DAY = 86_400_000
 
 QS = {"query_string": {"query": "service.name:checkout"}}
 RATE = json.dumps({"query": QS})
@@ -139,6 +142,29 @@ async def test_promql_queries_are_unchanged_and_tagged_promql(tmp_path):
     svc = make_service(tmp_path)
     out = await svc.query("up", start="now-1h", step="1m")
     assert svc.datasets.meta(out["dataset"]).query_language == "promql"
+
+
+async def test_filter_of_an_es_dataset_keeps_its_query_language(svc_es):
+    """Regression (telemetry-nerd-1x2c): filter() called datasets.put() without query_language,
+    so a filtered ES dataset silently read back as "promql" -- it kept its zero_is_no_documents
+    source caveat (carried through lineage, unaffected), but lost the es_dsl-gated catalog-field
+    unit lookup in show()."""
+    svc, _ = svc_es
+    svc.ws.catalog.put_claim(
+        "es", "event.duration",
+        Claim(field="unit", value="ms", origin="rule", confidence=1.0, ts_ms=0),
+    )  # fmt: skip
+    out = await svc.query(STATS, start="0", end=str(4 * DAY), step="1m", source="es")
+    d = out["dataset"]
+    assert svc.datasets.meta(d).query_language == "es_dsl"
+
+    filtered = svc.filter(d, "lowpass", "1h", "trend")["dataset"]
+    fmeta = svc.datasets.meta(filtered)
+    assert fmeta.query_language == "es_dsl"  # was "promql" (the default) before the fix
+
+    panel = svc.show(filtered, "trend?").panel
+    assert panel.spec["y"]["unit"] == "ms"
+    assert panel.spec["y"]["unit_provenance"] == "catalog unit of field event.duration"
 
 
 async def test_tool_descriptions_document_the_es_forms(tmp_path):
