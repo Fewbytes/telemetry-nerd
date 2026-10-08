@@ -13,7 +13,8 @@ import secrets
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from urllib.parse import urlencode
+from typing import Self
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import httpx
 
@@ -195,3 +196,76 @@ class TokenProvider:
             new_state = await self._exchange(data, prior_refresh_token=state.refresh_token)
             save_token(self._path, new_state)
             return new_state
+
+
+_CALLBACK_BODY = b"<html><body>Logged in. You can close this window.</body></html>"
+
+
+class CallbackListener:
+    """A local HTTP server that lives only for the duration of one OAuth login: it accepts
+    exactly one GET to /callback, captures code+state, and shuts down. No ASGI framework —
+    one route, one request, raw enough to parse by hand."""
+
+    def __init__(self, host: str = "127.0.0.1") -> None:
+        self._host = host
+        self._server: asyncio.base_events.Server | None = None
+        self._result: asyncio.Future[tuple[str, str]] | None = None
+
+    async def __aenter__(self) -> Self:
+        self._result = asyncio.get_running_loop().create_future()
+        self._server = await asyncio.start_server(self._handle, self._host, 0)
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        assert self._server is not None
+        self._server.close()
+        await self._server.wait_closed()
+
+    @property
+    def redirect_uri(self) -> str:
+        assert self._server is not None, "CallbackListener must be used as `async with`"
+        port = self._server.sockets[0].getsockname()[1]
+        return f"http://{self._host}:{port}/callback"
+
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            request_line = await reader.readline()
+            while True:
+                line = await reader.readline()
+                if line in (b"\r\n", b""):
+                    break
+            parts = request_line.decode("latin-1").split()
+            path = parts[1] if len(parts) >= 2 else "/"
+            query = urlsplit(path).query
+            params = parse_qs(query)
+            writer.write(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: "
+                + str(len(_CALLBACK_BODY)).encode()
+                + b"\r\nConnection: close\r\n\r\n"
+                + _CALLBACK_BODY
+            )
+            await writer.drain()
+            if self._result is not None and not self._result.done():
+                code = params.get("code", [None])[0]
+                state = params.get("state", [None])[0]
+                if code and state:
+                    self._result.set_result((code, state))
+                else:
+                    self._result.set_exception(
+                        OAuthLoginFailed(
+                            "OAuth callback was missing code or state",
+                            hint="try source_connect again",
+                        )
+                    )
+        finally:
+            writer.close()
+
+    async def wait_for_code(self, timeout_s: float = 300.0) -> tuple[str, str]:
+        assert self._result is not None, "CallbackListener must be used as `async with`"
+        try:
+            return await asyncio.wait_for(self._result, timeout_s)
+        except TimeoutError as e:
+            raise OAuthLoginTimeout(
+                f"no OAuth callback received within {timeout_s:g}s",
+                hint="the login page was never completed; run source_connect again",
+            ) from e
