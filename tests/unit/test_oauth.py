@@ -256,6 +256,41 @@ async def test_transient_refresh_failure_keeps_the_token_file(tmp_path):
     assert await provider.headers() == {"Authorization": "Bearer AT1"}
 
 
+async def test_concurrent_replace_login_survives_a_racing_refresh_rejection(tmp_path):
+    """source_connect(replace=True) racing an old adapter's in-flight refresh (bead 06ft):
+    a fresh complete_login save must never be clobbered by a concurrent failing refresh's
+    delete-on-invalid_grant, and complete_login's own save must itself be lock-protected."""
+    ref = _oauth_ref()
+    path = token_path(tmp_path, "sso")
+    key = issuer_key(ref, _SOURCE_URL)
+    save_token(path, TokenState("AT0", "RT0", time.time() - 10, key))  # already expired
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        form = dict(httpx.QueryParams(request.content.decode()))
+        if form["grant_type"] == "refresh_token":
+            return httpx.Response(400, json={"error": "invalid_grant"})
+        return httpx.Response(
+            200, json={"access_token": "AT1", "refresh_token": "RT1", "expires_in": 3600}
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    old_adapter = TokenProvider(ref, "sso", _SOURCE_URL, tmp_path, client=client)
+    new_login = TokenProvider(ref, "sso", _SOURCE_URL, tmp_path, client=client)
+
+    async def refresh_fails():
+        with pytest.raises(MissingSecret):
+            await old_adapter.headers()
+
+    async def fresh_login_succeeds():
+        await new_login.complete_login("code", "verifier", "http://localhost:1/callback")
+
+    await asyncio.gather(refresh_fails(), fresh_login_succeeds())
+
+    survivor = load_token(path)
+    assert survivor is not None  # the fresh login's token must never end up deleted
+    assert survivor.access_token == "AT1"
+
+
 async def test_concurrent_refresh_calls_hit_the_token_endpoint_once(tmp_path):
     calls = []
 

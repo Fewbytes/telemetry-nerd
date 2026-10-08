@@ -162,7 +162,8 @@ class TokenProvider:
         if secret is not None:
             data["client_secret"] = secret
         state = await self._exchange(data, prior_refresh_token=None)
-        save_token(self._path, state)
+        async with self._lock:
+            save_token(self._path, state)
 
     async def _exchange(self, data: dict, *, prior_refresh_token: str | None) -> TokenState:
         try:
@@ -247,8 +248,12 @@ class TokenProvider:
                 if getattr(e, "status_code", None) in (400, 401):
                     # a dead refresh token leaves no recovery path otherwise: delete the
                     # token file so the next source_connect logs in again instead of
-                    # repeating this
-                    self._path.unlink(missing_ok=True)
+                    # repeating this — but never a token a concurrent fresh login already
+                    # wrote in our place (source_connect(replace=True) racing an old
+                    # adapter's in-flight refresh)
+                    current = self._load_current()
+                    if current is None or current.access_token == state.access_token:
+                        self._path.unlink(missing_ok=True)
                 raise
             save_token(self._path, new_state)
             return new_state
