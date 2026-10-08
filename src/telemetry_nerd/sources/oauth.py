@@ -160,3 +160,38 @@ class TokenProvider:
                 hint="the IdP app must be configured for offline access / refresh tokens",
             )
         return TokenState(access, refresh, time.time() + expires_in)
+
+    async def headers(self) -> dict[str, str]:
+        state = load_token(self._path)
+        if state is None:
+            raise MissingSecret(
+                "source has no OAuth login yet",
+                hint="run source_connect to log in",
+            )
+        if state.expires_at - _EXPIRY_MARGIN_S <= time.time():
+            state = await self._refresh(state)
+        return {"Authorization": f"Bearer {state.access_token}"}
+
+    async def on_401(self) -> bool:
+        state = load_token(self._path)
+        if state is None:
+            return False
+        await self._refresh(state)
+        return True
+
+    async def _refresh(self, state: TokenState) -> TokenState:
+        async with self._lock:
+            current = load_token(self._path)
+            if current is not None and current.access_token != state.access_token:
+                return current  # another caller already refreshed while we waited
+            data = {
+                "grant_type": "refresh_token",
+                "refresh_token": state.refresh_token,
+                "client_id": self._oauth.client_id,
+            }
+            secret = self._oauth.client_secret(self._environ)
+            if secret is not None:
+                data["client_secret"] = secret
+            new_state = await self._exchange(data, prior_refresh_token=state.refresh_token)
+            save_token(self._path, new_state)
+            return new_state

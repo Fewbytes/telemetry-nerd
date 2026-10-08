@@ -151,3 +151,95 @@ async def test_complete_login_requires_a_refresh_token(tmp_path):
     provider = TokenProvider(_oauth_ref(), "sso", tmp_path, client=client)
     with pytest.raises(MissingSecret, match="refresh_token"):
         await provider.complete_login("code", "verifier", "http://localhost:1234/callback")
+
+
+import asyncio
+
+
+def _seed_token(provider: TokenProvider, *, expires_in_s: float) -> None:
+    from telemetry_nerd.sources.oauth import TokenState, save_token
+
+    save_token(
+        provider._path,
+        TokenState("AT0", "RT0", time.time() + expires_in_s),
+    )
+
+
+async def test_headers_returns_the_stored_token_when_fresh(tmp_path):
+    provider = TokenProvider(_oauth_ref(), "sso", tmp_path)
+    _seed_token(provider, expires_in_s=3600)
+    assert await provider.headers() == {"Authorization": "Bearer AT0"}
+
+
+async def test_headers_raises_missing_secret_when_never_logged_in(tmp_path):
+    provider = TokenProvider(_oauth_ref(), "sso", tmp_path)
+    with pytest.raises(MissingSecret, match="no OAuth login"):
+        await provider.headers()
+
+
+async def test_headers_refreshes_proactively_near_expiry(tmp_path):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(dict(httpx.QueryParams(request.content.decode())))
+        return httpx.Response(
+            200, json={"access_token": "AT1", "refresh_token": "RT1", "expires_in": 3600}
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = TokenProvider(_oauth_ref(), "sso", tmp_path, client=client)
+    _seed_token(provider, expires_in_s=30)  # inside the 60s margin
+
+    headers = await provider.headers()
+    assert headers == {"Authorization": "Bearer AT1"}
+    assert calls[0]["grant_type"] == "refresh_token"
+    assert calls[0]["refresh_token"] == "RT0"
+
+
+async def test_on_401_forces_a_refresh_and_reports_success(tmp_path):
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(
+                200, json={"access_token": "AT1", "refresh_token": "RT1", "expires_in": 3600}
+            )
+        )
+    )
+    provider = TokenProvider(_oauth_ref(), "sso", tmp_path, client=client)
+    _seed_token(provider, expires_in_s=3600)  # still "fresh", but the server says 401
+    assert await provider.on_401() is True
+    assert await provider.headers() == {"Authorization": "Bearer AT1"}
+
+
+async def test_on_401_with_no_token_at_all_returns_false(tmp_path):
+    provider = TokenProvider(_oauth_ref(), "sso", tmp_path)
+    assert await provider.on_401() is False
+
+
+async def test_refresh_failure_raises_missing_secret(tmp_path):
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(400, json={"error": "invalid_grant"})
+        )
+    )
+    provider = TokenProvider(_oauth_ref(), "sso", tmp_path, client=client)
+    _seed_token(provider, expires_in_s=30)
+    with pytest.raises(MissingSecret, match="token exchange failed"):
+        await provider.headers()
+
+
+async def test_concurrent_refresh_calls_hit_the_token_endpoint_once(tmp_path):
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(
+            200, json={"access_token": "AT1", "refresh_token": "RT1", "expires_in": 3600}
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = TokenProvider(_oauth_ref(), "sso", tmp_path, client=client)
+    _seed_token(provider, expires_in_s=30)
+
+    results = await asyncio.gather(*(provider.headers() for _ in range(5)))
+    assert all(h == {"Authorization": "Bearer AT1"} for h in results)
+    assert len(calls) == 1
