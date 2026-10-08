@@ -279,3 +279,37 @@ def test_an_elasticsearch_datasource_points_at_the_direct_connection():
     assert "not Prometheus" in UNSUPPORTED_HINT
     assert 'source_connect(url=..., flavor="elasticsearch"' in UNSUPPORTED_HINT
     assert "index_pattern" in UNSUPPORTED_HINT and "time_field" in UNSUPPORTED_HINT
+
+
+async def test_discover_datasources_uses_oauth_headers_when_given():
+    captured = {}
+
+    def fake(request: httpx.Request) -> httpx.Response:
+        captured["auth"] = request.headers.get("Authorization")
+        return httpx.Response(200, json=[])
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    await discover_datasources(
+        "https://grafana.example.com",
+        auth=None,
+        oauth_headers={"Authorization": "Bearer AT0"},
+        client=client,
+    )
+    assert captured["auth"] == "Bearer AT0"
+
+
+async def test_probe_backend_uses_oauth_headers_when_given():
+    captured = {}
+
+    def fake(request: httpx.Request) -> httpx.Response:
+        captured["auth"] = request.headers.get("Authorization")
+        return httpx.Response(200, json={"data": {"version": "2.1.0"}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    await probe_backend(
+        "https://grafana.example.com/proxy",
+        auth=None,
+        oauth_headers={"Authorization": "Bearer AT0"},
+        client=client,
+    )
+    assert captured["auth"] == "Bearer AT0"

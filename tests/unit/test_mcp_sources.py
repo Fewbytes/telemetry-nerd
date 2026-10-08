@@ -1,3 +1,4 @@
+import functools
 import json
 
 from mcp import Client
@@ -110,7 +111,7 @@ async def test_connect_an_elasticsearch_source_with_an_api_key(tmp_path, monkeyp
 
     monkeypatch.setattr(ElasticsearchSource, "probe", ok)
     monkeypatch.setenv("ES_API_KEY", "abc==")
-    svc = make_service(tmp_path, factory=source_factory)
+    svc = make_service(tmp_path, factory=functools.partial(source_factory, data_dir=tmp_path))
     r = await call(build_mcp(svc, "http://x"), "source_connect", {
         "name": "logs", "url": "https://es.example:9200", "flavor": "elasticsearch",
         "index_pattern": "access-logs-*", "time_field": "@timestamp",
@@ -127,7 +128,7 @@ async def test_connect_an_elasticsearch_source_with_an_api_key(tmp_path, monkeyp
 
 
 async def test_an_es_source_without_time_field_is_refused_with_the_reason(tmp_path):
-    svc = make_service(tmp_path, factory=source_factory)
+    svc = make_service(tmp_path, factory=functools.partial(source_factory, data_dir=tmp_path))
     r = await call(build_mcp(svc, "http://x"), "source_connect", {
         "name": "logs", "url": "https://es.example:9200", "flavor": "elasticsearch",
         "index_pattern": "access-logs-*",
