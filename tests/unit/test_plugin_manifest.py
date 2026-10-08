@@ -179,9 +179,13 @@ def test_launcher_container_exec_respects_container_env_for_docker(fake_runtime,
 
 def test_launcher_ignores_tn_container_without_runtime(tmp_path):
     # TN_CONTAINER set but neither podman nor docker on PATH: falls through to the normal
-    # fail-loudly path, not a crash.
+    # fail-loudly path, not a crash. Uses an empty dir rather than the real /usr/bin:/bin --
+    # some CI runner images ship podman there, which would find a real runtime and take the
+    # TN_CONTAINER branch instead of the fail-loudly one this test checks.
+    empty_bin = tmp_path / "empty-bin"
+    empty_bin.mkdir()
     env = {
-        "PATH": "/usr/bin:/bin",
+        "PATH": str(empty_bin),
         "CLAUDE_PLUGIN_ROOT": str(tmp_path),
         "TN_CONTAINER": "telemetry-nerd",
     }
