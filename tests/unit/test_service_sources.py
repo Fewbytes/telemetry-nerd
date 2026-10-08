@@ -7,7 +7,7 @@ import pytest
 
 from telemetry_nerd.core.bootstrap import source_factory
 from telemetry_nerd.sources.base import SourceError, SourceUnavailable
-from telemetry_nerd.sources.oauth import TokenState, issuer_key, save_token, token_path
+from telemetry_nerd.sources.oauth import TokenState, issuer_key, load_token, save_token, token_path
 from telemetry_nerd.sources.spec import AuthRef, SourceSpec
 from tests.unit.fakes import FakeSource, make_service
 
@@ -183,3 +183,88 @@ async def test_source_connect_with_oauth_and_no_token_drives_a_real_login(tmp_pa
 
     await asyncio.gather(connect_task, fire_once_listening())
     assert service.sources.spec("sso") is not None
+
+
+async def test_oauth_full_lifecycle_refresh_then_relogin_after_revoke(tmp_path, monkeypatch):
+    """connect->login->query->expiry->refresh->query->revoke->re-login (final review I5):
+    the IdP's own refresh grant is driven by a fake transport, never a real network call."""
+    refresh_ok = {"value": True}
+
+    def fake_transport(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "idp.example.com":
+            form = dict(httpx.QueryParams(request.content.decode()))
+            if form["grant_type"] == "authorization_code":
+                return httpx.Response(
+                    200, json={"access_token": "AT0", "refresh_token": "RT0", "expires_in": 3600}
+                )
+            if not refresh_ok["value"]:
+                return httpx.Response(400, json={"error": "invalid_grant"})
+            return httpx.Response(
+                200, json={"access_token": "AT1", "refresh_token": "RT1", "expires_in": 3600}
+            )
+        return httpx.Response(200, json={"status": "success", "data": {}})
+
+    real_async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "telemetry_nerd.sources.promql.httpx.AsyncClient",
+        lambda **kw: real_async_client(transport=httpx.MockTransport(fake_transport)),
+    )
+    monkeypatch.setattr(
+        "telemetry_nerd.sources.oauth.httpx.AsyncClient",
+        lambda **kw: real_async_client(transport=httpx.MockTransport(fake_transport)),
+    )
+    service = make_service(tmp_path, factory=_real_factory(tmp_path))
+
+    async def drive_login(connect_coro) -> None:
+        before = len([e for e in service.log.tail(50) if e.type == "source.oauth_login_url"])
+        task = asyncio.create_task(connect_coro)
+
+        async def fire() -> None:
+            login_url = None
+            for _ in range(200):  # ~2s worst case
+                events = [e for e in service.log.tail(50) if e.type == "source.oauth_login_url"]
+                if len(events) > before:
+                    login_url = events[-1].payload["url"]
+                    break
+                await asyncio.sleep(0.01)
+            assert login_url is not None
+            params = dict(httpx.QueryParams(httpx.URL(login_url).params))
+            async with real_async_client() as c:
+                await c.get(
+                    params["redirect_uri"],
+                    params={"code": "code123", "state": params["state"]},
+                )
+
+        await asyncio.gather(task, fire())
+
+    path = token_path(tmp_path, "sso")
+
+    # connect -> login
+    await drive_login(service.source_connect(_oauth_spec()))
+    assert load_token(path).access_token == "AT0"
+
+    # query succeeds with the freshly issued token
+    await service.sources.get("sso").probe()
+
+    # expiry -> refresh -> query succeeds with the new token
+    seeded = load_token(path)
+    save_token(
+        path, TokenState(seeded.access_token, seeded.refresh_token, time.time() - 10, seeded.issuer_key)
+    )  # fmt: skip
+    await service.sources.get("sso").probe()
+    assert load_token(path).access_token == "AT1"
+
+    # the IdP revokes the refresh token: the next refresh fails, and the dead token is dropped
+    refresh_ok["value"] = False
+    stale = load_token(path)
+    save_token(
+        path, TokenState(stale.access_token, stale.refresh_token, time.time() - 10, stale.issuer_key)
+    )  # fmt: skip
+    with pytest.raises(SourceError):
+        await service.sources.get("sso").probe()
+    assert load_token(path) is None
+
+    # re-login: the next connect is not stuck (confirms C2's fix)
+    refresh_ok["value"] = True
+    await drive_login(service.source_connect(_oauth_spec(), replace=True))
+    assert load_token(path).access_token == "AT0"

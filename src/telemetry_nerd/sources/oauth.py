@@ -225,9 +225,7 @@ class TokenProvider:
     ) -> TokenState:
         async with self._lock:
             current = self._load_current()
-            check_against = rejected_access_token if rejected_access_token is not None else (
-                state.access_token
-            )
+            check_against = rejected_access_token or state.access_token
             if current is not None and current.access_token != check_against:
                 return current  # another caller already refreshed while we waited
             data = {
