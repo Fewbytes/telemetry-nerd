@@ -74,6 +74,7 @@ def build_service(settings: Settings) -> TelemetryService:
         ),
         active=active,
         registry=registry,
+        data_dir=settings.data_dir,
         auto_profile=True,
         kernels=KernelManager(KernelConfig.from_settings(settings)),
         runs_root=runs_root(settings.data_dir),

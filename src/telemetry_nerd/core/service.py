@@ -167,8 +167,9 @@ from telemetry_nerd.sources.base import (
     language_of,
 )
 from telemetry_nerd.sources.esquery import EsQuery
+from telemetry_nerd.sources.oauth import CallbackListener, oauth_login, token_path
 from telemetry_nerd.sources.registry import SourceRegistry
-from telemetry_nerd.sources.spec import RESERVED_NAMES, SourceSpec
+from telemetry_nerd.sources.spec import RESERVED_NAMES, OAuthRef, SourceSpec
 from telemetry_nerd.workspace.models import PanelGroup
 from telemetry_nerd.workspace.registry import WorkspaceRegistry
 from telemetry_nerd.workspace.scope import ActiveWorkspace
@@ -285,6 +286,7 @@ class TelemetryService:
     #: the daemon's active workspace; the scope every workspace store reads (spec D4)
     active: ActiveWorkspace
     registry: WorkspaceRegistry
+    data_dir: Path
     clock: Callable[[], int] = now_ms
     #: bridge presence, stamped by this service's clock (zek0.3)
     presence: PresenceRegistry = field(init=False)
@@ -1954,6 +1956,8 @@ class TelemetryService:
                 f"source {spec.name!r} already exists",
                 hint="pass replace=true to reconfigure it, or choose another name",
             )
+        if isinstance(spec.auth, OAuthRef) and not token_path(self.data_dir, spec.name).exists():
+            await self._oauth_login(spec, actor)
         source = self.sources.build(spec)  # raises MissingSecret before any network call
         try:
             status = await source.probe()
@@ -1975,6 +1979,13 @@ class TelemetryService:
         if res is not None:
             out["resolution"] = res
         return out
+
+    async def _oauth_login(self, spec: SourceSpec, actor: Actor) -> None:
+        assert isinstance(spec.auth, OAuthRef)
+        async with CallbackListener() as listener:
+            login = oauth_login(spec.auth, spec.name, self.data_dir, listener)
+            self.log.append(actor, "source.oauth_login_url", spec.name, {"url": login.url()})
+            await login.complete()
 
     def source_list(self) -> list[dict]:
         out = self.sources.describe()
