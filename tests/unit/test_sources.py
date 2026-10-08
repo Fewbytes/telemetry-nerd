@@ -149,3 +149,14 @@ async def test_oauth_source_raises_after_retry_still_401(tmp_path):
     src = PromQLSource.from_spec(_oauth_spec(tmp_path), client=client, data_dir=tmp_path)
     with pytest.raises(SourceError, match="401"):
         await src.probe()
+
+
+async def test_static_auth_source_401_falls_through_to_the_generic_error_unchanged():
+    def fake(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"status": "error", "error": "unauthorized"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    src = PromQLSource("s", "http://prom.example.com", client=client)
+    with pytest.raises(SourceError, match="query failed: unauthorized") as exc_info:
+        await src.probe()
+    assert "authentication failed" not in str(exc_info.value)

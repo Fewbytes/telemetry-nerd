@@ -430,7 +430,7 @@ class PromQLSource:
                 resp = await self._client.get(
                     url, params=params, headers=headers, timeout=timeout_s
                 )
-        if resp.status_code == 401:
+        if resp.status_code == 401 and self._token_provider is not None:
             raise SourceError(
                 f"authentication failed (HTTP 401) querying {self.base_url}",
                 hint="re-run source_connect to log in again, or check the static credential",
