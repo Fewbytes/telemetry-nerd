@@ -13,12 +13,15 @@ from telemetry_nerd.sources.oauth import (
     TokenState,
     generate_pkce,
     generate_state,
+    issuer_key,
     load_token,
     oauth_login,
     save_token,
     token_path,
 )
 from telemetry_nerd.sources.spec import MissingSecret, OAuthRef
+
+_SOURCE_URL = "https://prom.example.com"
 
 
 def test_generate_pkce_challenge_is_sha256_of_verifier():
@@ -46,14 +49,14 @@ def test_token_path_is_under_oauth_tokens_subdir(tmp_path):
 
 def test_save_then_load_token_round_trips(tmp_path):
     path = token_path(tmp_path, "sso")
-    state = TokenState(access_token="a", refresh_token="r", expires_at=123.0)
+    state = TokenState(access_token="a", refresh_token="r", expires_at=123.0, issuer_key="k")
     save_token(path, state)
     assert load_token(path) == state
 
 
 def test_save_token_sets_restrictive_permissions(tmp_path):
     path = token_path(tmp_path, "sso")
-    save_token(path, TokenState("a", "r", 123.0))
+    save_token(path, TokenState("a", "r", 123.0, "k"))
     assert (path.stat().st_mode & 0o777) == 0o600
 
 
@@ -80,7 +83,7 @@ def _oauth_ref(**kw) -> OAuthRef:
 
 
 def test_login_url_includes_pkce_challenge_and_state(tmp_path):
-    provider = TokenProvider(_oauth_ref(), "sso", tmp_path)
+    provider = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path)
     url, state, verifier = provider.login_url("http://localhost:1234/callback")
     parts = urlsplit(url)
     params = parse_qs(parts.query)
@@ -105,7 +108,7 @@ async def test_complete_login_exchanges_code_and_persists_token(tmp_path):
         })  # fmt: skip
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    provider = TokenProvider(_oauth_ref(), "sso", tmp_path, client=client)
+    provider = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path, client=client)
     await provider.complete_login("code123", "verifier123", "http://localhost:1234/callback")
 
     assert seen["form"]["grant_type"] == "authorization_code"
@@ -116,8 +119,9 @@ async def test_complete_login_exchanges_code_and_persists_token(tmp_path):
     assert "client_secret" not in seen["form"]
 
     assert load_token(provider._path) == TokenState(
-        "AT1", "RT1", pytest.approx(time.time() + 3600, abs=5)
-    )
+        "AT1", "RT1", pytest.approx(time.time() + 3600, abs=5),
+        issuer_key(_oauth_ref(), _SOURCE_URL),
+    )  # fmt: skip
 
 
 async def test_complete_login_sends_client_secret_when_configured(tmp_path):
@@ -129,7 +133,7 @@ async def test_complete_login_sends_client_secret_when_configured(tmp_path):
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     provider = TokenProvider(
-        _oauth_ref(client_secret_env="IDP_SECRET"), "sso", tmp_path,
+        _oauth_ref(client_secret_env="IDP_SECRET"), "sso", _SOURCE_URL, tmp_path,
         client=client, environ={"IDP_SECRET": "s3cr3t"},
     )  # fmt: skip
     await provider.complete_login("code123", "verifier123", "http://localhost:1234/callback")
@@ -142,7 +146,7 @@ async def test_complete_login_rejects_non_200(tmp_path):
             lambda r: httpx.Response(400, json={"error": "invalid_grant"})
         )
     )
-    provider = TokenProvider(_oauth_ref(), "sso", tmp_path, client=client)
+    provider = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path, client=client)
     with pytest.raises(MissingSecret, match="token exchange failed"):
         await provider.complete_login("bad", "verifier", "http://localhost:1234/callback")
 
@@ -151,7 +155,7 @@ async def test_complete_login_requires_a_refresh_token(tmp_path):
     client = httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={"access_token": "AT1"}))
     )
-    provider = TokenProvider(_oauth_ref(), "sso", tmp_path, client=client)
+    provider = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path, client=client)
     with pytest.raises(MissingSecret, match="refresh_token"):
         await provider.complete_login("code", "verifier", "http://localhost:1234/callback")
 
@@ -164,18 +168,18 @@ def _seed_token(provider: TokenProvider, *, expires_in_s: float) -> None:
 
     save_token(
         provider._path,
-        TokenState("AT0", "RT0", time.time() + expires_in_s),
+        TokenState("AT0", "RT0", time.time() + expires_in_s, provider._issuer_key),
     )
 
 
 async def test_headers_returns_the_stored_token_when_fresh(tmp_path):
-    provider = TokenProvider(_oauth_ref(), "sso", tmp_path)
+    provider = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path)
     _seed_token(provider, expires_in_s=3600)
     assert await provider.headers() == {"Authorization": "Bearer AT0"}
 
 
 async def test_headers_raises_missing_secret_when_never_logged_in(tmp_path):
-    provider = TokenProvider(_oauth_ref(), "sso", tmp_path)
+    provider = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path)
     with pytest.raises(MissingSecret, match="no OAuth login"):
         await provider.headers()
 
@@ -190,7 +194,7 @@ async def test_headers_refreshes_proactively_near_expiry(tmp_path):
         )
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    provider = TokenProvider(_oauth_ref(), "sso", tmp_path, client=client)
+    provider = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path, client=client)
     _seed_token(provider, expires_in_s=30)  # inside the 60s margin
 
     headers = await provider.headers()
@@ -207,15 +211,15 @@ async def test_on_401_forces_a_refresh_and_reports_success(tmp_path):
             )
         )
     )
-    provider = TokenProvider(_oauth_ref(), "sso", tmp_path, client=client)
+    provider = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path, client=client)
     _seed_token(provider, expires_in_s=3600)  # still "fresh", but the server says 401
-    assert await provider.on_401() is True
+    assert await provider.on_401("AT0") is True
     assert await provider.headers() == {"Authorization": "Bearer AT1"}
 
 
 async def test_on_401_with_no_token_at_all_returns_false(tmp_path):
-    provider = TokenProvider(_oauth_ref(), "sso", tmp_path)
-    assert await provider.on_401() is False
+    provider = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path)
+    assert await provider.on_401("AT0") is False
 
 
 async def test_refresh_failure_raises_missing_secret(tmp_path):
@@ -224,7 +228,7 @@ async def test_refresh_failure_raises_missing_secret(tmp_path):
             lambda r: httpx.Response(400, json={"error": "invalid_grant"})
         )
     )
-    provider = TokenProvider(_oauth_ref(), "sso", tmp_path, client=client)
+    provider = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path, client=client)
     _seed_token(provider, expires_in_s=30)
     with pytest.raises(MissingSecret, match="token exchange failed"):
         await provider.headers()
@@ -240,7 +244,7 @@ async def test_concurrent_refresh_calls_hit_the_token_endpoint_once(tmp_path):
         )
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    provider = TokenProvider(_oauth_ref(), "sso", tmp_path, client=client)
+    provider = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path, client=client)
     _seed_token(provider, expires_in_s=30)
 
     results = await asyncio.gather(*(provider.headers() for _ in range(5)))
@@ -256,7 +260,7 @@ async def test_oauth_login_completes_against_a_fake_idp_and_callback(tmp_path):
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     async with CallbackListener() as listener:
-        login = oauth_login(_oauth_ref(), "sso", tmp_path, listener, client=client)
+        login = oauth_login(_oauth_ref(), "sso", _SOURCE_URL, tmp_path, listener, client=client)
         url = login.url()  # phase 1: the login URL, before any network call
 
         async def fire():
@@ -270,13 +274,13 @@ async def test_oauth_login_completes_against_a_fake_idp_and_callback(tmp_path):
         await login.complete()  # phase 2: drive the exchange to completion
         await task
 
-    provider = TokenProvider(_oauth_ref(), "sso", tmp_path)
+    provider = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path)
     assert await provider.headers() == {"Authorization": "Bearer AT0"}
 
 
 async def test_oauth_login_rejects_a_mismatched_callback_state(tmp_path):
     async with CallbackListener() as listener:
-        login = oauth_login(_oauth_ref(), "sso", tmp_path, listener)
+        login = oauth_login(_oauth_ref(), "sso", _SOURCE_URL, tmp_path, listener)
         login.url()
 
         async def fire():

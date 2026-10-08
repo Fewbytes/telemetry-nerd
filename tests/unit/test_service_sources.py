@@ -7,7 +7,7 @@ import pytest
 
 from telemetry_nerd.core.bootstrap import source_factory
 from telemetry_nerd.sources.base import SourceError, SourceUnavailable
-from telemetry_nerd.sources.oauth import TokenState, save_token, token_path
+from telemetry_nerd.sources.oauth import TokenState, issuer_key, save_token, token_path
 from telemetry_nerd.sources.spec import AuthRef, SourceSpec
 from tests.unit.fakes import FakeSource, make_service
 
@@ -119,7 +119,9 @@ def _real_factory(tmp_path):
 async def test_source_connect_with_oauth_and_a_valid_token_connects_without_logging_in(
     tmp_path, monkeypatch
 ):
-    save_token(token_path(tmp_path, "sso"), TokenState("AT0", "RT0", time.time() + 3600))
+    s = _oauth_spec()
+    key = issuer_key(s.auth, s.url)
+    save_token(token_path(tmp_path, "sso"), TokenState("AT0", "RT0", time.time() + 3600, key))
     service = make_service(tmp_path, factory=_real_factory(tmp_path))
 
     def fake_transport(request: httpx.Request) -> httpx.Response:

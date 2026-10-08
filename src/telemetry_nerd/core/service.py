@@ -168,7 +168,13 @@ from telemetry_nerd.sources.base import (
     language_of,
 )
 from telemetry_nerd.sources.esquery import EsQuery
-from telemetry_nerd.sources.oauth import CallbackListener, oauth_login, token_path
+from telemetry_nerd.sources.oauth import (
+    CallbackListener,
+    issuer_key,
+    load_token,
+    oauth_login,
+    token_path,
+)
 from telemetry_nerd.sources.registry import SourceRegistry
 from telemetry_nerd.sources.spec import RESERVED_NAMES, OAuthRef, SourceSpec
 from telemetry_nerd.workspace.models import PanelGroup
@@ -1957,7 +1963,7 @@ class TelemetryService:
                 f"source {spec.name!r} already exists",
                 hint="pass replace=true to reconfigure it, or choose another name",
             )
-        if isinstance(spec.auth, OAuthRef) and not token_path(self.data_dir, spec.name).exists():
+        if isinstance(spec.auth, OAuthRef) and not self._has_valid_token(spec):
             await self._oauth_login(spec, actor)
         source = self.sources.build(spec)  # raises MissingSecret before any network call
         try:
@@ -1981,13 +1987,21 @@ class TelemetryService:
             out["resolution"] = res
         return out
 
+    def _has_valid_token(self, spec: SourceSpec) -> bool:
+        assert isinstance(spec.auth, OAuthRef)
+        state = load_token(token_path(self.data_dir, spec.name))
+        return state is not None and state.issuer_key == issuer_key(spec.auth, spec.url)
+
     async def _oauth_login(self, spec: SourceSpec, actor: Actor) -> None:
         assert isinstance(spec.auth, OAuthRef)
         async with CallbackListener() as listener:
-            login = oauth_login(spec.auth, spec.name, self.data_dir, listener)
+            login = oauth_login(spec.auth, spec.name, spec.url, self.data_dir, listener)
             url = login.url()
             self.log.append(actor, "source.oauth_login_url", spec.name, {"url": url})
-            webbrowser.open(url)  # best effort: headless/SSH daemons fall back to the log entry
+            try:  # best effort: a headless/SSH daemon falls back to the log entry/timeout hint
+                webbrowser.open(url)
+            except webbrowser.Error:
+                pass
             await login.complete()
 
     def source_list(self) -> list[dict]:
@@ -2052,6 +2066,7 @@ class TelemetryService:
         old = self.sources.remove(name)
         if old is not None:
             await self._close(old)
+        token_path(self.data_dir, name).unlink(missing_ok=True)  # no-op for non-OAuth sources
         self.log.append(actor, "source.disconnected", name, {})
 
     async def learn(self, source: str = "default", actor: Actor = "system") -> dict:

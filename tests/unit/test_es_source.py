@@ -7,7 +7,7 @@ import pytest
 
 from telemetry_nerd.sources.base import SourceError, SourceUnavailable
 from telemetry_nerd.sources.elasticsearch import ElasticsearchSource
-from telemetry_nerd.sources.oauth import TokenState, save_token, token_path
+from telemetry_nerd.sources.oauth import TokenState, issuer_key, save_token, token_path
 from telemetry_nerd.sources.promql import USER_AGENT
 from telemetry_nerd.sources.spec import AuthRef, SourceSpec
 
@@ -183,11 +183,13 @@ def oauth_spec(**kw) -> SourceSpec:
 
 
 def _seed_oauth_token(tmp_path, name: str = "logs") -> None:
-    save_token(token_path(tmp_path, name), TokenState("AT0", "RT0", time.time() + 3600))
+    s = oauth_spec()
+    key = issuer_key(s.auth, s.url)
+    save_token(token_path(tmp_path, name), TokenState("AT0", "RT0", time.time() + 3600, key))
 
 
 async def test_from_spec_requires_data_dir_for_oauth_sources(tmp_path):
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError, match="data_dir"):
         ElasticsearchSource.from_spec(oauth_spec())
 
 

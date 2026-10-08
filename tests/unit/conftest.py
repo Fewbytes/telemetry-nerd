@@ -5,6 +5,7 @@ from __future__ import annotations
 import socket
 import threading
 import time
+import webbrowser
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -17,6 +18,12 @@ from telemetry_nerd.api.app import create_app
 from telemetry_nerd.core.service import TelemetryService
 from telemetry_nerd.mcp.server import build_mcp
 from tests.unit.fakes import make_service
+
+
+@pytest.fixture(autouse=True)
+def _no_real_browser(monkeypatch):
+    """OAuth login opens the user's browser (bead C1); never actually pop one in tests."""
+    monkeypatch.setattr(webbrowser, "open", lambda url: False)
 
 
 @dataclass

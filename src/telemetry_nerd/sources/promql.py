@@ -208,9 +208,10 @@ class PromQLSource:
         token_provider = None
         headers: Mapping[str, str] = {}
         if isinstance(spec.auth, OAuthRef):
-            assert data_dir is not None, "OAuth sources need data_dir"
+            if data_dir is None:
+                raise ValueError("OAuth sources need data_dir")
             token_provider = TokenProvider(
-                spec.auth, spec.name, data_dir, client=client, environ=dict(environ)
+                spec.auth, spec.name, spec.url, data_dir, client=client, environ=dict(environ)
             )
         elif spec.auth is not None:
             headers = spec.auth.headers(environ)
@@ -400,17 +401,13 @@ class PromQLSource:
             buckets, series, partial=partial, failed=failed, notes=(*notes, *notes_extra)
         )
 
-    async def _get_json(
-        self, path: str, params: Mapping[str, str | list[str]], timeout_s: float | None = None
-    ) -> dict:
-        url = f"{self.base_url}{path}"
-        timeout_s = timeout_s or self.limits.timeout_s
-        headers = self._headers
-        if self._token_provider is not None:
-            headers = {**headers, **(await self._token_provider.headers())}
+    async def _attempt(
+        self, url: str, params: Mapping[str, str | list[str]], headers: Mapping[str, str],
+        timeout_s: float,
+    ) -> httpx.Response:  # fmt: skip
         try:
             async with self._gate.slot():
-                resp = await self._client.get(
+                return await self._client.get(
                     url, params=params, headers=headers, timeout=timeout_s
                 )
         except httpx.TimeoutException as e:
@@ -423,17 +420,25 @@ class PromQLSource:
                 f"cannot reach {self.base_url}: {e}",
                 hint="check the source URL and that the server is running",
             ) from e
+
+    async def _get_json(
+        self, path: str, params: Mapping[str, str | list[str]], timeout_s: float | None = None
+    ) -> dict:
+        url = f"{self.base_url}{path}"
+        timeout_s = timeout_s or self.limits.timeout_s
+        headers = self._headers
+        if self._token_provider is not None:
+            headers = {**headers, **(await self._token_provider.headers())}
+        resp = await self._attempt(url, params, headers, timeout_s)
         if resp.status_code == 401 and self._token_provider is not None:
-            await self._token_provider.on_401()
-            headers = {**self._headers, **(await self._token_provider.headers())}
-            async with self._gate.slot():
-                resp = await self._client.get(
-                    url, params=params, headers=headers, timeout=timeout_s
-                )
+            rejected = headers.get("Authorization", "").removeprefix("Bearer ")
+            if await self._token_provider.on_401(rejected):
+                headers = {**self._headers, **(await self._token_provider.headers())}
+                resp = await self._attempt(url, params, headers, timeout_s)
         if resp.status_code == 401 and self._token_provider is not None:
             raise SourceError(
                 f"authentication failed (HTTP 401) querying {self.base_url}",
-                hint="re-run source_connect to log in again, or check the static credential",
+                hint="re-run source_connect to log in again",
             )
         if resp.status_code == 429 or resp.status_code >= 500:
             raise SourceUnavailable(

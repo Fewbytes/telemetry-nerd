@@ -61,7 +61,7 @@ def test_measurement_items_come_from_caveats():
 
 from telemetry_nerd.model.discovery import Discovery
 from telemetry_nerd.sources.base import SourceError, language_of
-from telemetry_nerd.sources.oauth import TokenState, save_token, token_path
+from telemetry_nerd.sources.oauth import TokenState, issuer_key, save_token, token_path
 from telemetry_nerd.sources.promql import PromQLSource
 from telemetry_nerd.sources.spec import SourceSpec
 
@@ -92,11 +92,12 @@ def _oauth_spec(tmp_path, **kw) -> SourceSpec:
 
 
 def _seed_oauth_token(tmp_path, name: str = "sso") -> None:
-    save_token(token_path(tmp_path, name), TokenState("AT0", "RT0", time.time() + 3600))
+    key = issuer_key(_oauth_spec(tmp_path).auth, _oauth_spec(tmp_path).url)
+    save_token(token_path(tmp_path, name), TokenState("AT0", "RT0", time.time() + 3600, key))
 
 
 async def test_from_spec_requires_data_dir_for_oauth_sources(tmp_path):
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError, match="data_dir"):
         PromQLSource.from_spec(_oauth_spec(tmp_path))
 
 

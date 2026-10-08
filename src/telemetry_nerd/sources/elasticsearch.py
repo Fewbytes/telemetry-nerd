@@ -279,9 +279,10 @@ class ElasticsearchSource:
         token_provider = None
         headers: Mapping[str, str] = {}
         if isinstance(spec.auth, OAuthRef):
-            assert data_dir is not None, "OAuth sources need data_dir"
+            if data_dir is None:
+                raise ValueError("OAuth sources need data_dir")
             token_provider = TokenProvider(
-                spec.auth, spec.name, data_dir, client=client, environ=dict(environ)
+                spec.auth, spec.name, spec.url, data_dir, client=client, environ=dict(environ)
             )
         elif spec.auth is not None:
             headers = spec.auth.headers(environ)
@@ -329,6 +330,32 @@ class ElasticsearchSource:
     async def scrape_interval(self, selector: str, at_ms: int | None = None) -> int | None:
         return None  # documents are events, not samples of a series
 
+    async def _attempt(
+        self,
+        method: str,
+        url: str,
+        params: Mapping[str, str] | None,
+        body: dict | None,
+        headers: Mapping[str, str],
+        timeout_s: float,
+    ) -> httpx.Response:
+        try:
+            async with self._gate.slot():
+                return await self._client.request(
+                    method, url, params=params, json=body, headers=headers,
+                    timeout=timeout_s,
+                )  # fmt: skip
+        except httpx.TimeoutException as e:
+            raise SourceUnavailable(
+                f"query timed out after {timeout_s:g}s",
+                hint="narrow the query, shorten the range, or use a coarser step",
+            ) from e
+        except httpx.HTTPError as e:
+            raise SourceUnavailable(
+                f"cannot reach {self.base_url}: {e}",
+                hint="check the source url and that the cluster is up",
+            ) from e
+
     async def _request(
         self,
         method: str,
@@ -343,34 +370,16 @@ class ElasticsearchSource:
         headers = self._headers
         if self._token_provider is not None:
             headers = {**headers, **(await self._token_provider.headers())}
-        try:
-            async with self._gate.slot():
-                resp = await self._client.request(
-                    method, url, params=params, json=body, headers=headers,
-                    timeout=timeout_s,
-                )  # fmt: skip
-        except httpx.TimeoutException as e:
-            raise SourceUnavailable(
-                f"query timed out after {timeout_s:g}s",
-                hint="narrow the query, shorten the range, or use a coarser step",
-            ) from e
-        except httpx.HTTPError as e:
-            raise SourceUnavailable(
-                f"cannot reach {self.base_url}: {e}",
-                hint="check the source url and that the cluster is up",
-            ) from e
+        resp = await self._attempt(method, url, params, body, headers, timeout_s)
         if resp.status_code == 401 and self._token_provider is not None:
-            await self._token_provider.on_401()
-            headers = {**self._headers, **(await self._token_provider.headers())}
-            async with self._gate.slot():
-                resp = await self._client.request(
-                    method, url, params=params, json=body, headers=headers,
-                    timeout=timeout_s,
-                )  # fmt: skip
+            rejected = headers.get("Authorization", "").removeprefix("Bearer ")
+            if await self._token_provider.on_401(rejected):
+                headers = {**self._headers, **(await self._token_provider.headers())}
+                resp = await self._attempt(method, url, params, body, headers, timeout_s)
         if resp.status_code == 401 and self._token_provider is not None:
             raise SourceError(
                 f"authentication failed (HTTP 401) querying {self.base_url}",
-                hint="re-run source_connect to log in again, or check the static credential",
+                hint="re-run source_connect to log in again",
             )
         if resp.status_code == 401:
             raise SourceError(
