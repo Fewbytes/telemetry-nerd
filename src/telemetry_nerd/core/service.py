@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import time
+import webbrowser
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -1984,7 +1985,9 @@ class TelemetryService:
         assert isinstance(spec.auth, OAuthRef)
         async with CallbackListener() as listener:
             login = oauth_login(spec.auth, spec.name, self.data_dir, listener)
-            self.log.append(actor, "source.oauth_login_url", spec.name, {"url": login.url()})
+            url = login.url()
+            self.log.append(actor, "source.oauth_login_url", spec.name, {"url": url})
+            webbrowser.open(url)  # best effort: headless/SSH daemons fall back to the log entry
             await login.complete()
 
     def source_list(self) -> list[dict]:

@@ -297,7 +297,12 @@ class OAuthLogin:
 
     async def complete(self) -> None:
         try:
-            code, got_state = await self._listener.wait_for_code(self._timeout_s)
+            try:
+                code, got_state = await self._listener.wait_for_code(self._timeout_s)
+            except OAuthLoginTimeout as e:
+                raise OAuthLoginTimeout(
+                    f"{e}; if the browser did not open, log in at {self._url}", hint=e.hint
+                ) from e
             if got_state != self._state:
                 raise OAuthLoginFailed(
                     "OAuth callback state did not match (possible CSRF)",
