@@ -340,6 +340,7 @@ class TelemetryService:
             self._histogram_family, lambda s: getattr(self._source(s), "flavor", None),
             lambda s, sel, at: self._source(s).scrape_interval(sel, at),
             lambda s: language_of(self._source(s)),
+            claims_facts=self.ws.catalog_facts_claims_only,
         )  # fmt: skip
         self.code = CodeOps(
             self.datasets, self.ws, self.log, self.kernels,

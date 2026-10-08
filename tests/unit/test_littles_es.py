@@ -96,6 +96,23 @@ def test_a_binding_is_refused_on_an_es_source(tmp_path):
         _run(svc, binding="checkout")
 
 
+def test_es_latency_field_suffix_is_not_inferred_as_a_unit(tmp_path):
+    """_unit used to fall back to catalog_facts, which infers a unit from a Prometheus metric
+    name suffix (e.g. _seconds). An ES field path like event.duration_seconds is not a metric
+    name, and the design spec says name-based inference is skipped for ES: with no catalog claim
+    for the field, the unit must come back unknown/assumed, not 's' guessed from the name."""
+    svc, _, _ = _setup(tmp_path)
+    suffixed_qs = {"query_string": {"query": "service.name:checkout"}}
+    suffixed_latency = json.dumps(
+        {"query": suffixed_qs, "aggs": {"lat": {"stats": {"field": "event.duration_seconds"}}}}
+    )
+    out = _run(svc, latency=suffixed_latency, latency_unit=None)
+    units = {a["name"]: a for a in out["assumptions"]}["units"]
+    assert units["status"] == "assumed"
+    assert "ASSUMED seconds" in units["detail"]
+    assert "latency_unit_assumed" in out["caveats"]
+
+
 async def test_check_littles_law_documents_concurrency_source(tmp_path):
     from mcp import Client
 

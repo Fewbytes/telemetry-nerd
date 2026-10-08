@@ -246,11 +246,16 @@ class LittlesOps:
         flavor: Callable[[str], str | None] = lambda s: None,
         scrape: Callable[[str, str, int], Awaitable[int | None]] | None = None,
         language: Callable[[str], str] = lambda s: "promql",
+        claims_facts: Callable[[str, str], Any] | None = None,
     ) -> None:
         self._datasets = datasets
         self._query = query
         self._resolution = resolution
         self._facts = facts
+        # claims-only facts (no Prometheus name-rule fallback): the ES path's field path is not
+        # a metric name, so facts() would wrongly infer a unit from its suffix (spec: name-based
+        # inference is skipped for ES)
+        self._claims_facts = claims_facts or facts
         self._has = catalog_has
         self._catalog_any = catalog_any
         self._binding = binding
@@ -364,15 +369,18 @@ class LittlesOps:
             f"no {base}_sum / {base}_count on {source!r}: " + refusal.split(": ", 1)[1]
         )
 
-    def _unit(self, source: str, base: str, given: str | None) -> tuple[float, str, str | None]:
+    def _unit(
+        self, source: str, base: str, given: str | None, *, es: bool = False
+    ) -> tuple[float, str, str | None]:
         if given:
             u = given.strip().lower()
             if u not in UNIT_SECONDS:
                 raise ValueError(f"latency_unit must be one of {', '.join(UNIT_SECONDS)}")
             return UNIT_SECONDS[u], u, "given"
-        facts = self._facts(source, base)
-        if getattr(facts, "unit", None) not in UNIT_SECONDS:
-            facts = self._facts(source, f"{base}_sum")
+        facts_of = self._claims_facts if es else self._facts
+        facts = facts_of(source, base)
+        if not es and getattr(facts, "unit", None) not in UNIT_SECONDS:
+            facts = facts_of(source, f"{base}_sum")
         u = getattr(facts, "unit", None)
         if u in UNIT_SECONDS:
             return UNIT_SECONDS[u], u, getattr(facts, "unit_provenance", None) or "catalog"
@@ -479,7 +487,7 @@ class LittlesOps:
             lat = self._latency(source, roles["latency"])
             arr_name, arr_sel = _parse("arrival_rate", roles["arrival_rate"])
             arr_type = getattr(self._facts(source, arr_name), "type", None)
-        factor, unit, unit_basis = self._unit(source, lat["base"], latency_unit)
+        factor, unit, unit_basis = self._unit(source, lat["base"], latency_unit, es=es)
         res = max(self._resolution(source), self._resolution(conc_source))
         scrape_ms, scrape_note = await self._probe_scrape(
             conc_source, f"{conc_name}{conc_sel}", res, start, end

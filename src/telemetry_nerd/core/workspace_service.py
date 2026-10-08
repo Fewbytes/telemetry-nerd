@@ -1848,6 +1848,13 @@ class WorkspaceService:
         claims = self.catalog.claims_for(source, metric)
         return facts_from_claims(claims) if claims else facts_from_name(metric)
 
+    def catalog_facts_claims_only(self, source: str, metric: str) -> Facts:
+        """Like catalog_facts, but never falls back to name rules: for an Elasticsearch/
+        OpenSearch field path, which is not a Prometheus metric name (spec: name-based
+        inference is skipped for ES)."""
+        claims = self.catalog.claims_for(source, metric)
+        return facts_from_claims(claims) if claims else Facts(None, None, None, None)
+
     def catalog_entry(self, source: str, metric: str) -> CatalogEntry:
         return self.catalog.entry(source, metric)
 
