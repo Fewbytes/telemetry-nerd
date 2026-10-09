@@ -116,6 +116,68 @@ def _real_factory(tmp_path):
     return lambda spec: source_factory(spec, tmp_path)
 
 
+async def test_ensure_oauth_login_is_a_noop_with_a_valid_existing_token(tmp_path):
+    from telemetry_nerd.sources.oauth import TokenState, issuer_key, save_token, token_path
+
+    service = make_service(tmp_path, factory=_real_factory(tmp_path))
+    spec = _oauth_spec()
+    save_token(
+        token_path(tmp_path, spec.name),
+        TokenState("AT0", "RT0", time.time() + 3600, issuer_key(spec.auth, spec.url)),
+    )
+
+    # must not open a browser or a CallbackListener: a valid token already exists
+    import telemetry_nerd.core.service as service_module
+
+    def fail_if_called(*a, **kw):
+        raise AssertionError("CallbackListener must not be constructed")
+
+    orig = service_module.CallbackListener
+    service_module.CallbackListener = fail_if_called
+    try:
+        await service.ensure_oauth_login(spec.auth, spec.name, spec.url, "claude")
+    finally:
+        service_module.CallbackListener = orig
+
+
+async def test_ensure_oauth_login_client_credentials_skips_browser_and_listener(
+    tmp_path, monkeypatch
+):
+    opened = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+    monkeypatch.setenv("IDP_SECRET", "s3cret")
+
+    service = make_service(tmp_path, factory=_real_factory(tmp_path))
+    oauth = _oauth_spec(
+        auth={
+            "authorize_url": "https://idp.example.com/authorize",
+            "token_url": "https://idp.example.com/token",
+            "client_id": "tn-client",
+            "client_secret_env": "IDP_SECRET",
+            "flow": "client_credentials",
+        }
+    ).auth
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"access_token": "AT1", "expires_in": 3600})
+
+    real_async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "telemetry_nerd.sources.oauth.httpx.AsyncClient",
+        lambda **kw: real_async_client(transport=httpx.MockTransport(handler)),
+    )
+
+    await service.ensure_oauth_login(oauth, "sso", "http://prom.example.com", "claude")
+
+    assert opened == []
+    events = [e for e in service.log.tail(50) if e.type == "source.oauth_login_url"]
+    assert events == []
+    from telemetry_nerd.sources.oauth import load_token, token_path
+
+    state = load_token(token_path(tmp_path, "sso"))
+    assert state.access_token == "AT1"
+
+
 async def test_source_connect_with_oauth_and_a_valid_token_connects_without_logging_in(
     tmp_path, monkeypatch
 ):

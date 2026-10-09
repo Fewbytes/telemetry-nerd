@@ -170,6 +170,7 @@ from telemetry_nerd.sources.base import (
 from telemetry_nerd.sources.esquery import EsQuery
 from telemetry_nerd.sources.oauth import (
     CallbackListener,
+    TokenProvider,
     issuer_key,
     load_token,
     oauth_login,
@@ -1966,8 +1967,8 @@ class TelemetryService:
                 f"source {spec.name!r} already exists",
                 hint="pass replace=true to reconfigure it, or choose another name",
             )
-        if isinstance(spec.auth, OAuthRef) and not self._has_valid_token(spec):
-            await self._oauth_login(spec, actor)
+        if isinstance(spec.auth, OAuthRef):
+            await self.ensure_oauth_login(spec.auth, spec.name, spec.url, actor)
         source = self.sources.build(spec)  # raises MissingSecret before any network call
         try:
             status = await source.probe()
@@ -1990,17 +1991,26 @@ class TelemetryService:
             out["resolution"] = res
         return out
 
-    def _has_valid_token(self, spec: SourceSpec) -> bool:
-        assert isinstance(spec.auth, OAuthRef)
-        state = load_token(token_path(self.data_dir, spec.name))
-        return state is not None and state.issuer_key == issuer_key(spec.auth, spec.url)
-
-    async def _oauth_login(self, spec: SourceSpec, actor: Actor) -> None:
-        assert isinstance(spec.auth, OAuthRef)
+    async def ensure_oauth_login(
+        self, oauth: OAuthRef, name: str, source_url: str, actor: Actor
+    ) -> None:
+        """No-op if a valid token already exists for (oauth, name, source_url). Otherwise
+        drives login: interactive PKCE for authorization_code, a direct token POST for
+        client_credentials — no browser, no listener, no login URL."""
+        state = load_token(token_path(self.data_dir, name))
+        if state is not None and state.issuer_key == issuer_key(oauth, source_url):
+            return
+        if oauth.flow == "client_credentials":
+            provider = TokenProvider(oauth, name, source_url, self.data_dir)
+            try:
+                await provider.client_credentials_login()
+            finally:
+                await provider.aclose()
+            return
         async with CallbackListener() as listener:
-            login = oauth_login(spec.auth, spec.name, spec.url, self.data_dir, listener)
+            login = oauth_login(oauth, name, source_url, self.data_dir, listener)
             url = login.url()
-            self.log.append(actor, "source.oauth_login_url", spec.name, {"url": url})
+            self.log.append(actor, "source.oauth_login_url", name, {"url": url})
             try:  # best effort: a headless/SSH daemon falls back to the log entry/timeout hint
                 webbrowser.open(url)
             except webbrowser.Error:
