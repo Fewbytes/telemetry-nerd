@@ -8,7 +8,9 @@ from mcp.types import TextContent
 from telemetry_nerd.core.bootstrap import source_factory
 from telemetry_nerd.mcp.server import build_mcp
 from telemetry_nerd.sources.elasticsearch import ElasticsearchSource
+from telemetry_nerd.sources.grafana import proxy_url
 from telemetry_nerd.sources.promql import PromQLSource
+from telemetry_nerd.sources.spec import OAuthRef
 from tests.unit.fakes import make_service
 
 URL = "https://play.grafana.org/api/datasources/proxy/uid/grafanacloud-prom"
@@ -104,9 +106,11 @@ async def test_oauth_and_auth_env_together_is_a_tool_error(tmp_path):
 
 async def test_grafana_with_oauth_logs_in_then_probes_with_the_token(tmp_path, monkeypatch):
     monkeypatch.setenv("IDP_SECRET", "s3cret")
+    idp_calls = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.host == "idp.example.com":
+            idp_calls.append(request)
             return httpx.Response(200, json={"access_token": "AT1", "expires_in": 3600})
         if request.url.path.endswith("/api/v1/status/buildinfo"):
             assert request.headers.get("Authorization") == "Bearer AT1"
@@ -160,6 +164,113 @@ async def test_grafana_with_oauth_logs_in_then_probes_with_the_token(tmp_path, m
     assert not r.is_error
     body = json.loads(text(r))
     assert body["backend"] == "prometheus"
+    assert len(idp_calls) == 1
+
+
+async def test_grafana_reconnect_with_different_uid_without_replace_does_not_overwrite_token(
+    tmp_path, monkeypatch
+):
+    from telemetry_nerd.sources.oauth import issuer_key, load_token, token_path
+
+    monkeypatch.setenv("IDP_SECRET", "s3cret")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "idp.example.com":
+            return httpx.Response(200, json={"access_token": "AT1", "expires_in": 3600})
+        if request.url.path.endswith("/api/v1/status/buildinfo"):
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "version": "2.1.0",
+                        "revision": "abc123",
+                        "branch": "HEAD",
+                        "buildUser": "root@buildhost",
+                        "goVersion": "go1.21",
+                    }
+                },
+            )
+        return httpx.Response(
+            200, json={"status": "success", "data": {"resultType": "matrix", "result": []}}
+        )
+
+    real_async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "telemetry_nerd.sources.grafana.httpx.AsyncClient",
+        lambda **kw: real_async_client(transport=httpx.MockTransport(handler)),
+    )
+    monkeypatch.setattr(
+        "telemetry_nerd.sources.promql.httpx.AsyncClient",
+        lambda **kw: real_async_client(transport=httpx.MockTransport(handler)),
+    )
+    monkeypatch.setattr(
+        "telemetry_nerd.sources.oauth.httpx.AsyncClient",
+        lambda **kw: real_async_client(transport=httpx.MockTransport(handler)),
+    )
+
+    svc = make_service(tmp_path, factory=lambda spec: source_factory(spec, tmp_path))
+    mcp = build_mcp(svc, "http://x")
+    oauth_args = {
+        "oauth_authorize_url": "https://idp.example.com/authorize",
+        "oauth_token_url": "https://idp.example.com/token",
+        "oauth_client_id": "tn-client",
+        "oauth_client_secret_env": "IDP_SECRET",
+        "oauth_flow": "client_credentials",
+    }
+    r = await call(
+        mcp,
+        "source_connect",
+        {"name": "sso", "grafana": "https://play.grafana.org", "uid": "uid-a", **oauth_args},
+    )
+    assert not r.is_error, text(r)
+
+    original_key = issuer_key(
+        OAuthRef.model_validate(
+            {
+                "authorize_url": oauth_args["oauth_authorize_url"],
+                "token_url": oauth_args["oauth_token_url"],
+                "client_id": oauth_args["oauth_client_id"],
+                "client_secret_env": oauth_args["oauth_client_secret_env"],
+                "flow": "client_credentials",
+            }
+        ),
+        proxy_url("https://play.grafana.org", "uid-a"),
+    )
+    state = load_token(token_path(svc.data_dir, "sso"))
+    assert state is not None and state.issuer_key == original_key
+
+    r2 = await call(
+        mcp,
+        "source_connect",
+        {"name": "sso", "grafana": "https://play.grafana.org", "uid": "uid-b", **oauth_args},
+    )
+    assert r2.is_error
+    assert "already exists" in text(r2)
+
+    state_after = load_token(token_path(svc.data_dir, "sso"))
+    assert state_after is not None and state_after.issuer_key == original_key
+
+
+async def test_grafana_uid_with_trailing_slash_is_rejected(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    r = await call(
+        mcp,
+        "source_connect",
+        {"name": "sso", "grafana": "https://play.grafana.org", "uid": "grafanacloud-prom/"},
+    )
+    assert r.is_error
+    assert "uid" in text(r)
+
+
+async def test_grafana_uid_with_embedded_whitespace_is_rejected(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    r = await call(
+        mcp,
+        "source_connect",
+        {"name": "sso", "grafana": "https://play.grafana.org", "uid": " grafanacloud-prom"},
+    )
+    assert r.is_error
+    assert "uid" in text(r)
 
 
 async def test_partial_oauth_args_without_authorize_url_is_a_tool_error(tmp_path):

@@ -992,10 +992,16 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                     raise ToolError(
                         "grafana needs uid: see source_discover_grafana(url=...) for datasource uids"
                     )
+                if uid != uid.strip() or "/" in uid:
+                    raise ToolError(
+                        f"uid {uid!r} looks malformed: no leading/trailing whitespace or '/' "
+                        "(see source_discover_grafana(url=...) for datasource uids)"
+                    )
                 datasource_url = proxy_url(grafana, uid)
                 oauth_headers = None
                 static_auth = None
                 if oauth is not None:
+                    service.check_connectable(name, replace=replace)
                     oauth_ref = OAuthRef.model_validate(oauth)
                     await service.ensure_oauth_login(
                         oauth_ref, name, datasource_url, actor="claude"

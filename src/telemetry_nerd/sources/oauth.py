@@ -72,7 +72,8 @@ class TokenState:
 
 
 def issuer_key(oauth: OAuthRef, source_url: str) -> str:
-    return f"{oauth.token_url}|{oauth.client_id}|{source_url}"
+    base = f"{oauth.token_url}|{oauth.client_id}|{source_url}"
+    return base if oauth.flow == "authorization_code" else f"{base}|{oauth.flow}"
 
 
 def token_path(data_dir: Path, name: str) -> Path:

@@ -1958,15 +1958,18 @@ class TelemetryService:
         if aclose is not None:
             await aclose()
 
+    def check_connectable(self, name: str, *, replace: bool) -> None:
+        self._refuse_reserved(name)
+        if self.sources.spec(name) is not None and not replace:
+            raise SourceError(
+                f"source {name!r} already exists",
+                hint="pass replace=true to reconfigure it, or choose another name",
+            )
+
     async def source_connect(
         self, spec: SourceSpec, *, replace: bool = False, actor: Actor = "claude"
     ) -> dict:
-        self._refuse_reserved(spec.name)
-        if self.sources.spec(spec.name) is not None and not replace:
-            raise SourceError(
-                f"source {spec.name!r} already exists",
-                hint="pass replace=true to reconfigure it, or choose another name",
-            )
+        self.check_connectable(spec.name, replace=replace)
         if isinstance(spec.auth, OAuthRef):
             await self.ensure_oauth_login(spec.auth, spec.name, spec.url, actor)
         source = self.sources.build(spec)  # raises MissingSecret before any network call

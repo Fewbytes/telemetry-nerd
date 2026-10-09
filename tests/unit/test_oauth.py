@@ -476,6 +476,29 @@ async def test_token_with_a_different_issuer_key_is_treated_as_absent(tmp_path):
         await provider.headers()
 
 
+async def test_issuer_key_distinguishes_flows_on_the_same_client_and_url(tmp_path):
+    auth_code_ref = _oauth_ref()
+    client_creds_ref = _oauth_ref(client_secret_env="IDP_SECRET", flow="client_credentials")
+
+    # same token_url/client_id/url, different flow: distinct issuer_key
+    assert issuer_key(auth_code_ref, _SOURCE_URL) != issuer_key(client_creds_ref, _SOURCE_URL)
+
+    # a token saved under one flow's key is absent under the other flow's provider
+    provider = TokenProvider(client_creds_ref, "sso", _SOURCE_URL, tmp_path)
+    save_token(
+        provider._path,
+        TokenState("AT0", None, time.time() + 3600, issuer_key(auth_code_ref, _SOURCE_URL)),
+    )
+    assert provider._load_current() is None
+
+    # but the same flow's key still matches, as before
+    save_token(
+        provider._path,
+        TokenState("AT0", None, time.time() + 3600, issuer_key(client_creds_ref, _SOURCE_URL)),
+    )
+    assert provider._load_current() is not None
+
+
 async def test_login_timeout_message_includes_the_login_url(tmp_path):
     async with CallbackListener() as listener:
         login = oauth_login(_oauth_ref(), "sso", _SOURCE_URL, tmp_path, listener, timeout_s=0.05)

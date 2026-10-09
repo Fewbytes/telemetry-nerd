@@ -68,6 +68,11 @@ def test_auth_and_oauth_both_set_is_rejected():
                 "auth": {"env": "TOKEN", **_oauth()},
             }
         )
+    # control case: a plain AuthRef still works unchanged
+    spec = SourceSpec.model_validate(
+        {"name": "sso", "url": "https://prom.example.com", "auth": {"env": "TOKEN"}}
+    )
+    assert isinstance(spec.auth, AuthRef)
 
 
 def test_oauth_ref_defaults_to_authorization_code_flow():
@@ -105,8 +110,3 @@ def test_client_credentials_flow_with_client_secret_env_is_valid():
         }
     )
     assert ref.flow == "client_credentials"
-    # control case: a plain AuthRef still works unchanged
-    spec = SourceSpec.model_validate(
-        {"name": "sso", "url": "https://prom.example.com", "auth": {"env": "TOKEN"}}
-    )
-    assert isinstance(spec.auth, AuthRef)
