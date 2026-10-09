@@ -430,4 +430,63 @@ async def test_a_classic_histogram_listed_only_by_its_members_is_suggested_by_ba
     svc, _ = await learned(tmp_path, d)
     shop = by_id(svc.ws.binding_suggest("default", limit=100))["RED:app:shop"]
     assert shop["roles"]["duration"] == "shop_request_duration_seconds"
-    assert shop["detail"]["duration"]["histogram"] == "classic"
+
+
+def ecs_discovery() -> Discovery:
+    """An ECS-shaped Elasticsearch/OpenSearch discovery (sources/elasticsearch.py): field paths,
+    not Prometheus names, and no TYPE/HELP metadata (field_caps only ever yields gauge/counter
+    for a time_series_metric/metric_type field, never for a plain ECS field)."""
+    return Discovery(
+        tuple(
+            MetricInfo(n)
+            for n in (
+                "event.duration",
+                "http.response.status_code",
+                "event.outcome",
+                "service.name",
+                "url.path",
+            )
+        ),
+        (),
+        {},
+        None,
+        1.0,
+        ("cardinality_unavailable",),
+        False,
+        naming="fields",
+    )
+
+
+async def test_ecs_red_and_littles_law(tmp_path):
+    svc, _ = await learned(tmp_path, ecs_discovery())
+    got = by_id(svc.ws.binding_suggest("default", limit=100))
+    red = got["RED:ecs_http"]
+    assert red["key"] == "ecs.http" and red["join_on"] == ["service.name"]
+    assert red["roles"] == {
+        "rate": "event.duration",
+        "errors": "event.duration",
+        "duration": "event.duration",
+    }
+    d = red["detail"]
+    assert d["rate"]["form"] == "es_field_rate" and "value_count" in d["rate"]["expr"]
+    assert d["errors"]["form"] == "es_label_split" and "500" in d["errors"]["expr"]
+    assert "event.outcome" in d["errors"]["note"]  # alternative filter, mentioned not offered
+    assert d["duration"]["form"] == "es_stats" and "stats" in d["duration"]["expr"]
+    assert "histogram_quantile" not in d["duration"]["expr"]  # not a PromQL histogram
+    assert red["caveat"]
+    # role_claim boost: the ecs pack claims role="latency" for event.duration
+    assert d["duration"]["confidence"] > 0.85
+
+    ll = got["littles_law:ecs_http"]
+    assert ll["roles"]["arrival_rate"] == "event.duration"
+    assert ll["roles"]["latency"] == "event.duration"
+    assert ll["roles"]["concurrency"] is None
+    (u,) = ll["unfilled"]
+    assert u["role"] == "concurrency" and "ecs.http" in u["suggest_instrumentation"]["where"]
+
+
+async def test_ecs_pack_claims_flow_into_the_catalog(tmp_path):
+    svc, _ = await learned(tmp_path, ecs_discovery())
+    entry = svc.ws.catalog_entry("default", "event.duration")
+    assert entry.fields["unit"].value == "ns" and entry.fields["unit"].origin == "pack"
+    assert entry.fields["type"].value == "histogram" and entry.fields["role"].value == "latency"

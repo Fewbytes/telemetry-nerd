@@ -294,7 +294,7 @@ class PackIndex:
         return list(out.values())
 
 
-BUILTIN = ("node_exporter", "kubernetes", "otel_semconv")
+BUILTIN = ("node_exporter", "kubernetes", "otel_semconv", "ecs")
 
 
 @lru_cache(maxsize=1)

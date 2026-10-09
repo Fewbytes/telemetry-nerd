@@ -15,6 +15,7 @@ group `<prefix>_requests_total`-style names by prefix.
 
 from __future__ import annotations
 
+import json
 import re
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
@@ -283,6 +284,75 @@ def _spanmetrics_rules() -> dict[str, tuple[Rule, ...]]:
                 "histogram",
                 role_claim="latency",
                 note="span duration; on Grafana Play exposed only as a native histogram",
+            ),
+        ),
+    }
+
+
+def _es_agg(query: dict[str, Any] | None, agg_name: str, agg: dict[str, Any]) -> str:
+    """An Elasticsearch `expr` (sources/esquery.py): the one metric aggregation named `agg_name`,
+    grouped by service.name (one series per service, the ECS join key), under an optional filter
+    `query`. `{m}` stands in for the catalog field name, substituted the same way as a PromQL
+    expr's `{m}` (_candidate() does a plain string replace, so this works unmodified)."""
+    doc: dict[str, Any] = {}
+    if query is not None:
+        doc["query"] = query
+    doc["aggs"] = {"by_service": {"terms": {"field": "service.name"}, "aggs": {agg_name: agg}}}
+    return json.dumps(doc)
+
+
+def _ecs_rules() -> dict[str, tuple[Rule, ...]]:
+    """ECS-conformant Elasticsearch/OpenSearch access-log fields (catalog/packs/ecs.toml). There
+    is no classic/native histogram distinction here: event.duration is a per-document field
+    queried with `stats` (mean) or `percentiles` (quantiles), never histogram_quantile(). One
+    field (event.duration) carries request_rate (count via value_count), request_latency (mean
+    via stats) and, filtered by status/outcome, request_errors -- the same one-field-many-roles
+    shape http_server_request_duration_seconds has in _otel_http_rules()."""
+    dur = exact("event.duration")
+    rate_expr = _es_agg(None, "rate", {"value_count": {"field": "{m}"}})
+    status_err_expr = _es_agg(
+        {"range": {"http.response.status_code": {"gte": 500}}},
+        "n",
+        {"value_count": {"field": "{m}"}},
+    )
+    latency_expr = _es_agg(None, "lat", {"stats": {"field": "{m}"}})
+    return {
+        "request_rate": (
+            R(
+                dur,
+                HIST,
+                0.75,
+                "es_field_rate",
+                rate_expr,
+                note="documents per second via value_count, one series per service.name",
+            ),
+        ),
+        "request_errors": (
+            # only one candidate can be offered per metric (event.duration is the only count
+            # anchor this scope has): http.response.status_code is the ECS field this picks,
+            # since it is HTTP-specific like the scope itself; event.outcome="failure" is a
+            # protocol-agnostic alternative filter worth trying by hand where there is no status
+            # code (non-HTTP events, or a differently-named status field).
+            R(
+                dur,
+                HIST,
+                0.6,
+                "es_label_split",
+                status_err_expr,
+                note='ECS http.response.status_code >= 500 (try event.outcome="failure" '
+                "instead where there is no HTTP status code); " + _LABEL_UNVERIFIED,
+            ),
+        ),
+        "request_latency": (
+            R(
+                dur,
+                HIST,
+                0.85,
+                "es_stats",
+                latency_expr,
+                role_claim="latency",
+                note="mean W via stats; quantiles need a percentiles aggregation instead "
+                '(exactly one percents value, e.g. {"percents": [99]})',
             ),
         ),
     }
@@ -771,6 +841,17 @@ def _scopes() -> tuple[Scope, ...]:
             _spanmetrics_rules(),
             rl,
             caveat="derived from spans: counts only sampled traces if the pipeline samples",
+        ),
+        Scope(
+            "ecs_http",
+            "ECS-conformant access log (Elasticsearch/OpenSearch)",
+            "ecs.http",
+            ("service.name",),
+            _ecs_rules(),
+            rl,
+            caveat="ECS field semantics are a convention (catalog/packs/ecs.toml), not read from "
+            "the index mapping; event.duration is a per-document field, not a pre-bucketed "
+            "histogram, so percentile accuracy depends on the aggregation chosen",
         ),
         *_node_rules(),
         *_k8s_and_runtime_rules(),

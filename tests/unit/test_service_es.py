@@ -193,10 +193,10 @@ def learn_duration_unit(svc, unit="ms"):
 
 async def test_show_takes_the_unit_of_the_aggregated_field_from_the_catalog(svc_es):
     svc, _ = svc_es
-    learn_duration_unit(svc)
+    learn_duration_unit(svc)  # declares a conflicting ms unit; the ecs pack's ns claim still wins
     out = await svc.query(STATS, start="now-1h", step="1m", source="es")
     res = svc.show(out["dataset"], "How slow is checkout?")
-    assert res.panel.spec["y"]["unit"] == "ms"
+    assert res.panel.spec["y"]["unit"] == "ns"
     assert "event.duration" in res.panel.spec["y"]["unit_provenance"]
 
 

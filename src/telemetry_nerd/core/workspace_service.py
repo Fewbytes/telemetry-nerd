@@ -1018,14 +1018,20 @@ class WorkspaceService:
         ts = self.clock()
         if discovery.naming == "fields":
             # document field paths (Elasticsearch/OpenSearch) are not Prometheus names:
-            # name-template families, T0 naming rules (_total -> counter, _seconds -> s) and
-            # knowledge packs would misread them, so only declared metadata is claimed
+            # name-template families and T0 naming rules (_total -> counter, _seconds -> s) would
+            # misread them, so only declared metadata is claimed from name rules. Knowledge packs
+            # match field paths by exact name (or an explicit regex), never by suffix guessing, so
+            # they are safe to apply here too (e.g. catalog/packs/ecs.toml on ECS field names).
             fam = {"families": 0, "members": 0}
             rows = [
                 (m.name, spec.to_claim(ts))
                 for m in discovery.metrics
                 for spec in derive_claims(m.name, m, {})
                 if spec.origin == "metadata"
+            ] + [
+                (m.name, spec.to_claim(ts))
+                for m in discovery.metrics
+                for spec in self.packs.claims_for(m.name)
             ]
             changed = self.catalog.put_claims_bulk(source, rows)
             relations_changed = 0

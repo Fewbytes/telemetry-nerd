@@ -164,20 +164,23 @@ ES_DISCOVERY = Discovery(
 )
 
 
-async def test_field_paths_get_declared_metadata_claims_only(tmp_path):
+async def test_field_paths_get_declared_metadata_and_exact_pack_claims_only(tmp_path):
+    """Field paths (Elasticsearch/OpenSearch) never get T0 name-suffix rules (requests_total,
+    http_request_duration_seconds misread as Prometheus conventions), but an exact-name knowledge
+    pack entry (ecs.toml's event.duration) still applies and, ranking above metadata, wins."""
     svc = make_service(tmp_path, FakeSource(name="default", discovery=ES_DISCOVERY))
     out = await svc.learn("default")
     assert (out["metrics"], out["families"], out["family_members"]) == (4, 0, 0)
     assert out["relations_changed"] == 0
     dur = svc.ws.catalog_entry("default", "event.duration").fields["unit"]
-    assert (dur.value, dur.origin) == ("ns", "metadata")
+    assert (dur.value, dur.origin) == ("ns", "pack")
     assert svc.ws.catalog_entry("default", "requests_total").fields == {}
     assert svc.ws.catalog_entry("default", "http_request_duration_seconds").fields == {}
     b = svc.ws.catalog_entry("default", "http.response.bytes")
     assert (b.fields["type"].value, b.fields["unit"].value) == ("counter", "B")
     origins = {c.origin for e in svc.ws.catalog_list("default")
                for cs in e.claims.values() for c in cs}  # fmt: skip
-    assert origins == {"metadata"}
+    assert origins == {"metadata", "pack"}
 
 
 def test_declared_byte_unit_symbol_normalizes():
