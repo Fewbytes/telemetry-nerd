@@ -1000,9 +1000,11 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                     await service.ensure_oauth_login(
                         oauth_ref, name, datasource_url, actor="claude"
                     )
-                    oauth_headers = await TokenProvider(
-                        oauth_ref, name, datasource_url, service.data_dir
-                    ).headers()
+                    provider = TokenProvider(oauth_ref, name, datasource_url, service.data_dir)
+                    try:
+                        oauth_headers = await provider.headers()
+                    finally:
+                        await provider.aclose()
                 elif auth:
                     static_auth = AuthRef.model_validate(auth)
                 backend, detected_flavor = await probe_backend(
