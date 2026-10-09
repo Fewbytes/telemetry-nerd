@@ -199,6 +199,69 @@ async def test_exchange_failure_hint_differs_for_client_credentials(tmp_path):
     assert "client_credentials enabled" in exc_info.value.hint
 
 
+async def test_client_credentials_login_posts_grant_and_persists_token(tmp_path, monkeypatch):
+    monkeypatch.setenv("IDP_SECRET", "s3cret")
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["form"] = dict(httpx.QueryParams(request.content.decode()))
+        return httpx.Response(200, json={"access_token": "AT1", "expires_in": 3600})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    oauth = _oauth_ref(flow="client_credentials", client_secret_env="IDP_SECRET")
+    provider = TokenProvider(oauth, "sso", _SOURCE_URL, tmp_path, client=client)
+
+    await provider.client_credentials_login()
+
+    assert seen["form"]["grant_type"] == "client_credentials"
+    assert seen["form"]["client_id"] == "tn-client"
+    assert seen["form"]["client_secret"] == "s3cret"
+    assert "code" not in seen["form"]
+    assert "code_verifier" not in seen["form"]
+    assert "redirect_uri" not in seen["form"]
+
+    state = load_token(provider._path)
+    assert state.access_token == "AT1"
+    assert state.refresh_token is None
+
+
+async def test_client_credentials_login_without_secret_in_environ_raises(tmp_path, monkeypatch):
+    monkeypatch.delenv("IDP_SECRET", raising=False)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+    oauth = _oauth_ref(flow="client_credentials", client_secret_env="IDP_SECRET")
+    provider = TokenProvider(oauth, "sso", _SOURCE_URL, tmp_path, client=client)
+
+    with pytest.raises(MissingSecret, match="IDP_SECRET"):
+        await provider.client_credentials_login()
+
+
+async def test_refresh_client_credentials_re_posts_same_grant_no_refresh_token(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("IDP_SECRET", "s3cret")
+    calls = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        form = dict(httpx.QueryParams(request.content.decode()))
+        calls.append(form)
+        return httpx.Response(200, json={"access_token": f"AT{len(calls)}", "expires_in": 3600})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    oauth = _oauth_ref(flow="client_credentials", client_secret_env="IDP_SECRET")
+    provider = TokenProvider(oauth, "sso", _SOURCE_URL, tmp_path, client=client)
+    await provider.client_credentials_login()  # AT1, calls[0]
+
+    from telemetry_nerd.sources.oauth import load_token as _load
+
+    stale = _load(provider._path)
+    refreshed = await provider._refresh(stale)
+
+    assert calls[1]["grant_type"] == "client_credentials"
+    assert "refresh_token" not in calls[1]
+    assert refreshed.access_token == "AT2"
+    assert refreshed.refresh_token is None
+
+
 import asyncio
 
 

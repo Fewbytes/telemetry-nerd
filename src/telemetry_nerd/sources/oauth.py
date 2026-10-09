@@ -165,6 +165,22 @@ class TokenProvider:
         async with self._lock:
             save_token(self._path, state)
 
+    async def client_credentials_login(self) -> None:
+        secret = self._oauth.client_secret(self._environ)
+        if secret is None:
+            raise MissingSecret(
+                f"client_secret_env {self._oauth.client_secret_env!r} is unset or empty",
+                hint="export that environment variable in the daemon's environment",
+            )
+        data = {
+            "grant_type": "client_credentials",
+            "client_id": self._oauth.client_id,
+            "client_secret": secret,
+        }
+        state = await self._exchange(data, prior_refresh_token=None)
+        async with self._lock:
+            save_token(self._path, state)
+
     async def _exchange(self, data: dict, *, prior_refresh_token: str | None) -> TokenState:
         try:
             resp = await self._client.post(self._oauth.token_url, data=data, timeout=30.0)
@@ -234,16 +250,31 @@ class TokenProvider:
             check_against = rejected_access_token or state.access_token
             if current is not None and current.access_token != check_against:
                 return current  # another caller already refreshed while we waited
-            data = {
-                "grant_type": "refresh_token",
-                "refresh_token": state.refresh_token,
-                "client_id": self._oauth.client_id,
-            }
-            secret = self._oauth.client_secret(self._environ)
-            if secret is not None:
-                data["client_secret"] = secret
+            if self._oauth.flow == "client_credentials":
+                secret = self._oauth.client_secret(self._environ)
+                if secret is None:
+                    raise MissingSecret(
+                        f"client_secret_env {self._oauth.client_secret_env!r} is unset or empty",
+                        hint="export that environment variable in the daemon's environment",
+                    )
+                data = {
+                    "grant_type": "client_credentials",
+                    "client_id": self._oauth.client_id,
+                    "client_secret": secret,
+                }
+                prior_refresh_token = None
+            else:
+                data = {
+                    "grant_type": "refresh_token",
+                    "refresh_token": state.refresh_token,
+                    "client_id": self._oauth.client_id,
+                }
+                secret = self._oauth.client_secret(self._environ)
+                if secret is not None:
+                    data["client_secret"] = secret
+                prior_refresh_token = state.refresh_token
             try:
-                new_state = await self._exchange(data, prior_refresh_token=state.refresh_token)
+                new_state = await self._exchange(data, prior_refresh_token=prior_refresh_token)
             except MissingSecret as e:
                 # only a real rejection (invalid_grant: 400/401) means the refresh token is
                 # dead with no recovery path otherwise; a transient IdP failure (5xx, 429, a
