@@ -63,7 +63,7 @@ def generate_state() -> str:
 @dataclass(frozen=True)
 class TokenState:
     access_token: str
-    refresh_token: str
+    refresh_token: str | None
     expires_at: float  # epoch seconds
     #: identifies which (IdP, client, source) this token belongs to; a stored token whose
     #: issuer_key doesn't match the current spec is treated as absent everywhere (bead: a
@@ -174,10 +174,13 @@ class TokenProvider:
                 hint="check token_url and that the IdP is reachable",
             ) from e
         if resp.status_code != 200:
-            exc = MissingSecret(
-                f"OAuth token exchange failed: HTTP {resp.status_code}",
-                hint="re-run source_connect to log in again",
+            hint = (
+                "check client_id and client_secret, or that the IdP app has "
+                "client_credentials enabled for this client"
+                if self._oauth.flow == "client_credentials"
+                else "re-run source_connect to log in again"
             )
+            exc = MissingSecret(f"OAuth token exchange failed: HTTP {resp.status_code}", hint=hint)
             exc.status_code = resp.status_code
             raise exc
         try:
@@ -190,7 +193,7 @@ class TokenProvider:
                 "OAuth token endpoint returned a malformed response",
                 hint="check token_url points at the IdP's token endpoint",
             ) from e
-        if refresh is None:
+        if refresh is None and self._oauth.flow == "authorization_code":
             raise MissingSecret(
                 "OAuth token endpoint did not return a refresh_token",
                 hint="the IdP app must be configured for offline access / refresh tokens",

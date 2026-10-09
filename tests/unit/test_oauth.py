@@ -161,6 +161,44 @@ async def test_complete_login_requires_a_refresh_token(tmp_path):
         await provider.complete_login("code", "verifier", "http://localhost:1234/callback")
 
 
+async def test_exchange_allows_missing_refresh_token_for_client_credentials(tmp_path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"access_token": "AT1", "expires_in": 3600})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    oauth = _oauth_ref(flow="client_credentials", client_secret_env="IDP_SECRET")
+    provider = TokenProvider(oauth, "sso", _SOURCE_URL, tmp_path, client=client)
+
+    state = await provider._exchange({"grant_type": "client_credentials"}, prior_refresh_token=None)
+
+    assert state.access_token == "AT1"
+    assert state.refresh_token is None
+
+
+async def test_exchange_still_requires_refresh_token_for_authorization_code(tmp_path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"access_token": "AT1", "expires_in": 3600})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    provider = TokenProvider(_oauth_ref(), "sso", _SOURCE_URL, tmp_path, client=client)
+
+    with pytest.raises(MissingSecret, match="refresh_token"):
+        await provider._exchange({"grant_type": "authorization_code"}, prior_refresh_token=None)
+
+
+async def test_exchange_failure_hint_differs_for_client_credentials(tmp_path):
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, text="invalid_client")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    oauth = _oauth_ref(flow="client_credentials", client_secret_env="IDP_SECRET")
+    provider = TokenProvider(oauth, "sso", _SOURCE_URL, tmp_path, client=client)
+
+    with pytest.raises(MissingSecret) as exc_info:
+        await provider._exchange({"grant_type": "client_credentials"}, prior_refresh_token=None)
+    assert "client_credentials enabled" in exc_info.value.hint
+
+
 import asyncio
 
 
