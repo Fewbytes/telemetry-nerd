@@ -29,8 +29,9 @@ from telemetry_nerd.model.time import format_duration, iso, parse_duration, pars
 from telemetry_nerd.retro.models import LessonScope
 from telemetry_nerd.sources.base import SourceError
 from telemetry_nerd.sources.grafana import discover_datasources, probe_backend, proxy_url
+from telemetry_nerd.sources.oauth import TokenProvider
 from telemetry_nerd.sources.public import PUBLIC_SOURCES
-from telemetry_nerd.sources.spec import AuthRef, SourceSpec
+from telemetry_nerd.sources.spec import AuthRef, OAuthRef, SourceSpec
 from telemetry_nerd.workspace.models import (
     AnnotationIn,
     Finding,
@@ -911,7 +912,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         e.g. "access-logs-*" (lowercase; a comma-separated list may use *; never bare * or
         _all); time_field (required, no default) = the date field documents are bucketed by,
         e.g. "@timestamp". resolution: the finest query step accepted (default 1s; documents have
-        no series interval). Through Grafana (grafana+uid) is not supported yet.
+        no series interval). Through Grafana (grafana+uid) is not supported.
         resolution: the series interval. "auto" (default): measured from the sample spacing
         (median spacing per job, i.e. the scrape interval for scraped metrics; the coarsest
         job's when they differ), re-measured by source_learn; or
@@ -953,11 +954,6 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise ToolError(f"{given} given without oauth_authorize_url: pass all OAuth params")
         oauth = None
         if oauth_authorize_url is not None:
-            if grafana is not None:
-                raise ToolError(
-                    "Grafana datasources with OAuth are not yet supported; connect with "
-                    "url= and oauth_* directly, or use a static auth_env/auth_file token"
-                )
             oauth = {
                 "authorize_url": oauth_authorize_url,
                 "token_url": oauth_token_url,
@@ -997,8 +993,20 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                         "grafana needs uid: see source_discover_grafana(url=...) for datasource uids"
                     )
                 datasource_url = proxy_url(grafana, uid)
+                oauth_headers = None
+                static_auth = None
+                if oauth is not None:
+                    oauth_ref = OAuthRef.model_validate(oauth)
+                    await service.ensure_oauth_login(
+                        oauth_ref, name, datasource_url, actor="claude"
+                    )
+                    oauth_headers = await TokenProvider(
+                        oauth_ref, name, datasource_url, service.data_dir
+                    ).headers()
+                elif auth:
+                    static_auth = AuthRef.model_validate(auth)
                 backend, detected_flavor = await probe_backend(
-                    datasource_url, AuthRef.model_validate(auth) if auth else None
+                    datasource_url, static_auth, oauth_headers=oauth_headers
                 )
                 out = await service.source_connect(
                     spec(datasource_url, detected_flavor), replace=replace

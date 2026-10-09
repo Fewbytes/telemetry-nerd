@@ -5,7 +5,9 @@ import httpx
 from mcp import Client
 from mcp.types import TextContent
 
+from telemetry_nerd.core.bootstrap import source_factory
 from telemetry_nerd.mcp.server import build_mcp
+from telemetry_nerd.sources.elasticsearch import ElasticsearchSource
 from telemetry_nerd.sources.promql import PromQLSource
 from tests.unit.fakes import make_service
 
@@ -100,8 +102,47 @@ async def test_oauth_and_auth_env_together_is_a_tool_error(tmp_path):
     assert "oauth_*" in text(r) or "not both" in text(r)
 
 
-async def test_grafana_with_oauth_is_rejected_not_attempted(tmp_path):
-    mcp = build_mcp(make_service(tmp_path), "http://x")
+async def test_grafana_with_oauth_logs_in_then_probes_with_the_token(tmp_path, monkeypatch):
+    monkeypatch.setenv("IDP_SECRET", "s3cret")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "idp.example.com":
+            return httpx.Response(200, json={"access_token": "AT1", "expires_in": 3600})
+        if request.url.path.endswith("/api/v1/status/buildinfo"):
+            assert request.headers.get("Authorization") == "Bearer AT1"
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "version": "2.1.0",
+                        "revision": "abc123",
+                        "branch": "HEAD",
+                        "buildUser": "root@buildhost",
+                        "goVersion": "go1.21",
+                    }
+                },
+            )
+        return httpx.Response(
+            200, json={"status": "success", "data": {"resultType": "matrix", "result": []}}
+        )
+
+    real_async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "telemetry_nerd.sources.grafana.httpx.AsyncClient",
+        lambda **kw: real_async_client(transport=httpx.MockTransport(handler)),
+    )
+    monkeypatch.setattr(
+        "telemetry_nerd.sources.promql.httpx.AsyncClient",
+        lambda **kw: real_async_client(transport=httpx.MockTransport(handler)),
+    )
+    monkeypatch.setattr(
+        "telemetry_nerd.sources.oauth.httpx.AsyncClient",
+        lambda **kw: real_async_client(transport=httpx.MockTransport(handler)),
+    )
+
+    mcp = build_mcp(
+        make_service(tmp_path, factory=lambda spec: source_factory(spec, tmp_path)), "http://x"
+    )
     r = await call(
         mcp,
         "source_connect",
@@ -112,10 +153,13 @@ async def test_grafana_with_oauth_is_rejected_not_attempted(tmp_path):
             "oauth_authorize_url": "https://idp.example.com/authorize",
             "oauth_token_url": "https://idp.example.com/token",
             "oauth_client_id": "tn-client",
+            "oauth_client_secret_env": "IDP_SECRET",
+            "oauth_flow": "client_credentials",
         },
     )
-    assert r.is_error
-    assert "not yet supported" in text(r)
+    assert not r.is_error
+    body = json.loads(text(r))
+    assert body["backend"] == "prometheus"
 
 
 async def test_partial_oauth_args_without_authorize_url_is_a_tool_error(tmp_path):
@@ -147,10 +191,6 @@ async def test_unknown_argument_is_rejected_not_ignored(tmp_path):
     async with Client(mcp) as client:
         tools = (await client.list_tools()).tools
     assert all(t.input_schema.get("additionalProperties") is False for t in tools)
-
-
-from telemetry_nerd.core.bootstrap import source_factory
-from telemetry_nerd.sources.elasticsearch import ElasticsearchSource
 
 
 async def test_connect_an_elasticsearch_source_with_an_api_key(tmp_path, monkeypatch):
@@ -206,7 +246,9 @@ async def test_client_credentials_oauth_source_connect_skips_browser(tmp_path, m
         lambda **kw: real_async_client(transport=httpx.MockTransport(handler)),
     )
 
-    mcp = build_mcp(make_service(tmp_path, factory=lambda spec: source_factory(spec, tmp_path)), "http://x")
+    mcp = build_mcp(
+        make_service(tmp_path, factory=lambda spec: source_factory(spec, tmp_path)), "http://x"
+    )
     r = await call(
         mcp,
         "source_connect",
