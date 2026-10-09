@@ -108,6 +108,7 @@ class OAuthRef(BaseModel):
     #: (same convention as AuthRef.env); None for a public PKCE client with no secret
     client_secret_env: str | None = None
     scopes: list[str] = Field(default_factory=list)
+    flow: Literal["authorization_code", "client_credentials"] = "authorization_code"
 
     @field_validator("authorize_url", "token_url")
     @classmethod
@@ -127,6 +128,15 @@ class OAuthRef(BaseModel):
             )
         return v
 
+    @model_validator(mode="after")
+    def _client_credentials_needs_secret(self) -> OAuthRef:
+        if self.flow == "client_credentials" and self.client_secret_env is None:
+            raise ValueError(
+                "flow='client_credentials' requires client_secret_env: this grant has no "
+                "PKCE and no public-client option"
+            )
+        return self
+
     def client_secret(self, environ: Mapping[str, str] = os.environ) -> str | None:
         if self.client_secret_env is None:
             return None
@@ -139,6 +149,7 @@ class OAuthRef(BaseModel):
             "client_id": self.client_id,
             "scopes": self.scopes,
             "client_secret_env": self.client_secret_env,
+            "flow": self.flow,
         }
 
 

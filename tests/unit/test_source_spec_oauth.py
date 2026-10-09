@@ -55,6 +55,7 @@ def test_source_spec_public_redacts_oauth_client_secret_env_presence_only():
         "client_id": "tn-client",
         "scopes": [],
         "client_secret_env": "IDP_SECRET",
+        "flow": "authorization_code",
     }
 
 
@@ -67,6 +68,43 @@ def test_auth_and_oauth_both_set_is_rejected():
                 "auth": {"env": "TOKEN", **_oauth()},
             }
         )
+
+
+def test_oauth_ref_defaults_to_authorization_code_flow():
+    ref = OAuthRef.model_validate(
+        {
+            "authorize_url": "https://idp.example.com/authorize",
+            "token_url": "https://idp.example.com/token",
+            "client_id": "tn-client",
+        }
+    )
+    assert ref.flow == "authorization_code"
+    assert ref.public()["flow"] == "authorization_code"
+
+
+def test_client_credentials_flow_requires_client_secret_env():
+    with pytest.raises(ValidationError, match="client_secret_env"):
+        OAuthRef.model_validate(
+            {
+                "authorize_url": "https://idp.example.com/authorize",
+                "token_url": "https://idp.example.com/token",
+                "client_id": "tn-client",
+                "flow": "client_credentials",
+            }
+        )
+
+
+def test_client_credentials_flow_with_client_secret_env_is_valid():
+    ref = OAuthRef.model_validate(
+        {
+            "authorize_url": "https://idp.example.com/authorize",
+            "token_url": "https://idp.example.com/token",
+            "client_id": "tn-client",
+            "client_secret_env": "IDP_SECRET",
+            "flow": "client_credentials",
+        }
+    )
+    assert ref.flow == "client_credentials"
     # control case: a plain AuthRef still works unchanged
     spec = SourceSpec.model_validate(
         {"name": "sso", "url": "https://prom.example.com", "auth": {"env": "TOKEN"}}
