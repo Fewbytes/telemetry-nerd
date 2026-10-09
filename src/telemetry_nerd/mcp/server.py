@@ -879,6 +879,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         oauth_client_id: str | None = None,
         oauth_client_secret_env: str | None = None,
         oauth_scopes: list[str] | None = None,
+        oauth_flow: str = "authorization_code",
         max_concurrency: int = 4,
         min_interval: str = "0s",
         timeout: str = "30s",
@@ -927,6 +928,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         them) instead of auth_env/auth_file. The first source_connect call drives an
         interactive login (it returns once you, the user, finish logging in at the URL
         Claude shows you) and then connects; mutually exclusive with auth_env/auth_file.
+        oauth_flow: "authorization_code" (default, interactive SSO login) or
+        "client_credentials" (machine-to-machine: no browser, requires oauth_client_secret_env).
         Politeness for shared/public servers: lower max_concurrency, set min_interval
         (e.g. 500ms), raise timeout (e.g. 60s).
         profile_source: name of another source with downsampled data of the same series (e.g. a
@@ -961,6 +964,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                 "client_id": oauth_client_id,
                 "client_secret_env": oauth_client_secret_env,
                 "scopes": oauth_scopes or [],
+                "flow": oauth_flow,
             }
         auth = oauth or _auth_ref(auth_env, auth_file, auth_scheme)
 

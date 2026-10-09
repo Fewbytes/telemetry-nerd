@@ -1,6 +1,7 @@
 import functools
 import json
 
+import httpx
 from mcp import Client
 from mcp.types import TextContent
 
@@ -181,6 +182,46 @@ async def test_an_es_source_without_time_field_is_refused_with_the_reason(tmp_pa
         "index_pattern": "access-logs-*",
     })  # fmt: skip
     assert r.is_error and "time_field" in text(r)
+
+
+async def test_client_credentials_oauth_source_connect_skips_browser(tmp_path, monkeypatch):
+    monkeypatch.setenv("IDP_SECRET", "s3cret")
+    opened = []
+    monkeypatch.setattr("webbrowser.open", opened.append)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "idp.example.com":
+            return httpx.Response(200, json={"access_token": "AT1", "expires_in": 3600})
+        return httpx.Response(
+            200, json={"status": "success", "data": {"resultType": "matrix", "result": []}}
+        )
+
+    real_async_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "telemetry_nerd.sources.promql.httpx.AsyncClient",
+        lambda **kw: real_async_client(transport=httpx.MockTransport(handler)),
+    )
+    monkeypatch.setattr(
+        "telemetry_nerd.sources.oauth.httpx.AsyncClient",
+        lambda **kw: real_async_client(transport=httpx.MockTransport(handler)),
+    )
+
+    mcp = build_mcp(make_service(tmp_path, factory=lambda spec: source_factory(spec, tmp_path)), "http://x")
+    r = await call(
+        mcp,
+        "source_connect",
+        {
+            "name": "m2m",
+            "url": URL,
+            "oauth_authorize_url": "https://idp.example.com/authorize",
+            "oauth_token_url": "https://idp.example.com/token",
+            "oauth_client_id": "tn-client",
+            "oauth_client_secret_env": "IDP_SECRET",
+            "oauth_flow": "client_credentials",
+        },
+    )
+    assert not r.is_error
+    assert opened == []
 
 
 async def test_source_connect_documents_the_es_flavors(tmp_path):
