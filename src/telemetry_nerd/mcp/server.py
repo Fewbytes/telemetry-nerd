@@ -29,6 +29,7 @@ from telemetry_nerd.model.time import format_duration, iso, parse_duration, pars
 from telemetry_nerd.retro.models import LessonScope
 from telemetry_nerd.sources.base import SourceError
 from telemetry_nerd.sources.grafana import discover_datasources, probe_backend, proxy_url
+from telemetry_nerd.sources.kibana import discover_index_patterns
 from telemetry_nerd.sources.oauth import TokenProvider
 from telemetry_nerd.sources.public import PUBLIC_SOURCES
 from telemetry_nerd.sources.spec import AuthRef, OAuthRef, SourceSpec
@@ -1067,6 +1068,48 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             )
             return _dump(
                 {"grafana_url": url.rstrip("/"), "datasources": [d.describe() for d in datasources]}
+            )
+        except ValidationError as e:
+            raise _fail(e) from e
+        except SourceError as e:
+            raise _source_error(e) from e
+
+    @mcp.tool()
+    async def source_discover_kibana(
+        url: str,
+        auth_env: str | None = None,
+        auth_file: str | None = None,
+        auth_scheme: str = "bearer",
+    ) -> str:
+        """List index patterns a Kibana instance knows about, so you can connect the
+        underlying Elasticsearch/OpenSearch cluster directly with
+        source_connect(url=<the ES/OpenSearch url, not this Kibana url>,
+        flavor="elasticsearch", index_pattern=..., time_field=...).
+
+        Discovery only: this never queries through Kibana itself - the Query DSL queries
+        telemetry-nerd runs always go straight to Elasticsearch/OpenSearch (there is no
+        Kibana-proxied query path; see telemetry-nerd-sgb). Kibana is consulted only to
+        learn what index patterns exist and which time field each one is configured with.
+        Reads Kibana's saved-objects API (/api/saved_objects/_find?type=index-pattern),
+        which inlines the configured time field; Kibana's newer /api/data_views list
+        endpoint omits it, so saved-objects was picked instead even though it is Kibana's
+        older, deprecated-but-still-served API.
+        Each entry: id, title (the index pattern string, e.g. "logs-*", pass as
+        index_pattern), and time_field when Kibana has one configured (pass as time_field;
+        when absent you still need to supply one yourself to source_connect).
+        Auth: same convention as source_discover_grafana (auth_env/auth_file, NEVER the
+        secret itself; auth_scheme: bearer | basic | apikey).
+        """
+        try:
+            auth = _auth_ref(auth_env, auth_file, auth_scheme)
+            patterns = await discover_index_patterns(
+                url, AuthRef.model_validate(auth) if auth else None
+            )
+            return _dump(
+                {
+                    "kibana_url": url.rstrip("/"),
+                    "index_patterns": [p.describe() for p in patterns],
+                }
             )
         except ValidationError as e:
             raise _fail(e) from e

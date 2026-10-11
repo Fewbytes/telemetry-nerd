@@ -37,8 +37,12 @@ at runtime rather than these env vars — see below).
 
 `source_connect(url=..., flavor="elasticsearch", index_pattern=..., time_field=...)` (same for
 `"opensearch"`: one adapter serves both, since OpenSearch's search API is a wire-compatible
-fork). Direct HTTP connection to the cluster only — no Grafana-proxied ES/OpenSearch and no
-Kibana discovery yet. Requirements:
+fork). Direct HTTP connection to the cluster only — no Grafana-proxied ES/OpenSearch. If you
+have a Kibana in front of the cluster, `source_discover_kibana(url=...)` is an optional
+discovery shortcut: it lists the index patterns Kibana knows about (with their configured time
+field, when set) so you can read off `index_pattern`/`time_field` before calling
+`source_connect` — Kibana is only consulted for discovery, queries still go straight to
+Elasticsearch/OpenSearch. Requirements:
 
 - `index_pattern`: the indices to read (e.g. `access-logs-*`), and `time_field`: the date field
   documents are bucketed by (e.g. `@timestamp`) — both required, with no default.
@@ -53,7 +57,7 @@ translation — covering request-rate, latency (mean/min/max via `stats`, or a T
 `percentile`) and distribution queries, and `check_littles_law` with a separate
 `concurrency_source` for the in-flight gauge (concurrency isn't read from ES documents in v1).
 
-Not yet supported: Grafana-proxied connections, Kibana-based discovery, AWS SigV4 auth for
+Not yet supported: Grafana-proxied connections, AWS SigV4 auth for
 Amazon OpenSearch Service, operating profiles / normal-band overlays, and automatic RED/USE/
 Little's-law binding suggestions (the suggestion corpus is PromQL-only; an ECS catalog pack is
 planned). Full design: `docs/superpowers/specs/2026-10-07-elasticsearch-opensearch-adapter-design.md`.
