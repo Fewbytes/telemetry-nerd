@@ -38,7 +38,8 @@ from telemetry_nerd.sources.gate import Gate
 from telemetry_nerd.sources.oauth import TokenProvider
 from telemetry_nerd.sources.promql import MAX_STEPS_PER_QUERY, USER_AGENT
 from telemetry_nerd.sources.semantics import ELASTICSEARCH
-from telemetry_nerd.sources.spec import OAuthRef, SourceSpec
+from telemetry_nerd.sources.sigv4 import Signer
+from telemetry_nerd.sources.spec import AuthRef, OAuthRef, SourceSpec
 
 EsFlavor = Literal["elasticsearch", "opensearch"]
 #: finest query step assumed when none is configured (documents have no series interval)
@@ -251,6 +252,7 @@ class ElasticsearchSource:
         gate: Gate | None = None,
         token_provider: TokenProvider | None = None,
         via_grafana_proxy: bool = False,
+        signer: Signer | None = None,
     ) -> None:
         self.name = name
         self.base_url = base_url.rstrip("/")
@@ -272,6 +274,8 @@ class ElasticsearchSource:
         self._headers = {"User-Agent": USER_AGENT, **(headers or {})}
         self._gate = gate or Gate()
         self._token_provider = token_provider
+        #: AWS SigV4 (auth.scheme='sigv4'): signs each request instead of a static header
+        self._signer = signer
         self._caps: dict[str, dict[str, dict]] = {}  # field -> {type: info}, until discover()
 
     @classmethod
@@ -285,6 +289,7 @@ class ElasticsearchSource:
         """Build a live source; resolves the secret reference now (raises MissingSecret)."""
         assert spec.index_pattern is not None and spec.time_field is not None  # spec validates
         token_provider = None
+        signer = None
         headers: Mapping[str, str] = {}
         if isinstance(spec.auth, OAuthRef):
             if data_dir is None:
@@ -292,6 +297,8 @@ class ElasticsearchSource:
             token_provider = TokenProvider(
                 spec.auth, spec.name, spec.url, data_dir, client=client, environ=dict(environ)
             )
+        elif isinstance(spec.auth, AuthRef) and spec.auth.scheme == "sigv4":
+            signer = Signer.from_auth(spec.auth)
         elif spec.auth is not None:
             headers = spec.auth.headers(environ)
         return cls(
@@ -307,6 +314,7 @@ class ElasticsearchSource:
             gate=Gate(spec.politeness.max_concurrency, spec.politeness.min_interval_ms),
             token_provider=token_provider,
             via_grafana_proxy=spec.grafana_proxy,
+            signer=signer,
         )
 
     async def aclose(self) -> None:
@@ -383,6 +391,19 @@ class ElasticsearchSource:
         headers = {**self._headers, **(extra_headers or {})}
         if self._token_provider is not None:
             headers = {**headers, **(await self._token_provider.headers())}
+        if self._signer is not None:
+            # a signature covers the exact bytes sent: serialize `body` now (matching httpx's
+            # own json encoding) and send that `content`, rather than let httpx re-serialize
+            # the dict afresh and risk a byte-for-byte mismatch with what was signed
+            if content is None and body is not None:
+                content = json.dumps(body, separators=(",", ":"))
+                body = None
+                headers.setdefault("Content-Type", "application/json")
+            payload = content.encode() if content is not None else b""
+            headers = {
+                **headers,
+                **self._signer.sign(method, url, headers, payload, params=params),
+            }
         resp = await self._attempt(method, url, params, body, headers, timeout_s, content=content)
         if resp.status_code == 401 and self._token_provider is not None:
             rejected = headers.get("Authorization", "").removeprefix("Bearer ")

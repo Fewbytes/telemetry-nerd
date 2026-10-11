@@ -55,9 +55,15 @@ OpenSearch in a datasource's jsonData, so this defaults to `elasticsearch` when 
 
 - `index_pattern`: the indices to read (e.g. `access-logs-*`), and `time_field`: the date field
   documents are bucketed by (e.g. `@timestamp`) — both required, with no default.
-- Auth: `auth_scheme` accepts `bearer`, `basic` (`user:pass`) or `apikey` (an Elasticsearch API
-  key, used verbatim as `Authorization: ApiKey <secret>`), with the secret passed by reference
-  (`auth_file` or `auth_env`), never as a tool argument.
+- Auth: `auth_scheme` accepts `bearer`, `basic` (`user:pass`), `apikey` (an Elasticsearch API
+  key, used verbatim as `Authorization: ApiKey <secret>`) or `sigv4` (for Amazon OpenSearch
+  Service). The first three take the secret by reference (`auth_file` or `auth_env`), never as a
+  tool argument. `sigv4` takes no `auth_file`/`auth_env`: credentials come from the standard AWS
+  credential chain (`AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY`/`AWS_SESSION_TOKEN`, the shared
+  config/credentials files, or an instance/task role) instead of this project's single-secret
+  model, and it needs `auth_region` (e.g. `us-east-1`). Each request is signed individually
+  (service `es`) rather than carrying a static header, since the signature covers the method,
+  url and body of that request.
 - Supported versions: Elasticsearch ≥ 7.10, OpenSearch ≥ 1.0.
 
 Claude queries it in Elasticsearch's own Query DSL (a `query` filter plus one metric
@@ -66,8 +72,7 @@ translation — covering request-rate, latency (mean/min/max via `stats`, or a T
 `percentile`) and distribution queries, and `check_littles_law` with a separate
 `concurrency_source` for the in-flight gauge (concurrency isn't read from ES documents in v1).
 
-Not yet supported: AWS SigV4 auth for
-Amazon OpenSearch Service, operating profiles / normal-band overlays, and automatic RED/USE/
+Not yet supported: operating profiles / normal-band overlays, and automatic RED/USE/
 Little's-law binding suggestions (the suggestion corpus is PromQL-only; an ECS catalog pack is
 planned). Full design: `docs/superpowers/specs/2026-10-07-elasticsearch-opensearch-adapter-design.md`.
 

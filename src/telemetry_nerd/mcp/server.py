@@ -241,8 +241,14 @@ def _trim_to_fit(items: list, render: Callable[[list], dict]) -> tuple[list, int
     return items, cut
 
 
-def _auth_ref(auth_env: str | None, auth_file: str | None, auth_scheme: str) -> dict | None:
-    """The auth reference (never the secret) a tool's auth_env/auth_file/auth_scheme name."""
+def _auth_ref(
+    auth_env: str | None, auth_file: str | None, auth_scheme: str, auth_region: str | None = None
+) -> dict | None:
+    """The auth reference (never the secret) a tool's auth_env/auth_file/auth_scheme name.
+    sigv4 takes neither auth_env nor auth_file (credentials come from the AWS chain) but needs
+    auth_region, so it is recognized on scheme alone."""
+    if auth_scheme == "sigv4":
+        return {"scheme": "sigv4", "region": auth_region}
     if auth_env is None and auth_file is None:
         return None
     return {"env": auth_env, "file": auth_file, "scheme": auth_scheme}
@@ -881,6 +887,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         auth_env: str | None = None,
         auth_file: str | None = None,
         auth_scheme: str = "bearer",
+        auth_region: str | None = None,
         oauth_authorize_url: str | None = None,
         oauth_token_url: str | None = None,
         oauth_client_id: str | None = None,
@@ -935,9 +942,14 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         path; picked up immediately) or an env var of the daemon (auth_env, the variable
         NAME; needs a daemon restart if set later).
         auth_scheme: bearer | basic ("user:pass") | apikey (an Elasticsearch API key as
-        Elasticsearch/Kibana hand it out, the encoded id:api_key, sent as "ApiKey <key>").
-        With grafana+uid, this is Grafana's own token (the proxy forwards it); it needs
-        access to that datasource.
+        Elasticsearch/Kibana hand it out, the encoded id:api_key, sent as "ApiKey <key>") |
+        sigv4 (Amazon OpenSearch Service only). With grafana+uid, this is Grafana's own token
+        (the proxy forwards it); it needs access to that datasource.
+        sigv4: AWS SigV4 request signing for Amazon OpenSearch Service. Takes no auth_env/
+        auth_file - credentials come from the daemon's standard AWS credential chain
+        (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY/AWS_SESSION_TOKEN, the shared config/
+        credentials files, or an instance/task role) - but needs auth_region (e.g. "us-east-1").
+        Each request is signed individually; there is no static token to inspect.
         OAuth (interactive SSO login, e.g. Okta): give oauth_authorize_url, oauth_token_url,
         oauth_client_id (and oauth_client_secret_env / oauth_scopes if the IdP app needs
         them) instead of auth_env/auth_file. The first source_connect call drives an
@@ -976,7 +988,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                 "scopes": oauth_scopes or [],
                 "flow": oauth_flow,
             }
-        auth = oauth or _auth_ref(auth_env, auth_file, auth_scheme)
+        auth = oauth or _auth_ref(auth_env, auth_file, auth_scheme, auth_region)
 
         politeness = {
             "max_concurrency": max_concurrency,

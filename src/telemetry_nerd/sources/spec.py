@@ -35,7 +35,9 @@ class AuthRef(BaseModel):
 
     env: str | None = None
     file: str | None = None
-    scheme: Literal["bearer", "basic", "apikey"] = "bearer"
+    scheme: Literal["bearer", "basic", "apikey", "sigv4"] = "bearer"
+    #: AWS region (e.g. us-east-1); sigv4 only - the credential chain has no region of its own
+    region: str | None = None
 
     @field_validator("env")
     @classmethod
@@ -56,22 +58,43 @@ class AuthRef(BaseModel):
 
     @model_validator(mode="after")
     def _exactly_one(self) -> AuthRef:
-        if (self.env is None) == (self.file is None):
-            raise ValueError("auth needs exactly one of env or file")
+        if self.scheme == "sigv4":
+            if self.env is not None or self.file is not None:
+                raise ValueError(
+                    "scheme='sigv4' takes credentials from the standard AWS credential chain "
+                    "(env vars, shared config/credentials files, or an instance/task role), not "
+                    "env or file"
+                )
+            if self.region is None:
+                raise ValueError("scheme='sigv4' needs region (e.g. region='us-east-1')")
+        else:
+            if (self.env is None) == (self.file is None):
+                raise ValueError("auth needs exactly one of env or file")
+            if self.region is not None:
+                raise ValueError("region is sigv4-only")
         return self
 
     def _secret(self, environ: Mapping[str, str]) -> str | None:
         if self.env is not None:
             return environ.get(self.env) or None
-        try:
-            return Path(self.file).read_text().strip() or None  # type: ignore[arg-type]
-        except OSError:
-            return None
+        if self.file is not None:
+            try:
+                return Path(self.file).read_text().strip() or None
+            except OSError:
+                return None
+        return None
 
     def is_set(self, environ: Mapping[str, str] = os.environ) -> bool:
+        if self.scheme == "sigv4":
+            return True  # credentials come from the AWS chain, resolved (and checked) lazily
         return self._secret(environ) is not None
 
     def headers(self, environ: Mapping[str, str] = os.environ) -> dict[str, str]:
+        if self.scheme == "sigv4":
+            raise ValueError(
+                "scheme='sigv4' has no static header: the signature depends on the method, url "
+                "and body of each request; use sources.sigv4.Signer instead of .headers()"
+            )
         secret = self._secret(environ)
         if secret is None:
             where = f"environment variable {self.env}" if self.env else f"file {self.file}"
@@ -90,12 +113,15 @@ class AuthRef(BaseModel):
         return {"Authorization": f"Bearer {secret}"}
 
     def public(self, environ: Mapping[str, str] = os.environ) -> dict:
-        return {
+        out = {
             "env": self.env,
             "file": self.file,
             "scheme": self.scheme,
             "set": self.is_set(environ),
         }
+        if self.region is not None:
+            out["region"] = self.region
+        return out
 
 
 class OAuthRef(BaseModel):

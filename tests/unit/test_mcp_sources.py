@@ -326,6 +326,37 @@ async def test_connect_an_elasticsearch_source_with_an_api_key(tmp_path, monkeyp
     assert isinstance(svc.sources["logs"], ElasticsearchSource)
 
 
+async def test_connect_an_opensearch_source_with_sigv4(tmp_path, monkeypatch):
+    async def ok(self) -> dict:
+        return {"reachable": True, "distribution": "opensearch", "version": "2.11.0"}
+
+    monkeypatch.setattr(ElasticsearchSource, "probe", ok)
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAFAKE")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secretfake")
+    svc = make_service(tmp_path, factory=functools.partial(source_factory, data_dir=tmp_path))
+    r = await call(build_mcp(svc, "http://x"), "source_connect", {
+        "name": "logs", "url": "https://search-x.us-east-1.es.amazonaws.com",
+        "flavor": "opensearch", "index_pattern": "access-logs-*", "time_field": "@timestamp",
+        "auth_scheme": "sigv4", "auth_region": "us-east-1",
+    })  # fmt: skip
+    assert not r.is_error, text(r)
+    out = json.loads(text(r))
+    assert out["source"]["auth"] == {
+        "env": None, "file": None, "scheme": "sigv4", "set": True, "region": "us-east-1",
+    }  # fmt: skip
+    assert isinstance(svc.sources["logs"], ElasticsearchSource)
+
+
+async def test_sigv4_without_region_is_a_tool_error(tmp_path):
+    svc = make_service(tmp_path, factory=functools.partial(source_factory, data_dir=tmp_path))
+    r = await call(build_mcp(svc, "http://x"), "source_connect", {
+        "name": "logs", "url": "https://search-x.us-east-1.es.amazonaws.com",
+        "flavor": "opensearch", "index_pattern": "access-logs-*", "time_field": "@timestamp",
+        "auth_scheme": "sigv4",
+    })  # fmt: skip
+    assert r.is_error and "region" in text(r)
+
+
 async def test_an_es_source_without_time_field_is_refused_with_the_reason(tmp_path):
     svc = make_service(tmp_path, factory=functools.partial(source_factory, data_dir=tmp_path))
     r = await call(build_mcp(svc, "http://x"), "source_connect", {

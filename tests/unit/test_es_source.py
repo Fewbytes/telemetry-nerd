@@ -1,17 +1,22 @@
 """ElasticsearchSource: construction, transport errors and probe (fixtures, MockTransport)."""
 
+import json
 import time
 
 import httpx
 import pytest
+from botocore.credentials import Credentials
 
 from telemetry_nerd.sources.base import SourceError, SourceUnavailable
 from telemetry_nerd.sources.elasticsearch import ElasticsearchSource
 from telemetry_nerd.sources.oauth import TokenState, issuer_key, save_token, token_path
 from telemetry_nerd.sources.promql import USER_AGENT
+from telemetry_nerd.sources.sigv4 import Signer
 from telemetry_nerd.sources.spec import AuthRef, SourceSpec
 
-from .es_fake import CAPS, PATTERN, URL, FakeEs, es_error, fixture
+from .es_fake import CAPS, PATTERN, RNG, URL, FakeEs, es_error, fixture
+
+M = 60_000
 
 
 def spec(**kw) -> SourceSpec:
@@ -49,6 +54,43 @@ async def test_from_spec_sends_the_api_key_and_user_agent():
     await src.probe()
     assert fake.requests[0].headers["Authorization"] == "ApiKey abc=="
     assert fake.requests[0].headers["User-Agent"] == USER_AGENT
+
+
+async def test_from_spec_builds_a_signer_for_sigv4_and_signs_requests(monkeypatch):
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIAFAKE")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "secretfake")
+    monkeypatch.delenv("AWS_SESSION_TOKEN", raising=False)
+    fake = FakeEs()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(fake))
+    src = ElasticsearchSource.from_spec(
+        spec(auth=AuthRef(scheme="sigv4", region="us-east-1")), client=client,
+    )  # fmt: skip
+    await src.probe()
+    auth = fake.requests[0].headers["Authorization"]
+    assert auth.startswith("AWS4-HMAC-SHA256 Credential=AKIAFAKE/")
+    assert "us-east-1/es/aws4_request" in auth
+    assert "X-Amz-Date" in fake.requests[0].headers
+
+
+async def test_sigv4_signs_the_search_json_body_path():
+    fake = FakeEs()
+    src = fake.source(signer=Signer("us-east-1", Credentials("AKIAFAKE", "secretfake")))
+    await src.fetch('{"query": {}}', RNG, M)
+    [req] = [r for r in fake.requests if r.url.path == f"/{PATTERN}/_search"]
+    assert req.headers["Authorization"].startswith("AWS4-HMAC-SHA256")
+    assert req.headers["Content-Type"] == "application/json"
+    assert isinstance(json.loads(req.content), dict)  # a well-formed JSON body was sent
+
+
+async def test_sigv4_signs_the_msearch_ndjson_path():
+    fake = FakeEs()
+    src = fake.source(
+        signer=Signer("us-east-1", Credentials("AKIAFAKE", "secretfake")), via_grafana_proxy=True
+    )
+    await src.fetch('{"query": {}}', RNG, M)
+    [req] = [r for r in fake.requests if r.url.path == "/_msearch"]
+    assert req.headers["Authorization"].startswith("AWS4-HMAC-SHA256")
+    assert req.headers["content-type"] == "application/x-ndjson"
 
 
 async def test_probe_reads_the_elasticsearch_version_and_checks_the_time_field():

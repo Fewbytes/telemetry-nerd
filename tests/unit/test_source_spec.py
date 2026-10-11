@@ -84,6 +84,40 @@ def test_missing_secret_has_actionable_hint(tmp_path):
         AuthRef(file=str(tmp_path / "missing")).headers({})
 
 
+def test_sigv4_forbids_env_and_file_and_requires_region():
+    with pytest.raises(ValidationError, match="credential chain"):
+        AuthRef(scheme="sigv4", env="TOKEN", region="us-east-1")
+    with pytest.raises(ValidationError, match="credential chain"):
+        AuthRef(scheme="sigv4", file="/abs/token", region="us-east-1")
+    with pytest.raises(ValidationError, match="needs region"):
+        AuthRef(scheme="sigv4")
+
+
+def test_region_is_sigv4_only():
+    with pytest.raises(ValidationError, match="sigv4-only"):
+        AuthRef(env="TOKEN", region="us-east-1")
+
+
+def test_sigv4_is_set_without_resolving_the_chain():
+    assert AuthRef(scheme="sigv4", region="us-east-1").is_set({}) is True
+
+
+def test_sigv4_headers_raises_with_a_clear_hint():
+    with pytest.raises(ValueError, match="each request"):
+        AuthRef(scheme="sigv4", region="us-east-1").headers({})
+
+
+def test_sigv4_public_view_includes_region():
+    view = AuthRef(scheme="sigv4", region="us-east-1").public({})
+    assert view == {
+        "env": None,
+        "file": None,
+        "scheme": "sigv4",
+        "set": True,
+        "region": "us-east-1",
+    }
+
+
 def test_public_view_never_contains_the_secret():
     spec = SourceSpec(name="x", url=GRAFANA, auth=AuthRef(env="TN_T"))
     env = {"TN_T": "s3cr3t-value"}
