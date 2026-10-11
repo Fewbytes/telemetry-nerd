@@ -450,16 +450,16 @@ and maps it onto the existing `Discovery` (`model/discovery.py`):
 
 | `Discovery` field | From `_field_caps` |
 |---|---|
-| `metrics` | one `MetricInfo` per **numeric** field (`long`, `integer`, `short`, `byte`, `double`, `float`, `half_float`, `scaled_float`, `unsigned_long`) that is aggregatable, `name` = the field path. ES has no metric names: a numeric field under the source's index pattern fills that role. |
-| `MetricInfo.type` | `time_series_metric` (ES 8 time-series data streams) or `meta.metric_type` when set (`gauge` / `counter`); otherwise `None` (unknown, not "untyped") |
+| `metrics` | one `MetricInfo` per **numeric** field (`long`, `integer`, `short`, `byte`, `double`, `float`, `half_float`, `scaled_float`, `unsigned_long`) that is aggregatable, `name` = the field path. ES has no metric names: a numeric field under the source's index pattern fills that role. Also one `MetricInfo(type="histogram")` per aggregatable `histogram`-typed field (telemetry-nerd-sgb.10: a pre-aggregated per-document distribution, supported by `sum`/`value_count`/`percentiles`/`histogram`/`range`, refused for `stats`; see `sources/elasticsearch.py` module docstring). |
+| `MetricInfo.type` | `time_series_metric` (ES 8 time-series data streams) or `meta.metric_type` when set (`gauge` / `counter`); `"histogram"` for a `histogram`-typed field; otherwise `None` (unknown, not "untyped") |
 | `MetricInfo.unit` | `meta.unit` when set: `ms`, `s`, `micros` → `us`, `nanos` → `ns`, `byte` → `B`; any other value kept verbatim |
 | `MetricInfo.help` | `None` (mappings carry no help text) |
 | `label_names` | aggregatable `keyword`, `constant_keyword`, `ip` and `boolean` fields (including the `.keyword` sub-fields of `text` fields): candidate `by` / `terms` fields. `text` fields are not aggregatable and are not listed. Numeric fields may also be grouped by (`terms` accepts them); they are listed under `metrics` only. |
-| `histograms` | `{}` (the pre-aggregated ES `histogram` field type is skipped in v1, with a caveat) |
+| `histograms` | `{}` (this is the Prometheus classic/native histogram-family concept; the ES `histogram` field type is a single self-contained field, listed under `metrics` instead, not a base name needing `_bucket`/`_sum`/`_count` series) |
 | `cardinality` | `None` (per-field cardinality would need one aggregation per field) |
 | `metadata_coverage` | share of numeric fields with a `meta.unit` or a metric type |
-| `caveats` | `cardinality_unavailable`; `mapping_conflict:<n>` (fields mapped with different types across the pattern's indices: excluded); `nested_fields_skipped:<n>` (fields under `nested` objects need `nested` aggregations: excluded); `histogram_fields_skipped:<n>`; `metrics_truncated:<limit>/<n>` (more than `Limits.max_metrics` numeric fields); `no_numeric_fields` when `metrics` is empty (not an error: the `rate` form needs no field) |
-| `partial` | true when fields were excluded (`mapping_conflict`, `nested_fields_skipped`, `histogram_fields_skipped`) or metrics were truncated (`metrics_truncated`); `cardinality_unavailable` alone does not make it partial |
+| `caveats` | `cardinality_unavailable`; `mapping_conflict:<n>` (fields mapped with different types across the pattern's indices: excluded); `nested_fields_skipped:<n>` (fields under `nested` objects need `nested` aggregations: excluded); `metrics_truncated:<limit>/<n>` (more than `Limits.max_metrics` numeric fields); `no_numeric_fields` when `metrics` is empty (not an error: the `rate` form needs no field) |
+| `partial` | true when fields were excluded (`mapping_conflict`, `nested_fields_skipped`) or metrics were truncated (`metrics_truncated`); `cardinality_unavailable` alone does not make it partial |
 
 A discovered ES field becomes a `CatalogEntry` with `source` = the ES source and `metric` = the
 field path; mapping-declared unit and type are `metadata`-origin claims, as source metadata is
@@ -621,8 +621,20 @@ Beads to file when this design is planned (names, not yet created):
    Prometheus label; and a gauge form for reading concurrency from ES documents that carry an
    in-flight field.
 9. **AWS SigV4 auth** for Amazon OpenSearch Service.
-10. **Pre-aggregated ES `histogram` field type** as a source-defined distribution (it would carry
-    source-defined edges, unlike the query-defined buckets here).
+10. ~~**Pre-aggregated ES `histogram` field type** as a source-defined distribution (it would carry
+    source-defined edges, unlike the query-defined buckets here).~~ Implemented
+    (telemetry-nerd-sgb.10), scoped down after verifying against a real Elasticsearch 8.15
+    cluster: Elasticsearch's aggregation framework re-buckets a histogram-typed field's stored
+    `values`/`counts` onto whatever interval/edges the *query* asks for (correctly weighted by
+    the stored counts) — it never hands back the field's own original per-document boundaries
+    over a time range; those are only readable per document (`_source`), out of scope for this
+    numeric-aggregate-first adapter. So the field is detected and exposed as a
+    `MetricInfo(type="histogram")`; `sum`, `value_count`, `avg`, `percentiles`, `histogram` and
+    `range` all work against it unchanged; `stats`/`extended_stats`/`cardinality` are rejected by
+    Elasticsearch itself and now refused early with a specific hint. No new `BucketScheme` kind
+    was added — the existing `linear`/`custom` kinds already describe what these aggregations
+    return. Also verified: OpenSearch 2.17 has no `histogram` field type at all (mapping it
+    fails outright), so this is Elasticsearch-only in practice.
 
 The remaining `telemetry-nerd-sgb` scope (InfluxDB, Loki, Graphite, other log stores) is unchanged
 by this design.

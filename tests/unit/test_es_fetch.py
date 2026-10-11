@@ -264,6 +264,27 @@ async def test_a_metric_on_a_non_numeric_field_is_refused():
         await FakeEs().source().fetch(expr, RNG, M)
 
 
+async def test_stats_on_a_histogram_typed_field_is_refused_with_a_specific_hint():
+    expr = json.dumps({"aggs": {"lat": {"stats": {"field": "latency_hist"}}}})
+    with pytest.raises(SourceError, match="pre-aggregated histogram field") as e:
+        await FakeEs().source().fetch(expr, RNG, M)
+    assert "sum, percentiles, histogram or range" in e.value.hint
+
+
+async def test_sum_on_a_histogram_typed_field_is_not_refused_as_non_numeric():
+    buckets = [tb(START, 30, s={"value": 300.0})]
+    expr = json.dumps({"aggs": {"s": {"sum": {"field": "latency_hist"}}}})
+    res = await FakeEs(search=search_response(buckets)).source().fetch(expr, RNG, M)
+    assert rows(res)
+
+
+async def test_percentiles_on_a_histogram_typed_field_is_not_refused_as_non_numeric():
+    expr = json.dumps({"aggs": {"p": {"percentiles": {"field": "latency_hist", "percents": [50]}}}})
+    buckets = [tb(START, 30, p={"values": {"50.0": 10.0}}, __tn_n={"value": 30})]
+    res = await FakeEs(search=search_response(buckets)).source().fetch_values(expr, RNG, M)
+    assert [r["avg"] for r in rows(res)] == [10.0]
+
+
 async def test_terms_on_a_text_field_is_refused_with_the_keyword_hint():
     expr = json.dumps({"aggs": {"by_msg": {"terms": {"field": "message"}}}})
     with pytest.raises(SourceError, match="not aggregatable") as e:

@@ -8,6 +8,29 @@ the version.
 Query buckets carry their END time, but an Elasticsearch bucket is [t - step, t) where a
 Prometheus one is (t - step, t]: a document stamped exactly on a boundary lands one bucket later
 than a sample would. Design: docs/superpowers/specs/2026-10-07-elasticsearch-opensearch-adapter-design.md.
+
+The ES/OpenSearch `histogram` FIELD TYPE (a document carries a pre-aggregated distribution as
+parallel `values`/`counts` arrays, boundaries fixed at ingest) is a different concept from the
+`histogram` AGGREGATION this adapter already runs for query_distribution (query-chosen
+interval/offset over a plain numeric field). Verified against a real Elasticsearch 8.15 cluster:
+running `sum`, `value_count`, `avg`, `percentiles`, `histogram` or `range` against a
+histogram-typed field works and is correctly weighted by the field's own stored counts; `stats`
+(and `extended_stats`, `cardinality`) are rejected outright by Elasticsearch
+(illegal_argument_exception). Critically, the `histogram` and `range` aggregations still
+re-bucket onto the INTERVAL/EDGES THE QUERY ASKS FOR, never the field's own original per-document
+`values` boundaries: Elasticsearch's aggregation framework has no way to hand back a
+histogram-typed field's exact source-defined edges over a time range. Those original edges are
+only readable per document (`_source`/`docvalue_fields` on a single hit), which is out of scope
+for this numeric-aggregate-first adapter (see the design doc's non-goals). So a histogram-typed
+field is exposed as a metric (`MetricInfo(type="histogram")`) that every supported aggregation
+form already handles transparently, `stats` is refused with a specific hint, and no new
+`BucketScheme` kind claims source-defined edges that Elasticsearch cannot actually produce.
+
+Also verified: OpenSearch 2.17 has no `histogram` field type at all - mapping a field as
+`{"type": "histogram"}` fails outright (`mapper_parsing_exception: No handler for type
+[histogram]`). This bead's support is therefore exercised against a real cluster only on
+Elasticsearch; an OpenSearch index simply cannot contain such a field, so there is nothing to
+detect or refuse there in practice.
 """
 
 from __future__ import annotations
@@ -47,6 +70,9 @@ DEFAULT_RESOLUTION_MS = 1_000
 _DEFAULT_LIMITS = Limits()
 NUMERIC_TYPES = frozenset({"long", "integer", "short", "byte", "double", "float", "half_float",
                            "scaled_float", "unsigned_long"})  # fmt: skip
+#: pre-aggregated distribution field (values/counts arrays per document, edges fixed at ingest);
+#: sum/value_count/avg/percentiles/histogram/range all work against it (verified), stats does not
+HISTOGRAM_FIELD_TYPE = "histogram"
 DATE_TYPES = frozenset({"date", "date_nanos"})
 LABEL_TYPES = frozenset({"keyword", "constant_keyword", "ip", "boolean"})
 MIN_VERSION: dict[str, tuple[int, int]] = {"elasticsearch": (7, 10), "opensearch": (1, 0)}
@@ -560,7 +586,7 @@ class ElasticsearchSource:
         nested = [f for f, t in fields.items() if isinstance(t, dict) and "nested" in t]
         numeric: list[MetricInfo] = []
         labels: list[str] = []
-        conflicts = nested_skipped = histogram_skipped = 0
+        conflicts = nested_skipped = 0
         for name, types in sorted(fields.items()):
             if name.startswith("_") or not isinstance(types, dict):
                 continue  # metadata fields (_id, _index, ...)
@@ -575,19 +601,17 @@ class ElasticsearchSource:
                 continue
             [kind] = kinds
             info = types[kind]
-            if kind == "histogram":
-                histogram_skipped += 1  # pre-aggregated histogram field: later work
-                continue
             if not info.get("aggregatable"):
                 continue
-            if kind in NUMERIC_TYPES:
+            if kind == HISTOGRAM_FIELD_TYPE:
+                numeric.append(MetricInfo(name, "histogram", None, _field_unit(info)))
+            elif kind in NUMERIC_TYPES:
                 numeric.append(MetricInfo(name, _field_type(info), None, _field_unit(info)))  # type: ignore[arg-type]
             elif kind in LABEL_TYPES:
                 labels.append(name)
         caveats = ["cardinality_unavailable"]
         partial = False
-        for count, code in ((conflicts, "mapping_conflict"), (nested_skipped, "nested_fields_skipped"),
-                            (histogram_skipped, "histogram_fields_skipped")):  # fmt: skip
+        for count, code in ((conflicts, "mapping_conflict"), (nested_skipped, "nested_fields_skipped")):  # fmt: skip
             if count:
                 caveats.append(f"{code}:{count}")
                 partial = True
@@ -842,7 +866,16 @@ class ElasticsearchSource:
                     hint="narrow index_pattern to indices that agree, or aggregate another field",
                 )
             [(kind, info)] = types.items()
-            if need == "numeric" and kind not in NUMERIC_TYPES:
+            if kind == HISTOGRAM_FIELD_TYPE and need == "numeric":
+                if q.form == "stats":
+                    raise SourceError(
+                        f"field {field} is a pre-aggregated histogram field; stats is not "
+                        "supported against it",
+                        hint="Elasticsearch rejects stats/extended_stats on a histogram-typed "
+                        "field; use sum, percentiles, histogram or range instead (each is "
+                        "weighted by the field's stored counts)",
+                    )
+            elif need == "numeric" and kind not in NUMERIC_TYPES:
                 raise SourceError(
                     f"field {field} is {kind}, not numeric",
                     hint="stats, percentiles and histogram need a numeric field; source_learn "

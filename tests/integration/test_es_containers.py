@@ -3,6 +3,7 @@ validation tier; spec: Testing)."""
 
 import json
 
+import httpx
 import pytest
 
 from telemetry_nerd.config import Settings
@@ -171,3 +172,69 @@ async def test_a_too_small_terms_size_is_refused(seeded):
     q = expr(aggs={"s": {"terms": {"field": "service.name", "size": 1}}})
     with pytest.raises(LimitExceeded, match="other terms"):
         await svc.query(q, **window(base))
+
+
+HIST_INDEX = "tn-hist-test"
+
+
+def _seed_histogram_field(url: str, base: int) -> None:
+    """One index with a `histogram`-typed field (pre-aggregated values/counts per document, a
+    distinct concept from the query-defined `histogram` *aggregation* used elsewhere in this
+    file): proves, against a real cluster, what Elasticsearch actually lets this adapter do with
+    it (telemetry-nerd-sgb.10)."""
+    httpx.delete(f"{url}/{HIST_INDEX}", timeout=30)
+    mapping = {"mappings": {"properties": {
+        "@timestamp": {"type": "date"},
+        "latency": {"type": "histogram"},
+    }}}  # fmt: skip
+    httpx.put(f"{url}/{HIST_INDEX}", json=mapping, timeout=30).raise_for_status()
+    docs = [
+        {"@timestamp": base, "latency": {"values": [1, 5, 10, 20], "counts": [3, 7, 10, 2]}},
+        {"@timestamp": base + 60_000, "latency": {"values": [1, 5, 10, 20], "counts": [1, 2, 3, 4]}},
+    ]  # fmt: skip
+    lines = "".join(
+        json.dumps({"index": {"_index": HIST_INDEX}}) + "\n" + json.dumps(d) + "\n" for d in docs
+    )
+    r = httpx.post(f"{url}/_bulk?refresh=true", content=lines,
+                   headers={"Content-Type": "application/x-ndjson"}, timeout=60)  # fmt: skip
+    r.raise_for_status()
+    assert not r.json()["errors"], r.json()
+
+
+@pytest.fixture
+async def hist_connected(es_url, tmp_path):
+    # OpenSearch 2.17 has no `histogram` field type at all (mapper_parsing_exception on PUT
+    # mapping: "No handler for type [histogram]"), verified against a real container; this
+    # fixture is Elasticsearch-only, not parametrized over `cluster` like the rest of this file.
+    base = base_ms()
+    _seed_histogram_field(es_url, base)
+    svc = build_service(Settings(data_dir=tmp_path / "d", source_url="http://127.0.0.1:9"))
+    await svc.source_connect(SourceSpec(name="hist", url=es_url, flavor="elasticsearch",
+                                        index_pattern=HIST_INDEX, time_field="@timestamp"))  # fmt: skip
+    return svc, base
+
+
+async def test_discover_reports_a_histogram_typed_field_as_a_histogram_metric(hist_connected):
+    svc, _ = hist_connected
+    out = await svc.learn("hist")
+    assert out["metrics"] == 1
+    entry = svc.ws.catalog_entry("hist", "latency")
+    assert entry is not None
+
+
+async def test_sum_against_a_histogram_typed_field_is_weighted_by_its_stored_counts(hist_connected):
+    svc, base = hist_connected
+    # doc 1 weighted sum: 1*3 + 5*7 + 10*10 + 20*2 = 178; over a 60s step, 178/60 avg
+    q = expr(aggs={"s": {"sum": {"field": "latency"}}})
+    out = await svc.query(q, start=str(base), end=str(base + 60_000), step="1m", source="hist")
+    _, res = svc.datasets.get(out["dataset"])
+    rows = res.buckets.to_pylist()
+    assert rows and rows[0]["avg"] == pytest.approx(178 / 60)
+
+
+async def test_stats_against_a_histogram_typed_field_is_refused_before_querying(hist_connected):
+    svc, base = hist_connected
+    q = expr(aggs={"s": {"stats": {"field": "latency"}}})
+    with pytest.raises(SourceError, match="pre-aggregated histogram field") as e:
+        await svc.query(q, start=str(base), end=str(base + 60_000), step="1m", source="hist")
+    assert "sum, percentiles, histogram or range" in e.value.hint

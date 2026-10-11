@@ -23,13 +23,14 @@ async def test_numeric_fields_are_metrics_and_aggregatable_keywords_are_labels()
         MetricInfo("host.cpu.pct", "gauge", None, None),
         MetricInfo("http.response.bytes", "counter", None, "B"),
         MetricInfo("http.response.status_code", None, None, None),
+        MetricInfo("latency_hist", "histogram", None, None),
     )
     assert d.label_names == ("host.ip", "is_bot", "message.keyword", "service.name", "tier")
     assert d.histograms == {} and d.cardinality is None
     assert d.naming == "fields"
-    assert d.metadata_coverage == pytest.approx(3 / 4)
+    assert d.metadata_coverage == pytest.approx(4 / 5)
     assert d.caveats == ("cardinality_unavailable", "mapping_conflict:1",
-                         "nested_fields_skipped:1", "histogram_fields_skipped:1")  # fmt: skip
+                         "nested_fields_skipped:1")  # fmt: skip
     assert d.partial is True
     [req] = [r for r in fake.requests if r.url.path.endswith("/_field_caps")]
     assert req.url.params["fields"] == "*" and req.url.params["include_unmapped"] == "false"
@@ -47,7 +48,7 @@ async def test_too_many_numeric_fields_are_truncated():
     src = fake_with(fixture("field_caps_all.json")).source(limits=Limits(max_metrics=2))
     d = await src.discover()
     assert [m.name for m in d.metrics] == ["event.duration", "host.cpu.pct"]
-    assert "metrics_truncated:2/4" in d.caveats and d.partial is True
+    assert "metrics_truncated:2/5" in d.caveats and d.partial is True
 
 
 async def test_discover_clears_the_field_check_cache():

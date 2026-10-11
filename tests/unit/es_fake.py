@@ -32,6 +32,7 @@ CAPS: dict[str, dict] = {
     "url.path": _agg("keyword"),
     "message": {"text": {"type": "text", "searchable": True, "aggregatable": False}},
     "message.keyword": _agg("keyword"),
+    "latency_hist": {"histogram": {"type": "histogram", "searchable": False, "aggregatable": True}},
 }
 
 
