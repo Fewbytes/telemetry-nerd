@@ -29,13 +29,17 @@ from telemetry_nerd.sources.spec import AuthRef
 #: built-in "prometheus" plugin is also how Thanos, Mimir and VictoriaMetrics are added.
 SUPPORTED_TYPES = frozenset({"prometheus"})
 
+#: Grafana datasource plugin ids for Elasticsearch/OpenSearch. These are queried through
+#: Grafana's proxy via `_msearch` (see sources/elasticsearch.py), not PromQL/MetricsQL:
+#: a materially different code path than SUPPORTED_TYPES, so kept separate.
+ES_TYPES = frozenset({"elasticsearch", "grafana-opensearch-datasource"})
+
 Backend = Literal["prometheus", "thanos", "mimir", "victoriametrics"]
 Flavor = Literal["prometheus", "victoriametrics"]
 
 UNSUPPORTED_HINT = (
-    "not Prometheus/MetricsQL-compatible, so it cannot be queried through Grafana yet; "
-    'Elasticsearch/OpenSearch connect directly: source_connect(url=..., flavor="elasticsearch", '
-    "index_pattern=..., time_field=...) (see telemetry-nerd-sgb for other adapters)"
+    "not Prometheus/MetricsQL-compatible and not Elasticsearch/OpenSearch, so it cannot be "
+    "queried through Grafana yet (see telemetry-nerd-sgb for other adapters)"
 )
 
 
@@ -54,10 +58,18 @@ class GrafanaDatasource(BaseModel):
     #: Grafana's own hint at the real backend (jsonData.prometheusType: Prometheus, Cortex,
     #: Mimir, Thanos), when an admin set it; not verified until connected (detect_backend)
     backend_hint: str | None = None
+    #: Elasticsearch/OpenSearch only: jsonData.database (the index pattern) and
+    #: jsonData.timeField, as Grafana's ES datasource plugin stores them. Grafana does not
+    #: reliably distinguish Elasticsearch from OpenSearch in jsonData (the community
+    #: "grafana-opensearch-datasource" plugin id is the only unambiguous signal; an
+    #: Elasticsearch-type datasource pointed at an OpenSearch cluster looks identical), so
+    #: callers default to "elasticsearch" when unsure.
+    index_pattern: str | None = None
+    time_field: str | None = None
 
     @property
     def supported(self) -> bool:
-        return self.type in SUPPORTED_TYPES
+        return self.type in SUPPORTED_TYPES or self.type in ES_TYPES
 
     def proxy_url(self, grafana_url: str) -> str:
         return proxy_url(grafana_url, self.uid)
@@ -72,6 +84,10 @@ class GrafanaDatasource(BaseModel):
         }
         if self.backend_hint:
             out["backend_hint"] = self.backend_hint
+        if self.index_pattern:
+            out["index_pattern"] = self.index_pattern
+        if self.time_field:
+            out["time_field"] = self.time_field
         if not self.supported:
             out["reason"] = f"datasource type {self.type!r} is {UNSUPPORTED_HINT}"
         return out
@@ -81,13 +97,18 @@ def _entry(uid: object, name: object, raw: Mapping[str, object]) -> GrafanaDatas
     if not uid:  # Grafana's built-in pseudo-entries (--Dashboard--, --Mixed--) have none
         return None
     json_data = raw.get("jsonData")
-    hint = json_data.get("prometheusType") if isinstance(json_data, dict) else None
+    json_data = json_data if isinstance(json_data, dict) else {}
+    hint = json_data.get("prometheusType")
+    index_pattern = json_data.get("database")
+    time_field = json_data.get("timeField")
     return GrafanaDatasource(
         uid=str(uid),
         name=str(name),
         type=str(raw.get("type", "")),
         is_default=bool(raw.get("isDefault", False)),
         backend_hint=str(hint) if hint else None,
+        index_pattern=str(index_pattern) if index_pattern else None,
+        time_field=str(time_field) if time_field else None,
     )
 
 

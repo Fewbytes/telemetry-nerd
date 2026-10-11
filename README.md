@@ -96,10 +96,10 @@ It works with any Prometheus-compatible source: Prometheus, VictoriaMetrics, Tha
 Grafana datasource proxies. No setup needed to try it: Claude can connect to several public
 demo sources (Grafana Play, Wikimedia, the VictoriaMetrics playground and more).
 
-It also connects directly to an Elasticsearch or OpenSearch cluster (`flavor="elasticsearch"` /
-`"opensearch"`, one adapter for both), querying it in its own Query DSL rather than translating
-PromQL — useful for turning access-log documents into request rate, latency and Little's-law
-inputs. Direct connection only today (no Grafana proxy or Kibana discovery yet); see
+It also connects to an Elasticsearch or OpenSearch cluster (`flavor="elasticsearch"` /
+`"opensearch"`, one adapter for both), directly or through a Grafana datasource proxy, querying
+it in its own Query DSL rather than translating PromQL — useful for turning access-log documents
+into request rate, latency and Little's-law inputs. See
 [docs/install.md](docs/install.md#elasticsearch--opensearch) for what's connectable and what's
 still missing.
 

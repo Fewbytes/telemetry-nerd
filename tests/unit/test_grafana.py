@@ -244,6 +244,108 @@ async def test_source_connect_grafana_uid_detects_victoriametrics(tmp_path, monk
     assert out["source"]["flavor"] == "victoriametrics"
 
 
+def _offline_es_factory(spec):
+    """A real ElasticsearchSource over a mock root+field_caps server (probe() only)."""
+    from telemetry_nerd.sources.elasticsearch import ElasticsearchSource
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/_field_caps"):
+            return httpx.Response(
+                200,
+                json={
+                    "indices": ["access-logs-1"],
+                    "fields": {spec.time_field: {"date": {"aggregatable": True}}},
+                },
+            )
+        return httpx.Response(200, json={"version": {"number": "8.11.0"}})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return ElasticsearchSource.from_spec(spec, client=client)
+
+
+async def test_source_connect_grafana_uid_detects_elasticsearch(tmp_path, monkeypatch):
+    from telemetry_nerd.sources.grafana import GrafanaDatasource
+
+    svc = make_service(tmp_path, factory=_offline_es_factory)
+    mcp = build_mcp(svc, "http://x")
+
+    async def fake_discover(url, auth=None, **kw):
+        return [
+            GrafanaDatasource(
+                uid="esuid",
+                name="cern-es",
+                type="elasticsearch",
+                index_pattern="access-logs-*",
+                time_field="@timestamp",
+            )
+        ]
+
+    monkeypatch.setattr("telemetry_nerd.mcp.server.discover_datasources", fake_discover)
+
+    async def fail_probe_backend(*a, **kw):
+        raise AssertionError("probe_backend must not be called for an ES datasource")
+
+    monkeypatch.setattr("telemetry_nerd.mcp.server.probe_backend", fail_probe_backend)
+    async with Client(mcp) as client:
+        r = await client.call_tool(
+            "source_connect",
+            {"name": "cern-es", "grafana": "https://monit-grafana-open.cern.ch", "uid": "esuid"},
+        )
+    assert not r.is_error, text(r)
+    out = json.loads(text(r))
+    assert out["backend"] == "elasticsearch"
+    assert out["source"]["flavor"] == "elasticsearch"
+    assert out["source"]["index_pattern"] == "access-logs-*"
+    assert out["source"]["time_field"] == "@timestamp"
+    assert out["status"]["reachable"] is True
+    assert "cern-es" in svc.sources
+
+
+async def test_source_connect_grafana_uid_elasticsearch_missing_jsondata_is_a_tool_error(
+    tmp_path, monkeypatch
+):
+    from telemetry_nerd.sources.grafana import GrafanaDatasource
+
+    svc = make_service(tmp_path)
+    mcp = build_mcp(svc, "http://x")
+
+    async def fake_discover(url, auth=None, **kw):
+        return [GrafanaDatasource(uid="esuid", name="cern-es", type="elasticsearch")]
+
+    monkeypatch.setattr("telemetry_nerd.mcp.server.discover_datasources", fake_discover)
+    async with Client(mcp) as client:
+        r = await client.call_tool(
+            "source_connect",
+            {"name": "cern-es", "grafana": "https://g.example", "uid": "esuid"},
+        )
+    assert r.is_error
+    assert "database/timeField" in text(r)
+
+
+async def test_source_connect_grafana_discovery_failure_falls_back_to_prometheus_path(
+    tmp_path, monkeypatch
+):
+    svc = make_service(tmp_path, factory=_offline_vm_factory)
+    mcp = build_mcp(svc, "http://x")
+
+    async def fake_discover(url, auth=None, **kw):
+        raise SourceError("listing denied")
+
+    async def fake_probe_backend(proxy_url, auth=None, **kw):
+        return "victoriametrics", "victoriametrics"
+
+    monkeypatch.setattr("telemetry_nerd.mcp.server.discover_datasources", fake_discover)
+    monkeypatch.setattr("telemetry_nerd.mcp.server.probe_backend", fake_probe_backend)
+    async with Client(mcp) as client:
+        r = await client.call_tool(
+            "source_connect",
+            {"name": "vm1", "grafana": "https://g.example", "uid": "vmuid"},
+        )
+    assert not r.is_error, text(r)
+    out = json.loads(text(r))
+    assert out["backend"] == "victoriametrics"
+
+
 async def test_source_connect_grafana_without_uid_is_a_tool_error(tmp_path):
     svc = make_service(tmp_path)
     mcp = build_mcp(svc, "http://x")
@@ -273,12 +375,40 @@ def test_spec_rejects_nothing_new():
     assert spec.url == "https://g.example/api/datasources/proxy/uid/u"
 
 
-def test_an_elasticsearch_datasource_points_at_the_direct_connection():
-    from telemetry_nerd.sources.grafana import UNSUPPORTED_HINT
+def test_an_elasticsearch_datasource_is_supported_via_grafana_proxy():
+    from telemetry_nerd.sources.grafana import GrafanaDatasource
 
+    es = GrafanaDatasource(uid="u", name="es", type="elasticsearch")
+    assert es.supported is True
+    opensearch = GrafanaDatasource(uid="u2", name="os", type="grafana-opensearch-datasource")
+    assert opensearch.supported is True
+
+
+def test_a_loki_datasource_is_still_unsupported():
+    from telemetry_nerd.sources.grafana import UNSUPPORTED_HINT, GrafanaDatasource
+
+    loki = GrafanaDatasource(uid="u", name="loki", type="loki")
+    assert loki.supported is False
     assert "not Prometheus" in UNSUPPORTED_HINT
-    assert 'source_connect(url=..., flavor="elasticsearch"' in UNSUPPORTED_HINT
-    assert "index_pattern" in UNSUPPORTED_HINT and "time_field" in UNSUPPORTED_HINT
+    assert "not Elasticsearch/OpenSearch" in UNSUPPORTED_HINT
+    desc = loki.describe()
+    assert desc["supported"] is False and "not Prometheus" in desc["reason"]
+
+
+def test_elasticsearch_datasource_jsondata_parsed_into_index_pattern_and_time_field():
+    from telemetry_nerd.sources.grafana import _entry
+
+    ds = _entry(
+        "u1",
+        "es",
+        {
+            "type": "elasticsearch",
+            "jsonData": {"database": "access-logs-*", "timeField": "@timestamp"},
+        },
+    )
+    assert ds is not None
+    assert ds.index_pattern == "access-logs-*"
+    assert ds.time_field == "@timestamp"
 
 
 async def test_discover_datasources_uses_oauth_headers_when_given():

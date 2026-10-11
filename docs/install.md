@@ -37,12 +37,21 @@ at runtime rather than these env vars — see below).
 
 `source_connect(url=..., flavor="elasticsearch", index_pattern=..., time_field=...)` (same for
 `"opensearch"`: one adapter serves both, since OpenSearch's search API is a wire-compatible
-fork). Direct HTTP connection to the cluster only — no Grafana-proxied ES/OpenSearch. If you
-have a Kibana in front of the cluster, `source_discover_kibana(url=...)` is an optional
-discovery shortcut: it lists the index patterns Kibana knows about (with their configured time
-field, when set) so you can read off `index_pattern`/`time_field` before calling
-`source_connect` — Kibana is only consulted for discovery, queries still go straight to
-Elasticsearch/OpenSearch. Requirements:
+fork). Direct HTTP connection to the cluster. If you have a Kibana in front of the cluster,
+`source_discover_kibana(url=...)` is an optional discovery shortcut: it lists the index patterns
+Kibana knows about (with their configured time field, when set) so you can read off
+`index_pattern`/`time_field` before calling `source_connect` — Kibana is only consulted for
+discovery, queries still go straight to Elasticsearch/OpenSearch. Requirements:
+
+Also connectable through a Grafana datasource proxy: `source_connect(name=..., grafana=...,
+uid=...)` detects an Elasticsearch/OpenSearch datasource the same way it detects Prometheus-
+compatible ones, reading `index_pattern`/`time_field` off the datasource's own Grafana config
+(jsonData `database`/`timeField`) instead of taking them as arguments. This exists because some
+Grafana ES/OpenSearch proxies (e.g. CERN's `monit-grafana-open`) reject a raw `POST
+/<index>/_search` through the proxy with 403 ("posts not allowed ... except on /_msearch") —
+queries made this way go through Elasticsearch's `_msearch` multi-search endpoint instead, the
+only one such proxies pass through. Grafana does not reliably distinguish Elasticsearch from
+OpenSearch in a datasource's jsonData, so this defaults to `elasticsearch` when it can't tell.
 
 - `index_pattern`: the indices to read (e.g. `access-logs-*`), and `time_field`: the date field
   documents are bucketed by (e.g. `@timestamp`) — both required, with no default.
@@ -57,7 +66,7 @@ translation — covering request-rate, latency (mean/min/max via `stats`, or a T
 `percentile`) and distribution queries, and `check_littles_law` with a separate
 `concurrency_source` for the in-flight gauge (concurrency isn't read from ES documents in v1).
 
-Not yet supported: Grafana-proxied connections, AWS SigV4 auth for
+Not yet supported: AWS SigV4 auth for
 Amazon OpenSearch Service, operating profiles / normal-band overlays, and automatic RED/USE/
 Little's-law binding suggestions (the suggestion corpus is PromQL-only; an ECS catalog pack is
 planned). Full design: `docs/superpowers/specs/2026-10-07-elasticsearch-opensearch-adapter-design.md`.

@@ -167,6 +167,33 @@ async def test_too_many_steps_are_refused_before_sending():
     assert fake.requests == []
 
 
+async def test_via_grafana_proxy_uses_msearch_not_search_and_matches_direct_results():
+    fake = FakeEs(search=search_response(RATE_BUCKETS))
+    res = await fake.source(via_grafana_proxy=True).fetch(RATE, RNG, M)
+    sid = series_id("es", {})
+    assert rows(res) == [
+        {"ts_ms": START + M, "series_id": sid, "avg": 2.0, "min": 2.0, "max": 2.0, "count": 1},
+        {"ts_ms": START + 2 * M, "series_id": sid, "avg": 0.0, "min": 0.0, "max": 0.0, "count": 1},
+        {"ts_ms": START + 3 * M, "series_id": sid, "avg": 1.0, "min": 1.0, "max": 1.0, "count": 1},
+    ]
+    assert fake.searches() == []  # never a raw POST to /<index>/_search
+    [body] = fake.msearches()
+    assert body["aggs"]["__tn_time"]["date_histogram"]["fixed_interval"] == "60000ms"
+    msearch_requests = [r for r in fake.requests if r.url.path == "/_msearch"]
+    [msearch_request] = msearch_requests
+    assert msearch_request.headers["content-type"] == "application/x-ndjson"
+
+
+async def test_via_grafana_proxy_msearch_item_error_maps_to_the_same_typed_errors():
+    item_error = {"error": {"type": "index_not_found_exception",
+                             "reason": "no such index [tn-access-x]",
+                             "root_cause": [{"type": "index_not_found_exception",
+                                             "reason": "no such index [tn-access-x]"}]},
+                  "status": 404}  # fmt: skip
+    with pytest.raises(SourceError, match="matches no index"):
+        await FakeEs(search=item_error).source(via_grafana_proxy=True).fetch(RATE, RNG, M)
+
+
 async def test_a_server_side_timeout_keeps_the_data_and_marks_the_span_partial():
     resp = search_response(RATE_BUCKETS, timed_out=True)
     res = await FakeEs(search=resp).source().fetch(RATE, RNG, M)

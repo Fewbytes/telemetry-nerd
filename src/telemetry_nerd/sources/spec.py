@@ -186,6 +186,11 @@ class SourceSpec(BaseModel):
     #: Elasticsearch/OpenSearch: the date field documents are bucketed by; no default (indices
     #: use @timestamp, timestamp, metadata.timestamp, ...: any guess is wrong somewhere)
     time_field: str | None = None
+    #: Elasticsearch/OpenSearch connected through a Grafana datasource proxy: some Grafana
+    #: proxies (e.g. CERN's monit-grafana-open) reject a raw POST to `/<index>/_search` with
+    #: 403 ("posts not allowed ... except on /_msearch") and only pass through Elasticsearch's
+    #: `_msearch` multi-search endpoint. When set, queries use `_msearch` instead.
+    grafana_proxy: bool = False
 
     @field_validator("timezone")
     @classmethod
@@ -242,6 +247,8 @@ class SourceSpec(BaseModel):
             raise ValueError(
                 "index_pattern and time_field are for flavor elasticsearch/opensearch only"
             )
+        if self.grafana_proxy and self.flavor not in ES_FLAVORS:
+            raise ValueError("grafana_proxy is for flavor elasticsearch/opensearch only")
         return self
 
     @field_validator("url")

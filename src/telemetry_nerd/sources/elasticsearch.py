@@ -12,6 +12,7 @@ than a sample would. Design: docs/superpowers/specs/2026-10-07-elasticsearch-ope
 
 from __future__ import annotations
 
+import json
 import os
 import time
 from collections.abc import Iterator, Mapping, Sequence
@@ -48,6 +49,7 @@ NUMERIC_TYPES = frozenset({"long", "integer", "short", "byte", "double", "float"
 DATE_TYPES = frozenset({"date", "date_nanos"})
 LABEL_TYPES = frozenset({"keyword", "constant_keyword", "ip", "boolean"})
 MIN_VERSION: dict[str, tuple[int, int]] = {"elasticsearch": (7, 10), "opensearch": (1, 0)}
+NDJSON_CONTENT_TYPE = "application/x-ndjson"
 
 
 class _Forbidden(SourceError):
@@ -248,12 +250,17 @@ class ElasticsearchSource:
         headers: Mapping[str, str] | None = None,
         gate: Gate | None = None,
         token_provider: TokenProvider | None = None,
+        via_grafana_proxy: bool = False,
     ) -> None:
         self.name = name
         self.base_url = base_url.rstrip("/")
         self.flavor = flavor
         self.index_pattern = index_pattern
         self.time_field = time_field
+        #: some Grafana ES/OpenSearch proxies (e.g. CERN's monit-grafana-open) reject a raw
+        #: POST to `/<index>/_search` and only pass through `_msearch`; when true, queries use
+        #: that endpoint instead (see _msearch_one)
+        self.via_grafana_proxy = via_grafana_proxy
         #: the finest query step the source accepts; never learned
         self.resolution_ms = resolution_ms or DEFAULT_RESOLUTION_MS
         self.resolution_origin: Literal["configured", "assumed"] = (
@@ -299,6 +306,7 @@ class ElasticsearchSource:
             headers=headers,
             gate=Gate(spec.politeness.max_concurrency, spec.politeness.min_interval_ms),
             token_provider=token_provider,
+            via_grafana_proxy=spec.grafana_proxy,
         )
 
     async def aclose(self) -> None:
@@ -339,12 +347,14 @@ class ElasticsearchSource:
         body: dict | None,
         headers: Mapping[str, str],
         timeout_s: float,
+        *,
+        content: str | None = None,
     ) -> httpx.Response:
+        kwargs: dict[str, Any] = {"content": content} if content is not None else {"json": body}
         try:
             async with self._gate.slot():
                 return await self._client.request(
-                    method, url, params=params, json=body, headers=headers,
-                    timeout=timeout_s,
+                    method, url, params=params, headers=headers, timeout=timeout_s, **kwargs,
                 )  # fmt: skip
         except httpx.TimeoutException as e:
             raise SourceUnavailable(
@@ -364,19 +374,27 @@ class ElasticsearchSource:
         *,
         params: Mapping[str, str] | None = None,
         body: dict | None = None,
+        content: str | None = None,
+        extra_headers: Mapping[str, str] | None = None,
         timeout_s: float | None = None,
     ) -> dict:
         url = f"{self.base_url}{path}"
         timeout_s = timeout_s or self.limits.timeout_s
-        headers = self._headers
+        headers = {**self._headers, **(extra_headers or {})}
         if self._token_provider is not None:
             headers = {**headers, **(await self._token_provider.headers())}
-        resp = await self._attempt(method, url, params, body, headers, timeout_s)
+        resp = await self._attempt(method, url, params, body, headers, timeout_s, content=content)
         if resp.status_code == 401 and self._token_provider is not None:
             rejected = headers.get("Authorization", "").removeprefix("Bearer ")
             if await self._token_provider.on_401(rejected):
-                headers = {**self._headers, **(await self._token_provider.headers())}
-                resp = await self._attempt(method, url, params, body, headers, timeout_s)
+                headers = {
+                    **self._headers,
+                    **(extra_headers or {}),
+                    **(await self._token_provider.headers()),
+                }
+                resp = await self._attempt(
+                    method, url, params, body, headers, timeout_s, content=content
+                )
         if resp.status_code == 401 and self._token_provider is not None:
             raise SourceError(
                 f"authentication failed (HTTP 401) querying {self.base_url}",
@@ -695,7 +713,10 @@ class ElasticsearchSource:
             )
         await self._check_fields(q)
         body = q.body(rng, step_ms, self.time_field, self.limits.timeout_s)
-        resp = await self._request("POST", f"/{self.index_pattern}/_search", body=body)
+        if self.via_grafana_proxy:
+            resp = await self._msearch_one(body)
+        else:
+            resp = await self._request("POST", f"/{self.index_pattern}/_search", body=body)
         shards = resp.get("_shards") if isinstance(resp.get("_shards"), dict) else {}
         if shards.get("total") == 0:  # a wildcard that matches nothing answers 200
             raise _no_index(self.index_pattern)
@@ -717,6 +738,27 @@ class ElasticsearchSource:
             else ()
         )
         return resp, failed
+
+    async def _msearch_one(self, body: dict) -> dict:
+        """POST the search `body` through Elasticsearch's multi-search endpoint, the only
+        search endpoint some Grafana ES/OpenSearch proxies pass through (see
+        `via_grafana_proxy`). NDJSON of one header line (naming the index pattern) and one
+        body line, trailing newline required. The single item's response shape is otherwise
+        identical to a direct `_search` response - except a per-item error comes back as
+        `{"error": ..., "status": ...}` inside that item rather than as an HTTP error."""
+        ndjson = f"{json.dumps({'index': self.index_pattern})}\n{json.dumps(body)}\n"
+        data = await self._request(
+            "POST", "/_msearch", content=ndjson, extra_headers={"Content-Type": NDJSON_CONTENT_TYPE}
+        )
+        responses = data.get("responses")
+        if not isinstance(responses, list) or not responses:
+            raise _malformed("_msearch response has no responses")
+        item = responses[0]
+        if not isinstance(item, dict):
+            raise _malformed("_msearch response item is not an object")
+        if "error" in item:
+            _raise_for(int(item.get("status") or 400), item, self.index_pattern)
+        return item
 
     async def _field_types(self, field: str) -> dict[str, dict]:
         if field not in self._caps:

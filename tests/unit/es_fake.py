@@ -98,6 +98,13 @@ class FakeEs:
         if path == f"/{PATTERN}/_search":
             body = json.loads(request.content)
             return _respond(self.search(body) if callable(self.search) else self.search)
+        if path == "/_msearch":
+            header, body_line = request.content.decode().splitlines()[:2]
+            assert json.loads(header) == {"index": PATTERN}
+            body = json.loads(body_line)
+            item = self.search(body) if callable(self.search) else self.search
+            item = item.json() if isinstance(item, httpx.Response) else item
+            return httpx.Response(200, json={"responses": [item]})
         return es_error(404, "index_not_found_exception", f"no such index [{path}]")
 
     def source(self, flavor: str = "elasticsearch", **kw) -> ElasticsearchSource:
@@ -106,7 +113,16 @@ class FakeEs:
                                    flavor=flavor, client=client, **kw)  # fmt: skip
 
     def searches(self) -> list[dict]:
-        return [json.loads(r.content) for r in self.requests if r.url.path.endswith("/_search")]
+        return [json.loads(r.content) for r in self.requests if r.url.path == f"/{PATTERN}/_search"]
+
+    def msearches(self) -> list[dict]:
+        """The query body of each `_msearch` call (the NDJSON body line, not the header)."""
+        out = []
+        for r in self.requests:
+            if r.url.path == "/_msearch":
+                _, body_line = r.content.decode().splitlines()[:2]
+                out.append(json.loads(body_line))
+        return out
 
     def caps_requests(self) -> list[str]:
         return [

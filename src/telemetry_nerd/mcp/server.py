@@ -28,7 +28,12 @@ from telemetry_nerd.model.jsonsafe import dumps
 from telemetry_nerd.model.time import format_duration, iso, parse_duration, parse_time
 from telemetry_nerd.retro.models import LessonScope
 from telemetry_nerd.sources.base import SourceError
-from telemetry_nerd.sources.grafana import discover_datasources, probe_backend, proxy_url
+from telemetry_nerd.sources.grafana import (
+    ES_TYPES,
+    discover_datasources,
+    probe_backend,
+    proxy_url,
+)
 from telemetry_nerd.sources.kibana import discover_index_patterns
 from telemetry_nerd.sources.oauth import TokenProvider
 from telemetry_nerd.sources.public import PUBLIC_SOURCES
@@ -902,9 +907,16 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         https://<grafana>/api/datasources/proxy/uid/<uid>.
         grafana + uid: connect a datasource you found with source_discover_grafana (e.g.
         source_connect(name="play-mimir", grafana="https://play.grafana.org",
-        uid="grafanacloud-prom")), without building the proxy url yourself. The datasource's
-        own buildinfo (through Grafana's proxy) decides `flavor` (e.g. VictoriaMetrics ->
-        victoriametrics); the given `flavor` argument is ignored. Mutually exclusive with url.
+        uid="grafanacloud-prom")), without building the proxy url yourself. For a Prometheus-
+        compatible datasource, the datasource's own buildinfo (through Grafana's proxy)
+        decides `flavor` (e.g. VictoriaMetrics -> victoriametrics); the given `flavor`
+        argument is ignored. For an Elasticsearch/OpenSearch datasource, index_pattern and
+        time_field are read from the datasource's own Grafana config (jsonData.database /
+        jsonData.timeField) instead of being probed, and queries go through Elasticsearch's
+        `_msearch` endpoint, which is all some Grafana ES/OpenSearch proxies (e.g. CERN's
+        monit-grafana-open) pass through - a raw `_search` gets 403'd there. Grafana cannot
+        always tell Elasticsearch and OpenSearch apart, so this defaults to "elasticsearch"
+        when unsure. Mutually exclusive with url.
         flavor: "victoriametrics" (MetricsQL rollup), "prometheus" (also works on VM, Thanos,
         Mimir), "elasticsearch" or "opensearch" (one adapter serves both; flavor only changes how
         the version is read); ignored when grafana+uid detect it.
@@ -913,7 +925,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         e.g. "access-logs-*" (lowercase; a comma-separated list may use *; never bare * or
         _all); time_field (required, no default) = the date field documents are bucketed by,
         e.g. "@timestamp". resolution: the finest query step accepted (default 1s; documents have
-        no series interval). Through Grafana (grafana+uid) is not supported.
+        no series interval). Through Grafana (grafana+uid), index_pattern/time_field are
+        detected automatically instead (see above).
         resolution: the series interval. "auto" (default): measured from the sample spacing
         (median spacing per job, i.e. the scrape interval for scraped metrics; the coarsest
         job's when they differ), re-measured by source_learn; or
@@ -965,6 +978,12 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             }
         auth = oauth or _auth_ref(auth_env, auth_file, auth_scheme)
 
+        politeness = {
+            "max_concurrency": max_concurrency,
+            "min_interval_ms": parse_duration(min_interval),
+            "timeout_s": parse_duration(timeout) / 1000,
+        }
+
         def spec(source_url: str, source_flavor: str) -> SourceSpec:
             return SourceSpec.model_validate(
                 {
@@ -973,11 +992,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                     "flavor": source_flavor,
                     "resolution_ms": None if resolution == "auto" else parse_duration(resolution),
                     "auth": auth,
-                    "politeness": {
-                        "max_concurrency": max_concurrency,
-                        "min_interval_ms": parse_duration(min_interval),
-                        "timeout_s": parse_duration(timeout) / 1000,
-                    },
+                    "politeness": politeness,
                     "profile_source": profile_source,
                     "timezone": timezone,
                     "index_pattern": index_pattern,
@@ -1014,6 +1029,56 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
                         await provider.aclose()
                 elif auth:
                     static_auth = AuthRef.model_validate(auth)
+                # best-effort: list the datasources to see if `uid` is an Elasticsearch/
+                # OpenSearch type (a materially different code path, _msearch through the
+                # proxy); a listing failure (e.g. a token scoped only to the proxy, not to
+                # the datasources API) falls back to the Prometheus-compatible path below,
+                # same as probe_backend's own best-effort fallback.
+                es_datasource = None
+                try:
+                    datasources = await discover_datasources(
+                        grafana, static_auth, oauth_headers=oauth_headers
+                    )
+                    ds = next((d for d in datasources if d.uid == uid), None)
+                    if ds is not None and ds.type in ES_TYPES:
+                        es_datasource = ds
+                except SourceError:
+                    pass
+                if es_datasource is not None:
+                    if es_datasource.index_pattern is None or es_datasource.time_field is None:
+                        raise ToolError(
+                            f"Grafana datasource {uid!r} is Elasticsearch/OpenSearch but its "
+                            "jsonData has no database/timeField configured; connect directly "
+                            "instead: source_connect(url=..., flavor='elasticsearch', "
+                            "index_pattern=..., time_field=...)"
+                        )
+                    # Grafana does not reliably distinguish Elasticsearch from OpenSearch in
+                    # jsonData outside the (uncommon) community opensearch plugin id; default
+                    # to elasticsearch when unsure (see GrafanaDatasource.index_pattern).
+                    es_flavor = (
+                        "opensearch"
+                        if es_datasource.type == "grafana-opensearch-datasource"
+                        else "elasticsearch"
+                    )
+                    es_spec = SourceSpec.model_validate(
+                        {
+                            "name": name,
+                            "url": datasource_url,
+                            "flavor": es_flavor,
+                            "resolution_ms": (
+                                None if resolution == "auto" else parse_duration(resolution)
+                            ),
+                            "auth": auth,
+                            "politeness": politeness,
+                            "profile_source": profile_source,
+                            "timezone": timezone,
+                            "index_pattern": es_datasource.index_pattern,
+                            "time_field": es_datasource.time_field,
+                            "grafana_proxy": True,
+                        }
+                    )
+                    out = await service.source_connect(es_spec, replace=replace)
+                    return _dump({**out, "backend": es_flavor})
                 backend, detected_flavor = await probe_backend(
                     datasource_url, static_auth, oauth_headers=oauth_headers
                 )
