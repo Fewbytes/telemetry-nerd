@@ -66,10 +66,11 @@ def test_histogram_interval_and_offset():
 
 def test_terms_without_sub_aggregation_is_the_grouped_rate_form():
     q = EsQuery.parse(expr(aggs={"by_status": {"terms": {"field": "http.response.status_code"}}}))
-    assert (q.form, q.group_name, q.group_field, q.metric) == (
+    assert (q.form, q.group_name, q.group_kind, q.group_fields, q.metric) == (
         "rate",
         "by_status",
-        "http.response.status_code",
+        "terms",
+        ("http.response.status_code",),
         None,
     )
 
@@ -86,11 +87,77 @@ def test_terms_wrapping_a_metric_groups_it():
         )
     )
     assert (q.form, q.metric_name, q.field) == ("stats", "lat", "event.duration")
-    assert (q.group_name, q.group, q.group_field) == (
+    assert (q.group_name, q.group, q.group_kind, q.group_fields) == (
         "by_status",
         {"field": "http.response.status_code", "size": 50},
-        "http.response.status_code",
+        "terms",
+        ("http.response.status_code",),
     )
+
+
+def test_composite_without_sub_aggregation_is_the_grouped_rate_form():
+    composite = {"sources": [{"svc": {"terms": {"field": "service.name"}}},
+                             {"status": {"terms": {"field": "http.response.status_code"}}}],
+                 "size": 100}  # fmt: skip
+    q = EsQuery.parse(expr(aggs={"by_svc_status": {"composite": composite}}))
+    assert (q.form, q.group_name, q.group, q.group_kind, q.group_fields) == (
+        "rate",
+        "by_svc_status",
+        composite,
+        "composite",
+        ("service.name", "http.response.status_code"),
+    )
+
+
+def test_composite_wrapping_a_metric_groups_it():
+    composite = {"sources": [{"a": {"terms": {"field": "service.name"}}},
+                             {"b": {"terms": {"field": "http.response.status_code"}}},
+                             {"c": {"terms": {"field": "url.path"}}}],
+                 "size": 10}  # fmt: skip
+    q = EsQuery.parse(expr(aggs={"g": {"composite": composite, "aggs": STATS}}))
+    assert (q.form, q.metric_name, q.field) == ("stats", "lat", "event.duration")
+    assert q.group_kind == "composite"
+    assert q.group_fields == ("service.name", "http.response.status_code", "url.path")
+
+
+@pytest.mark.parametrize(
+    ("composite", "match"),
+    [
+        ({"sources": [{"a": {"terms": {"field": "x"}}}]}, "2\\+ sources"),
+        (
+            {
+                "sources": [{"a": {"terms": {"field": "x"}}}, {"b": {"terms": {"field": "y"}}}],
+                "after": {},
+            },
+            "sources and size only",
+        ),
+        (
+            {"sources": [{"a": {"terms": {"field": "x"}}, "b": {"terms": {"field": "y"}}}]},
+            "2\\+ sources",
+        ),
+        (
+            {
+                "sources": [
+                    {"a": {"date_histogram": {"field": "x"}}},
+                    {"b": {"terms": {"field": "y"}}},
+                ]
+            },
+            "plain terms source",
+        ),
+        (
+            {
+                "sources": [
+                    {"a": {"terms": {"field": "x"}, "aggs": {}}},
+                    {"b": {"terms": {"field": "y"}}},
+                ]
+            },
+            "plain terms source",
+        ),
+    ],
+)
+def test_composite_shapes_this_adapter_does_not_support_are_refused(composite, match):
+    with pytest.raises(SourceError, match=match):
+        EsQuery.parse(expr(aggs={"g": {"composite": composite}}))
 
 
 def _terms(sub):
@@ -121,7 +188,24 @@ REFUSALS = [
     (expr(aggs={"p": {"percentiles": {"field": "x", "percents": [100]}}}), "exactly one percents"),
     (expr(aggs={"__tn_x": {"stats": {"field": "x"}}}), "reserved"),
     (expr(aggs=_terms({"__tn_n": {"stats": {"field": "x"}}})), "reserved"),
-    (expr(aggs=_terms({"u": {"terms": {"field": "v"}}})), "one terms level"),
+    (expr(aggs=_terms({"u": {"terms": {"field": "v"}}})), "two-level nesting"),
+    (
+        expr(
+            aggs=_terms(
+                {
+                    "c": {
+                        "composite": {
+                            "sources": [
+                                {"a": {"terms": {"field": "p"}}},
+                                {"b": {"terms": {"field": "q"}}},
+                            ]
+                        }
+                    }
+                }
+            )
+        ),
+        "two-level nesting",
+    ),
     (
         expr(aggs=_terms({"h": {"histogram": {"field": "x", "interval": 5}}})),
         "query_distribution's by",
@@ -214,15 +298,33 @@ def test_grouped_form_nests_the_metric_under_terms():
     }
 
 
-def test_with_group_builds_the_terms_level_from_by():
+def test_with_group_builds_the_terms_level_from_one_field():
     h = EsQuery.parse(expr(aggs={"h": {"histogram": {"field": "x", "interval": 5}}}))
-    g = h.with_group("service.name", 501)
-    assert (g.group_name, g.group, g.group_field) == (
+    g = h.with_group(["service.name"], 501)
+    assert (g.group_name, g.group, g.group_kind, g.group_fields) == (
         GROUP_AGG,
         {"field": "service.name", "size": 501},
-        "service.name",
+        "terms",
+        ("service.name",),
     )
     assert g.form == "histogram" and h.group is None  # frozen: a new query
+
+
+def test_with_group_builds_a_composite_level_from_two_or_more_fields():
+    h = EsQuery.parse(expr(aggs={"h": {"histogram": {"field": "x", "interval": 5}}}))
+    g = h.with_group(["service.name", "url.path"], 501)
+    assert (g.group_name, g.group_kind, g.group_fields) == (
+        GROUP_AGG,
+        "composite",
+        ("service.name", "url.path"),
+    )
+    assert g.group == {
+        "sources": [
+            {"service.name": {"terms": {"field": "service.name"}}},
+            {"url.path": {"terms": {"field": "url.path"}}},
+        ],
+        "size": 501,
+    }
 
 
 def test_fields_names_every_aggregated_field_with_what_it_needs():
@@ -231,3 +333,17 @@ def test_fields_names_every_aggregated_field_with_what_it_needs():
     count = EsQuery.parse(expr(aggs={"n": {"value_count": {"field": "user.id"}}}))
     assert count.fields() == [("user.id", "aggregatable")]
     assert EsQuery.parse(expr(query=QS)).fields() == []
+    composite = {"sources": [{"a": {"terms": {"field": "x"}}}, {"b": {"terms": {"field": "y"}}}]}
+    assert EsQuery.parse(expr(aggs={"g": {"composite": composite}})).fields() == [
+        ("x", "aggregatable"),
+        ("y", "aggregatable"),
+    ]
+
+
+def test_body_nests_the_metric_under_composite():
+    composite = {"sources": [{"a": {"terms": {"field": "service.name"}}},
+                             {"b": {"terms": {"field": "http.response.status_code"}}}],
+                 "size": 50}  # fmt: skip
+    q = EsQuery.parse(expr(aggs={"by_svc_status": {"composite": composite, "aggs": STATS}}))
+    inner = q.body(RNG, 60_000, "@timestamp", 30.0)["aggs"][TIME_AGG]["aggs"]
+    assert inner == {"by_svc_status": {"composite": composite, "aggs": STATS}}

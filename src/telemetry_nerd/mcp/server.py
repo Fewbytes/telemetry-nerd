@@ -833,7 +833,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
         Elasticsearch / OpenSearch: the request body with ONE histogram aggregation, e.g.
         {"query": {...}, "aggs": {"lat": {"histogram": {"field": "event.duration",
-        "interval": 25}}}}; group with by (at most one field), not terms. Its buckets are
+        "interval": 25}}}}; group with by (one field: terms, 2+ fields: composite), not in
+        the selector's aggs. Its buckets are
         chosen by the query (interval, offset), edges [lo, hi): re-query with a smaller
         interval for more detail. Counts are doc_count per query bucket (exact).
 

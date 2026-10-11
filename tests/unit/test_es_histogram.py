@@ -6,7 +6,7 @@ import pytest
 
 from telemetry_nerd.model.distribution import BucketScheme
 from telemetry_nerd.model.series import series_id
-from telemetry_nerd.sources.base import LimitExceeded, SourceError
+from telemetry_nerd.sources.base import LimitExceeded, Limits, SourceError
 
 from .es_fake import RNG, START, FakeEs, search_response, tb
 
@@ -85,9 +85,51 @@ async def test_the_scheme_carries_the_histogram_offset():
     assert dist.rows.to_pylist()[0]["bucket_hi"] == 15.0
 
 
-async def test_more_than_one_by_field_is_refused():
-    with pytest.raises(SourceError, match="at most one field"):
-        await FakeEs().source().fetch_histogram(SELECTOR, ["a", "b"], RNG, M)
+async def test_by_with_two_fields_builds_a_composite_aggregation_and_keeps_both_labels():
+    def by(*groups):
+        return {"buckets": [{"key": k, "doc_count": sum(n for _, n in h), "lat": hist(*h)}
+                            for k, h in groups]}  # fmt: skip
+
+    buckets = [
+        tb(
+            START,
+            15,
+            __tn_by=by(
+                ({"service.name": "checkout", "url.path": "/pay"}, [(25.0, 10)]),
+                ({"service.name": "search", "url.path": "/q"}, [(0.0, 5)]),
+            ),
+        ),
+    ]
+    fake = FakeEs(search=search_response(buckets))
+    # Previously `with_group(by[0], ...)` silently dropped every field but the first, so a
+    # two-field `by` collapsed "checkout"/"/pay" and "search"/"/q" into one series keyed only
+    # by service.name. The fix passes the full `by` through and builds a composite aggregation.
+    dist = await fake.source().fetch_histogram(SELECTOR, ["service.name", "url.path"], RNG, M)
+    inner = fake.searches()[0]["aggs"]["__tn_time"]["aggs"]
+    assert inner["__tn_by"]["composite"] == {
+        "sources": [
+            {"service.name": {"terms": {"field": "service.name"}}},
+            {"url.path": {"terms": {"field": "url.path"}}},
+        ],
+        "size": 501,
+    }
+    labels = {frozenset(json.loads(r["labels"]).items()) for r in dist.series.to_pylist()}
+    assert labels == {
+        frozenset({("service.name", "checkout"), ("url.path", "/pay")}),
+        frozenset({("service.name", "search"), ("url.path", "/q")}),
+    }
+
+
+async def test_composite_grouping_at_the_size_cap_is_refused_as_truncated():
+    buckets = [tb(START, 9, __tn_by={"buckets": [
+        {"key": {"service.name": "checkout", "url.path": "/pay"}, "doc_count": 9, "lat": hist()}
+    ]})]  # fmt: skip
+    with pytest.raises(LimitExceeded, match="full requested size"):
+        await (
+            FakeEs(search=search_response(buckets))
+            .source(limits=Limits(max_series=0))
+            .fetch_histogram(SELECTOR, ["service.name", "url.path"], RNG, M)
+        )
 
 
 async def test_a_selector_that_is_not_a_histogram_is_refused():

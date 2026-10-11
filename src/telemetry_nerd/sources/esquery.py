@@ -1,7 +1,8 @@
 """Elasticsearch / OpenSearch `expr`: parse, validate, build the request (pure, no I/O).
 
 `expr` is the caller's native request body: a `query` clause plus at most one metric
-aggregation, optionally inside one `terms` grouping. Time never appears in it: the adapter wraps
+aggregation, optionally inside one `terms` grouping (one field) or one `composite` grouping (2+
+fields). Time never appears in it: the adapter wraps
 the aggregation in a `date_histogram` built from the time range and query step, as the PromQL
 adapter adds start/end/step. Design:
 docs/superpowers/specs/2026-10-07-elasticsearch-opensearch-adapter-design.md.
@@ -10,6 +11,7 @@ docs/superpowers/specs/2026-10-07-elasticsearch-opensearch-adapter-design.md.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
@@ -18,25 +20,27 @@ from telemetry_nerd.sources.base import SourceError
 
 Form = Literal["rate", "field_rate", "stats", "percentile", "histogram"]
 Need = Literal["numeric", "aggregatable"]
+GroupKind = Literal["terms", "composite"]
 
 RESERVED_PREFIX = "__tn_"
 TIME_AGG = "__tn_time"  # the adapter's date_histogram
 COUNT_AGG = "__tn_n"  # the adapter's value_count beside a percentiles aggregation
-GROUP_AGG = "__tn_by"  # the adapter's terms built from query_distribution's `by`
+GROUP_AGG = "__tn_by"  # the adapter's terms/composite built from query_distribution's `by`
 _METRIC_FORMS: dict[str, Form] = {
     "value_count": "field_rate",
     "stats": "stats",
     "percentiles": "percentile",
     "histogram": "histogram",
 }
-_KINDS = frozenset({"terms", *_METRIC_FORMS})
+_KINDS = frozenset({"terms", "composite", *_METRIC_FORMS})
 
 FORMS_HINT = (
     'accepted: {"query": {...}} alone (documents per second); or "aggs" with ONE of '
     "value_count (a field's values per second), stats (mean/min/max/count of a numeric field), "
     'percentiles with exactly one "percents" value; optionally inside one terms aggregation '
-    "(one series per term). histogram only in query_distribution. No time range or "
-    "date_histogram in expr: time is start/end/step"
+    "(one series per term) or one composite aggregation of 2+ terms sources (one series per "
+    "combination). histogram only in query_distribution. No time range or date_histogram in "
+    "expr: time is start/end/step"
 )
 
 
@@ -81,6 +85,32 @@ def _field(name: str, kind: str, params: dict) -> str:
     return field
 
 
+def _composite_fields(name: str, params: dict) -> tuple[str, ...]:
+    """The fields of a `composite` grouping's `sources`, validated to the narrow shape this
+    adapter supports: 2+ sources, each exactly one `{name: {"terms": {"field": ...}}}` entry."""
+    extra = sorted(set(params) - {"sources", "size"})
+    if extra:
+        raise _refuse(f"{name}: composite takes sources and size only, not {extra}")
+    sources = params.get("sources")
+    if not isinstance(sources, list) or len(sources) < 2:
+        raise _refuse(f"{name}: composite needs 2+ sources; group by one field with terms instead")
+    fields = []
+    for src in sources:
+        if not isinstance(src, dict) or len(src) != 1:
+            raise _refuse(
+                f"{name}: each composite source is one "
+                '{"<source name>": {"terms": {"field": ...}}}'
+            )
+        [(src_name, src_body)] = src.items()
+        if not isinstance(src_body, dict) or set(src_body) != {"terms"}:
+            raise _refuse(
+                f"{name}: composite source {src_name} must be a plain terms source (no nested "
+                "aggs, no date_histogram/histogram sources)"
+            )
+        fields.append(_field(f"{name}.{src_name}", "terms", src_body["terms"]))
+    return tuple(fields)
+
+
 def _number(x: object) -> bool:
     return isinstance(x, int | float) and not isinstance(x, bool)
 
@@ -93,8 +123,9 @@ class EsQuery:
     metric: dict | None = None  # {kind: params}, sent as written
     field: str | None = None
     group_name: str | None = None
-    group: dict | None = None  # the terms params, sent as written
-    group_field: str | None = None
+    group: dict | None = None  # the terms/composite params, sent as written
+    group_kind: GroupKind | None = None
+    group_fields: tuple[str, ...] = ()  # 1 field (terms) or 2+ (composite)
     q: float | None = None  # percentile form: percents[0] / 100
     interval: float | None = None  # histogram form
     offset: float = 0.0  # histogram form
@@ -119,18 +150,22 @@ class EsQuery:
             return cls(query=query, form="rate")
         name, body = _one(doc.get("aggs", doc.get("aggregations")))
         kind, params, sub = _agg(name, body)
-        if kind != "terms":
+        if kind not in ("terms", "composite"):
             if sub is not None:
                 raise _refuse(f"{name}: a {kind} aggregation takes no sub-aggregations")
             return cls._metric(query, name, kind, params, None)
-        group = (name, params, _field(name, kind, params))
+        fields = _field(name, kind, params) if kind == "terms" else _composite_fields(name, params)
+        group = (name, params, kind, (fields,) if kind == "terms" else fields)
         if sub is None:
             return cls(query=query, form="rate", group_name=name, group=params,
-                       group_field=group[2])  # fmt: skip
+                       group_kind=kind, group_fields=group[3])  # fmt: skip
         mname, mbody = _one(sub)
         mkind, mparams, msub = _agg(mname, mbody)
-        if mkind == "terms":
-            raise _refuse(f"{mname}: one terms level only (multi-field grouping is later work)")
+        if mkind in ("terms", "composite"):
+            raise _refuse(
+                f"{mname}: two-level nesting isn't supported; use one composite aggregation "
+                "for multi-field grouping"
+            )
         if mkind == "histogram":
             raise _refuse(f"{mname}: group a histogram with query_distribution's by, not terms")
         if msub is not None:
@@ -139,12 +174,18 @@ class EsQuery:
 
     @classmethod
     def _metric(
-        cls, query: dict, name: str, kind: str, params: dict, group: tuple[str, dict, str] | None
+        cls,
+        query: dict,
+        name: str,
+        kind: str,
+        params: dict,
+        group: tuple[str, dict, GroupKind, tuple[str, ...]] | None,
     ) -> EsQuery:
         field = _field(name, kind, params)
         grouping = (
-            {"group_name": group[0], "group": group[1], "group_field": group[2]} if group else {}
-        )
+            {"group_name": group[0], "group": group[1], "group_kind": group[2],
+             "group_fields": group[3]} if group else {}
+        )  # fmt: skip
         base: dict[str, Any] = {"query": query, "metric_name": name, "metric": {kind: params},
                                 "field": field, **grouping}  # fmt: skip
         if kind == "percentiles":
@@ -167,10 +208,18 @@ class EsQuery:
             return cls(form="histogram", interval=float(interval), offset=float(offset), **base)
         return cls(form=_METRIC_FORMS[kind], **base)
 
-    def with_group(self, field: str, size: int) -> EsQuery:
-        """This query grouped by `field` (query_distribution's `by`): one adapter terms level."""
+    def with_group(self, fields: Sequence[str], size: int) -> EsQuery:
+        """This query grouped by `fields` (query_distribution's `by`): one adapter terms level
+        for a single field, or one composite level for 2+ fields."""
+        fields = tuple(fields)
+        if len(fields) == 1:
+            group: dict[str, Any] = {"field": fields[0], "size": size}
+            kind: GroupKind = "terms"
+        else:
+            group = {"sources": [{f: {"terms": {"field": f}}} for f in fields], "size": size}
+            kind = "composite"
         return replace(
-            self, group_name=GROUP_AGG, group={"field": field, "size": size}, group_field=field
+            self, group_name=GROUP_AGG, group=group, group_kind=kind, group_fields=fields
         )
 
     def fields(self) -> list[tuple[str, Need]]:
@@ -178,8 +227,7 @@ class EsQuery:
         out: list[tuple[str, Need]] = []
         if self.field is not None:
             out.append((self.field, "aggregatable" if self.form == "field_rate" else "numeric"))
-        if self.group_field is not None:
-            out.append((self.group_field, "aggregatable"))
+        out.extend((f, "aggregatable") for f in self.group_fields)
         return out
 
     def body(self, rng: TimeRange, step_ms: int, time_field: str, timeout_s: float) -> dict:
@@ -192,10 +240,10 @@ class EsQuery:
             metrics[COUNT_AGG] = {"value_count": {"field": self.field}}
         inner: dict[str, Any] = metrics
         if self.group is not None and self.group_name is not None:
-            terms: dict[str, Any] = {"terms": self.group}
+            grouping: dict[str, Any] = {self.group_kind or "terms": self.group}
             if metrics:
-                terms["aggs"] = metrics
-            inner = {self.group_name: terms}
+                grouping["aggs"] = metrics
+            inner = {self.group_name: grouping}
         time_agg: dict[str, Any] = {
             "date_histogram": {
                 "field": time_field,

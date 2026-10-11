@@ -177,24 +177,44 @@ def _bucket_ts(b: dict, step_ms: int) -> int:
 
 
 def _groups(q: EsQuery, b: dict) -> Iterator[tuple[dict[str, str], dict]]:
-    """(labels, the bucket holding the metric) per series in one time bucket."""
-    if q.group_name is None or q.group_field is None:
+    """(labels, the bucket holding the metric) per series in one time bucket.
+
+    `composite` has no `sum_other_doc_count` overflow signal: it pages exhaustively via
+    `after_key` instead. This adapter takes one page per query bucket (matching the `terms`
+    path, which doesn't paginate either), so hitting the requested `size` is treated as the
+    overflow signal here."""
+    if q.group_name is None or not q.group_fields:
         yield {}, b
         return
     agg = b.get(q.group_name)
     if not isinstance(agg, dict) or not isinstance(agg.get("buckets"), list):
-        raise _malformed(f"time bucket without its terms aggregation {q.group_name!r}")
+        raise _malformed(f"time bucket without its grouping aggregation {q.group_name!r}")
+    buckets = agg["buckets"]
+    if q.group_kind == "composite":
+        size = (q.group or {}).get("size", 10)
+        if len(buckets) >= size:
+            raise LimitExceeded(
+                f"composite aggregation on {', '.join(q.group_fields)} returned the full "
+                f"requested size ({size}) in a query bucket; results may be truncated",
+                hint="narrow the query or the grouping fields (up to the 500-series limit)",
+            )
+        for tb in buckets:
+            key = tb.get("key")
+            if not isinstance(key, dict):
+                raise _malformed(f"composite bucket without a key object {tb!r}")
+            yield {f: str(key.get(f)) for f in q.group_fields}, tb
+        return
     other = agg.get("sum_other_doc_count") or 0
     if other > 0:
         size = (q.group or {}).get("size", 10)
         raise LimitExceeded(
-            f"terms on {q.group_field} returned only the top {size} terms in a query bucket "
+            f"terms on {q.group_fields[0]} returned only the top {size} terms in a query bucket "
             f"({other} documents fell in other terms)",
             hint="raise the terms size (up to the 500-series limit) or narrow the query",
         )
-    for tb in agg["buckets"]:
+    for tb in buckets:
         key = tb.get("key_as_string", tb.get("key"))
-        yield {q.group_field: str(key)}, tb
+        yield {q.group_fields[0]: str(key)}, tb
 
 
 def _percentile_value(agg: dict) -> float | None:
@@ -603,13 +623,8 @@ class ElasticsearchSource:
                 hint='selector = {"query": {...}, "aggs": {"lat": {"histogram": {"field": '
                 '"<numeric field>", "interval": 25}}}}; group with by',
             )
-        if len(by) > 1:
-            raise SourceError(
-                f"by takes at most one field on an Elasticsearch source, got {list(by)}",
-                hint="one terms level in v1 (multi-field grouping is later work)",
-            )
         if by:
-            q = q.with_group(by[0], self.limits.max_series + 1)
+            q = q.with_group(by, self.limits.max_series + 1)
         resp, failed = await self._search(q, rng, step_ms)
         width = float(q.interval or 0)
         rows: list[tuple[int, str, float, float, float]] = []
