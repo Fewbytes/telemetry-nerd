@@ -146,7 +146,9 @@ async def test_discover_learns_fields_and_their_declared_units(seeded):
     out = await svc.learn("es")
     assert out["metrics"] >= 2 and out["families"] == 0
     dur = svc.ws.catalog_entry("es", "event.duration").fields["unit"]
-    assert (dur.value, dur.origin) == ("ns", "metadata")
+    # the ecs pack (telemetry-nerd-sgb.1) now claims event.duration's unit by exact name,
+    # which outranks the source-declared metadata claim seen before that pack existed
+    assert (dur.value, dur.origin) == ("ns", "pack")
     assert "http.response.status_code" in {e.metric for e in svc.ws.catalog_list("es")}
 
 
