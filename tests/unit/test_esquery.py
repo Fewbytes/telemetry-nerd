@@ -31,6 +31,7 @@ def test_absent_query_means_all_documents():
     ("agg", "form"),
     [
         ({"n": {"value_count": {"field": "event.duration"}}}, "field_rate"),
+        ({"n": {"sum": {"field": "event.duration"}}}, "sum"),
         (STATS, "stats"),
         ({"p": {"percentiles": {"field": "event.duration", "percents": [99]}}}, "percentile"),
         ({"h": {"histogram": {"field": "event.duration", "interval": 25}}}, "histogram"),
@@ -62,6 +63,55 @@ def test_histogram_interval_and_offset():
     assert (h.interval, h.offset) == (25.0, 5.0)
     plain = EsQuery.parse(expr(aggs={"h": {"histogram": {"field": "x", "interval": 25}}}))
     assert plain.offset == 0.0
+
+
+def test_range_edges_are_the_finite_ascending_boundaries():
+    ranges = [{"to": 25}, {"from": 25, "to": 50}, {"from": 50}]
+    r = EsQuery.parse(expr(aggs={"r": {"range": {"field": "x", "ranges": ranges}}}))
+    assert r.form == "range"
+    assert r.edges == (25.0, 50.0)
+    assert r.metric == {"range": {"field": "x", "ranges": ranges}}
+
+
+def test_range_keyed_is_refused():
+    ranges = [{"to": 25}, {"from": 25}]
+    with pytest.raises(SourceError, match="keyed"):
+        EsQuery.parse(expr(aggs={"r": {"range": {"field": "x", "ranges": ranges, "keyed": True}}}))
+
+
+def test_range_needs_a_non_empty_ranges_list():
+    with pytest.raises(SourceError, match="non-empty ranges list"):
+        EsQuery.parse(expr(aggs={"r": {"range": {"field": "x", "ranges": []}}}))
+
+
+def test_range_entry_needs_from_or_to():
+    with pytest.raises(SourceError, match="at least one"):
+        EsQuery.parse(expr(aggs={"r": {"range": {"field": "x", "ranges": [{}]}}}))
+
+
+def test_range_grouped_by_terms_is_refused():
+    with pytest.raises(SourceError, match="query_distribution's by"):
+        EsQuery.parse(expr(aggs=_terms({"r": {"range": {"field": "x", "ranges": [{"to": 1}]}}})))
+
+
+def test_runtime_mappings_round_trips_into_the_body():
+    rm = {"derived": {"type": "long", "script": {"source": "emit(1)"}}}
+    q = EsQuery.parse(expr(query=QS, runtime_mappings=rm))
+    assert q.runtime_mappings == rm
+    assert q.body(RNG, 60_000, "@timestamp", 30.0)["runtime_mappings"] == rm
+
+
+def test_runtime_mappings_must_be_a_non_empty_object_of_typed_fields():
+    with pytest.raises(SourceError, match="non-empty"):
+        EsQuery.parse(expr(runtime_mappings={}))
+    with pytest.raises(SourceError, match="type"):
+        EsQuery.parse(expr(runtime_mappings={"derived": {"script": {"source": "emit(1)"}}}))
+
+
+def test_runtime_mapped_fields_are_exempt_from_the_field_check():
+    rm = {"derived": {"type": "double", "script": {"source": "emit(1.0)"}}}
+    q = EsQuery.parse(expr(aggs={"s": {"stats": {"field": "derived"}}}, runtime_mappings=rm))
+    assert q.fields() == []
 
 
 def test_terms_without_sub_aggregation_is_the_grouped_rate_form():
@@ -214,6 +264,10 @@ REFUSALS = [
     (expr(aggs={"l": {"stats": {"field": "x"}, "aggs": STATS}}), "takes no sub-aggregations"),
     (expr(aggs={"h": {"histogram": {"field": "x"}}}), "positive numeric interval"),
     (expr(aggs={"h": {"histogram": {"field": "x", "interval": 5, "keyed": True}}}), "keyed"),
+    (
+        expr(aggs={"r": {"range": {"field": "x", "ranges": [{"to": 1}], "after": {}}}}),
+        "sources and size only|field and ranges only",
+    ),
 ]
 
 

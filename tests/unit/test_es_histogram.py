@@ -132,9 +132,67 @@ async def test_composite_grouping_at_the_size_cap_is_refused_as_truncated():
         )
 
 
+RANGE_SELECTOR = json.dumps(
+    {
+        "aggs": {
+            "r": {
+                "range": {
+                    "field": "event.duration",
+                    "ranges": [{"to": 25}, {"from": 25, "to": 50}, {"from": 50}],
+                }
+            }
+        }
+    }
+)
+
+
+def rangebuckets(*buckets):
+    """buckets: (from|None, to|None, doc_count) triples, as the range agg answers them."""
+    out = []
+    for lo, hi, n in buckets:
+        b: dict = {"doc_count": n}
+        if lo is not None:
+            b["from"] = lo
+        if hi is not None:
+            b["to"] = hi
+        out.append(b)
+    return {"buckets": out}
+
+
+async def test_range_rows_and_a_custom_scheme_with_open_ended_edges():
+    buckets = [
+        tb(
+            START,
+            13,
+            r=rangebuckets((None, 25, 10), (25, 50, 0), (50, None, 3)),
+        ),
+    ]
+    dist = await FakeEs(search=search_response(buckets)).source().fetch_histogram(
+        RANGE_SELECTOR, (), RNG, M
+    )  # fmt: skip
+    sid = series_id("es", {})
+    assert dist.rows.to_pylist() == [
+        {
+            "ts_ms": START + M,
+            "series_id": sid,
+            "bucket_lo": float("-inf"),
+            "bucket_hi": 25.0,
+            "count": 10.0,
+        },
+        {
+            "ts_ms": START + M,
+            "series_id": sid,
+            "bucket_lo": 50.0,
+            "bucket_hi": float("inf"),
+            "count": 3.0,
+        },
+    ]  # the zero-count middle bucket is not a row
+    assert dist.scheme == BucketScheme("custom", edges=(25.0, 50.0))
+
+
 async def test_a_selector_that_is_not_a_histogram_is_refused():
     stats = json.dumps({"aggs": {"lat": {"stats": {"field": "event.duration"}}}})
-    with pytest.raises(SourceError, match="needs a histogram aggregation"):
+    with pytest.raises(SourceError, match="needs a histogram or range aggregation"):
         await FakeEs().source().fetch_histogram(stats, (), RNG, M)
 
 

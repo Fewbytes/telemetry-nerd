@@ -16,6 +16,7 @@ QS = {"query_string": {"query": "service.name:checkout"}}
 RATE = json.dumps({"query": QS})
 STATS = json.dumps({"query": QS, "aggs": {"lat": {"stats": {"field": "event.duration"}}}})
 COUNT = json.dumps({"aggs": {"n": {"value_count": {"field": "event.duration"}}}})
+SUM = json.dumps({"aggs": {"s": {"sum": {"field": "event.duration"}}}})
 P99 = json.dumps({"aggs": {"p": {"percentiles": {"field": "event.duration", "percents": [99]}}}})
 BY_STATUS_RATE = json.dumps(
     {"aggs": {"by_status": {"terms": {"field": "http.response.status_code"}}}}
@@ -69,6 +70,18 @@ async def test_rate_needs_no_field_check():
     assert fake.caps_requests() == []
 
 
+async def test_runtime_mappings_are_sent_and_exempt_from_the_field_check():
+    rm = {"derived": {"type": "double", "script": {"source": "emit(doc['event.duration'].value)"}}}
+    sel = json.dumps({"aggs": {"s": {"sum": {"field": "derived"}}}, "runtime_mappings": rm})
+    buckets = [tb(START, 30, s={"value": 300.0})]
+    fake = FakeEs(search=search_response(buckets))
+    res = await fake.source().fetch(sel, RNG, M)
+    assert rows(res)
+    [body] = fake.searches()
+    assert body["runtime_mappings"] == rm
+    assert fake.caps_requests() == []  # "derived" isn't a mapped field: no caps lookup for it
+
+
 async def test_field_rate_is_value_count_per_second():
     buckets = [tb(START, 30, n={"value": 30}), tb(START + M, 0, n={"value": 0}),
                tb(START + 2 * M, 6, n={"value": 3})]  # fmt: skip
@@ -78,6 +91,26 @@ async def test_field_rate_is_value_count_per_second():
         (START + 2 * M, 0.0, 1),
         (START + 3 * M, 0.05, 1),
     ]
+
+
+async def test_sum_is_the_field_total_per_second():
+    buckets = [tb(START, 30, s={"value": 300.0}), tb(START + M, 0, s={"value": 0}),
+               tb(START + 2 * M, 6, s={"value": 30.0})]  # fmt: skip
+    res = await FakeEs(search=search_response(buckets)).source().fetch(SUM, RNG, M)
+    assert [(r["ts_ms"], r["avg"], r["count"]) for r in rows(res)] == [
+        (START + M, 5.0, 1),
+        (START + 2 * M, 0.0, 1),
+        (START + 3 * M, 0.5, 1),
+    ]
+
+
+async def test_sum_field_check_needs_a_numeric_field():
+    with pytest.raises(SourceError, match="not numeric"):
+        await (
+            FakeEs()
+            .source()
+            .fetch(json.dumps({"aggs": {"s": {"sum": {"field": "service.name"}}}}), RNG, M)
+        )
 
 
 async def test_stats_keeps_mean_min_max_and_the_documents_that_had_the_field():

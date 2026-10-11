@@ -217,6 +217,17 @@ def _groups(q: EsQuery, b: dict) -> Iterator[tuple[dict[str, str], dict]]:
         yield {q.group_fields[0]: str(key)}, tb
 
 
+def _leaf_bounds(q: EsQuery, leaf: dict, width: float) -> tuple[float, float]:
+    """One histogram or range leaf bucket's [lo, hi): histogram buckets are `key` wide;
+    range buckets carry explicit `from`/`to`, missing at an open end (-inf / +inf)."""
+    if q.form == "range":
+        lo = float(leaf["from"]) if "from" in leaf else float("-inf")
+        hi = float(leaf["to"]) if "to" in leaf else float("inf")
+        return lo, hi
+    lo = float(leaf["key"])
+    return lo, lo + width
+
+
 def _percentile_value(agg: dict) -> float | None:
     values = agg.get("values")
     if isinstance(values, dict):
@@ -235,7 +246,7 @@ def _cell(q: EsQuery, parent: dict, step_s: float) -> Cell | None:
             v = float(parent["doc_count"]) / step_s
             return v, v, v, 1
         agg = parent[q.metric_name]
-        if q.form == "field_rate":
+        if q.form in ("field_rate", "sum"):
             v = float(agg.get("value") or 0) / step_s
             return v, v, v, 1
         if q.form == "stats":
@@ -615,18 +626,20 @@ class ElasticsearchSource:
         self, selector: str, by: Sequence[str], rng: TimeRange, step_ms: int
     ) -> DistResult:
         """Document counts per value bucket per query bucket. The value buckets are chosen by the
-        query (interval, offset), not by the source: a finer interval can always be asked for."""
+        query (interval/offset for histogram, explicit ranges for range), not by the source: a
+        finer interval, or different range edges, can always be asked for."""
         q = EsQuery.parse(selector)
-        if q.form != "histogram":
+        if q.form not in ("histogram", "range"):
             raise SourceError(
-                "query_distribution needs a histogram aggregation",
+                "query_distribution needs a histogram or range aggregation",
                 hint='selector = {"query": {...}, "aggs": {"lat": {"histogram": {"field": '
-                '"<numeric field>", "interval": 25}}}}; group with by',
+                '"<numeric field>", "interval": 25}}}} (or "range" with explicit "ranges"); '
+                "group with by",
             )
         if by:
             q = q.with_group(by, self.limits.max_series + 1)
         resp, failed = await self._search(q, rng, step_ms)
-        width = float(q.interval or 0)
+        width = float(q.interval or 0) if q.form == "histogram" else 0.0
         rows: list[tuple[int, str, float, float, float]] = []
         cols: dict[tuple[str, int], float] = {}
         labels_by_sid: dict[str, dict[str, str]] = {}
@@ -643,8 +656,8 @@ class ElasticsearchSource:
                 for leaf in leaves:
                     c = float(leaf.get("doc_count") or 0)
                     if c > 0:
-                        lo = float(leaf["key"])
-                        rows.append((ts, sid, lo, lo + width, c))
+                        lo, hi = _leaf_bounds(q, leaf, width)
+                        rows.append((ts, sid, lo, hi, c))
                         n += c
                 cols[(sid, ts)] = n
         if len(labels_by_sid) > self.limits.max_series:
@@ -686,16 +699,20 @@ class ElasticsearchSource:
                 {"series_id": sids, "labels": [labels_json(labels_by_sid[s]) for s in sids]},
                 schema=SERIES_SCHEMA,
             ),
-            scheme=BucketScheme("linear", width=width, offset=q.offset),
+            scheme=(
+                BucketScheme("linear", width=width, offset=q.offset)
+                if q.form == "histogram"
+                else BucketScheme("custom", edges=q.edges)
+            ),
             expr=selector,
             caveats=("query_chosen_buckets",),
             failed=failed,
         )
 
     async def _fetch(self, q: EsQuery, rng: TimeRange, step_ms: int) -> FetchResult:
-        if q.form == "histogram":
+        if q.form in ("histogram", "range"):
             raise SourceError(
-                "a histogram aggregation is a distribution, not a time series",
+                f"a {q.form} aggregation is a distribution, not a time series",
                 hint="use query_distribution(selector=<this expr>, source=...) for counts per "
                 "value bucket",
             )
@@ -716,7 +733,7 @@ class ElasticsearchSource:
                 f"query returned {len(labels_by_sid)} series (limit {self.limits.max_series})",
                 hint="group by a field with fewer values, or narrow the query",
             )
-        if q.form in ("rate", "field_rate") and q.group is not None:
+        if q.form in ("rate", "field_rate", "sum") and q.group is not None:
             # a term absent from an interior query bucket had no matching documents there
             for sid in labels_by_sid:
                 for b in interior:
