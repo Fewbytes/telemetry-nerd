@@ -72,9 +72,15 @@ translation — covering request-rate, latency (mean/min/max via `stats`, or a T
 `percentile`) and distribution queries, and `check_littles_law` with a separate
 `concurrency_source` for the in-flight gauge (concurrency isn't read from ES documents in v1).
 
-Not yet supported: operating profiles / normal-band overlays, and automatic RED/USE/
-Little's-law binding suggestions (the suggestion corpus is PromQL-only; an ECS catalog pack is
-planned). Full design: `docs/superpowers/specs/2026-10-07-elasticsearch-opensearch-adapter-design.md`.
+Operating profiles and normal-band overlays work on ES sources too: `rate`/`value_count`/`sum`
+aggregations profile as rates, `stats` as a level, and a single `percentiles` as a quantile (a
+`histogram` or `range` aggregation has no single operating range and is refused — compare
+distributions with `query_distribution` instead). There is no PromQL-style rate-window widening:
+the query's own bucketing is already the profile's step.
+
+Not yet supported: automatic RED/USE/Little's-law binding suggestions (the suggestion corpus is
+PromQL-only; an ECS catalog pack is planned). Full design:
+`docs/superpowers/specs/2026-10-07-elasticsearch-opensearch-adapter-design.md`.
 
 Building a wheel without node: `TN_SKIP_UI_BUILD=1 uv build --wheel` gives an API-only wheel
 (the daemon warns that the UI is missing). `just verify-install` builds a wheel, checks it

@@ -217,23 +217,30 @@ async def test_show_auto_never_rewrites_an_es_query_as_a_rate(svc_es):
     assert res.panel.spec.get("auto") is None and len(es.calls) == calls
 
 
-async def test_operating_profiles_are_refused_on_es_sources(svc_es):
+async def test_operating_profiles_work_on_es_sources(svc_es):
     svc, _ = svc_es
-    with pytest.raises(SourceError, match="PromQL-only"):
-        await svc.operating_profile(RATE, source="es")
+    out = await svc.operating_profile(RATE, source="es")
+    assert out["kind"] == "rate" and out["expr"] == RATE
 
 
-async def test_the_normal_band_overlay_is_unavailable_with_a_reason(svc_es):
+async def test_operating_profiles_are_refused_on_a_histogram_aggregation(svc_es):
+    svc, _ = svc_es
+    with pytest.raises(SourceError, match="no single operating range"):
+        await svc.operating_profile(HIST, source="es")
+
+
+async def test_the_normal_band_overlay_is_unavailable_until_a_profile_is_computed(svc_es):
     svc, _ = svc_es
     out = await svc.query(RATE, start="now-1h", step="1m", source="es")
     panel = svc.show(out["dataset"], "How busy is checkout?").panel
     normal = svc.panel_data(panel.id, 800)["overlays"]["normal"]
-    assert normal["available"] is False and "PromQL-only" in normal["reason"]
+    assert normal["available"] is False
+    assert "not computed yet" in normal["reason"]
 
 
-async def test_analyze_on_an_es_dataset_says_no_profile_can_shape_the_centre(svc_es):
+async def test_analyze_on_an_es_dataset_says_the_profile_has_no_cycle(svc_es):
     svc, _ = svc_es
     out = await svc.query(RATE, start="now-1h", step="1m", source="es")
     res = await svc.analyze_profiled(out["dataset"])
-    assert res["seasonal_centre"]["status"] == "unavailable"
-    assert "PromQL-only" in res["seasonal_centre"]["reason"]
+    assert res["seasonal_centre"]["status"] == "not_seasonal"
+    assert "no daily/weekly cycle" in res["seasonal_centre"]["reason"]

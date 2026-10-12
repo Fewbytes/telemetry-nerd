@@ -42,6 +42,7 @@ from telemetry_nerd.datasets.store import is_code_expr
 from telemetry_nerd.model.errors import NotFound
 from telemetry_nerd.model.time import TimeRange, format_duration, now_ms, parse_duration
 from telemetry_nerd.sources.base import Source, SourceError, SourceUnavailable, language_of
+from telemetry_nerd.sources.esquery import EsQuery
 from telemetry_nerd.sources.promql import is_selector
 from telemetry_nerd.sources.registry import SourceRegistry
 
@@ -134,6 +135,37 @@ def profile_target(
     if windows:
         return ProfileTarget(e, "rate", rate_window)
     return ProfileTarget(e, "level", None)
+
+
+#: ES form -> profile Kind. rate/field_rate/sum are already per-second rates from the adapter's
+#: date_histogram bucketing (like a PromQL rate()); stats is a mean per step (like a plain gauge
+#: selector); percentile stays a per-step quantile. histogram/range have no single operating
+#: range (see profile_target's equivalent histogram refusal).
+_ES_KIND: dict[str, Kind] = {
+    "rate": "rate",
+    "field_rate": "rate",
+    "sum": "rate",
+    "stats": "level",
+    "percentile": "quantile",
+}
+
+
+def es_profile_target(expr: str) -> ProfileTarget:
+    """What to profile for an Elasticsearch/OpenSearch expr.
+
+    Unlike PromQL, there is no rate window to widen: the adapter's date_histogram step IS the
+    profile step already, so `expr` is profiled unchanged. Raises ProfileRefused."""
+    form = EsQuery.parse(expr).form
+    kind = _ES_KIND.get(form)
+    if kind is None:
+        raise ProfileRefused(
+            "a histogram has no single operating range",
+            hint=(
+                "profile a percentile aggregation instead, or compare distributions with "
+                "query_distribution"
+            ),
+        )
+    return ProfileTarget(expr, kind, None)
 
 
 class OperatingProfile(ProfileStats):
@@ -254,16 +286,13 @@ class ProfileService:
                 f"{expr.strip()} is a code output (fixed data): it has no operating profile",
                 hint="profile the code's input expression instead",
             )
-        if language_of(self.sources.get(source)) == "es_dsl":
-            raise SourceError(
-                "operating profiles are PromQL-only (v1): not available on an "
-                "Elasticsearch/OpenSearch source",
-                hint="compare time ranges with compare_seasonal or analyze(baseline=...) instead",
-            )
         psrc, caveats = self._profile_source(source)
-        t = profile_target(
-            expr, lambda m: self.ws.catalog_facts(source, m), psrc.resolution_ms, self.step_ms
-        )
+        if language_of(self.sources.get(source)) == "es_dsl":
+            t = es_profile_target(expr)
+        else:
+            t = profile_target(
+                expr, lambda m: self.ws.catalog_facts(source, m), psrc.resolution_ms, self.step_ms
+            )
         return t, psrc, caveats
 
     # reads --------------------------------------------------------------

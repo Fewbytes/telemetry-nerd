@@ -2351,16 +2351,9 @@ class TelemetryService:
                 "flags": ov.model_dump(), "normal": off, "limit": off,
                 "ghost": {**off, "loaded": False, "label": "last week"},
             }  # fmt: skip
-        if meta.query_language == "es_dsl":
-            normal = {
-                "available": False,
-                "reason": "operating profiles are PromQL-only (v1): no normal band on an "
-                "Elasticsearch/OpenSearch source",
-            }
-        else:
-            profile = self.profiles.cached(meta.source, meta.expr)
-            window = format_duration(profile.window_ms) if profile else ""
-            normal = normal_payload(profile, series, step_ms, window)
+        profile = self.profiles.cached(meta.source, meta.expr)
+        window = format_duration(profile.window_ms) if profile else ""
+        normal = normal_payload(profile, series, step_ms, window)
         limit = limit_payload(self.datasets, spec.y.context, meta, labels, width_px)
         ghost = ghost_payload(self.datasets, spec, meta, width_px) if ov.ghost else {
             "available": True, "loaded": "week" in spec.references, "label": "last week",

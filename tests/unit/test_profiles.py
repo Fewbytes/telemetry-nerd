@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
 import numpy as np
 import pyarrow as pa
@@ -13,6 +14,7 @@ from telemetry_nerd.catalog.rules import facts_from_name
 from telemetry_nerd.core.profiles import (
     ProfileRefused,
     ProfileUnavailable,
+    es_profile_target,
     profile_target,
 )
 from telemetry_nerd.model.discovery import Discovery, MetricInfo
@@ -27,7 +29,7 @@ from telemetry_nerd.model.time import TimeRange
 from telemetry_nerd.sources.base import SourceUnavailable
 from telemetry_nerd.sources.spec import SourceSpec
 
-from .fakes import FakeSource, make_service
+from .fakes import FakeEsSource, FakeSource, make_service
 
 DAY = 24 * HOUR_MS
 MONDAY = 1_788_739_200_000  # 2026-09-07 00:00 UTC
@@ -174,6 +176,63 @@ def test_histograms_and_raw_counter_totals_are_refused_with_a_hint(expr):
     with pytest.raises(ProfileRefused) as e:
         target(expr)
     assert e.value.hint
+
+
+# --- what is profiled (Elasticsearch/OpenSearch) ------------------------------------------
+_ES_QS = {"query_string": {"query": "service.name:checkout"}}
+_ES_RATE = json.dumps({"query": _ES_QS})
+_ES_FIELD_RATE = json.dumps(
+    {"query": _ES_QS, "aggs": {"n": {"value_count": {"field": "http.status_code"}}}}
+)
+_ES_SUM = json.dumps({"query": _ES_QS, "aggs": {"b": {"sum": {"field": "http.response.bytes"}}}})
+_ES_STATS = json.dumps({"query": _ES_QS, "aggs": {"lat": {"stats": {"field": "event.duration"}}}})
+_ES_P99 = json.dumps(
+    {"query": _ES_QS, "aggs": {"p": {"percentiles": {"field": "event.duration", "percents": [99]}}}}
+)
+_ES_HIST = json.dumps(
+    {"query": _ES_QS, "aggs": {"lat": {"histogram": {"field": "event.duration", "interval": 25}}}}
+)
+_ES_RANGE = json.dumps(
+    {
+        "query": _ES_QS,
+        "aggs": {
+            "lat": {"range": {"field": "event.duration", "ranges": [{"to": 25}, {"from": 25}]}}
+        },
+    },
+)
+
+
+@pytest.mark.parametrize(
+    "expr, kind",
+    [
+        (_ES_RATE, "rate"),
+        (_ES_FIELD_RATE, "rate"),
+        (_ES_SUM, "rate"),
+        (_ES_STATS, "level"),
+        (_ES_P99, "quantile"),
+    ],
+)
+def test_es_forms_are_classified_without_rewriting(expr, kind):
+    # unlike PromQL, there is no rate window to widen: the adapter's date_histogram step IS
+    # the profile step already
+    t = es_profile_target(expr)
+    assert (t.expr, t.kind, t.rate_window_ms) == (expr, kind, None)
+
+
+@pytest.mark.parametrize("expr", [_ES_HIST, _ES_RANGE])
+def test_es_histogram_and_range_forms_are_refused_with_a_hint(expr):
+    with pytest.raises(ProfileRefused) as e:
+        es_profile_target(expr)
+    assert e.value.hint
+
+
+async def test_es_profile_computes_through_the_service(tmp_path):
+    es = FakeEsSource(name="es")
+    svc = make_service(tmp_path, es)  # attached as "default", regardless of es.name
+    p = await svc.profiles.ensure("default", _ES_RATE)
+    assert p.kind == "rate" and p.expr == _ES_RATE and p.profiled_from == "es"
+    assert not p.extremes  # the ES fetch_values path never reports intra-step extremes
+    assert p.series_total == 1
 
 
 # --- lazy compute and daily refresh -------------------------------------------------------
