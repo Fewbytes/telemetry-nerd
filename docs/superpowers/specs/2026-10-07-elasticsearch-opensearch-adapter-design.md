@@ -648,8 +648,15 @@ Beads to file when this design is planned (names, not yet created):
    (`Undercount: ...`, bucket_state unknown). In `check_littles_law` it is a concurrency only
    from a source other than the arrival/latency source: from the same documents L, λ and W
    agree by construction (circular; refused). The check then skips the gauge's end-of-interval
-   (trapezoid) correction (`Substeps.conc_is_average`) and adds a `concurrency_derived`
-   assumption. Not done: grouping (`terms`) of the derived level; operating profiles of it
+   (trapezoid) correction (`Substeps.conc_reading = "exact"`) and adds a `concurrency_derived`
+   assumption. A stats-form gauge (`conc_reading = "documents"`, sgb.12) is the mean of the gauge
+   documents in each bucket [t − step, t), not a reading at t: it is not corrected either, and
+   the documents' unknown position in the bucket (evenly spread: its middle; one snapshot on the
+   bucket grid: its start) is a bias bound, |N(end) − N(before)| × step / 2 per window, with the
+   documents ASSUMED to sample the level evenly in time (the `window_alignment` assumption).
+   Measured on littles_sim (40 seeds, a backlog ramp): with the trapezoid correction ci95 held
+   the exact R in 81% of windows for one snapshot per bucket at its start; without it and with
+   the bound, ≥ 95% at every phase and document count tested. Not done: grouping (`terms`) of the derived level; operating profiles of it
    (refused: a profile's time range is beyond the document cap).
 9. **AWS SigV4 auth** for Amazon OpenSearch Service.
 10. ~~**Pre-aggregated ES `histogram` field type** as a source-defined distribution (it would carry

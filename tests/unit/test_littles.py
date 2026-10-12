@@ -9,6 +9,7 @@ counter is special cause at its peak 75/75 (1/75 before), with a completions cou
 before: the rest common cause); consistent traffic, rho 0.95, load steps and low traffic: no
 promotion. Table: docs/superpowers/specs/2026-10-02-littles-law-design.md."""
 
+import dataclasses
 import json
 import math
 from pathlib import Path
@@ -32,7 +33,7 @@ from telemetry_nerd.analysis.littles import (
     kendall_increasing_p,
 )
 
-from .littles_sim import exact_r, simulate, substeps
+from .littles_sim import exact_r, gauge_documents, simulate, substeps
 
 LOAD = [(0.0, 2.0), (1200.0, 3.7), (2400.0, 2.0)]  # M/M/4, mu=1: rho 0.5 -> 0.925 -> 0.5
 SPIKE = [(0.0, 2.0), (1500.0, 5.0), (1800.0, 2.0)]  # M/M/4: rho 1.25 for 5 min, a queue builds
@@ -462,6 +463,37 @@ def test_gauge_end_of_interval_reading_is_corrected_to_the_trapezoid():
     assert math.isclose(b.L, exact, rel_tol=1e-12)
     assert math.isclose(b.L_correction, -(N[39] - N[19]) * 15 / 2 / (20 * 15))
     assert b.bias == {"alignment": 0.0}
+
+
+RAMP = [(0.0, 2.0), (600.0, 4.6), (1500.0, 2.0)]  # M/M/4: rho 1.15 for 15 min, a backlog ramps
+
+
+@pytest.mark.parametrize(("docs", "phase_s"), [(1, 0.0), (1, 7.5), (1, 14.9), (5, 0.0)])
+def test_es_stats_gauge_is_a_bucket_mean_not_an_end_of_interval_reading(docs, phase_s):
+    """sgb.12: an Elasticsearch stats gauge is the mean of the snapshot documents inside each
+    query bucket [t - step, t), not a reading at t, so the trapezoid correction (which moves an
+    end reading half a step back) is wrong for it: with one snapshot on the bucket grid (the
+    start of its bucket) it moved L a whole step the wrong way, and ci95 covered the simulation's
+    exact R in 81% of the windows across a backlog ramp. Read as `documents`: no correction, and
+    the documents' unknown position in the bucket bounded (|endpoint shift| x step / 2): ci95
+    holds the exact R at every phase and document count."""
+    scrape_s, dur = 15.0, 2700.0
+    covered = total = 0
+    for seed in range(40):
+        m = simulate(seed, duration_s=dur, rates=RAMP, scrape_s=scrape_s)
+        sub = dataclasses.replace(
+            substeps(m, scrape_s), conc=gauge_documents(m, scrape_s, docs, phase_s),
+            conc_reading="documents",
+        )  # fmt: skip
+        for a in range(0, sub.ts_ms.size - 19, 20):
+            b = judge(sub, np.arange(a, a + 20))
+            if b.ratio is None:
+                continue
+            assert b.L_correction == 0.0 and "gauge_phase" in b.bias
+            e = exact_r(seed, b.start_ms / 1000, b.end_ms / 1000, duration_s=dur, rates=RAMP)
+            total += 1
+            covered += b.ci95[0] <= e <= b.ci95[1]
+    assert covered / total >= 0.95, (covered, total)
 
 
 # --- 4ahp: fewer than MIN_SPREAD windows: the special-cause label rests on the cautious envelope

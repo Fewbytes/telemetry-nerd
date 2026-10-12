@@ -57,6 +57,7 @@ MIN_BASELINE = 4  # windows outside a peak's episode needed to scale its backlog
 #: judged windows needed to estimate the process's own window-to-window variation (`spread`);
 #: fewer: the cautious envelope (Block.common_cautious) carries the special-cause label (4ahp)
 MIN_SPREAD = 5
+CONC_READINGS = ("end", "exact", "documents")  # Substeps.conc_reading
 
 
 @dataclass(frozen=True)
@@ -74,9 +75,17 @@ class Substeps:
     step_ms: int
     lookback_ms: int = 0  # rate window offset vs the gauge average: (rate interval - step) / 2
     scrape_ms: int = 0  # counter scrape interval (0: the sub-step)
-    #: conc is already the exact time average over each sub-step (derived from documents, not a
-    #: gauge read at the end of a scrape interval): no end-of-interval (trapezoid) correction
-    conc_is_average: bool = False
+    #: what each conc value is (CONC_READINGS): "end", a gauge read at the end of the scrape
+    #: interval the counters cover (trapezoid-corrected); "exact", the exact time average over the
+    #: sub-step (derived from access-log documents: nothing to correct); "documents", the mean of
+    #: the gauge documents whose timestamps fall in the query bucket [t - step, t) (an
+    #: Elasticsearch stats aggregation): centred on the bucket only if they are spread evenly,
+    #: so not corrected, and the documents' unknown position in the bucket is a bias bound (sgb.12)
+    conc_reading: str = "end"
+
+    def __post_init__(self) -> None:
+        if self.conc_reading not in CONC_READINGS:
+            raise ValueError(f"conc_reading is one of {', '.join(CONC_READINGS)}")
 
     def usable(self) -> np.ndarray:
         return (
@@ -281,9 +290,15 @@ def judge(
     # the gauge is read at the END of each scrape interval the counters cover ((s_j-1, s_j]):
     # the readings' sum integrates N half a scrape late, off by (N at the end - N before) x
     # scrape / 2 per contiguous segment (exact for a linear path): corrected (trapezoid), not
-    # bounded: its sign is known
+    # bounded: its sign is known. An exact time average (derived from documents) needs nothing.
+    # A mean of gauge documents in the bucket [t - step, t) (sgb.12) is not an end reading: it is
+    # N at the documents' mean time, the bucket's middle only when they are spread evenly (one
+    # snapshot on the bucket grid sits at its START). That time is unknown anywhere in the
+    # bucket, so the same endpoint shift x step / 2 is a bias bound (sign unknown), not corrected
     gap_s = (sub.scrape_ms or sub.step_ms) / 1000
-    shift = 0.0 if sub.conc_is_average else _endpoint_shift(sub, ok) * gap_s / 2 / T
+    moved = _endpoint_shift(sub, ok) if sub.conc_reading != "exact" else 0.0
+    shift = moved * gap_s / 2 / T if sub.conc_reading == "end" else 0.0
+    phase_L = abs(moved) * step_s / 2 / T if sub.conc_reading == "documents" else 0.0
     L = max(L - shift, 0.0)
     blk.L, blk.L_correction = L, -shift
     W = S / C
@@ -347,7 +362,9 @@ def judge(
         if delta_s > 0 else 0.0
     )  # fmt: skip
     blk.bias = {"alignment": align}
-    bias = align
+    if sub.conc_reading == "documents":
+        blk.bias["gauge_phase"] = phase_L / lw  # 5. the documents' position in the bucket
+    bias = _bias(blk)
     qt = q95 if q_test is None else t_quantile(q_test, df)
     blk.ci95 = (max(0.0, R - q95 * sd - bias), R + q95 * sd + bias)
     blk.ci_test = (max(0.0, R - qt * sd - bias), R + qt * sd + bias)
@@ -359,7 +376,7 @@ def judge(
         blk.verdict = "consistent"
     blk.diff_ci = ((blk.ci95[0] - 1) * lw, (blk.ci95[1] - 1) * lw)
     # per-side intervals (panel bands)
-    half_L = q95 * math.hypot(sd_L, sd_edge * lw)
+    half_L = q95 * math.hypot(sd_L, sd_edge * lw) + phase_L
     blk.L_ci = (max(0.0, L - half_L), L + half_L)
     half_lw = lw * q95 * (r_lam + r_w) + align * lw / max(R, 1e-12)
     blk.lambda_W_ci = (max(0.0, lw - half_lw), lw + half_lw)
@@ -520,7 +537,8 @@ def window_of(g: GroupResult, t: dict) -> Block:
 
 
 def _bias(w: Block) -> float:
-    """A block's bias bounds (rate lookback, gauge endpoint), added to its half-width."""
+    """A block's bias bounds (rate lookback, a documents gauge's phase), added to its
+    half-width."""
     return float(sum(w.bias.values()))
 
 
@@ -1143,5 +1161,5 @@ def combine(groups: list[Substeps]) -> Substeps:
         ts, total("arrivals"), total("lat_sum"), total("lat_count"), total("conc"),
         # the summed gauge is sampled at the same scrapes: its samples are not added up
         np.nan_to_num(total("conc_n", np.maximum)), first.step_ms, first.lookback_ms,
-        first.scrape_ms, first.conc_is_average,
+        first.scrape_ms, first.conc_reading,
     )  # fmt: skip

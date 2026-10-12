@@ -227,6 +227,14 @@ def _fill_empty_tiles(v: np.ndarray, n: np.ndarray, gauge: bool) -> tuple[np.nda
     return v, n
 
 
+def _conc_reading(cfg: dict) -> str:
+    """Substeps.conc_reading: derived from documents (exact), an Elasticsearch stats gauge (the
+    mean of the documents in each query bucket: sgb.12), else a gauge read at each scrape."""
+    if cfg.get("concurrency_derived"):
+        return "exact"
+    return "documents" if cfg.get("concurrency_es") else "end"
+
+
 _LABEL = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _ES_FIELD = re.compile(r"[A-Za-z_@][A-Za-z0-9_@.\-]*")
 #: terms size of the grouping added to ES queries: more groups than this is refused by the
@@ -676,6 +684,7 @@ class LittlesOps:
             "resolution_ms": res, "arrivals": arrivals, "arrival_is_rate": arr_is_rate,
             "roles": roles, "binding": bound, "exprs": exprs, "warmup": warmup,
             "matchers": matchers, "es_queries": es_queries, "concurrency_derived": derived,
+            "concurrency_es": conc_es,
         }  # fmt: skip
         self._last[ds["concurrency"]] = cfg
         return self.summary(cfg)
@@ -761,7 +770,7 @@ class LittlesOps:
                 grid, get("arrival_rate")[0] * arr_s,
                 get("latency_sum")[0] * cfg["unit_factor"] * per_s,
                 get("latency_count")[0] * per_s, conc, conc_n, step, cfg["lookback_ms"],
-                cfg.get("scrape_ms", cfg["resolution_ms"]), bool(cfg.get("concurrency_derived")),
+                cfg.get("scrape_ms", cfg["resolution_ms"]), _conc_reading(cfg),
             )  # fmt: skip
 
         matched, unmatched = [], []
@@ -906,13 +915,26 @@ class LittlesOps:
             "than the gauge reading: a bias bound in the interval"
         )  # fmt: skip
         out.append({
-            "name": "window_alignment", "status": "ok",
+            "name": "window_alignment",
+            "status": "assumed" if _conc_reading(cfg) == "documents" else "ok",
             "detail": (
                 f"all four signals on one {format_duration(cfg['step_ms'])} grid, windows anchored "
                 "at the requested start (the range is not widened); sub-steps missing any signal "
                 "are dropped from all; "
                 + counters
-                + "; the gauge's end-of-interval reading is corrected (trapezoid); a load episode "
+                + {
+                    "end": "; the gauge's end-of-interval reading is corrected (trapezoid)",
+                    "exact": "; L is an exact time average per sub-step (no end-of-interval "
+                    "correction)",
+                    "documents": "; L is the mean of the gauge documents in each query bucket "
+                    "[t − step, t), not a reading at its end: not corrected (trapezoid); where "
+                    "in the bucket they sit is unknown (evenly spread: its middle; one snapshot "
+                    "on the bucket grid: its start), bounded by the worst case, half a step, "
+                    "times the change in L over the window (a bias bound in the interval); "
+                    "ASSUMED: the documents sample the level evenly in time (periodic "
+                    "snapshots); documents written per event weight busy moments more",
+                }[_conc_reading(cfg)]
+                + "; a load episode "
                 "that starts and ends inside one window balances over it (Little's law holds over "
                 "that window): use windows shorter than the episodes to see them"
             ),

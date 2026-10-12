@@ -132,6 +132,20 @@ def exact_r(
     return L / lw if lw > 0 else math.nan
 
 
+def gauge_documents(
+    m: dict[str, np.ndarray], step_s: float = 15.0, docs: int = 1, phase_s: float = 0.0
+) -> np.ndarray:
+    """An in-flight gauge as an Elasticsearch stats aggregation serves it (sgb.12): the mean of
+    the snapshot documents whose timestamps fall in each query bucket [t - step, t), `docs` of
+    them per bucket, evenly spaced from `phase_s` (0: one snapshot on the bucket grid, which a
+    date_histogram puts at the START of the bucket it opens, not at its end)."""
+    off = (phase_s + np.arange(docs) * step_s / docs) % step_s
+    tau = (m["ts"] - step_s)[:, None] + off[None, :]
+    dep = np.sort(m["depart"])
+    n = np.searchsorted(m["t_arr"], tau, side="right") - np.searchsorted(dep, tau, side="right")
+    return n.mean(axis=1)
+
+
 def substeps(
     m: dict[str, np.ndarray], scrape_s: float = 15.0, drop_gauge: bool = False
 ) -> Substeps:
@@ -346,7 +360,8 @@ class EsSimSource(SimSource):
             series_id,
         )
 
-        level = np.sum([m["gauge"] for m in self.sims.values()], axis=0)
+        # snapshot documents on the bucket grid: each one lands in the bucket it opens
+        level = np.sum([gauge_documents(m, self.scrape_s) for m in self.sims.values()], axis=0)
         sid = series_id(self.name, {})
         rows = [
             (self.start_ms + int((k + 1) * self.scrape_s * 1000), float(v))

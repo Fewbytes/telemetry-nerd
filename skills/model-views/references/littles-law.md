@@ -110,6 +110,9 @@ the gap; never compute L from lambda x W.
   source); from the signals' own documents the check is circular and refused. Its
   `concurrency_derived` assumption (timestamp start/end, every request logged once) belongs in
   any report of the verdict.
+- Concurrency from an ES `stats` gauge is the mean of the gauge documents in each query bucket,
+  not a reading at its end: `window_alignment` is then `assumed` (documents spread evenly in
+  time) and the interval carries a `gauge_phase` bias bound for where in the bucket they sit.
 - `total` is the ungrouped view: what a check without `by` sees.
 
 ## Assumptions (each is `ok`, `assumed` or `flagged`)

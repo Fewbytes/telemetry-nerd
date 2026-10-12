@@ -78,6 +78,20 @@ def test_concurrency_can_come_from_an_es_query(tmp_path):
     assert set(es.exprs) == {ARRIVALS, LATENCY, IN_FLIGHT}
 
 
+def test_an_es_stats_gauge_is_read_as_a_bucket_mean_not_trapezoid_corrected(tmp_path):
+    """sgb.12: the stats gauge is the mean of the documents in each query bucket, so it is not
+    given the end-of-interval (trapezoid) correction a scraped gauge gets; the documents'
+    position in the bucket is a bias bound, and the assumption says so."""
+    svc, _, _ = _setup(tmp_path)
+    es_gauge = _run(svc, concurrency=IN_FLIGHT, concurrency_source="default")
+    align = {a["name"]: a for a in es_gauge["assumptions"]}["window_alignment"]
+    assert align["status"] == "assumed"
+    assert "mean of the gauge documents" in align["detail"] and "evenly in time" in align["detail"]
+    prom_gauge = _run(svc)
+    align = {a["name"]: a for a in prom_gauge["assumptions"]}["window_alignment"]
+    assert align["status"] == "ok" and "corrected (trapezoid)" in align["detail"]
+
+
 def test_es_concurrency_with_a_prometheus_signal_source_is_consistent(tmp_path):
     svc, es, _ = _setup(tmp_path)
     out = _run(
