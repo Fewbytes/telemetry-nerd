@@ -101,6 +101,10 @@ the gap; never compute L from lambda x W.
   one member in full, `detail=true` everything (large);
   `unmatched` lists groups missing from a signal (`missing_in: concurrency` is a missing
   instance in the gauge and explains `L_low` for the total).
+- Two sources (signals on one, `concurrency_source` another): name both sides when they differ,
+  `by=["host.name=instance"]` (ES field = the gauge's label). Only names are mapped: groups join
+  on equal values, which `label_sets` states as `assumed`; a value spelled differently on the two
+  sources (`web-1` vs `web-1:9100`) shows as `unmatched`, not as a discrepancy.
 - `total` is the ungrouped view: what a check without `by` sees.
 
 ## Assumptions (each is `ok`, `assumed` or `flagged`)

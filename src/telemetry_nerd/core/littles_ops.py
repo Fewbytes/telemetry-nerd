@@ -227,6 +227,61 @@ def _fill_empty_tiles(v: np.ndarray, n: np.ndarray, gauge: bool) -> tuple[np.nda
     return v, n
 
 
+_LABEL = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+_ES_FIELD = re.compile(r"[A-Za-z_@][A-Za-z0-9_@.\-]*")
+#: terms size of the grouping added to ES queries: more groups than this is refused by the
+#: adapter (sum_other_doc_count / a full composite page), never silently truncated
+ES_GROUP_SIZE = 500
+
+
+def _by_mapping(by: list[str], *, two_sources: bool, es: bool) -> tuple[list[str], list[str]]:
+    """(the names on the signals' source, the names on the concurrency source). An entry is a
+    name both sources share, or `signal_name=concurrency_name` when the concurrency comes from
+    another source whose namespace differs (an Elasticsearch field `host.name` and a Prometheus
+    label `instance`). Only names are mapped: a group joins when the values are equal strings."""
+    sig_names, conc_names = [], []
+    for entry in by:
+        left, eq, right = entry.partition("=")
+        left, right = left.strip(), right.strip() if eq else left.strip()
+        if eq and not two_sources:
+            raise ValueError(
+                f"by: {entry!r} maps a name across sources, but all signals come from one "
+                "source: pass the name alone"
+            )
+        if not (_ES_FIELD if es else _LABEL).fullmatch(left):
+            raise ValueError(
+                f"by: {left!r} is not {'an Elasticsearch field' if es else 'a label name'}"
+            )
+        if not _LABEL.fullmatch(right):
+            hint = (
+                f" (hint: map it to the concurrency source's label, e.g. by=[\"{left}=instance\"])"
+                if es and not eq else ""
+            )  # fmt: skip
+            raise ValueError(f"by: {right!r} is not a label name on the concurrency source{hint}")
+        sig_names.append(left)
+        conc_names.append(right)
+    if len(set(sig_names)) < len(sig_names) or len(set(conc_names)) < len(conc_names):
+        raise ValueError("by: a name is given twice")
+    return sig_names, conc_names
+
+
+def _es_grouped(expr: str, fields: list[str]) -> str:
+    """An ES arrival/latency query with one series per value of `fields`: its metric aggregation
+    (if any) nested under a terms aggregation (one field) or a composite of terms sources (2+)."""
+    doc = json.loads(expr)
+    metric = doc.pop("aggs", None) or doc.pop("aggregations", None)
+    if len(fields) == 1:
+        group: dict[str, Any] = {"terms": {"field": fields[0], "size": ES_GROUP_SIZE}}
+    else:
+        group = {"composite": {
+            "sources": [{f: {"terms": {"field": f}}} for f in fields], "size": ES_GROUP_SIZE,
+        }}  # fmt: skip
+    if metric:
+        group["aggs"] = metric
+    doc["aggs"] = {"littles_by": group}
+    return json.dumps(doc, sort_keys=True)
+
+
 def _key(labels: dict, by: list[str]) -> tuple[str, ...]:
     return tuple(labels.get(b, "") for b in by)
 
@@ -344,8 +399,9 @@ class LittlesOps:
             )
         if arr.group is not None or lat.group is not None:
             raise ValueError(
-                "terms grouping in arrival_rate/latency is not supported: the check runs on one "
-                "total when its signals span two sources"
+                "terms grouping in arrival_rate/latency is not supported: the check groups "
+                'them itself (hint: drop the terms aggregation and pass by=["<field>=<label>"], '
+                "the ES field and the concurrency source's label it matches)"
             )
         return arr, lat
 
@@ -472,12 +528,6 @@ class LittlesOps:
                 "binding is not supported on an Elasticsearch/OpenSearch source (bindings come "
                 "from PromQL rules): pass arrival_rate, latency and concurrency"
             )
-        if conc_source != source and by:
-            raise ValueError(
-                "by is not supported when the signals come from two sources (an Elasticsearch "
-                "field and a Prometheus label are different names; joining them needs a label "
-                "mapping, later work): drop by"
-            )
         if conc_es and by:
             raise ValueError(
                 "by is not supported with an Elasticsearch/OpenSearch concurrency query (one "
@@ -487,9 +537,7 @@ class LittlesOps:
             source, binding,
             {"arrival_rate": arrival_rate, "latency": latency, "concurrency": concurrency}, by,
         )  # fmt: skip
-        for b in by:
-            if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", b):
-                raise ValueError(f"by: {b!r} is not a label name")
+        by, conc_by = _by_mapping(by, two_sources=conc_source != source, es=es)
         if conc_es:
             conc_q = self._es_concurrency(roles["concurrency"])
             conc_name, conc_sel = str(conc_q.field), ""
@@ -523,10 +571,15 @@ class LittlesOps:
             # one stats fetch feeds both latency roles (sum = avg x count); query buckets are
             # tiles [t - step, t): no lookback, per-bucket counts divided by the step
             arr_is_rate = True
+            arr_x, lat_x = roles["arrival_rate"], roles["latency"]
+            if by:  # one series per value of the ES fields; the gauge summed by its labels
+                arr_x, lat_x = _es_grouped(arr_x, by), _es_grouped(lat_x, by)
+            conc_agg = f"sum by ({', '.join(conc_by)})" if conc_by else "sum"
             exprs = {
-                "arrival_rate": roles["arrival_rate"], "latency_sum": roles["latency"],
-                "latency_count": roles["latency"],
-                "concurrency": roles["concurrency"] if conc_es else f"sum ({conc_name}{conc_sel})",
+                "arrival_rate": arr_x, "latency_sum": lat_x, "latency_count": lat_x,
+                "concurrency": (
+                    roles["concurrency"] if conc_es else f"{conc_agg} ({conc_name}{conc_sel})"
+                ),
             }  # fmt: skip
             counter_form, lookback_ms, tile_s = "es_buckets", 0, step / 1000
             matchers = {"concurrency": _matchers(conc_sel)}
@@ -553,6 +606,8 @@ class LittlesOps:
             )  # fmt: skip
             if conc_es:
                 exprs["concurrency"] = roles["concurrency"]
+            elif conc_by != by:  # mapped names on the concurrency source
+                exprs["concurrency"] = f"sum by ({', '.join(conc_by)}) ({conc_name}{conc_sel})"
             # how much further back the counters' window reaches than the gauge reading it is
             # compared with: 0 with increase() tiles (VM); rate(x[ri]) at t covers (t - ri, t]
             # (VM also takes the sample before it), the gauge is read at the last scrape <= t,
@@ -584,7 +639,8 @@ class LittlesOps:
                 fetched[(role_source, expr)] = out["dataset"]
             ds[role] = fetched[(role_source, expr)]
         cfg = {
-            "source": source, "datasets": ds, "by": by, "step_ms": step, "window_ms": win,
+            "source": source, "datasets": ds, "by": by, "by_concurrency": conc_by,
+            "step_ms": step, "window_ms": win,
             "k": int(k), "skip": int(skip), "start_ms": rng.start_ms, "end_ms": rng.end_ms,
             "unit_factor": factor, "unit": unit, "unit_basis": unit_basis,
             # how much further back the counters' window reaches than the gauge reading it is
@@ -615,9 +671,13 @@ class LittlesOps:
         return cfg
 
     def _grouped(
-        self, dataset_id: str, by: list[str], grid: np.ndarray, step: int, value: str = "avg"
-    ) -> tuple:
-        """Per group key: (values on the grid, sample counts, labels); labels missing a `by`."""
+        self, dataset_id: str, by: list[str], grid: np.ndarray, step: int, value: str = "avg",
+        names_as: list[str] | None = None,
+    ) -> tuple:  # fmt: skip
+        """Per group key: (values on the grid, sample counts, labels); labels missing a `by`.
+        `names_as`: the names the group labels are reported under (the signals' side of a
+        cross-source `by` mapping; default `by`)."""
+        shown = names_as or by
         _, result = self._datasets.get(dataset_id)
         labels = {r["series_id"]: json.loads(r["labels"]) for r in result.series.to_pylist()}
         df = pl.from_arrow(result.buckets)
@@ -643,7 +703,7 @@ class LittlesOps:
                 v = np.where(np.isnan(pv), v, np.where(np.isnan(v), pv, pv + v))
                 n = np.maximum(pn, n)
             out[key] = (v, n)
-            names[key] = {b: lb.get(b, "") for b in by}
+            names[key] = {n: lb.get(b, "") for n, b in zip(shown, by, strict=True)}
         return out, names, sorted(lacking)
 
     def run(self, cfg: dict) -> dict:
@@ -654,13 +714,15 @@ class LittlesOps:
         grid = np.arange(cfg["start_ms"], cfg["end_ms"] + 1, step, dtype=np.int64)
         per_role, names, lacking = {}, {}, {}
         stats = cfg.get("latency_from_stats")
+        conc_by = cfg.get("by_concurrency", by)
         for role, did in cfg["datasets"].items():
             value = (
                 {"latency_sum": "sum", "latency_count": "count"}.get(role, "avg")
                 if stats
                 else "avg"
             )
-            per_role[role], nm, lacking[role] = self._grouped(did, by, grid, step, value)
+            role_by = conc_by if role == "concurrency" else by
+            per_role[role], nm, lacking[role] = self._grouped(did, role_by, grid, step, value, by)
             names.update(nm)
         keys = sorted(set().union(*(set(v) for v in per_role.values())))
         nan = np.full(grid.size, np.nan)
@@ -780,10 +842,24 @@ class LittlesOps:
                 f"arrival_rate and latency queries differ: {es_queries['arrival_rate']} vs "
                 f"{es_queries['latency']}"
             )
+        conc_by = cfg.get("by_concurrency") or cfg["by"]
+        mapped = [f"{a} = {b}" for a, b in zip(cfg["by"], conc_by, strict=True) if a != b]
+        srcs = cfg.get("sources") or {}
+        cross = bool(cfg["by"]) and srcs.get("signals") != srcs.get("concurrency")
+        joined = (
+            f"; groups joined across sources by name (signals' {srcs.get('signals')} = "
+            f"concurrency's {srcs.get('concurrency')}: "
+            + (", ".join(mapped) if mapped else "the same names")
+            + ") and equal values: ASSUMED to name the same entities (a value spelled differently "
+            "on the two sources shows as unmatched groups)"
+            if cross else ""
+        )  # fmt: skip
+        status = "flagged" if issues else "assumed" if cross else "ok"
         out.append({
-            "name": "label_sets", "status": "flagged" if issues else "ok",
+            "name": "label_sets", "status": status,
             "detail": (
-                f"aggregated {'by ' + ', '.join(cfg['by']) if cfg['by'] else 'to one total'}; "
+                f"aggregated {'by ' + ', '.join(cfg['by']) if cfg['by'] else 'to one total'}"
+                f"{joined}; "
                 + ("; ".join(issues) if issues else "the same groups in all three signals and the "
                    "same selectors")
             ),
@@ -847,7 +923,6 @@ class LittlesOps:
                 "name": "window_vs_latency", "status": "flagged",
                 "detail": f"W > window/10 in {len(sh)} window(s): edge effects are large (longer window)",
             })  # fmt: skip
-        srcs = cfg.get("sources") or {}
         if srcs and srcs["signals"] != srcs["concurrency"]:
             out.append({
                 "name": "sources", "status": "assumed",
@@ -905,9 +980,12 @@ class LittlesOps:
                 f"({sug.type}); {sug.why})"
             ))  # fmt: skip
         if not cfg["by"] and tot.verdict != "consistent":
+            two = len(set((cfg.get("sources") or {}).values())) > 1
             hints.append(
                 "to localise it to series, re-run with by=[a label all three share, e.g. instance]"
-            )
+                + ('; across two sources name both sides: by=["<signals name>=<concurrency label>"]'
+                   if two else "")
+            )  # fmt: skip
         caveats = []
         if not cfg["unit_basis"]:
             caveats.append("latency_unit_assumed")

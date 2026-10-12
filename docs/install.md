@@ -71,7 +71,8 @@ aggregation, optionally grouped by one `terms` field) rather than through any Pr
 translation — covering request-rate, latency (mean/min/max via `stats`, or a TDigest
 `percentile`) and distribution queries, and `check_littles_law` with a separate
 `concurrency_source` for the in-flight level: a PromQL gauge, or an ES `stats` query on an
-in-flight field whose per-step mean is the total in flight. Deriving concurrency from access-log
+in-flight field whose per-step mean is the total in flight. Grouping across the two sources
+maps names: `by=["host.name=instance"]` (ES field = the gauge's label). Deriving concurrency from access-log
 start times and latencies is later work.
 
 Operating profiles and normal-band overlays work on ES sources too: `rate`/`value_count`/`sum`

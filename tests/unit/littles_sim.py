@@ -161,8 +161,9 @@ class SimSource:
     def __init__(self, sims: dict[str, dict], start_ms: int, scrape_s: float = 15.0,
                  hide: set[tuple[str, str]] = frozenset(), latency_scale: float = 1.0,
                  latency_name: str = LATENCY, flavor: str | None = None,
-                 scrape_ms: int | None = None) -> None:  # fmt: skip
+                 scrape_ms: int | None = None, label: str = "instance") -> None:  # fmt: skip
         self.name = "default"
+        self.label = label  # the instance label's name on this source
         self.identity = "sim"
         self.resolution_ms = int(scrape_s * 1000)
         self.sims, self.start_ms, self.scrape_s = sims, start_ms, scrape_s
@@ -204,7 +205,7 @@ class SimSource:
         assert step_ms == self.resolution_ms, "the sim serves the scrape step only"
         self.exprs.append(expr)
         role = self._role(expr)
-        grouped = "by (instance)" in expr
+        grouped = f"by ({self.label})" in expr
         per: dict[str, np.ndarray] = {}
         for inst, m in self.sims.items():
             if (role if role in ("gauge", "counter") else "latency", inst) in self.hide:
@@ -220,7 +221,7 @@ class SimSource:
         rows = []
         labels = {}
         for inst, v in per.items():
-            lb = {"instance": inst} if grouped else {}
+            lb = {self.label: inst} if grouped else {}
             sid = series_id(self.name, lb)
             labels[sid] = lb
             for k, val in enumerate(v):
@@ -273,23 +274,35 @@ class EsSimSource(SimSource):
         stats = '"stats"' in expr
         if IN_FLIGHT_FIELD in expr:  # the in-flight gauge: one level per query bucket
             return self._gauge(expr, rng)
-        d = lambda key: sum(np.diff(np.r_[0.0, m[key]]) for m in self.sims.values())
-        count = d("count")
-        values = d("sum") / np.where(count > 0, count, 1) if stats else d("counter") / self.scrape_s
-        sid = series_id(self.name, {})
-        rows = []
-        for k in range(count.size):
-            ts = self.start_ms + int((k + 1) * self.scrape_s * 1000)
-            if not rng.start_ms <= ts <= rng.end_ms or (stats and count[k] == 0):
-                continue
-            rows.append((ts, float(values[k]), int(count[k]) if stats else 1))
-        vals = [r[1] for r in rows]
+        from telemetry_nerd.sources.esquery import EsQuery
+
+        fields = EsQuery.parse(expr).group_fields  # grouped: one series per instance
+        role = "latency" if stats else "counter"
+        sims = {i: m for i, m in self.sims.items() if (role, i) not in self.hide}
+        parts = {i: {i: m} for i, m in sims.items()} if fields else {"": sims}
+        rows, labels = [], {}
+        for inst, group in parts.items():
+            d = lambda key, g=group: sum(np.diff(np.r_[0.0, m[key]]) for m in g.values())
+            count = d("count")
+            values = (
+                d("sum") / np.where(count > 0, count, 1) if stats else d("counter") / self.scrape_s
+            )
+            lb = {f: inst for f in fields}
+            sid = series_id(self.name, lb)
+            labels[sid] = lb
+            for k in range(count.size):
+                ts = self.start_ms + int((k + 1) * self.scrape_s * 1000)
+                if not rng.start_ms <= ts <= rng.end_ms or (stats and count[k] == 0):
+                    continue
+                rows.append((ts, sid, float(values[k]), int(count[k]) if stats else 1))
+        vals = [r[2] for r in rows]
         buckets = pa.table(
-            {"ts_ms": [r[0] for r in rows], "series_id": [sid] * len(rows), "avg": vals,
-             "min": vals, "max": vals, "count": [r[2] for r in rows]},
+            {"ts_ms": [r[0] for r in rows], "series_id": [r[1] for r in rows], "avg": vals,
+             "min": vals, "max": vals, "count": [r[3] for r in rows]},
             schema=BUCKET_SCHEMA,
         )  # fmt: skip
-        series = pa.table({"series_id": [sid] if rows else [], "labels": [labels_json({})] if rows else []},
+        sids = sorted({r[1] for r in rows})
+        series = pa.table({"series_id": sids, "labels": [labels_json(labels[s]) for s in sids]},
                           schema=SERIES_SCHEMA)  # fmt: skip
         return FetchResult(buckets, series)
 

@@ -104,10 +104,75 @@ def test_grouping_with_an_es_concurrency_query_is_refused(tmp_path):
         _run(svc, concurrency=IN_FLIGHT, concurrency_source="default", by=["service"])
 
 
-def test_grouping_across_two_sources_is_refused(tmp_path):
-    svc, _, _ = _setup(tmp_path)
-    with pytest.raises(ValueError, match="two sources"):
-        _run(svc, by=["service"])
+def _setup_two(tmp_path, hide=frozenset()):
+    sims = {i: simulate(seed, rates=[(0.0, 3.0)], c=6) for i, seed in (("i0", 21), ("i1", 22))}
+    es = EsSimSource(sims, START)
+    prom = SimSource(sims, START, hide=hide)
+    prom.name, prom.identity = "prom", "prom-sim"
+    svc = make_service(tmp_path, source=es)
+    svc.sources.attach("prom", prom)
+    return svc, es, prom
+
+
+def test_grouping_across_sources_maps_an_es_field_to_a_prometheus_label(tmp_path):
+    """by=["host.name=instance"]: the ES queries are grouped by the field (a terms aggregation
+    the check adds), the gauge summed by the label, and groups join on equal values."""
+    svc, es, prom = _setup_two(tmp_path)
+    out = _run(svc, by=["host.name=instance"])
+    assert out["verdict"] == "consistent"
+    groups = {g["labels"]["host.name"]: g for g in out["groups"]}
+    assert set(groups) == {"i0", "i1"}
+    assert all(g["verdict"] == "consistent" for g in groups.values())
+    grouped = [json.loads(e) for e in es.exprs]
+    assert all(e["aggs"]["littles_by"]["terms"]["field"] == "host.name" for e in grouped)
+    assert any("stats" in e["aggs"]["littles_by"].get("aggs", {}).get("lat", {}) for e in grouped)
+    assert all("sum by (instance)" in e for e in prom.exprs)
+    label_sets = {a["name"]: a for a in out["assumptions"]}["label_sets"]
+    assert label_sets["status"] == "assumed"
+    assert "host.name = instance" in label_sets["detail"]
+    assert "unmatched" not in out
+
+
+def test_a_group_missing_on_the_concurrency_source_is_unmatched(tmp_path):
+    svc, _, _ = _setup_two(tmp_path, hide={("gauge", "i1")})
+    out = _run(svc, by=["host.name=instance"])
+    [u] = out["unmatched"]
+    assert u["labels"] == {"host.name": "i1"} and u["missing_in"] == ["concurrency"]
+    label_sets = {a["name"]: a for a in out["assumptions"]}["label_sets"]
+    assert label_sets["status"] == "flagged"
+
+
+def test_an_unmapped_es_field_is_refused_with_the_mapping_hint(tmp_path):
+    svc, _, _ = _setup_two(tmp_path)
+    with pytest.raises(ValueError, match=r"host.name=instance"):
+        _run(svc, by=["host.name"])
+
+
+def test_a_mapping_on_one_source_is_refused(tmp_path):
+    svc, _, _ = _setup_two(tmp_path)
+    with pytest.raises(ValueError, match="one source"):
+        _run(svc, source="prom", arrival_rate="http_requests_total",
+             latency="http_request_duration_seconds", concurrency_source="prom",
+             by=["instance=instance"])  # fmt: skip
+
+
+def test_terms_grouping_written_in_the_query_points_at_by(tmp_path):
+    svc, _, _ = _setup_two(tmp_path)
+    grouped = json.dumps({"query": QS, "aggs": {"t": {"terms": {"field": "host.name"}}}})
+    with pytest.raises(ValueError, match="by="):
+        _run(svc, arrival_rate=grouped)
+
+
+def test_es_grouped_query_shapes():
+    from telemetry_nerd.core.littles_ops import ES_GROUP_SIZE, _es_grouped
+
+    one = json.loads(_es_grouped(ARRIVALS, ["host.name"]))
+    assert one == {"query": QS, "aggs": {"littles_by": {
+        "terms": {"field": "host.name", "size": ES_GROUP_SIZE}}}}  # fmt: skip
+    two = json.loads(_es_grouped(LATENCY, ["host.name", "url.path"]))
+    comp = two["aggs"]["littles_by"]
+    assert [list(s) for s in comp["composite"]["sources"]] == [["host.name"], ["url.path"]]
+    assert comp["aggs"] == {"lat": {"stats": {"field": "event.duration"}}}
 
 
 def test_a_percentile_latency_is_refused(tmp_path):
@@ -154,3 +219,19 @@ async def test_check_littles_law_documents_concurrency_source(tmp_path):
         tools = {t.name: t for t in (await c.list_tools()).tools}
     doc = tools["check_littles_law"].description or ""
     assert "concurrency_source" in doc and "Elasticsearch" in doc
+
+
+def test_two_prometheus_sources_map_label_names(tmp_path):
+    """The mapping is not ES-specific: signals on one PromQL source grouped by `instance`, the
+    gauge on another whose label is `pod`."""
+    sims = {i: simulate(seed, rates=[(0.0, 3.0)], c=6) for i, seed in (("i0", 21), ("i1", 22))}
+    sig = SimSource(sims, START)
+    gauge = SimSource(sims, START, label="pod")
+    gauge.name, gauge.identity = "gauges", "gauge-sim"
+    svc = make_service(tmp_path, source=sig)
+    svc.sources.attach("gauges", gauge)
+    out = _run(svc, arrival_rate="http_requests_total", latency="http_request_duration_seconds",
+               concurrency_source="gauges", by=["instance=pod"])  # fmt: skip
+    assert {g["labels"]["instance"] for g in out["groups"]} == {"i0", "i1"}
+    assert all("sum by (pod)" in e for e in gauge.exprs)
+    assert all("sum by (instance)" in e for e in sig.exprs)

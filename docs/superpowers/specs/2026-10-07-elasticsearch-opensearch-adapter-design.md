@@ -353,9 +353,17 @@ selector (`_parse`) and writes the four queries itself (`_exprs`), all on one `s
 - **Sub-step grid with two sources:** the grid uses the larger of the two sources' resolutions
   (`res`), and the gauge's series-interval probe (`_probe_scrape`) runs against
   `concurrency_source`.
-- **Grouping across sources is refused in v1:** `by` must be empty when the roles span two
-  sources (an ES group label `service.name` and a Prometheus label `service` are different names;
-  joining them needs a label mapping, later work). Same-source checks keep today's behaviour.
+- **Grouping across sources** (sgb.8, 2026-10-12; was refused in v1): an ES field
+  `service.name` and a Prometheus label `service` are different names, so a `by` entry is either
+  a name both sources share or `<signals name>=<concurrency label>` (`by=["host.name=instance"]`).
+  On an ES signals source the check adds the grouping itself (a `terms` aggregation for one
+  field, a `composite` of terms sources for 2+, size 500: more groups is refused by the
+  adapter's overflow rule, never truncated); a terms aggregation written in `arrival_rate` /
+  `latency` is refused with a hint to use `by`. The gauge is summed by the mapped labels. Groups
+  join on equal values only (no value mapping); the `label_sets` assumption is `assumed` and
+  names the mapping, and values spelled differently show as `unmatched`. A mapping entry with
+  one source is refused; `by` with an ES concurrency query stays refused (one total level).
+  Same-source checks keep today's behaviour.
 - **Assumptions** gain one entry when sources differ: "arrivals and latency from <ES source>
   (documents, query buckets [t − step, t)), concurrency from <other source> (gauge read at the
   last scrape ≤ t)", status `assumed`.
