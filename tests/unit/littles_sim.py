@@ -243,6 +243,9 @@ class SimSource:
         return self.discovery
 
 
+IN_FLIGHT_FIELD = "http.server.in_flight"
+
+
 class EsSimSource(SimSource):
     """The arrival and latency signals as an Elasticsearch access-log index serves them: the
     rate form (documents per second) and the stats form (mean latency and count of the requests
@@ -268,6 +271,8 @@ class EsSimSource(SimSource):
         assert step_ms == self.resolution_ms, "the sim serves the scrape step only"
         self.exprs.append(expr)
         stats = '"stats"' in expr
+        if IN_FLIGHT_FIELD in expr:  # the in-flight gauge: one level per query bucket
+            return self._gauge(expr, rng)
         d = lambda key: sum(np.diff(np.r_[0.0, m[key]]) for m in self.sims.values())
         count = d("count")
         values = d("sum") / np.where(count > 0, count, 1) if stats else d("counter") / self.scrape_s
@@ -282,6 +287,34 @@ class EsSimSource(SimSource):
         buckets = pa.table(
             {"ts_ms": [r[0] for r in rows], "series_id": [sid] * len(rows), "avg": vals,
              "min": vals, "max": vals, "count": [r[2] for r in rows]},
+            schema=BUCKET_SCHEMA,
+        )  # fmt: skip
+        series = pa.table({"series_id": [sid] if rows else [], "labels": [labels_json({})] if rows else []},
+                          schema=SERIES_SCHEMA)  # fmt: skip
+        return FetchResult(buckets, series)
+
+    def _gauge(self, expr, rng):
+        import pyarrow as pa
+
+        from telemetry_nerd.model.series import (
+            BUCKET_SCHEMA,
+            SERIES_SCHEMA,
+            FetchResult,
+            labels_json,
+            series_id,
+        )
+
+        level = np.sum([m["gauge"] for m in self.sims.values()], axis=0)
+        sid = series_id(self.name, {})
+        rows = [
+            (self.start_ms + int((k + 1) * self.scrape_s * 1000), float(v))
+            for k, v in enumerate(level)
+        ]
+        rows = [r for r in rows if rng.start_ms <= r[0] <= rng.end_ms]
+        vals = [r[1] for r in rows]
+        buckets = pa.table(
+            {"ts_ms": [r[0] for r in rows], "series_id": [sid] * len(rows), "avg": vals,
+             "min": vals, "max": vals, "count": [1] * len(rows)},
             schema=BUCKET_SCHEMA,
         )  # fmt: skip
         series = pa.table({"series_id": [sid] if rows else [], "labels": [labels_json({})] if rows else []},

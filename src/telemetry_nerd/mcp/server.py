@@ -678,13 +678,15 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         latency is refused with a hint); concurrency = the in-flight gauge. Metric names or
         selectors `name{job="api"}`; the check writes the rates and `sum by (by)`.
         concurrency_source: the source the concurrency gauge is read from (default `source`).
-        Elasticsearch / OpenSearch access logs give arrivals and latency, never concurrency:
-        source=<the ES source>, arrival_rate = a query with no aggs (documents per second, e.g.
+        Elasticsearch / OpenSearch access logs give arrivals and latency; concurrency is an
+        aggregate, so it is read as its own query from any source: source=<the ES source>, arrival_rate = a query with no aggs (documents per second, e.g.
         {"query": {"query_string": {"query": "service.name:checkout"}}}), latency = the same
         query with a stats aggregation on the duration field ({"query": ..., "aggs": {"lat":
         {"stats": {"field": "event.duration"}}}}; W = its mean), concurrency = the in-flight
-        gauge name, concurrency_source = the Prometheus source it lives in. by is refused when
-        the signals span two sources; binding is refused on an ES source; latency_unit comes
+        gauge name and concurrency_source = the Prometheus source it lives in, or a stats query
+        on an in-flight field of an ES source (its mean per step is L, so the field must hold
+        the TOTAL in flight, not one instance's share). by is refused when the signals span two
+        sources or the concurrency is an ES query; binding is refused on an ES source; latency_unit comes
         from the field's catalog unit (mapping meta.unit) when known.
         window: judged span (default ~range/12); warmup: excluded from the start (e.g. "10m");
         latency_unit: s|ms|us|ns when the catalog does not know it (else ASSUMED s, flagged);

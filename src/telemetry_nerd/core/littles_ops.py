@@ -349,6 +349,24 @@ class LittlesOps:
             )
         return arr, lat
 
+    def _es_concurrency(self, concurrency: str) -> EsQuery:
+        """concurrency as a native Elasticsearch query: a stats aggregation whose mean per query
+        bucket is the number in flight (L). A rate or sum form is a per-second count, not a level."""
+        try:
+            q = EsQuery.parse(concurrency)
+        except SourceError as e:
+            raise ValueError(f"{e} (hint: {e.hint})") from e
+        if q.form != "stats":
+            raise ValueError(
+                f"concurrency on an Elasticsearch source is a stats aggregation on the in-flight "
+                f"field (its mean per step is L; got the {q.form} form)"
+            )
+        if q.group is not None:
+            raise ValueError(
+                "terms grouping in concurrency is not supported: the check runs on one total"
+            )
+        return q
+
     def native_histogram(self, source: str, base: str, refusal: str | None = None) -> bool:
         """True for a native histogram (no _bucket/_sum/_count series). With a catalog, a base
         name without _sum/_count there is refused when `refusal` is given (percentile-only)."""
@@ -448,12 +466,7 @@ class LittlesOps:
             raise ValueError("arrivals is auto, arrivals or completions")
         conc_source = concurrency_source or source
         es = self._language(source) == "es_dsl"
-        if self._language(conc_source) == "es_dsl":
-            raise ValueError(
-                f"concurrency_source={conc_source!r} is an Elasticsearch/OpenSearch source: the "
-                "in-flight gauge is read from a PromQL source in v1 (hint: "
-                "concurrency_source=<the Prometheus source with the gauge>)"
-            )
+        conc_es = self._language(conc_source) == "es_dsl"
         if es and binding:
             raise ValueError(
                 "binding is not supported on an Elasticsearch/OpenSearch source (bindings come "
@@ -465,6 +478,11 @@ class LittlesOps:
                 "field and a Prometheus label are different names; joining them needs a label "
                 "mapping, later work): drop by"
             )
+        if conc_es and by:
+            raise ValueError(
+                "by is not supported with an Elasticsearch/OpenSearch concurrency query (one "
+                "total in-flight level per step): drop by"
+            )
         roles, by, bound = self._roles(
             source, binding,
             {"arrival_rate": arrival_rate, "latency": latency, "concurrency": concurrency}, by,
@@ -472,8 +490,12 @@ class LittlesOps:
         for b in by:
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", b):
                 raise ValueError(f"by: {b!r} is not a label name")
-        conc_name, conc_sel = _parse("concurrency", roles["concurrency"])
-        if getattr(self._facts(conc_source, conc_name), "type", None) == "counter":
+        if conc_es:
+            conc_q = self._es_concurrency(roles["concurrency"])
+            conc_name, conc_sel = str(conc_q.field), ""
+        else:
+            conc_name, conc_sel = _parse("concurrency", roles["concurrency"])
+        if not conc_es and getattr(self._facts(conc_source, conc_name), "type", None) == "counter":
             raise ValueError(
                 f"concurrency={conc_name!r} is a counter: L is the number in flight, a gauge "
                 "(hint: bind an in-flight / active-requests gauge)"
@@ -489,8 +511,11 @@ class LittlesOps:
             arr_type = getattr(self._facts(source, arr_name), "type", None)
         factor, unit, unit_basis = self._unit(source, lat["base"], latency_unit, es=es)
         res = max(self._resolution(source), self._resolution(conc_source))
-        scrape_ms, scrape_note = await self._probe_scrape(
-            conc_source, f"{conc_name}{conc_sel}", res, start, end
+        # an ES gauge has no scrape spacing: its query buckets are the sub-steps
+        scrape_ms, scrape_note = (
+            (res, None)
+            if conc_es
+            else await self._probe_scrape(conc_source, f"{conc_name}{conc_sel}", res, start, end)
         )
         rng, win, step, k = _windows(start, end, window, res, self._clock(), scrape_note)
         skip = 1 + (-(-parse_duration(warmup) // step) if warmup else 0)
@@ -500,7 +525,8 @@ class LittlesOps:
             arr_is_rate = True
             exprs = {
                 "arrival_rate": roles["arrival_rate"], "latency_sum": roles["latency"],
-                "latency_count": roles["latency"], "concurrency": f"sum ({conc_name}{conc_sel})",
+                "latency_count": roles["latency"],
+                "concurrency": roles["concurrency"] if conc_es else f"sum ({conc_name}{conc_sel})",
             }  # fmt: skip
             counter_form, lookback_ms, tile_s = "es_buckets", 0, step / 1000
             matchers = {"concurrency": _matchers(conc_sel)}
@@ -525,6 +551,8 @@ class LittlesOps:
                 by, lat, arr_name, arr_sel, arr_form, f"{conc_name}{conc_sel}",
                 format_duration(res) if tiled else None,
             )  # fmt: skip
+            if conc_es:
+                exprs["concurrency"] = roles["concurrency"]
             # how much further back the counters' window reaches than the gauge reading it is
             # compared with: 0 with increase() tiles (VM); rate(x[ri]) at t covers (t - ri, t]
             # (VM also takes the sample before it), the gauge is read at the last scrape <= t,
@@ -532,6 +560,10 @@ class LittlesOps:
             # behind the bucket's middle at sub-steps of 5s-60s)
             counter_form = "increase_tiles" if tiled else "rate_interval"
             lookback_ms = 0 if tiled else max(0, (rate_interval_ms(step, res) - res) // 2)
+            if conc_es and not tiled:
+                # an ES gauge is the mean of the sub-step's bucket, centred step / 2 back, not a
+                # sample res / 2 back
+                lookback_ms = max(0, (rate_interval_ms(step, res) - step) // 2)
             tile_s = res / 1000 if tiled else None
             matchers = {
                 "arrival_rate": _matchers(arr_sel), "latency": _matchers(lat["selector"]),

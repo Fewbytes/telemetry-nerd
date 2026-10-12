@@ -70,7 +70,9 @@ Claude queries it in Elasticsearch's own Query DSL (a `query` filter plus one me
 aggregation, optionally grouped by one `terms` field) rather than through any PromQL
 translation — covering request-rate, latency (mean/min/max via `stats`, or a TDigest
 `percentile`) and distribution queries, and `check_littles_law` with a separate
-`concurrency_source` for the in-flight gauge (concurrency isn't read from ES documents in v1).
+`concurrency_source` for the in-flight level: a PromQL gauge, or an ES `stats` query on an
+in-flight field whose per-step mean is the total in flight. Deriving concurrency from access-log
+start times and latencies is later work.
 
 Operating profiles and normal-band overlays work on ES sources too: `rate`/`value_count`/`sum`
 aggregations profile as rates, `stats` as a level, and a single `percentiles` as a quantile (a

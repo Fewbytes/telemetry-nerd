@@ -7,7 +7,7 @@ import json
 import pytest
 
 from .fakes import NOW, make_service
-from .littles_sim import CONCURRENCY, EsSimSource, SimSource, simulate
+from .littles_sim import CONCURRENCY, IN_FLIGHT_FIELD, EsSimSource, SimSource, simulate
 
 START = NOW - 3_600_000
 QS = {"query_string": {"query": "service.name:checkout"}}
@@ -66,10 +66,42 @@ def test_label_sets_flags_when_arrival_rate_and_latency_queries_differ(tmp_path)
     assert str(other_qs) in label_sets["detail"] and str(QS) in label_sets["detail"]
 
 
-def test_concurrency_is_never_read_from_an_es_source(tmp_path):
+IN_FLIGHT = json.dumps({"query": QS, "aggs": {"l": {"stats": {"field": IN_FLIGHT_FIELD}}}})
+
+
+def test_concurrency_can_come_from_an_es_query(tmp_path):
+    """Any source can serve L: here the same ES index gives arrivals, latency and the in-flight
+    level as a stats aggregation (its mean per step)."""
+    svc, es, _ = _setup(tmp_path)
+    out = _run(svc, concurrency=IN_FLIGHT, concurrency_source="default")
+    assert out["verdict"] == "consistent"
+    assert set(es.exprs) == {ARRIVALS, LATENCY, IN_FLIGHT}
+
+
+def test_es_concurrency_with_a_prometheus_signal_source_is_consistent(tmp_path):
+    svc, es, _ = _setup(tmp_path)
+    out = _run(
+        svc,
+        source="prom",
+        arrival_rate="http_server_requests_total",
+        latency="http_server_duration_seconds",
+        concurrency=IN_FLIGHT,
+        concurrency_source="default",
+    )
+    assert out["verdict"] == "consistent"
+    assert es.exprs == [IN_FLIGHT]
+
+
+def test_es_concurrency_must_be_the_stats_form(tmp_path):
     svc, _, _ = _setup(tmp_path)
-    with pytest.raises(ValueError, match="PromQL source"):
-        _run(svc, concurrency_source="default")
+    with pytest.raises(ValueError, match="stats aggregation on the in-flight"):
+        _run(svc, concurrency=ARRIVALS, concurrency_source="default")
+
+
+def test_grouping_with_an_es_concurrency_query_is_refused(tmp_path):
+    svc, _, _ = _setup(tmp_path)
+    with pytest.raises(ValueError, match="one total"):
+        _run(svc, concurrency=IN_FLIGHT, concurrency_source="default", by=["service"])
 
 
 def test_grouping_across_two_sources_is_refused(tmp_path):
