@@ -105,6 +105,11 @@ the gap; never compute L from lambda x W.
   `by=["host.name=instance"]` (ES field = the gauge's label). Only names are mapped: groups join
   on equal values, which `label_sets` states as `assumed`; a value spelled differently on the two
   sources (`web-1` vs `web-1:9100`) shows as `unmatched`, not as a discrepancy.
+- Concurrency from access logs (the ES `in_flight` form) is a measurement only when the logs
+  are an instrument independent of the arrival and latency signals (another tier, another
+  source); from the signals' own documents the check is circular and refused. Its
+  `concurrency_derived` assumption (timestamp start/end, every request logged once) belongs in
+  any report of the verdict.
 - `total` is the ungrouped view: what a check without `by` sees.
 
 ## Assumptions (each is `ok`, `assumed` or `flagged`)

@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
+import numpy as np
 import pyarrow as pa
 
 from telemetry_nerd.model.discovery import Discovery, MetricInfo
@@ -55,6 +56,7 @@ from telemetry_nerd.model.series import (
     series_id,
 )
 from telemetry_nerd.model.time import TimeRange, format_duration
+from telemetry_nerd.sources import inflight
 from telemetry_nerd.sources.base import LimitExceeded, Limits, SourceError, SourceUnavailable
 from telemetry_nerd.sources.esquery import COUNT_AGG, TIME_AGG, EsQuery
 from telemetry_nerd.sources.gate import Gate
@@ -287,6 +289,20 @@ def _cell(q: EsQuery, parent: dict, step_s: float) -> Cell | None:
         return v, v, v, n
     except (KeyError, TypeError, ValueError) as e:
         raise _malformed(f"malformed {q.form} bucket {parent!r}") from e
+
+
+def _in_flight_note(q: EsQuery, docs: int, longest_ms: float) -> str:
+    anchor = (
+        "[timestamp, timestamp + duration)" if q.timestamp == "start"
+        else "[timestamp − duration, timestamp)"
+    )  # fmt: skip
+    return (
+        f"in_flight derived from {docs} document(s) of {q.field}: each counted in flight over "
+        f"{anchor} (timestamp = {q.timestamp}, as stated); ASSUMED every request logged once (no "
+        "sampling) with the duration covering that span; requests still running when queried have "
+        f"no document yet (the newest buckets undercount); longest duration seen "
+        f"{longest_ms / 1000:.4g}s (max_duration {format_duration(q.max_duration_ms or 0)})"
+    )
 
 
 class ElasticsearchSource:
@@ -740,6 +756,8 @@ class ElasticsearchSource:
                 hint="use query_distribution(selector=<this expr>, source=...) for counts per "
                 "value bucket",
             )
+        if q.form == "in_flight":
+            return await self._fetch_in_flight(q, rng, step_ms)
         resp, failed = await self._search(q, rng, step_ms)
         step_s = step_ms / 1000
         cells: dict[tuple[str, int], Cell] = {}
@@ -790,6 +808,11 @@ class ElasticsearchSource:
             )
         await self._check_fields(q)
         body = q.body(rng, step_ms, self.time_field, self.limits.timeout_s)
+        return await self._run_search(body, rng)
+
+    async def _run_search(self, body: dict, span: TimeRange) -> tuple[dict, Failed]:
+        """POST one search; a timed-out or partly failed response marks `span` failed."""
+        rng = span
         if self.via_grafana_proxy:
             resp = await self._msearch_one(body)
         else:
@@ -815,6 +838,115 @@ class ElasticsearchSource:
             else ()
         )
         return resp, failed
+
+    async def _fetch_in_flight(self, q: EsQuery, rng: TimeRange, step_ms: int) -> FetchResult:
+        """The number of requests in flight per query bucket, derived from every document in the
+        read range (sources/inflight.py): one count request bounds the volume (refused above
+        inflight.MAX_DOCS, never truncated) and plans slices of at most one page each."""
+        assert q.timestamp is not None and q.unit_ms is not None and q.max_duration_ms is not None
+        lo, hi = inflight.read_range(
+            rng.start_ms, rng.end_ms, step_ms, q.max_duration_ms, q.timestamp
+        )
+        steps = -(-(hi - lo) // step_ms)
+        if steps > MAX_STEPS_PER_QUERY:
+            raise LimitExceeded(
+                f"{steps} steps (the range plus max_duration) exceeds {MAX_STEPS_PER_QUERY} per "
+                "query",
+                hint="use a coarser step or a shorter range",
+            )
+        await self._check_fields(q)
+        timeout = self.limits.timeout_s
+        resp, failed = await self._run_search(
+            q.in_flight_count_body(lo, hi, step_ms, self.time_field, timeout), rng
+        )
+        counts = []
+        for b in _time_buckets(resp):
+            try:
+                counts.append((int(b["key"]), int(b.get("doc_count") or 0)))
+            except (KeyError, TypeError, ValueError) as e:
+                raise _malformed(f"malformed time bucket {b!r}") from e
+        total = sum(n for _, n in counts)
+        if total > inflight.MAX_DOCS:
+            raise LimitExceeded(
+                f"in_flight reads every document: {total} in the range plus max_duration "
+                f"(at most {inflight.MAX_DOCS})",
+                hint="a shorter range or a narrower query; nothing is sampled or truncated",
+            )
+        try:
+            slices = inflight.plan_slices(counts, step_ms)
+        except ValueError as e:
+            raise LimitExceeded(
+                f"in_flight: {e}", hint="use a shorter step (slices are read one query step at "
+                "most per request) or a narrower query",
+            ) from e  # fmt: skip
+        ts: list[float] = []
+        dur: list[float] = []
+        missing = 0
+        for s_lo, s_hi, _ in slices:
+            body = q.in_flight_docs_body(
+                max(s_lo, lo), min(s_hi, hi), inflight.PAGE, self.time_field, timeout
+            )
+            page, more = await self._run_search(body, rng)
+            failed += more
+            hits = (page.get("hits") or {}).get("hits")
+            if not isinstance(hits, list):
+                raise _malformed("in_flight slice response has no hits.hits")
+            if len(hits) >= inflight.PAGE:
+                raise LimitExceeded(
+                    f"in_flight: a slice returned a full page ({inflight.PAGE}) where the count "
+                    "planned fewer: documents arrived while reading",
+                    hint="retry, or end the range before the newest (still ingesting) data",
+                )
+            for h in hits:
+                f = h.get("fields") or {}
+                t, d = (f.get(self.time_field) or [None])[0], (f.get(q.field) or [None])[0]
+                try:
+                    tv, dv = float(t), float(d)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    missing += 1
+                    continue
+                if dv < 0 or not np.isfinite(dv):
+                    missing += 1
+                    continue
+                ts.append(tv)
+                dur.append(dv)
+        start, end = inflight.spans(np.array(ts), np.array(dur), q.unit_ms, q.timestamp)
+        grid = np.arange(rng.start_ms, rng.end_ms + 1, step_ms, dtype=np.int64)
+        got = inflight.derive(start, end, grid, step_ms)
+        longest = float(np.max(dur)) * q.unit_ms if dur else 0.0
+        notes = [_in_flight_note(q, len(ts), longest)]
+        if missing:
+            notes.append(
+                f"in_flight: {missing} document(s) without a usable duration or timestamp were "
+                "left out: their requests are not counted, so L is a lower bound where they ran"
+            )
+        if longest > q.max_duration_ms:
+            # a request longer than max_duration reaching in from outside the read range was
+            # missed; the longest one seen bounds how far into the range that reaches (at least)
+            reach = int(longest - q.max_duration_ms)
+            span = (
+                (rng.start_ms, min(rng.end_ms, rng.start_ms + reach))
+                if q.timestamp == "start"
+                else (max(rng.start_ms, rng.end_ms - reach), rng.end_ms)
+            )
+            why = (
+                f"Undercount: requests up to {longest / 1000:.4g}s long seen, longer than "
+                f"max_duration {format_duration(q.max_duration_ms)}: ones reaching in from "
+                "outside the documents read are missed here (raise max_duration)"
+            )
+            failed += ((*span, why),)
+        sid = series_id(self.name, {})
+        n = got.ends.size
+        buckets = pa.table(
+            {"ts_ms": got.ends, "series_id": [sid] * n, "avg": got.avg, "min": got.min,
+             "max": got.max, "count": [1] * n},
+            schema=BUCKET_SCHEMA,
+        )  # fmt: skip
+        series = pa.table(
+            {"series_id": [sid] if n else [], "labels": [labels_json({})] if n else []},
+            schema=SERIES_SCHEMA,
+        )
+        return FetchResult(buckets, series, failed=failed, notes=tuple(notes))
 
     async def _msearch_one(self, body: dict) -> dict:
         """POST the search `body` through Elasticsearch's multi-search endpoint, the only

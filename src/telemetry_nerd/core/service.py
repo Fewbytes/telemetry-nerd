@@ -2278,8 +2278,8 @@ class TelemetryService:
         stats, percentile and histogram forms; none for the rate forms (a document is not
         necessarily a request: the caller passes unit, e.g. req/s)."""
         q = EsQuery.parse(meta.expr)
-        if q.form in ("rate", "field_rate") or q.field is None:
-            return None, None
+        if q.form in ("rate", "field_rate", "in_flight") or q.field is None:
+            return None, None  # in_flight: a number of requests; its field is the duration
         # the catalog's claims only: catalog_facts falls back to Prometheus name rules, which
         # must never be applied to a field path (spec: name-based inference is skipped)
         claims = self.ws.catalog.claims_for(meta.source, q.field)

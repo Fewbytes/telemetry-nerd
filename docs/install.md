@@ -72,8 +72,12 @@ translation — covering request-rate, latency (mean/min/max via `stats`, or a T
 `percentile`) and distribution queries, and `check_littles_law` with a separate
 `concurrency_source` for the in-flight level: a PromQL gauge, or an ES `stats` query on an
 in-flight field whose per-step mean is the total in flight. Grouping across the two sources
-maps names: `by=["host.name=instance"]` (ES field = the gauge's label). Deriving concurrency from access-log
-start times and latencies is later work.
+maps names: `by=["host.name=instance"]` (ES field = the gauge's label). Concurrency can also be
+derived from access logs with the `in_flight` form (each document spans its duration; `unit` and
+`timestamp: start|end` are required; at most 100 000 documents per query, refused above). It is
+a dataset of its own, and a Little's law concurrency only from an instrument independent of the
+arrival and latency signals: from the same documents the check would be circular, so it is
+refused.
 
 Operating profiles and normal-band overlays work on ES sources too: `rate`/`value_count`/`sum`
 aggregations profile as rates, `stats` as a level, and a single `percentiles` as a quantile (a

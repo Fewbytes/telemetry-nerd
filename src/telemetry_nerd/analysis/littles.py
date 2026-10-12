@@ -74,6 +74,9 @@ class Substeps:
     step_ms: int
     lookback_ms: int = 0  # rate window offset vs the gauge average: (rate interval - step) / 2
     scrape_ms: int = 0  # counter scrape interval (0: the sub-step)
+    #: conc is already the exact time average over each sub-step (derived from documents, not a
+    #: gauge read at the end of a scrape interval): no end-of-interval (trapezoid) correction
+    conc_is_average: bool = False
 
     def usable(self) -> np.ndarray:
         return (
@@ -280,7 +283,7 @@ def judge(
     # scrape / 2 per contiguous segment (exact for a linear path): corrected (trapezoid), not
     # bounded: its sign is known
     gap_s = (sub.scrape_ms or sub.step_ms) / 1000
-    shift = _endpoint_shift(sub, ok) * gap_s / 2 / T
+    shift = 0.0 if sub.conc_is_average else _endpoint_shift(sub, ok) * gap_s / 2 / T
     L = max(L - shift, 0.0)
     blk.L, blk.L_correction = L, -shift
     W = S / C
@@ -1140,5 +1143,5 @@ def combine(groups: list[Substeps]) -> Substeps:
         ts, total("arrivals"), total("lat_sum"), total("lat_count"), total("conc"),
         # the summed gauge is sampled at the same scrapes: its samples are not added up
         np.nan_to_num(total("conc_n", np.maximum)), first.step_ms, first.lookback_ms,
-        first.scrape_ms,
+        first.scrape_ms, first.conc_is_average,
     )  # fmt: skip

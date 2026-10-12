@@ -625,9 +625,32 @@ Beads to file when this design is planned (names, not yet created):
    PromQL profiles: retention edge, late ingestion / settling (an ingest-lag setting), partial
    shard behaviour.
 7. **Operating profiles on ES sources** (profiles build PromQL rollups today).
-8. **Grouped cross-source Little's law**: a label mapping between an ES group field and a
+8. ~~**Grouped cross-source Little's law**: a label mapping between an ES group field and a
    Prometheus label; and a gauge form for reading concurrency from ES documents that carry an
-   in-flight field.
+   in-flight field.~~ Implemented (telemetry-nerd-sgb.8): the gauge form is a `stats` query as
+   concurrency; the mapping is `by=["<field>=<label>"]` (see [Little's law](#littles-law-on-an-es-source)).
+11. **Concurrency derived from access logs** (telemetry-nerd-sgb.11, implemented 2026-10-12):
+   the `in_flight` form, `{"aggs": {"l": {"in_flight": {"field": <duration>, "unit":
+   s|ms|us|ns, "timestamp": start|end, "max_duration": "5m"}}}}`, a telemetry-nerd extension
+   (not an ES aggregation; `sources/inflight.py`). Each document is one request over
+   `[ts, ts + d)` (start) or `[ts − d, ts)` (end); per query bucket the adapter reports the
+   exact time average of the number in flight (prefix sums over sorted starts and ends) and its
+   min/max. `unit` and `timestamp` have no default (a guessed unit is off by 10³–10⁹, a guessed
+   timestamp shifts each request by its own duration). Volume: one `date_histogram` count over
+   the read range (the range plus `max_duration` on the side requests reach in from) bounds it:
+   above 100 000 documents the query is refused, never sampled; documents are then read in
+   time slices of under one page (10 000, the default `max_result_window`; no PIT or
+   `search_after`, so it works through the Grafana proxy and on OpenSearch), and a full page is
+   refused (documents arrived after the count). Stated, not assumed silently (dataset notes):
+   every request logged once, the duration covers the anchored span, requests still running
+   when queried have no document (the newest buckets undercount); a duration longer than
+   `max_duration` seen marks the side of the range it reaches into as a failed span
+   (`Undercount: ...`, bucket_state unknown). In `check_littles_law` it is a concurrency only
+   from a source other than the arrival/latency source: from the same documents L, λ and W
+   agree by construction (circular; refused). The check then skips the gauge's end-of-interval
+   (trapezoid) correction (`Substeps.conc_is_average`) and adds a `concurrency_derived`
+   assumption. Not done: grouping (`terms`) of the derived level; operating profiles of it
+   (refused: a profile's time range is beyond the document cap).
 9. **AWS SigV4 auth** for Amazon OpenSearch Service.
 10. ~~**Pre-aggregated ES `histogram` field type** as a source-defined distribution (it would carry
     source-defined edges, unlike the query-defined buckets here).~~ Implemented

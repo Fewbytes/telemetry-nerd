@@ -480,6 +480,16 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         [t - step, t): a document on a boundary lands one bucket later than a Prometheus
         sample. An empty interior bucket reads as 0/s (caveat zero_is_no_documents). Rate forms
         carry no unit: pass unit (e.g. req/s) to show when you know it.
+        Concurrency from access logs (not an ES aggregation; no terms grouping): {"query": ...,
+        "aggs": {"l": {"in_flight": {"field": "event.duration", "unit": "ns", "timestamp":
+        "end", "max_duration": "5m"}}}} = the number of requests in flight, exact time average
+        (min/max) per query bucket, each document spanning its duration. unit (s|ms|us|ns) and
+        timestamp (start: the time field marks the request's start; end: its completion, most
+        access logs) are required, never guessed. It reads every document of the range plus
+        max_duration: more than 100000 is refused (shorter range, narrower query), never
+        sampled; requests longer than max_duration seen mark an undercount span; the
+        assumptions (every request logged once, the newest buckets undercount) come back as
+        source_warning caveats.
 
         Returns {dataset, summary}. The summary is compact; raw series stay on the server.
         """
@@ -685,7 +695,10 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         {"stats": {"field": "event.duration"}}}}; W = its mean), concurrency = the in-flight
         gauge name and concurrency_source = the Prometheus source it lives in, or a stats query
         on an in-flight field of an ES source (its mean per step is L, so the field must hold
-        the TOTAL in flight, not one instance's share). by across two sources: an entry is a
+        the TOTAL in flight, not one instance's share), or the in_flight form (L derived from
+        access-log documents' durations; see query) from a source independent of the arrival and
+        latency signals: from the signals' own ES source it is refused as circular (L, λ and W
+        of one set of requests agree by construction). by across two sources: an entry is a
         name both share or `<signals name>=<concurrency label>`, e.g. by=["host.name=instance"]
         groups the ES queries by the field host.name (the check adds the terms aggregation; do
         not write one) and the gauge by the label instance; groups join on equal values (stated

@@ -157,6 +157,12 @@ def es_profile_target(expr: str) -> ProfileTarget:
     profile step already, so `expr` is profiled unchanged. Raises ProfileRefused."""
     form = EsQuery.parse(expr).form
     kind = _ES_KIND.get(form)
+    if form == "in_flight":
+        raise ProfileRefused(
+            "in_flight reads every document: an operating profile's long time range is beyond "
+            "its document cap",
+            hint="profile an in-flight field (stats) or a PromQL in-flight gauge instead",
+        )
     if kind is None:
         raise ProfileRefused(
             "a histogram has no single operating range",

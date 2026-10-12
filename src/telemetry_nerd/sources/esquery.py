@@ -15,10 +15,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
-from telemetry_nerd.model.time import TimeRange
+from telemetry_nerd.model.time import TimeRange, parse_duration
 from telemetry_nerd.sources.base import SourceError
 
-Form = Literal["rate", "field_rate", "sum", "stats", "percentile", "histogram", "range"]
+Form = Literal[
+    "rate", "field_rate", "sum", "stats", "percentile", "histogram", "range", "in_flight"
+]
 Need = Literal["numeric", "aggregatable"]
 GroupKind = Literal["terms", "composite"]
 
@@ -34,7 +36,12 @@ _METRIC_FORMS: dict[str, Form] = {
     "histogram": "histogram",
 }
 _DIST_KINDS = frozenset({"histogram", "range"})  # query_distribution forms: no grouping by terms
-_KINDS = frozenset({"terms", "composite", "range", *_METRIC_FORMS})
+#: not an Elasticsearch aggregation: the adapter derives the number in flight from the documents
+#: themselves (each request spans [start, start + duration)), see sources/inflight.py
+IN_FLIGHT = "in_flight"
+IN_FLIGHT_UNITS_MS = {"s": 1e3, "ms": 1.0, "us": 1e-3, "ns": 1e-6}
+IN_FLIGHT_MAX_DURATION = "5m"
+_KINDS = frozenset({"terms", "composite", "range", IN_FLIGHT, *_METRIC_FORMS})
 _TOP_KEYS = frozenset({"query", "aggs", "aggregations", "runtime_mappings"})
 
 FORMS_HINT = (
@@ -42,8 +49,11 @@ FORMS_HINT = (
     "value_count (a field's values per second), sum (a numeric field's values summed per "
     "second), stats (mean/min/max/count of a numeric field), percentiles with exactly one "
     '"percents" value; optionally inside one terms aggregation (one series per term) or one '
-    "composite aggregation of 2+ terms sources (one series per combination). histogram and "
-    "range only in query_distribution. an optional top-level runtime_mappings defines scripted "
+    "composite aggregation of 2+ terms sources (one series per combination). Or, not an "
+    'Elasticsearch aggregation, in_flight {"field": <duration field>, "unit": s|ms|us|ns, '
+    '"timestamp": start|end, "max_duration": "5m"}: the number of requests in flight, '
+    "time-averaged per query bucket, derived from the documents (each spans its duration; no "
+    "grouping). histogram and range only in query_distribution. an optional top-level runtime_mappings defines scripted "
     "fields usable anywhere in query/aggs. No time range or date_histogram in expr: time is "
     "start/end/step"
 )
@@ -143,6 +153,36 @@ def _range_edges(name: str, params: dict) -> tuple[float, ...]:
     return tuple(sorted(edges))
 
 
+def _in_flight(name: str, params: dict) -> dict[str, Any]:
+    """The in_flight form's parameters. `unit` and `timestamp` have no default: a guessed unit is
+    off by 10^3-10^9 and a guessed timestamp shifts every request by its own duration."""
+    extra = sorted(set(params) - {"field", "unit", "timestamp", "max_duration"})
+    if extra:
+        raise _refuse(
+            f"{name}: in_flight takes field, unit, timestamp and max_duration, not {extra}"
+        )
+    unit = params.get("unit")
+    if unit not in IN_FLIGHT_UNITS_MS:
+        raise _refuse(
+            f"{name}: in_flight needs the duration field's unit: one of "
+            f"{', '.join(IN_FLIGHT_UNITS_MS)} (ECS event.duration is ns)"
+        )
+    ts = params.get("timestamp")
+    if ts not in ("start", "end"):
+        raise _refuse(
+            f"{name}: in_flight needs timestamp: start (the time field marks when the request "
+            "began) or end (when it completed; most access logs)"
+        )
+    text = params.get("max_duration", IN_FLIGHT_MAX_DURATION)
+    try:
+        max_ms = parse_duration(str(text))
+    except ValueError as e:
+        raise _refuse(f"{name}: max_duration {text!r} is not a duration ({e})") from e
+    if max_ms <= 0:
+        raise _refuse(f"{name}: max_duration must be positive")
+    return {"unit_ms": IN_FLIGHT_UNITS_MS[unit], "timestamp": ts, "max_duration_ms": max_ms}
+
+
 def _runtime_mappings(doc: dict) -> dict | None:
     runtime_mappings = doc.get("runtime_mappings")
     if runtime_mappings is None:
@@ -170,6 +210,9 @@ class EsQuery:
     interval: float | None = None  # histogram form
     offset: float = 0.0  # histogram form
     edges: tuple[float, ...] = ()  # range form: finite boundaries named by ranges, ascending
+    unit_ms: float | None = None  # in_flight form: milliseconds per unit of the duration field
+    timestamp: Literal["start", "end"] | None = None  # in_flight: what the time field marks
+    max_duration_ms: int | None = None  # in_flight: how far beyond the range documents are read
     runtime_mappings: dict | None = None  # top-level, sent as written
 
     @classmethod
@@ -213,6 +256,8 @@ class EsQuery:
             )
         if mkind in _DIST_KINDS:
             raise _refuse(f"{mname}: group a {mkind} with query_distribution's by, not terms")
+        if mkind == IN_FLIGHT:
+            raise _refuse(f"{mname}: in_flight takes no terms grouping (one total per step)")
         if msub is not None:
             raise _refuse(f"{mname}: aggregations nest at most terms -> metric")
         return cls._metric(query, mname, mkind, mparams, group, runtime_mappings)
@@ -255,6 +300,8 @@ class EsQuery:
             return cls(form="histogram", interval=float(interval), offset=float(offset), **base)
         if kind == "range":
             return cls(form="range", edges=_range_edges(name, params), **base)
+        if kind == IN_FLIGHT:
+            return cls(form="in_flight", **_in_flight(name, params), **base)
         return cls(form=_METRIC_FORMS[kind], **base)
 
     def with_group(self, fields: Sequence[str], size: int) -> EsQuery:
@@ -281,6 +328,43 @@ class EsQuery:
             out.append((self.field, "aggregatable" if self.form == "field_rate" else "numeric"))
         out.extend((f, "aggregatable") for f in self.group_fields if f not in runtime)
         return out
+
+    def _filter(self, time_field: str, gte: int, lt: int) -> dict:
+        window = {"gte": gte, "lt": lt, "format": "epoch_millis"}
+        return {"bool": {"filter": [self.query, {"range": {time_field: window}}]}}
+
+    def in_flight_count_body(
+        self, lo: int, hi: int, step_ms: int, time_field: str, timeout_s: float
+    ) -> dict:
+        """in_flight, first request: documents per `step_ms` bucket of the time field over
+        [lo, hi) (bucket starts at lo + k step), to bound the volume and plan the slices."""
+        req: dict[str, Any] = {
+            "size": 0, "track_total_hits": False, "timeout": f"{round(timeout_s * 1000)}ms",
+            "query": self._filter(time_field, lo, hi),
+            "aggs": {TIME_AGG: {"date_histogram": {
+                "field": time_field, "fixed_interval": f"{step_ms}ms",
+                "offset": f"+{lo % step_ms}ms", "min_doc_count": 0,
+            }}},
+        }  # fmt: skip
+        if self.runtime_mappings:
+            req["runtime_mappings"] = self.runtime_mappings
+        return req
+
+    def in_flight_docs_body(
+        self, lo: int, hi: int, size: int, time_field: str, timeout_s: float
+    ) -> dict:
+        """in_flight, one slice: the time field and the duration of every document in [lo, hi)
+        (doc values only; `size` is above the slice's counted documents)."""
+        req: dict[str, Any] = {
+            "size": size, "track_total_hits": False, "_source": False,
+            "timeout": f"{round(timeout_s * 1000)}ms",
+            "query": self._filter(time_field, lo, hi),
+            "docvalue_fields": [{"field": time_field, "format": "epoch_millis"}, self.field],
+            "sort": [{time_field: "asc"}],
+        }  # fmt: skip
+        if self.runtime_mappings:
+            req["runtime_mappings"] = self.runtime_mappings
+        return req
 
     def body(self, rng: TimeRange, step_ms: int, time_field: str, timeout_s: float) -> dict:
         """The request sent: the caller's query and aggregation under a date_histogram of

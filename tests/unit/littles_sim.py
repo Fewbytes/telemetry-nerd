@@ -96,7 +96,8 @@ def simulate(
     hsum = np.where(done > 0, lat_sorted[np.maximum(done - 1, 0)], 0.0)
     assert counter in ("arrivals", "completions")
     req = arrived if counter == "arrivals" else done.astype(float)
-    return {"ts": ts, "counter": req, "count": done.astype(float), "sum": hsum, "gauge": gauge}
+    return {"ts": ts, "counter": req, "count": done.astype(float), "sum": hsum, "gauge": gauge,
+            "t_arr": t_arr, "depart": depart}  # fmt: skip
 
 
 def exact_r(
@@ -274,6 +275,8 @@ class EsSimSource(SimSource):
         stats = '"stats"' in expr
         if IN_FLIGHT_FIELD in expr:  # the in-flight gauge: one level per query bucket
             return self._gauge(expr, rng)
+        if '"in_flight"' in expr:  # derived from the requests' spans (the access-log documents)
+            return self._derived(rng, step_ms)
         from telemetry_nerd.sources.esquery import EsQuery
 
         fields = EsQuery.parse(expr).group_fields  # grouped: one series per instance
@@ -304,6 +307,32 @@ class EsSimSource(SimSource):
         sids = sorted({r[1] for r in rows})
         series = pa.table({"series_id": sids, "labels": [labels_json(labels[s]) for s in sids]},
                           schema=SERIES_SCHEMA)  # fmt: skip
+        return FetchResult(buckets, series)
+
+    def _derived(self, rng, step_ms):
+        import pyarrow as pa
+
+        from telemetry_nerd.model.series import (
+            BUCKET_SCHEMA,
+            SERIES_SCHEMA,
+            FetchResult,
+            labels_json,
+            series_id,
+        )
+        from telemetry_nerd.sources.inflight import derive
+
+        start = np.concatenate([m["t_arr"] for m in self.sims.values()]) * 1000 + self.start_ms
+        end = np.concatenate([m["depart"] for m in self.sims.values()]) * 1000 + self.start_ms
+        grid = np.arange(rng.start_ms, rng.end_ms + 1, step_ms, dtype=np.int64)
+        got = derive(start, end, grid, step_ms)
+        sid = series_id(self.name, {})
+        n = got.ends.size
+        buckets = pa.table(
+            {"ts_ms": got.ends, "series_id": [sid] * n, "avg": got.avg, "min": got.min,
+             "max": got.max, "count": [1] * n},
+            schema=BUCKET_SCHEMA,
+        )  # fmt: skip
+        series = pa.table({"series_id": [sid], "labels": [labels_json({})]}, schema=SERIES_SCHEMA)
         return FetchResult(buckets, series)
 
     def _gauge(self, expr, rng):

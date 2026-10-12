@@ -407,15 +407,18 @@ class LittlesOps:
 
     def _es_concurrency(self, concurrency: str) -> EsQuery:
         """concurrency as a native Elasticsearch query: a stats aggregation whose mean per query
-        bucket is the number in flight (L). A rate or sum form is a per-second count, not a level."""
+        bucket is the number in flight (L), or the in_flight form (L derived from access-log
+        documents, each spanning its duration). A rate or sum form is a per-second count, not a
+        level."""
         try:
             q = EsQuery.parse(concurrency)
         except SourceError as e:
             raise ValueError(f"{e} (hint: {e.hint})") from e
-        if q.form != "stats":
+        if q.form not in ("stats", "in_flight"):
             raise ValueError(
                 f"concurrency on an Elasticsearch source is a stats aggregation on the in-flight "
-                f"field (its mean per step is L; got the {q.form} form)"
+                f"field (its mean per step is L) or the in_flight form (derived from the "
+                f"documents' durations); got the {q.form} form"
             )
         if q.group is not None:
             raise ValueError(
@@ -538,9 +541,25 @@ class LittlesOps:
             {"arrival_rate": arrival_rate, "latency": latency, "concurrency": concurrency}, by,
         )  # fmt: skip
         by, conc_by = _by_mapping(by, two_sources=conc_source != source, es=es)
+        derived = None
         if conc_es:
             conc_q = self._es_concurrency(roles["concurrency"])
             conc_name, conc_sel = str(conc_q.field), ""
+            if conc_q.form == "in_flight":
+                if es and conc_source == source:
+                    raise ValueError(
+                        "concurrency derived from the same documents as arrival_rate and latency "
+                        "makes the check circular: L, lambda and W from one set of requests agree "
+                        "by construction (Little's law is an identity for them, up to edge "
+                        "terms), so it could not detect a timer that misses queueing or "
+                        "instances the logs miss (hint: concurrency from an independent "
+                        "instrument, e.g. a Prometheus in-flight gauge or another tier's logs; "
+                        "query the in_flight form alone to see concurrency over time)"
+                    )
+                derived = {
+                    "field": conc_q.field, "timestamp": conc_q.timestamp,
+                    "max_duration_ms": conc_q.max_duration_ms,
+                }  # fmt: skip
         else:
             conc_name, conc_sel = _parse("concurrency", roles["concurrency"])
         if not conc_es and getattr(self._facts(conc_source, conc_name), "type", None) == "counter":
@@ -656,7 +675,7 @@ class LittlesOps:
             "scrape_ms": scrape_ms, "scrape_probe": scrape_note,
             "resolution_ms": res, "arrivals": arrivals, "arrival_is_rate": arr_is_rate,
             "roles": roles, "binding": bound, "exprs": exprs, "warmup": warmup,
-            "matchers": matchers, "es_queries": es_queries,
+            "matchers": matchers, "es_queries": es_queries, "concurrency_derived": derived,
         }  # fmt: skip
         self._last[ds["concurrency"]] = cfg
         return self.summary(cfg)
@@ -742,7 +761,7 @@ class LittlesOps:
                 grid, get("arrival_rate")[0] * arr_s,
                 get("latency_sum")[0] * cfg["unit_factor"] * per_s,
                 get("latency_count")[0] * per_s, conc, conc_n, step, cfg["lookback_ms"],
-                cfg.get("scrape_ms", cfg["resolution_ms"]),
+                cfg.get("scrape_ms", cfg["resolution_ms"]), bool(cfg.get("concurrency_derived")),
             )  # fmt: skip
 
         matched, unmatched = [], []
@@ -907,12 +926,38 @@ class LittlesOps:
         })  # fmt: skip
         fl = [w for w in allw if w.sd_source == "floor"]
         probe = cfg.get("scrape_probe")
+        derived = cfg.get("concurrency_derived")
+        if derived:
+            span = (
+                "[timestamp, timestamp + duration)" if derived["timestamp"] == "start"
+                else "[timestamp − duration, timestamp)"
+            )  # fmt: skip
+            out.append({
+                "name": "concurrency_derived", "status": "assumed",
+                "detail": (
+                    f"L derived from {srcs.get('concurrency')}'s documents, not a gauge: each "
+                    f"request in flight over {span} of {derived['field']} (timestamp = "
+                    f"{derived['timestamp']}, as stated), time-averaged exactly per sub-step (no "
+                    "end-of-interval correction). ASSUMED: every request logged once (no "
+                    "sampling), the duration covers the span the timestamp anchors, requests "
+                    f"longer than {format_duration(derived['max_duration_ms'])} reaching in from "
+                    "outside the range are seen (the dataset's failed spans say where not), and "
+                    "these logs are an instrument independent of the arrival and latency signals "
+                    "(the same requests' timer on both sides makes the check circular)"
+                ),
+            })  # fmt: skip
         out.append({
             "name": "gauge_sampling", "status": "flagged" if fl or probe else "ok",
             "detail": (
-                f"L is the gauge's average over scrapes every {format_duration(cfg['resolution_ms'])}"
-                "; short spikes between scrapes are invisible, so the interval is never narrower "
-                "than a Poisson-occupancy process would need"
+                (
+                    "L is exact per sub-step (every document counted); the Poisson-occupancy "
+                    "floor is kept anyway (conservative)"
+                    if derived else
+                    f"L is the gauge's average over scrapes every "
+                    f"{format_duration(cfg['resolution_ms'])}; short spikes between scrapes are "
+                    "invisible, so the interval is never narrower than a Poisson-occupancy "
+                    "process would need"
+                )
                 + (f" (that floor set the width in {len(fl)} window(s))" if fl else "")
                 + (f"; {probe}" if probe else "")
             ),
