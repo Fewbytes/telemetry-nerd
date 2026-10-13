@@ -78,7 +78,8 @@ def simulate(
     instant reading at the nominal tile edge itself: a gauge on scrapes of its own (another target
     or source; the check's gauge_scrape_phase bound). With `same_scrape` it is read at the
     counters' shifted scrapes instead (one target exports both: VictoriaMetrics' last sample in
-    the tile)."""
+    the tile). `counter_ts`: the counters' actual read times (the span a window's scrapes
+    cover, mvjm)."""
     rates = rates or [(0.0, 2.0)]
     t_arr, start, depart = _requests(seed, duration_s, rates, mu, c, batch, service_cv)
     measured = depart - (t_arr if timer == "arrival" else start)
@@ -101,7 +102,7 @@ def simulate(
     assert counter in ("arrivals", "completions")
     req = arrived if counter == "arrivals" else done.astype(float)
     return {"ts": ts, "counter": req, "count": done.astype(float), "sum": hsum, "gauge": gauge,
-            "t_arr": t_arr, "depart": depart}  # fmt: skip
+            "t_arr": t_arr, "depart": depart, "counter_ts": cts}  # fmt: skip
 
 
 def exact_r(

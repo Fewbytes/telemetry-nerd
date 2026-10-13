@@ -149,17 +149,17 @@ def test_ci95_holds_the_exact_r_of_spike_windows_at_any_tile_phase(same_scrape, 
 
 @pytest.mark.xfail(
     reason=(
-        "mvjm, open (split from p1ht): at severe overload (rho 5) the drain window right after the spike has its "
-        "own lambda/completions rate changing fast tile to tile; with scrape jitter near a full "
-        "tile, term (3)'s sd_count still under-covers the exact R there (~15-25% miss, not 5%). "
-        "Tried: bounding sd_count's fragment rate by the busiest boundary sub-step instead of the "
-        "window mean (_edge_rate) -- it narrowed the gap (24.7% -> 17.3% miss here) but also "
-        "widened ordinary (phase-aligned, rho 1.25) spike windows enough to swallow the drain "
-        "transient in test_littles_service.test_load_spike_is_called_out_as_transient_at_a_peak, "
-        "so it was reverted rather than traded in. The miss here is a real bias (measured ratio "
-        "far below exact R, not just a width problem) from a genuinely non-steady drain, which "
-        "term (2) (edge_straddle) explicitly excludes from its own steady-state model -- the fix "
-        "likely needs a non-steady-aware term, not a bigger Poisson bound on term (3) alone."
+        "mvjm, open (split from p1ht; needs an estimand ruling): at severe overload (rho 5) with "
+        "scrapes jittered +-2.4 s around the tile edges, ci95 holds the exact R of the LABELLED "
+        "drain window ~92% of the time, not 95%. Not a non-steady measurement gap: the same "
+        "intervals hold the exact R of the span the window's scrapes actually cover in 100% of "
+        "them (test_ci95_holds_the_exact_r_of_the_span_the_scrapes_cover_at_severe_overload). "
+        "The counters' span sits up to one series interval off the labelled window and the "
+        "spike's 20/s arrivals land in or out of it. A bias bound for that shift "
+        "(R x g x |x_last - x_first| / (x T), propagated through 1 / (1 - b)) closes it but also "
+        "widens peak windows (latency ramps inside them) enough to swallow 8 transient/special "
+        "cause detections that are valid over the scraped span. Whether ci95 claims the labelled "
+        "window or the scraped span (and whether labels share its bounds) is a design decision."
     ),
     strict=True,
 )
@@ -181,6 +181,32 @@ def test_ci95_still_undercovers_at_extreme_overload_near_a_full_tile_phase():
         total += 1
         covered += w.ci95[0] <= e <= w.ci95[1]
     assert covered / total >= 0.95, (covered, total)
+
+
+def test_ci95_holds_the_exact_r_of_the_span_the_scrapes_cover_at_severe_overload():
+    """mvjm diagnosis: one target (gauge and counters read at the same jittered scrapes) at rho 5.
+    The windows around the spike (the spike's, the drain's, the one after) describe the span
+    between their first and last scrape, up to one series interval off the labelled edges: ci95
+    holds the exact R of THAT span, so the measurement terms are right for what was measured;
+    the labelled window's own R is the open part (the xfail above)."""
+    rates = [(0.0, 2.0), (900.0, 20.0), (960.0, 2.0)]  # rho 0.5 -> 5.0 -> 0.5, a 60 s spike
+    scrape_s, duration_s = 5.0, 1800.0
+    covered = total = 0
+    for seed in range(60):
+        m = simulate(seed, duration_s=duration_s, rates=rates, c=4, scrape_s=scrape_s,
+                     tile_jitter_s=2.4, same_scrape=True)  # fmt: skip
+        r = check(substeps(m, scrape_s=scrape_s), k=12)
+        for w in r.windows[15:18]:  # 900-1080 s
+            if w.ratio is None:
+                continue
+            i, j = round(w.start_ms / 1000 / scrape_s) - 1, round(w.end_ms / 1000 / scrape_s) - 1
+            e = exact_r(seed, m["counter_ts"][i], m["counter_ts"][j], duration_s=duration_s,
+                        rates=rates, c=4)  # fmt: skip
+            if math.isnan(e):
+                continue
+            total += 1
+            covered += w.ci95[0] <= e <= w.ci95[1]
+    assert total >= 150 and covered / total >= 0.95, (covered, total)
 
 
 def test_measurement_interval_holds_no_count_noise_and_the_common_cause_scale_is_apart():
