@@ -128,6 +128,12 @@ readings integrates N half a scrape late: off by (N_end − N_before)·g/2 per c
 (exact for a linear path). Its sign is known, so it is corrected, not bounded: L̂ −= (N at the
 window's last sub-step − N at the sub-step before it)·g / (2T). On the seeded spike runs it cuts
 the rms error of L̂ against the exact ∫N dt from 14.3% to 12.7% (mean error ~0 either way).
+That needs the gauge read at the counters' own scrapes (one target exports both: ASSUMED, stated
+in `window_alignment`). A gauge from another source (`concurrency_source`) is on scrapes of its
+own, read up to one scrape interval g before or after the counters' interval end, so L's span
+may shift against λW's by up to g: a bias bound `gauge_scrape_phase` = |N_end − N_before|·g / T
+(p1ht). On littles_sim (rho 1.5 for 60 s, counters 60 ms past a tile edge, 20 seeds × 3 grids)
+ci95 held the exact R of the spike's and drain's windows in 90% of them without it, ≥ 99% with.
 
 The estimand is the realised path: over a window, L·T = ∫N dt and λ·W·T = Σ measured latencies of
 the window's completions describe the same requests up to those straddling its edges. So the

@@ -169,10 +169,9 @@ async def test_littles_consistent_example(tmp_path):
     assert round(cc["completions_per_window"]) == 2860 and round(100 * cc["rel95"]) == 8
     assert cc["warning"] is None
     status = {a["name"]: a["status"] for a in o["assumptions"]}
-    assert status["arrivals_vs_completions"] == "assumed" and status["warmup"] == "assumed"
-    assert {v for k, v in status.items() if k not in ("arrivals_vs_completions", "warmup")} == {
-        "ok"
-    }
+    assumed = ("arrivals_vs_completions", "warmup", "window_alignment")
+    assert all(status[k] == "assumed" for k in assumed)
+    assert {v for k, v in status.items() if k not in assumed} == {"ok"}
 
 
 async def test_littles_hidden_queueing_example(tmp_path):

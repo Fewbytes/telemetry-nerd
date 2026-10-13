@@ -235,6 +235,13 @@ def _conc_reading(cfg: dict) -> str:
     return "documents" if cfg.get("concurrency_es") else "end"
 
 
+def _same_scrape(cfg: dict) -> bool:
+    """Substeps.conc_same_scrape: a gauge on the signals' own source is ASSUMED read at their
+    scrapes (one target exports both); from another source its scrapes are its own (p1ht)."""
+    srcs = cfg.get("sources") or {}
+    return srcs.get("concurrency", cfg["source"]) == srcs.get("signals", cfg["source"])
+
+
 _LABEL = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _ES_FIELD = re.compile(r"[A-Za-z_@][A-Za-z0-9_@.\-]*")
 #: terms size of the grouping added to ES queries: more groups than this is refused by the
@@ -771,6 +778,7 @@ class LittlesOps:
                 get("latency_sum")[0] * cfg["unit_factor"] * per_s,
                 get("latency_count")[0] * per_s, conc, conc_n, step, cfg["lookback_ms"],
                 cfg.get("scrape_ms", cfg["resolution_ms"]), _conc_reading(cfg),
+                _same_scrape(cfg),
             )  # fmt: skip
 
         matched, unmatched = [], []
@@ -914,16 +922,27 @@ class LittlesOps:
             f"{format_duration(cfg['lookback_ms']) if cfg['lookback_ms'] else '0s'} further "
             "than the gauge reading: a bias bound in the interval"
         )  # fmt: skip
+        reading, same = _conc_reading(cfg), _same_scrape(cfg)
+        scrape = format_duration(cfg.get("scrape_ms") or cfg["resolution_ms"])
         out.append({
             "name": "window_alignment",
-            "status": "assumed" if _conc_reading(cfg) == "documents" else "ok",
+            "status": "assumed" if reading == "documents" or (reading == "end" and same) else "ok",
             "detail": (
                 f"all four signals on one {format_duration(cfg['step_ms'])} grid, windows anchored "
                 "at the requested start (the range is not widened); sub-steps missing any signal "
                 "are dropped from all; "
                 + counters
                 + {
-                    "end": "; the gauge's end-of-interval reading is corrected (trapezoid)",
+                    "end": "; the gauge's end-of-interval reading is corrected (trapezoid)"
+                    + (
+                        ", ASSUMED read at the counters' own scrapes (one target exports both; a "
+                        "gauge scraped on its own schedule would shift L against λW by up to one "
+                        "scrape interval)" if same else
+                        f": the gauge comes from another source, on scrapes of its own, read up "
+                        f"to one scrape interval ({scrape}) before or after the counters' "
+                        "interval end: L's span shifted against λW's, bounded by |N(end) − "
+                        "N(before)| × scrape ÷ window (a bias bound in the interval)"
+                    ),
                     "exact": "; L is an exact time average per sub-step (no end-of-interval "
                     "correction)",
                     "documents": "; L is the mean of the gauge documents in each query bucket "
@@ -933,7 +952,7 @@ class LittlesOps:
                     "times the change in L over the window (a bias bound in the interval); "
                     "ASSUMED: the documents sample the level evenly in time (periodic "
                     "snapshots); documents written per event weight busy moments more",
-                }[_conc_reading(cfg)]
+                }[reading]
                 + "; a load episode "
                 "that starts and ends inside one window balances over it (Little's law holds over "
                 "that window): use windows shorter than the episodes to see them"

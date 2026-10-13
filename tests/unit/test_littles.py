@@ -100,9 +100,56 @@ def test_ci95_holds_the_exact_r_across_tile_phases_near_a_spike(seed_range=range
     assert covered / total >= 0.93, (covered, total)
 
 
+SPIKE_60S = [(0.0, 2.0), (900.0, 6.0), (960.0, 2.0)]  # M/M/4: rho 0.5 -> 1.5 -> 0.5 for 60 s
+
+
+def _episode_coverage(rates, same_scrape: bool, gauge_own_scrapes: bool) -> dict:
+    """Per scrape placement (a constant phase near a full tile, mid-tile, +-jitter): how often
+    ci95 holds the exact R of the spike's and the drain's labelled windows (900-1080 s), over
+    seeds and three window grids."""
+    scrape_s, duration_s = 5.0, 1800.0
+    out = {}
+    for jitter, phase in ((0.15, 4.94), (0.0, 2.5), (2.4, 0.0)):
+        covered = total = 0
+        for seed in range(20):
+            m = simulate(seed, duration_s=duration_s, rates=rates, c=4, scrape_s=scrape_s,
+                         tile_jitter_s=jitter, tile_phase_s=phase, same_scrape=same_scrape)  # fmt: skip
+            sub = dataclasses.replace(
+                substeps(m, scrape_s=scrape_s), conc_same_scrape=not gauge_own_scrapes
+            )
+            for skip in (0, 4, 8):
+                for w in check(sub, k=12, skip=skip, offset=False).windows:
+                    a, b = w.start_ms / 1000, w.end_ms / 1000
+                    if w.ratio is None or not (a < 1080 and b > 900):
+                        continue
+                    e = exact_r(seed, a, b, duration_s=duration_s, rates=rates, c=4)
+                    total += 1
+                    covered += w.ci95[0] <= e <= w.ci95[1]
+        out[(jitter, phase)] = covered / total
+    return out
+
+
+@pytest.mark.parametrize(
+    ("same_scrape", "gauge_own_scrapes"),
+    [(True, False), (False, True)],
+    ids=["one-target", "gauge-on-its-own-scrapes"],
+)
+def test_ci95_holds_the_exact_r_of_spike_windows_at_any_tile_phase(same_scrape, gauge_own_scrapes):
+    """p1ht: the spike's own windows near tile edges. One target exports the gauge and the
+    counters (read at the same scrapes, whatever their phase on the tile grid): the trapezoid
+    holds and ci95 covers the exact R as it is. A gauge on scrapes of its own (another source)
+    is read up to one scrape before or after the counters' interval end: L's span shifts against
+    lambda W's, and at the spike's sharp edges that is not the Poisson fragment term (3) models.
+    Unbounded (the gauge assumed on the counters' scrapes), ci95 held the exact R in 90% of the
+    spike's and drain's windows with the counters 60 ms past a tile edge; with the bias bound
+    |N(end) - N(before)| x scrape / T (gauge_scrape_phase), >= 99% at every placement."""
+    coverage = _episode_coverage(SPIKE_60S, same_scrape, gauge_own_scrapes)
+    assert min(coverage.values()) >= 0.95, coverage
+
+
 @pytest.mark.xfail(
     reason=(
-        "p1ht, open: at severe overload (rho 5) the drain window right after the spike has its "
+        "mvjm, open (split from p1ht): at severe overload (rho 5) the drain window right after the spike has its "
         "own lambda/completions rate changing fast tile to tile; with scrape jitter near a full "
         "tile, term (3)'s sd_count still under-covers the exact R there (~15-25% miss, not 5%). "
         "Tried: bounding sd_count's fragment rate by the busiest boundary sub-step instead of the "

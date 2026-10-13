@@ -82,6 +82,9 @@ class Substeps:
     #: Elasticsearch stats aggregation): centred on the bucket only if they are spread evenly,
     #: so not corrected, and the documents' unknown position in the bucket is a bias bound (sgb.12)
     conc_reading: str = "end"
+    #: an "end" gauge read at the counters' own scrapes (one target exports both: assumed);
+    #: False (a gauge from another source): its scrapes are its own (p1ht), a bias bound
+    conc_same_scrape: bool = True
 
     def __post_init__(self) -> None:
         if self.conc_reading not in CONC_READINGS:
@@ -299,6 +302,13 @@ def judge(
     moved = _endpoint_shift(sub, ok) if sub.conc_reading != "exact" else 0.0
     shift = moved * gap_s / 2 / T if sub.conc_reading == "end" else 0.0
     phase_L = abs(moved) * step_s / 2 / T if sub.conc_reading == "documents" else 0.0
+    # (p1ht) the trapezoid assumes the gauge is read at the scrape that ends the counters'
+    # interval (one target: the same scrape). A gauge on scrapes of its own (another source)
+    # is read up to one scrape interval before or after it: L's span may be shifted against
+    # lambda W's by that much, off by up to |N(end) - N(before)| x scrape / T: a bias bound
+    rel_L = (
+        abs(moved) * gap_s / T if sub.conc_reading == "end" and not sub.conc_same_scrape else 0.0
+    )
     L = max(L - shift, 0.0)
     blk.L, blk.L_correction = L, -shift
     W = S / C
@@ -362,6 +372,8 @@ def judge(
         if delta_s > 0 else 0.0
     )  # fmt: skip
     blk.bias = {"alignment": align}
+    if rel_L:
+        blk.bias["gauge_scrape_phase"] = rel_L / lw  # 4b. a gauge on scrapes of its own
     if sub.conc_reading == "documents":
         blk.bias["gauge_phase"] = phase_L / lw  # 5. the documents' position in the bucket
     bias = _bias(blk)
@@ -376,7 +388,7 @@ def judge(
         blk.verdict = "consistent"
     blk.diff_ci = ((blk.ci95[0] - 1) * lw, (blk.ci95[1] - 1) * lw)
     # per-side intervals (panel bands)
-    half_L = q95 * math.hypot(sd_L, sd_edge * lw) + phase_L
+    half_L = q95 * math.hypot(sd_L, sd_edge * lw) + phase_L + rel_L
     blk.L_ci = (max(0.0, L - half_L), L + half_L)
     half_lw = lw * q95 * (r_lam + r_w) + align * lw / max(R, 1e-12)
     blk.lambda_W_ci = (max(0.0, lw - half_lw), lw + half_lw)
@@ -1161,5 +1173,5 @@ def combine(groups: list[Substeps]) -> Substeps:
         ts, total("arrivals"), total("lat_sum"), total("lat_count"), total("conc"),
         # the summed gauge is sampled at the same scrapes: its samples are not added up
         np.nan_to_num(total("conc_n", np.maximum)), first.step_ms, first.lookback_ms,
-        first.scrape_ms, first.conc_reading,
+        first.scrape_ms, first.conc_reading, first.conc_same_scrape,
     )  # fmt: skip

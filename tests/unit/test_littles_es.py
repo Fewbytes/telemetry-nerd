@@ -90,6 +90,9 @@ def test_an_es_stats_gauge_is_read_as_a_bucket_mean_not_trapezoid_corrected(tmp_
     prom_gauge = _run(svc)
     align = {a["name"]: a for a in prom_gauge["assumptions"]}["window_alignment"]
     assert align["status"] == "ok" and "corrected (trapezoid)" in align["detail"]
+    # p1ht: a gauge from another source is on scrapes of its own: bounded, not assumed aligned
+    assert "scrapes of its own" in align["detail"]
+    assert "gauge_scrape_phase" in prom_gauge["total"]["bias"]
 
 
 def test_es_concurrency_with_a_prometheus_signal_source_is_consistent(tmp_path):

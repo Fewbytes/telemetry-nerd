@@ -67,6 +67,7 @@ def simulate(
     service_cv: float = 1.0,  # service-time CV (1: exponential; else lognormal, mean 1 / mu)
     tile_phase_s: float = 0.0,  # counter grid offset from the gauge/tile grid (czt.2, p1ht)
     tile_jitter_s: float = 0.0,  # +-independent per-tile scrape jitter around that grid (p1ht)
+    same_scrape: bool = False,  # the gauge shares the counters' (shifted) scrapes: one target
 ) -> dict[str, np.ndarray]:
     """`tile_phase_s`/`tile_jitter_s`: the raw scrape that rate()/increase() actually extrapolate
     from is not guaranteed to land exactly on the nominal tile edge (0/0: a VM `increase(x[tile])`
@@ -74,9 +75,10 @@ def simulate(
     as from a query step that is not in phase with the real scrape cadence); `tile_jitter_s` is an
     independent +-uniform offset drawn per tile (real per-scrape timing jitter, as in
     tests/integration/test_queue_sim_vm.py's `rng.randint(-150, 150)`). The gauge is still an
-    instant reading at the nominal tile edge itself (its own query, unaffected). A spike whose rate
-    changes inside the fragment this leaves or borrows is split across tiles at a phase the window
-    grid never sees, which is exactly what term (3) (`sd_count`) has to bound."""
+    instant reading at the nominal tile edge itself: a gauge on scrapes of its own (another target
+    or source; the check's gauge_scrape_phase bound). With `same_scrape` it is read at the
+    counters' shifted scrapes instead (one target exports both: VictoriaMetrics' last sample in
+    the tile)."""
     rates = rates or [(0.0, 2.0)]
     t_arr, start, depart = _requests(seed, duration_s, rates, mu, c, batch, service_cv)
     measured = depart - (t_arr if timer == "arrival" else start)
@@ -93,6 +95,8 @@ def simulate(
     cts = np.clip(cts, 0.0, duration_s)
     arrived = np.searchsorted(t_arr, cts, side="right").astype(float)
     done = np.searchsorted(dep_sorted, cts, side="right")
+    if same_scrape:  # one target: the gauge is read at the counters' scrape too
+        gauge = arrived - done
     hsum = np.where(done > 0, lat_sorted[np.maximum(done - 1, 0)], 0.0)
     assert counter in ("arrivals", "completions")
     req = arrived if counter == "arrivals" else done.astype(float)

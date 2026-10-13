@@ -85,7 +85,8 @@ Read the discrepancy first: L - lambda x W = -0.16 requests (L 22.9 vs lambda x 
 measurement interval -6% to +5%); per window R 0.84-1.16. Verdict `consistent`: no systematic
 offset, no transient window; W is 2.4 s (service plus queueing). Common cause: at about 2860
 requests per window L and lambda W fluctuate +-8% (no warning: below 10%). Assumptions:
-`arrivals_vs_completions` and `warmup` are `assumed`, the rest `ok`; repeat the assumed ones in the
+`arrivals_vs_completions`, `warmup` and `window_alignment` (the gauge read at the counters' own
+scrapes: one target exports both) are `assumed`, the rest `ok`; repeat the assumed ones in the
 answer.
 
 When the latency timer starts only when a worker picks the request up, the queue is invisible to
