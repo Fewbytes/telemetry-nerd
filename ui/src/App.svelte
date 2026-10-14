@@ -1,6 +1,7 @@
 <script lang="ts">
   import { createWorkspace } from "./lib/workspace.svelte";
   import { theme } from "./lib/theme.svelte";
+  import { mode } from "./lib/mode.svelte";
 
   // runtime validation instead of a template cast
   const setTheme = (v: string): void => {
@@ -134,6 +135,14 @@
       </a>
     </nav>
     <div class="header-controls">
+      <span class="mode-toggle" role="group" aria-label="Display mode">
+        {#each ["simple", "nerd"] as const as m (m)}
+          <button
+            type="button" data-mode-toggle={m} aria-pressed={mode.effective === m}
+            class:on={mode.effective === m} onclick={() => mode.setOverride(m)}
+          >{m}</button>
+        {/each}
+      </span>
       <WorkspaceSwitcher active={ws.snapshot?.workspace ?? null} workspaces={ws.workspaces} onopen={ws.refreshWorkspaces} onsaved={ws.applyWorkspace} />
       <button
         type="button" class="export-pdf" data-export-pdf

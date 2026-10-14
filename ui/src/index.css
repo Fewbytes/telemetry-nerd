@@ -96,6 +96,13 @@ a.obj-id:hover { text-decoration: underline; }
   border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px;
 }
 
+.mode-toggle { display: inline-flex; }
+.mode-toggle button {
+  background: var(--bg); color: var(--fg); font: inherit; font-size: 12px;
+  border: 1px solid var(--border); padding: 2px 10px; cursor: pointer;
+}
+.mode-toggle button.on { font-weight: 600; background: var(--grid); }
+
 .header-controls { display: flex; align-items: center; gap: 8px; }
 .build-sha { font-size: 10px; font-family: ui-monospace, monospace; color: var(--muted); cursor: help; }
 .build-sha.mismatch { color: var(--warn); font-weight: 600; }

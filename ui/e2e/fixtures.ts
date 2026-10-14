@@ -44,6 +44,14 @@ export const test = base.extend<Isolation>({
     }
     await use(context);
   },
+  // The default mode is "simple" (bead 2knd). Existing specs assert nerd rendering, so they run in
+  // nerd unless a spec opts out (e.g. test.use / page.evaluate to set tn-mode-default).
+  page: async ({ page }, use) => {
+    await page.addInitScript(() => {
+      if (!localStorage.getItem("tn-mode-default")) localStorage.setItem("tn-mode-default", "nerd");
+    });
+    await use(page);
+  },
   uniq: async ({}, use, testInfo) => {
     const nonce = Math.random().toString(36).slice(2, 8);
     await use(`r${testInfo.repeatEachIndex}t${testInfo.retry}x${Date.now().toString(36)}${nonce}`);
