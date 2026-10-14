@@ -14,8 +14,8 @@ legend, notes/caveats, and a compact set of controls.
 | Topic | Decision |
 |---|---|
 | Principles | **Same truth, less chrome.** Simple mode never drops a caveat or uncertainty that changes the reading (bands, rugs, scoped-claim notes). It hides controls, methodology text and secondary readouts only. |
-| Audience | The same user, for a quick glance. Default mode is nerd. |
-| Scope of state | Global, persisted in `localStorage` (`tn-mode`), modelled on the theme store. Per-panel **peek**: a simple panel can expand to nerd rendering without changing the global mode (session-only). |
+| Audience | The same user for a quick glance, and users who prefer a simple UI. **Default mode is simple**, changeable in user settings. |
+| Scope of state | Two layers. **Default mode** (`simple` unless changed) is a user setting persisted in `localStorage` (`tn-mode-default`). The header toggle is a **session override** (`sessionStorage`, `tn-mode`): effective mode = override ?? default. Modelled on the theme store. Per-panel **peek**: a simple panel can expand to nerd rendering without changing the global mode (session-only). |
 | Beyond panels | Panels, groups, **Sidebar and HighlightStrip** get a slim form. Catalog and Proposals views unchanged. PDF export unchanged (always full). |
 | Mechanism | Mode store + conditional rendering + extraction (approach B). Not CSS-only (hidden parts would still compute/fetch; no compact toolbar possible). Not a separate SimplePanel (would duplicate plot wiring and drift). |
 
@@ -46,9 +46,10 @@ explanatory titles. Hidden in simple mode: reframe, follow-up, marginal referenc
 ## Architecture
 
 - `ui/src/lib/mode.svelte.ts` — `ModeStore` like `ThemeStore`: `setting: "simple" | "nerd"`,
-  `localStorage` key `tn-mode`, default `nerd`, DOM guards for node-env vitest, sets
+  `localStorage` `tn-mode-default` (default `simple`) plus `sessionStorage` `tn-mode` override, DOM guards for node-env vitest, sets
   `data-mode` on `<html>` (for CSS on trivially-hidden chrome and for e2e/screenshot hooks).
-- `App.svelte` header-controls: the toggle.
+- `App.svelte` header-controls: the toggle (sets the session override).
+- `SettingsMenu.svelte` (new; no settings surface exists today): a header popover with a "Default mode" select, the first user setting. Theme could move there later; out of scope.
 - `Panel.svelte` (1180 lines) is refactored **first, with no behaviour change**: the control rows
   under the plot, and the shown/query/notes block, are extracted into focused components
   (`NerdControls`, `ShownBlock`, `NotesList`) with explicit props and handler callbacks. The
@@ -62,11 +63,11 @@ explanatory titles. Hidden in simple mode: reframe, follow-up, marginal referenc
 ## Out of scope
 
 Per-workspace or daemon-synced mode; PDF export following the mode; Catalog/Proposals changes;
-changing what nerd mode shows.
+changing what nerd mode shows; moving the theme select into settings.
 
 ## Testing
 
-- Unit: mode store (default, persistence, bad stored value, no-window), toolbar handler wiring,
+- Unit: mode store (default simple, override beats default, persistence, bad stored value, no-window), toolbar handler wiring,
   compact notes.
 - UI (vitest): both modes per component.
 - e2e (Playwright on the fixture PromQL source): toggle persists across reload; nerd unchanged;
@@ -76,7 +77,8 @@ changing what nerd mode shows.
 
 ## Work breakdown (children of `2knd`)
 
-1. `.1` Mode store + header toggle + `data-mode`
+1. `.1` Mode store (default + session override) + header toggle + `data-mode`
+   `.10` User settings menu with default-mode select — needs .1
 2. `.2` Refactor: extract NerdControls / ShownBlock / NotesList from Panel (Opus)
 3. `.3` Simple panel chrome (header, hidden blocks, range·step line) — needs .1, .2
 4. `.4` SimpleToolbar — needs .2
