@@ -1,0 +1,28 @@
+<script lang="ts">
+  // what the panel shows (dataset, step, provenance, time range) and the query behind it
+  import type { PanelData } from "../../lib/api";
+  import { describeShown, provenanceParts, provenanceText } from "../../lib/panelNotes";
+  import { fmtStep } from "../../lib/format";
+
+  let { data, heatView, fleetView, openCode }: {
+    data: PanelData;
+    heatView: "heatmap" | "percentiles";
+    fleetView: "band" | "quantiles" | "heat" | "multiples";
+    openCode: ((id: string) => void) | undefined;
+  } = $props();
+
+  const fmtTime = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z");
+  const parts = $derived(provenanceParts(data.dataset));
+</script>
+
+<div class="shown">
+  <p class="what">{describeShown(data.dataset, fmtStep(data.effective_step_ms), data.kind, "mark" in data ? (data.kind === "heatmap" ? heatView === "percentiles" ? "percentiles" : "" : data.mark) : "", fleetView, data.kind === "fleet" && (data.clusters?.length ?? 0) >= 2)}</p>
+  <p class="where">
+    <span data-provenance>{#if parts}{@const [pre, node, post] = parts}{pre}<button type="button" class="ref-chip obj-id" data-code-link={node} title="View the code of {node}" onclick={() => openCode?.(node)}>{node}</button>{post}{:else}{provenanceText(data.dataset)}{/if}</span> · {fmtTime(data.dataset.start_ms)} – {fmtTime(data.dataset.end_ms)} · step
+        {fmtStep(data.effective_step_ms)}
+  </p>
+</div>
+<details class="query">
+  <summary>Query</summary>
+  <pre><code>{data.dataset.expr}</code></pre>
+</details>

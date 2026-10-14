@@ -10,7 +10,7 @@
   import { sliceSeries, type PreviewRender } from "./chart/preview";
   import { rgba, seriesName, toUplot } from "./chart/toUplot";
   import { drawRug, facetTop, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, rugMoreLabel, type RugCell } from "./chart/rug";
-  import { describeShown, intervalLegend, panelNotes, provenanceParts, provenanceText } from "./lib/panelNotes";
+  import { intervalLegend, panelNotes } from "./lib/panelNotes";
   import { panelLoadingState } from "./lib/loading";
   import { getContext } from "svelte";
   import { windowBadge } from "./lib/coverage";
@@ -37,6 +37,7 @@
   import SelectionMenu from "./components/SelectionMenu.svelte";
   import PanelThread from "./components/PanelThread.svelte";
   import NotesList from "./components/panel/NotesList.svelte";
+  import ShownBlock from "./components/panel/ShownBlock.svelte";
   import PinButton from "./components/PinButton.svelte";
   import MetricCard from "./components/MetricCard.svelte";
   import HeatmapPlot from "./components/HeatmapPlot.svelte";
@@ -211,8 +212,6 @@
   // so "still fetching" never looks like "stalled" or "no data"
   let loading = $state(false);
   const loadState = $derived(panelLoadingState(loading, !!data));
-
-  const fmtTime = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z");
 
   let requestId = 0;
   const load = (width: number) => {
@@ -1136,18 +1135,7 @@
     </div>
   {/if}
   {#if data}
-    {@const parts = provenanceParts(data.dataset)}
-    <div class="shown">
-      <p class="what">{describeShown(data.dataset, fmtStep(data.effective_step_ms), data.kind, "mark" in data ? (data.kind === "heatmap" ? heatView === "percentiles" ? "percentiles" : "" : data.mark) : "", fleetView, data.kind === "fleet" && (data.clusters?.length ?? 0) >= 2)}</p>
-      <p class="where">
-        <span data-provenance>{#if parts}{@const [pre, node, post] = parts}{pre}<button type="button" class="ref-chip obj-id" data-code-link={node} title="View the code of {node}" onclick={() => openCode?.(node)}>{node}</button>{post}{:else}{provenanceText(data.dataset)}{/if}</span> · {fmtTime(data.dataset.start_ms)} – {fmtTime(data.dataset.end_ms)} · step
-        {fmtStep(data.effective_step_ms)}
-      </p>
-    </div>
-    <details class="query">
-      <summary>Query</summary>
-      <pre><code>{data.dataset.expr}</code></pre>
-    </details>
+    <ShownBlock {data} {heatView} {fleetView} {openCode} />
     <NotesList {notes} {activeNotes} {setFocus} />
   {/if}
   {#if data}
