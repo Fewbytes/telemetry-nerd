@@ -11,11 +11,10 @@
   import { rgba, seriesName, toUplot } from "./chart/toUplot";
   import { drawRug, facetTop, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, rugMoreLabel, type RugCell } from "./chart/rug";
   import { describeShown, intervalLegend, panelNotes, provenanceParts, provenanceText } from "./lib/panelNotes";
-  import { sourceText } from "./lib/sources";
   import { panelLoadingState } from "./lib/loading";
   import { getContext } from "svelte";
   import { windowBadge } from "./lib/coverage";
-  import { focusRects, hasFocus, notesAt, unknownReasons } from "./chart/focus";
+  import { focusRects, notesAt, unknownReasons } from "./chart/focus";
   import ChartTip from "./components/ChartTip.svelte";
   import { fmtRange, fmtSI, fmtStep } from "./lib/format";
   import { axisGutterSize, placeTip, type HoverTip } from "./chart/plotKit";
@@ -37,6 +36,7 @@
   import { plotColors, theme } from "./lib/theme.svelte";
   import SelectionMenu from "./components/SelectionMenu.svelte";
   import PanelThread from "./components/PanelThread.svelte";
+  import NotesList from "./components/panel/NotesList.svelte";
   import PinButton from "./components/PinButton.svelte";
   import MetricCard from "./components/MetricCard.svelte";
   import HeatmapPlot from "./components/HeatmapPlot.svelte";
@@ -1148,23 +1148,7 @@
       <summary>Query</summary>
       <pre><code>{data.dataset.expr}</code></pre>
     </details>
-    {#if notes.length > 0}
-      <ul class="notes" aria-label="Notes and warnings">
-        {#each notes as note (note.key)}
-          <!-- svelte-ignore a11y_no_noninteractive_tabindex (notes with a where take focus so keyboard users get the same graph highlight as hover) -->
-          <li
-            class="note {note.kind}" class:active={activeNotes.includes(note.key)} data-note={note.key}
-            tabindex={hasFocus(note) ? 0 : undefined}
-            onmouseenter={() => setFocus(hasFocus(note) ? note.where ?? null : null)} onmouseleave={() => setFocus(null)}
-            onfocus={() => setFocus(hasFocus(note) ? note.where ?? null : null)} onblur={() => setFocus(null)}
-          >
-            <span class="tag">{note.kind === "caveat" ? "Caveat" : "Note"}</span>
-            {#if note.source}<span class="tag source" title="source of variation (spec §5.4)">{sourceText(note.source)}</span>{/if}
-            <span class="note-text">{note.text}</span>
-          </li>
-        {/each}
-      </ul>
-    {/if}
+    <NotesList {notes} {activeNotes} {setFocus} />
   {/if}
   {#if data}
     <MetricCard panelId={panel.id} />
