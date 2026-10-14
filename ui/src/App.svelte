@@ -12,6 +12,7 @@
   import { layoutItems } from "./lib/groups";
   import Sidebar from "./components/Sidebar.svelte";
   import ConnectionPill from "./components/ConnectionPill.svelte";
+  import SettingsMenu from "./components/SettingsMenu.svelte";
   import WorkspaceSwitcher from "./components/WorkspaceSwitcher.svelte";
   import CatalogView from "./components/CatalogView.svelte";
   import ProposalsView from "./components/ProposalsView.svelte";
@@ -151,6 +152,7 @@
         onclick={exportPdf}
       >{exportBusy ? "Exporting…" : "Export PDF"}</button>
       <ConnectionPill daemon={ws.daemon} presence={ws.presence} />
+      <SettingsMenu />
       <span
         class="build-sha"
         class:mismatch={daemonCommit !== null && daemonCommit !== "unknown" && daemonCommit !== __GIT_SHA__}
