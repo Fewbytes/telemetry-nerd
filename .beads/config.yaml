@@ -74,3 +74,5 @@
 # Durable events journal (bd_events_journal): records every committed issue mutation as an
 # ordered, replayable row. Retention is automatic (7 days / 100k rows by default).
 events-journal: true
+sync:
+    remote: "git@github.com:Fewbytes/telemetry-nerd.git"
