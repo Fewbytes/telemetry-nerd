@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import {
@@ -455,6 +455,12 @@
   // session-only: a simple panel can show its nerd rendering without changing the global mode
   let peeked = $state(false);
   const simple = $derived(mode.effective === "simple" && !peeked);
+  // the flip swaps the control that was clicked (and the menu's own refocus lands on a detached node), so hand focus to its counterpart
+  async function setPeek(on: boolean) {
+    peeked = on;
+    await tick();
+    sectionEl?.querySelector<HTMLElement>(on ? "[data-peek=simple]" : ".overflow > button")?.focus();
+  }
   const marg = $derived(!simple && data?.kind === "time" && !indexedOn ? (data.marginal ?? null) : null);
   const margW = $derived(marg ? MARGINAL_W : 0);
   // refetch panel data when what the server computes for it changes (marginal, indexed baseline)
@@ -818,14 +824,14 @@
     {#if mode.effective === "simple" && peeked}
       <button
         type="button" class="peek" data-peek="simple"
-        title="Back to the simple view of this panel" onclick={() => (peeked = false)}
+        title="Back to the simple view of this panel" onclick={() => setPeek(false)}
       >Simple view</button>
     {/if}
     {#if simple}
       <OverflowMenu label="Panel actions">
         <button
           type="button" class="export" data-peek="nerd"
-          title="Show this panel's full nerd rendering, until you switch it back" onclick={() => (peeked = true)}
+          title="Show this panel's full nerd rendering, until you switch it back" onclick={() => setPeek(true)}
         >Show nerd view</button>
         <button
           type="button" class="export" data-export="png" disabled={!!exportBusy || collapsed}

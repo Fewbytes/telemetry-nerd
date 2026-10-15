@@ -25,6 +25,7 @@ test("simple mode: one panel can peek at its nerd view without changing the glob
   await expect(elA.locator(".legend.time-range")).toBeVisible();
   await expect(elA.locator("[data-simple-toolbar]")).toHaveCount(0);
   await expect(elA.locator("[data-peek=simple]")).toBeVisible();
+  await expect(elA.locator("[data-peek=simple]")).toBeFocused();
   // the other panel and the global mode are untouched
   await expect(elB.locator("[data-simple-toolbar]")).toBeVisible();
   await expect(elB.locator(".obj-id")).toHaveCount(0);
@@ -35,6 +36,7 @@ test("simple mode: one panel can peek at its nerd view without changing the glob
   await expect(elA.locator("[data-simple-toolbar]")).toBeVisible();
   await expect(elA.locator(".obj-id")).toHaveCount(0);
   await expect(elA.locator("[data-peek=simple]")).toHaveCount(0);
+  await expect(elA.getByRole("button", { name: "Panel actions" })).toBeFocused();
 
   // session-only: a reload forgets the peek
   await elA.getByRole("button", { name: "Panel actions" }).click();

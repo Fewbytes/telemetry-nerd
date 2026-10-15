@@ -153,3 +153,46 @@ test("show_binding: RED and USE groups, linked crosshair and brush, gap card, bo
     await expect(page.locator(`[data-panel-id="${red.roles[role].panel}"]`)).toHaveCount(0);
   }
 });
+
+test("show_binding: a member peeks at its nerd view in simple mode, the group stays linked", async ({ page, request, uniq }) => {
+  const P = `tn_e2e_2knd6${uniq}`;
+  test.setTimeout(120_000);
+  const put = await request.post(`${FIXTURE}/api/v1/import/prometheus`, { data: exposition(P) });
+  expect(put.ok()).toBeTruthy();
+  await request.get(`${FIXTURE}/internal/force_flush`);
+  await mcpTool(request, "source_learn", { source: "default" });
+  await mcpTool(request, "catalog_write", {
+    source: "default",
+    claims: [["http_requests_total", "counter"], ["http_request_duration_seconds_bucket", "counter"]].map(([m, t]) => ({
+      metric: `${P}_${m}`, field: "type", value: t, confidence: 0.9, basis: "e2e fixture",
+    })),
+  });
+  await mcpTool(request, "catalog_bind", {
+    source: "default", kind: "RED", key: `${P}:checkout`, confidence: 0.8, basis: "e2e fixture", join_on: ["service"],
+    roles: { rate: `${P}_http_requests_total`, errors: `${P}_http_requests_total`, duration: `${P}_http_request_duration_seconds_bucket` },
+  });
+  const red = await mcpTool(request, "show_binding", {
+    kind: "RED", key: `${P}:checkout`, range: "3h", error_matcher: 'code=~"5.."',
+  });
+  await page.setViewportSize({ width: 1200, height: 1600 });
+  await page.goto(`/#/group/${red.group}`);
+  await page.locator("[data-mode-toggle=simple]").click();
+  const g = page.locator(`[data-group-id="${red.group}"]`);
+  const rate = g.locator('[data-role="rate"]');
+  const errors = g.locator('[data-role="errors"]');
+  for (const r of [rate, errors]) await expect(r.locator(".u-over")).toBeVisible();
+
+  await rate.getByRole("button", { name: "Panel actions" }).click();
+  await rate.locator("[data-peek=nerd]").click();
+  await expect(rate.locator("[data-peek=simple]")).toBeVisible();
+  await expect(rate.locator(".obj-id")).toBeVisible();
+  await expect(errors.locator(".obj-id")).toHaveCount(0);
+  await expect(errors.locator("[data-peek]")).toHaveCount(0);
+  for (const r of ["rate", "errors", "duration"]) await expect(g.locator(`[data-role="${r}"] .panel`)).toBeVisible();
+
+  // linked crosshair still reaches the sibling from the peeked member
+  await rate.locator(".u-over").scrollIntoViewIfNeeded();
+  const over = (await rate.locator(".u-over").boundingBox())!;
+  await page.mouse.move(over.x + over.width * 0.6, over.y + over.height / 2);
+  await expect(errors.locator("[data-xhair]")).toHaveCount(1);
+});
