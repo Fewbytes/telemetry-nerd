@@ -59,16 +59,17 @@ a.obj-id:hover { text-decoration: underline; }
 .simple-meta { margin: 0.25rem 0; color: var(--muted); font-size: 0.85em; }
 .overflow { position: relative; display: inline-block; }
 .overflow-pop button { white-space: nowrap; text-align: left; }
-.overflow-pop { position: absolute; right: 0; top: 100%; z-index: 20; display: flex; flex-direction: column; gap: 2px; padding: 4px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.15); }
+/* simple mode's popovers: the panel's overflow menu, the toolbar's layers list */
+.overflow-pop, .layers-pop { position: absolute; right: 0; z-index: 20; display: flex; flex-direction: column; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.15); }
+.overflow-pop { top: 100%; gap: 2px; padding: 4px; }
 .simple-what { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.85em; }
-.simple-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 4px; }
-.simple-toolbar { font-size: 11px; color: var(--muted); }
+.simple-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 4px; font-size: 11px; color: var(--muted); }
 .simple-toolbar .spacer { flex: 1; }
 .simple-toolbar button, .simple-toolbar select, .simple-toolbar summary { font: inherit; padding: 0 6px; border: 1px solid var(--border); background: none; color: var(--muted); border-radius: 4px; cursor: pointer; }
 .simple-toolbar select option { background: var(--bg); color: var(--fg); }
 .simple-toolbar button:disabled, .simple-toolbar select:disabled { opacity: 0.4; cursor: not-allowed; }
 .layers { position: relative; }
-.layers-pop { position: absolute; right: 0; z-index: 20; padding: 6px; white-space: nowrap; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 16px rgb(0 0 0 / 0.15); display: flex; flex-direction: column; gap: 4px; }
+.layers-pop { padding: 6px; white-space: nowrap; gap: 4px; }
 .panel .shown p { margin: 0; }
 .panel .shown .where { font-size: 12px; color: var(--muted); }
 .panel details.query { margin-top: 6px; font-size: 12px; color: var(--muted); }
@@ -120,23 +121,17 @@ button.compact-text:hover { color: var(--fg); }
 .app-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 12px; }
 .app-header .brand { display: flex; align-items: center; gap: 10px; white-space: nowrap; }
 .app-header .brand img { width: 32px; height: 32px; flex: none; }
-.theme-toggle {
-  background: var(--bg); color: var(--fg); font: inherit; font-size: 12px;
-  border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px;
+.theme-toggle, .mode-toggle button, .settings > button {
+  background: var(--bg); color: var(--fg); font: inherit; font-size: 12px; border: 1px solid var(--border);
 }
+.theme-toggle { border-radius: 4px; padding: 2px 6px; }
 
 .mode-toggle { display: inline-flex; }
-.mode-toggle button {
-  background: var(--bg); color: var(--fg); font: inherit; font-size: 12px;
-  border: 1px solid var(--border); padding: 2px 10px; cursor: pointer;
-}
+.mode-toggle button { padding: 2px 10px; cursor: pointer; }
 .mode-toggle button.on { font-weight: 600; background: var(--grid); }
 .mode-toggle button:first-child { border-radius: 4px 0 0 4px; }
 .mode-toggle button:last-child { border-radius: 0 4px 4px 0; margin-left: -1px; }
-.settings > button {
-  background: var(--bg); color: var(--fg); font: inherit; font-size: 12px;
-  border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; cursor: pointer;
-}
+.settings > button { border-radius: 4px; padding: 2px 8px; cursor: pointer; }
 
 /* the header has more controls than one row holds on narrow windows: wrap whole controls, never their labels */
 .header-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; margin-left: auto; align-items: center; gap: 6px 8px; }
