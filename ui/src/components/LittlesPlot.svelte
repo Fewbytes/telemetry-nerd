@@ -224,14 +224,14 @@
       {/if}
     </div>
     {#if warning}<div class="warn" data-littles-common-cause>{warning}</div>{/if}
-    <div class="legend">{#if compact}<CompactText text={littlesLegend(series, data.window_ms)} />{:else}{littlesLegend(series, data.window_ms)}{/if}</div>
+    <div class="legend"><CompactText text={littlesLegend(series, data.window_ms)} {compact} /></div>
   {:else}
     <div class="plot raw" data-littles-raw>
       <div bind:this={rawThroughput}></div>
       <div bind:this={rawLatency}></div>
       <div bind:this={rawConcurrency}></div>
     </div>
-    <div class="legend">{#if compact}<CompactText text={RAW_LEGEND} />{:else}{RAW_LEGEND}{/if}</div>
+    <div class="legend"><CompactText text={RAW_LEGEND} {compact} /></div>
   {/if}
 </div>
 

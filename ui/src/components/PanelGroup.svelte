@@ -92,7 +92,7 @@
         {/if}
       </div>
       {#if r?.notes?.length}
-        <ul class="role-notes">{#each r.notes as n (n)}<li>{#if simple}<CompactText text={n} />{:else}{n}{/if}</li>{/each}</ul>
+        <ul class="role-notes">{#each r.notes as n (n)}<li><CompactText text={n} compact={simple} /></li>{/each}</ul>
       {/if}
       {#if p && !p.closed}
         <PanelView panel={p} {annotations} {threads} />

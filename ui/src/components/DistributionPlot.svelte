@@ -383,11 +383,7 @@
       </div>
     {/each}
     {#if gap}
-      {#if compact}
-        <div><CompactText text={`max |ΔF| at bucket edges = ${gap.gap.toFixed(2)} at ${fmtValue(gap.at, unit)} (lower bound, edges where both ECDFs are exact)`} /></div>
-      {:else}
-      <div>max |ΔF| at bucket edges = {gap.gap.toFixed(2)} at {fmtValue(gap.at, unit)} (lower bound, edges where both ECDFs are exact)</div>
-      {/if}
+      <div><CompactText text={`max |ΔF| at bucket edges = ${gap.gap.toFixed(2)} at ${fmtValue(gap.at, unit)} (lower bound, edges where both ECDFs are exact)`} {compact} /></div>
     {/if}
     {#if (view === "histogram" || view === "ecdf") && thresh !== null}
       {#each readout(thresh) as line (line)}<div>threshold: {line}</div>{/each}

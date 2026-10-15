@@ -114,14 +114,10 @@
     {/if}
   </div>
   <div class="legend">
-    {#if compact}
-      <!-- the run-rules checkbox is an analysis knob (the peek has it); the legend says whether they are on -->
-      <CompactText text={spcLegend(series, data.baseline, supplementary)} />
-    {:else}
-    {spcLegend(series, data.baseline, supplementary)}
-    {#if hasSupplementary}
+    <CompactText text={spcLegend(series, data.baseline, supplementary)} {compact} />
+    <!-- simple mode: the run-rules checkbox is an analysis knob (the peek has it); the legend says whether they are on -->
+    {#if hasSupplementary && !compact}
       <label class="supp"><input type="checkbox" bind:checked={supplementary} data-spc-supplementary /> supplementary run rules</label>
-    {/if}
     {/if}
   </div>
 </div>

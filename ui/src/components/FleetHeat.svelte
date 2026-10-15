@@ -122,7 +122,7 @@
       <span>{bar.hi}</span>
       <span class="ends">purple: below the fleet · 0: at the median · orange: above</span>
     </div>
-    <div class="legend">{#if compact}<CompactText text={heatLegendText(heat, heat.rows.length)} />{:else}{heatLegendText(heat, heat.rows.length)}{/if}</div>
+    <div class="legend"><CompactText text={heatLegendText(heat, heat.rows.length)} {compact} /></div>
   </div>
 {:else}
   <div class="legend" data-fleet-heat-missing>no member × time matrix in this payload</div>

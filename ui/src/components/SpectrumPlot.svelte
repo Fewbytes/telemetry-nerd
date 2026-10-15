@@ -89,6 +89,6 @@
 <div class="spectrum" data-spectrum-peaks={significant}>
   <div bind:this={el}></div>
   <div class="legend">
-    {#if compact}<CompactText text={spectrumLegend(data.effective_step_ms, significant, redNoise)} />{:else}{spectrumLegend(data.effective_step_ms, significant, redNoise)}{/if}
+    <CompactText text={spectrumLegend(data.effective_step_ms, significant, redNoise)} {compact} />
   </div>
 </div>

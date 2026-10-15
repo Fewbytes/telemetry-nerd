@@ -1031,7 +1031,7 @@
         <SpectrogramPlot data={sg} series={s} width={fetchWidth} height={chartHeight}
           onRendered={(ms, cells) => onFacetRendered(i, sg.series.length, ms, cells, chartHeight)} />
       {/each}
-      <div class="legend">{#if simple}<CompactText text={spectrogramLegend(sg)} />{:else}{spectrogramLegend(sg)}{/if}</div>
+      <div class="legend"><CompactText text={spectrogramLegend(sg)} compact={simple} /></div>
     {/if}
     {#if data && data.kind === "histogram"}
       {@const hg = data}

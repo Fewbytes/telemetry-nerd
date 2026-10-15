@@ -82,7 +82,7 @@
     {/if}
   </div>
   <div bind:this={el}></div>
-  <div class="legend">{#if compact}<CompactText text={seasonalLegend(series, data.tz, view)} />{:else}{seasonalLegend(series, data.tz, view)}{/if}</div>
+  <div class="legend"><CompactText text={seasonalLegend(series, data.tz, view)} {compact} /></div>
   {#if series.reasons.length && series.verdict !== "insufficient_history"}
     <ul class="reasons">{#each series.reasons as r, i (i)}<li>{r}</li>{/each}</ul>
   {/if}

@@ -16,7 +16,7 @@
 
 <!-- a sentence ending in the bin-scheme list (le buckets) is one line, opened in place; every other
      sentence is the aggregation/estimator basis and stays in full -->
-<p class="simple-what" data-simple-what>{#if shownWhatCompact(data, heatView)}<CompactText text={shownWhat(data, heatView, fleetView)} />{:else}{shownWhat(data, heatView, fleetView)}{/if}</p>
+<p class="simple-what" data-simple-what><CompactText text={shownWhat(data, heatView, fleetView)} compact={shownWhatCompact(data, heatView)} /></p>
 {#if data.kind === "time" && data.series.some((s) => s.lo)}
   {@const bandLegend = intervalLegend(data.dataset)}
   {#if bandLegend}<div class="legend" data-interval-legend>band: {bandLegend}</div>{/if}

@@ -250,7 +250,7 @@
   {:else if view === "multiples"}
     <FleetSmallMultiples {data} {width} {range} {onRendered} />
   {:else}
-    <div class="legend" data-fleet-legend>{#if compact}<CompactText text={fleetLegend(data, bv)} />{:else}{fleetLegend(data, bv)}{/if}</div>
+    <div class="legend" data-fleet-legend><CompactText text={fleetLegend(data, bv)} {compact} /></div>
     {#if data.outliers.length}
       <ul class="outliers">
         {#each data.outliers as o, i (o.id)}
