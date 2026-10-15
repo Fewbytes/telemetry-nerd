@@ -21,7 +21,7 @@ export interface ControlProps {
   previewRender: PreviewRender | null;
   viewNow: DataViewName | null;
   previewEl: HTMLDivElement | null;
-  toggleOverlay: (key: "normal" | "limit" | "ghost", on: boolean) => void;
+  toggleOverlay: (key: "normal" | "limit" | "ghost", on: boolean) => Promise<void>;
   pick: (body: Parameters<typeof selectYView>[1], optimistic: YView | null) => void;
   pickIndexed: (baseline: "window" | "previous" | "week") => void;
   pickView: (v: DataViewName) => void;

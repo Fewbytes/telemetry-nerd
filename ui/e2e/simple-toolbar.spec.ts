@@ -85,6 +85,52 @@ test("simple mode: picking band… keeps it selected until Esc cancels the pick"
   await expect(y.locator("option:checked")).toHaveText("auto");
 });
 
+test("simple mode: band… can be picked again after Esc and after a band is set", async ({ page }) => {
+  const panel = await seedPanel(page.request, "simple: band pick twice");
+  await page.goto("/");
+  const el = page.locator(`[data-panel-id="${panel.id}"]`);
+  await expect(el.locator("canvas").first()).toBeVisible();
+  await page.locator("[data-mode-toggle=simple]").click();
+
+  const bar = el.locator("[data-simple-toolbar]");
+  const y = bar.getByLabel("Y-axis view");
+  const hint = bar.getByText("drag vertically on the plot · Esc cancels");
+  await y.selectOption({ label: "band…" });
+  await expect(hint).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(hint).toHaveCount(0);
+  await y.selectOption({ label: "band…" }); // the pick starts again
+  await expect(hint).toBeVisible();
+
+  const box = (await el.locator(".plot").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + 40);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + 120, { steps: 5 });
+  await page.mouse.up();
+  await expect(el.locator("[data-y-badge]")).toContainText("y band");
+  await expect(hint).toHaveCount(0);
+  await expect(y.locator("option:checked")).toHaveText("band…");
+  await y.selectOption({ label: "band… again" }); // the shown option cannot fire a change
+  await expect(hint).toBeVisible();
+  await expect(y.locator("option:checked")).toHaveText("band…");
+});
+
+test("simple mode: a failed layer toggle shows the real state again", async ({ page }) => {
+  const panel = await seedPanel(page.request, "simple: layer toggle fails");
+  await page.goto("/");
+  const el = page.locator(`[data-panel-id="${panel.id}"]`);
+  await expect(el.locator("canvas").first()).toBeVisible();
+  await page.locator("[data-mode-toggle=simple]").click();
+  const bar = el.locator("[data-simple-toolbar]");
+  await bar.getByLabel("Reference layers").click();
+  const normal = bar.getByRole("checkbox", { name: "normal band" });
+  await expect(normal).toBeChecked();
+  await page.route(`**/api/panels/${panel.id}/overlays`, (r) => r.fulfill({ status: 500, body: "boom" }));
+  await normal.uncheck();
+  await expect(normal).toBeChecked();
+  await expect(normal).toBeEnabled();
+});
+
 test("simple mode: a filtered panel keeps the filter-edge caveat next to its data view", async ({ page, request }) => {
   const q = await request.post("/api/query", {
     data: { expr: "tn_demo_latency_seconds", start: "now-3h", end: "now-10m", step: "1m" },

@@ -29,7 +29,16 @@
   const chips = $derived(data?.kind === "time" && data.overlays?.flags ? overlayChips(data.overlays) : []);
   const onChips = $derived(chips.filter((c) => c.on).length);
 
+  // a committed band is the select's value, and re-selecting the shown option fires no change: one
+  // extra option starts a new pick from there
+  const REPICK = "band:repick";
+  const bandCommitted = $derived(!bandPick && !!activeOffer && activeOffer.mode === "band");
+
   const applyView = (key: string) => {
+    if (key === REPICK) {
+      bandPick = true;
+      return;
+    }
     const v = key.startsWith("s:") ? suggestions.find((s) => s.id === key.slice(2)) : undefined;
     if (v) return pick({ suggestion: v.id! }, v);
     const o = offers.find((x) => yViewKey(x) === key);
@@ -61,6 +70,7 @@
         {#each offers as o (yViewKey(o))}
           <option value={yViewKey(o)} disabled={!o.enabled} title={o.title}>{o.label}{o.suggest ? " (suggested)" : ""}</option>
         {/each}
+        {#if bandCommitted}<option value={REPICK}>band… again</option>{/if}
         {#if suggestions.length}
           <optgroup label="Claude suggests">
             {#each suggestions as v (v.id)}
@@ -86,16 +96,18 @@
       <details class="layers">
         <summary aria-label="Reference layers">Layers{onChips ? ` (${onChips})` : ""}</summary>
         <div class="layers-pop">
-          <!-- checked is one-way: remount once a request settles so a failed toggle shows the real state -->
-          {#key overlayBusy}
-            {#each chips as c (c.key)}
-              <label title={c.title}>
-                <input type="checkbox" checked={c.on} disabled={!c.enabled || overlayBusy}
-                  onchange={(e) => toggleOverlay(c.key, e.currentTarget.checked)} />
-                {c.label}
-              </label>
-            {/each}
-          {/key}
+          <!-- checked is one-way: once the request settles (data reloaded, or failed) put the box back to the real state -->
+          {#each chips as c (c.key)}
+            <label title={c.title}>
+              <input type="checkbox" checked={c.on} disabled={!c.enabled || overlayBusy}
+                onchange={async (e) => {
+                  const box = e.currentTarget;
+                  await toggleOverlay(c.key, box.checked);
+                  box.checked = c.on;
+                }} />
+              {c.label}
+            </label>
+          {/each}
         </div>
       </details>
     {/if}

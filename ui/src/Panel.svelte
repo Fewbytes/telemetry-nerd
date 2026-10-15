@@ -223,11 +223,12 @@
   const loadState = $derived(panelLoadingState(loading, !!data));
 
   let requestId = 0;
-  const load = (width: number) => {
+  // resolves once this request has settled (data applied, error shown, or superseded)
+  const load = (width: number): Promise<void> => {
     const id = ++requestId;
     fetchWidth = width;
     loading = true;
-    fetchPanelData(panel.id, width)
+    return fetchPanelData(panel.id, width)
       .then((d) => {
         if (id !== requestId) return;
         // a reload can drop or move the note that drove the band: no mouseleave/blur will clear it
@@ -573,11 +574,11 @@
 
   // reference layers (2as.11): switching one changes the payload, so fetch it again
   let overlayBusy = $state(false);
-  const toggleOverlay = (key: "normal" | "limit" | "ghost", on: boolean) => {
+  const toggleOverlay = (key: "normal" | "limit" | "ghost", on: boolean): Promise<void> => {
     overlayBusy = true;
-    setOverlays(panel.id, { [key]: on })
+    return setOverlays(panel.id, { [key]: on })
       .then(() => load(fetchWidth || 800))
-      .catch((e) => (error = String(e)))
+      .catch((e) => { error = String(e); })
       .finally(() => (overlayBusy = false));
   };
   // follow-up (2as.19): fast errors flatter latency, so offer success and failure apart
