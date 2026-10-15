@@ -24,6 +24,9 @@ export const isInBounds = (
 export const nowAnchor = (fetchedEndMs: number | null | undefined, clockNowMs: number): number =>
   fetchedEndMs != null && fetchedEndMs > 0 ? fetchedEndMs : clockNowMs;
 
+export const RANGE_PRESETS = ["15m", "1h", "6h", "24h", "7d"] as const;
+export type RangePreset = (typeof RANGE_PRESETS)[number];
+
 const PRESET_MS: Record<string, number> = {
   "15m": 15 * 60_000,
   "1h": 3600_000,

@@ -1,51 +1,29 @@
 <script lang="ts">
   // the control rows under the plot (nerd mode). Markup only: the state and handlers live in
   // Panel, which passes them in, so other controls (e.g. a compact toolbar) can share them.
-  import type { Panel, PanelData, YContext, YView, selectYView } from "../../lib/api";
-  import type { Viewport } from "../../chart/viewport";
-  import type { PreviewRender as PreviewRenderData } from "../../chart/preview";
-  import { VIEW_LABELS, type DataViewName } from "../../chart/dataview";
+  import { RANGE_PRESETS } from "../../chart/viewport";
+  import { VIEW_LABELS } from "../../chart/dataview";
   import { overlayChips } from "../../chart/overlays";
-  import { yViewAction, yViewIsOn, yViewKey, yViewOffers, type YStats } from "../../chart/yview";
+  import { yViewAction, yViewIsOn, yViewKey, yViewOffers } from "../../chart/yview";
   import { intervalLegend } from "../../lib/panelNotes";
   import RangeStatus from "./RangeStatus.svelte";
   import PreviewRender from "./PreviewRender.svelte";
+  import type { ControlProps } from "./controls";
 
   let {
     data, panel, yst, yctx, yIsValues, chosen, bandPick = $bindable(), idxBusy, indexedOn,
     overlayBusy, splitBusy, splitNote, reframeBusy, margBusy, rangeBusy, rangeError,
     viewport, previewRender, viewNow, previewEl = $bindable(),
     toggleOverlay, split, reframe, pick, pickIndexed, pickView, pickPreset, pickTyped, keepThisRange, toggleMarginal,
-  }: {
-    data: PanelData | null;
-    panel: Panel;
-    yst: YStats | null;
-    yctx: YContext | null;
-    yIsValues: boolean;
-    chosen: YView | null;
-    bandPick: boolean;
-    idxBusy: boolean;
+  }: ControlProps & {
     indexedOn: boolean;
-    overlayBusy: boolean;
     splitBusy: boolean;
     splitNote: string | null;
     reframeBusy: boolean;
     margBusy: boolean;
-    rangeBusy: boolean;
-    rangeError: string | null;
-    viewport: Viewport | null;
-    previewRender: PreviewRenderData | null;
-    viewNow: DataViewName | null;
-    previewEl: HTMLDivElement | null;
-    toggleOverlay: (key: "normal" | "limit" | "ghost", on: boolean) => void;
     split: () => void;
     reframe: (i: number) => void;
-    pick: (body: Parameters<typeof selectYView>[1], optimistic: YView | null) => void;
-    pickIndexed: (baseline: "window" | "previous" | "week") => void;
-    pickView: (v: DataViewName) => void;
-    pickPreset: (preset: "15m" | "1h" | "6h" | "24h" | "7d") => void;
     pickTyped: (text: string) => void;
-    keepThisRange: () => void;
     toggleMarginal: (ref: "previous" | "week" | "profile" | null) => void;
   } = $props();
 </script>
@@ -110,7 +88,7 @@
 {#if data?.kind === "time"}
   <div class="legend time-range" role="group" aria-label="Time range">
     range:
-    {#each ["15m", "1h", "6h", "24h", "7d"] as const as preset}
+    {#each RANGE_PRESETS as preset}
       <button type="button" disabled={rangeBusy} onclick={() => pickPreset(preset)}>{preset}</button>
     {/each}
     <input

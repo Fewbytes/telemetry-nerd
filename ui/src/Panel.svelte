@@ -6,7 +6,7 @@
     closePanel, fetchPanelData, previewPanel, refreshYContext, reframePanel, rescopePanel, splitOutcome, reportRender, selectYView, setMarginal, selectDataView, setOverlays,
     type Annotation, type Panel, type PanelData, type Thread, type Where, type YView,
   } from "./lib/api";
-  import { isInBounds, nowAnchor, parseRelative, presetRange, type Viewport } from "./chart/viewport";
+  import { isInBounds, nowAnchor, parseRelative, presetRange, type RangePreset, type Viewport } from "./chart/viewport";
   import { sliceSeries, type PreviewRender } from "./chart/preview";
   import { rgba, seriesName, toUplot } from "./chart/toUplot";
   import { drawRug, facetTop, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, rugMoreLabel, type RugCell } from "./chart/rug";
@@ -369,7 +369,7 @@
       .finally(() => (rangeBusy = false));
   };
 
-  const pickPreset = (preset: "15m" | "1h" | "6h" | "24h" | "7d") =>
+  const pickPreset = (preset: RangePreset) =>
     applyViewport(presetRange(preset, nowAnchor(fetchedBounds().end_ms, Date.now())));
 
   const pickTyped = (text: string) => {

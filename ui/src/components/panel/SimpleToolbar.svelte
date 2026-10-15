@@ -1,42 +1,19 @@
 <script lang="ts">
   // simple mode's compact controls: range presets left, view/layer/filter dropdowns right.
   // Same state and handlers as NerdControls (they live in Panel); only the presentation differs.
-  import type { Panel, PanelData, YContext, YView, selectYView } from "../../lib/api";
-  import type { Viewport } from "../../chart/viewport";
-  import type { PreviewRender as PreviewRenderData } from "../../chart/preview";
+  import { RANGE_PRESETS } from "../../chart/viewport";
   import { VIEW_LABELS, type DataViewName } from "../../chart/dataview";
   import { overlayChips } from "../../chart/overlays";
-  import { yViewAction, yViewIsOn, yViewKey, yViewOffers, type YStats } from "../../chart/yview";
+  import { yViewAction, yViewIsOn, yViewKey, yViewOffers } from "../../chart/yview";
   import RangeStatus from "./RangeStatus.svelte";
   import PreviewRender from "./PreviewRender.svelte";
+  import type { ControlProps } from "./controls";
 
   let {
     data, panel, yst, yctx, yIsValues, chosen, bandPick = $bindable(), idxBusy, overlayBusy, rangeBusy, rangeError,
     viewport, previewRender, viewNow, previewEl = $bindable(),
     toggleOverlay, pick, pickIndexed, pickView, pickPreset, keepThisRange,
-  }: {
-    data: PanelData | null;
-    panel: Panel;
-    yst: YStats | null;
-    yctx: YContext | null;
-    yIsValues: boolean;
-    chosen: YView | null;
-    bandPick: boolean;
-    idxBusy: boolean;
-    overlayBusy: boolean;
-    rangeBusy: boolean;
-    rangeError: string | null;
-    viewport: Viewport | null;
-    previewRender: PreviewRenderData | null;
-    viewNow: DataViewName | null;
-    previewEl: HTMLDivElement | null;
-    toggleOverlay: (key: "normal" | "limit" | "ghost", on: boolean) => void;
-    pick: (body: Parameters<typeof selectYView>[1], optimistic: YView | null) => void;
-    pickIndexed: (baseline: "window" | "previous" | "week") => void;
-    pickView: (v: DataViewName) => void;
-    pickPreset: (preset: "15m" | "1h" | "6h" | "24h" | "7d") => void;
-    keepThisRange: () => void;
-  } = $props();
+  }: ControlProps = $props();
 
   const offers = $derived(data && yst && yIsValues && (data.kind === "time" || data.kind === "fleet") ? yViewOffers(data.kind, yst, yctx) : []);
   // Claude's y-view suggestions (the nerd row's "· Claude:" buttons), as option values "s:<id>"
@@ -69,7 +46,7 @@
   <div class="simple-toolbar" data-simple-toolbar role="group" aria-label="Panel controls">
     {#if data.kind === "time"}
       <span class="presets" role="group" aria-label="Time range">
-        {#each ["15m", "1h", "6h", "24h", "7d"] as const as preset}
+        {#each RANGE_PRESETS as preset}
           <button type="button" disabled={rangeBusy} onclick={() => pickPreset(preset)}>{preset}</button>
         {/each}
       </span>
