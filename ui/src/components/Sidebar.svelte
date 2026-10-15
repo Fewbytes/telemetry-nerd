@@ -35,7 +35,9 @@
     else n.add(k);
     opened = n;
   };
-  const folded = (key: string) => (simple ? !opened.has(key) && (key === "hypotheses" || key === "gaps") : collapsedSidebar.has(key));
+  const localFold = (key: string) => simple && (key === "hypotheses" || key === "gaps");
+  const folded = (key: string) => (localFold(key) ? !opened.has(key) : collapsedSidebar.has(key));
+  const toggleFold = (key: string) => (localFold(key) ? toggleOpened(key) : collapsedSidebar.toggle(key));
 
   // each section folds independently (telemetry-nerd-prli), freeing vertical space; once every
   // section present is folded, the sidebar itself hides and the panel grid reclaims its column
@@ -43,28 +45,26 @@
   const allCollapsed = $derived(!simple && sections.every((s) => collapsedSidebar.has(s)));
 </script>
 
+<!-- a section's fold toggle and title; `count` (simple mode) follows the title -->
+{#snippet foldHeader(key: string, title: string, count?: number)}
+  <header>
+    <button
+      type="button" class="collapse" aria-pressed={folded(key)} aria-expanded={!folded(key)}
+      title={folded(key) ? "Expand" : "Collapse"} aria-label={folded(key) ? `Expand ${title}${count === undefined ? "" : ` (${count})`}` : `Collapse ${title}`}
+      onclick={() => toggleFold(key)}
+    >{folded(key) ? "▸" : "▾"}</button>
+    <h2>{title}{#if count !== undefined}{" "}({count}){/if}</h2>
+  </header>
+{/snippet}
+
 <aside class="sidebar" class:all-collapsed={allCollapsed}>
   <section>
-    <header>
-      <button
-        type="button" class="collapse" aria-pressed={collapsedSidebar.has("chat")} aria-expanded={!collapsedSidebar.has("chat")}
-        title={collapsedSidebar.has("chat") ? "Expand" : "Collapse"} aria-label={collapsedSidebar.has("chat") ? "Expand Chat" : "Collapse Chat"}
-        onclick={() => collapsedSidebar.toggle("chat")}
-      >{collapsedSidebar.has("chat") ? "▸" : "▾"}</button>
-      <h2>Chat</h2>
-    </header>
-    {#if !collapsedSidebar.has("chat")}<ChatThread thread={chat} />{/if}
+    {@render foldHeader("chat", "Chat")}
+    {#if !folded("chat")}<ChatThread thread={chat} />{/if}
   </section>
 
   <section>
-    <header>
-      <button
-        type="button" class="collapse" aria-pressed={folded("hypotheses")} aria-expanded={!folded("hypotheses")}
-        title={folded("hypotheses") ? "Expand" : "Collapse"} aria-label={folded("hypotheses") ? `Expand Hypotheses${simple ? ` (${hypotheses.length})` : ""}` : "Collapse Hypotheses"}
-        onclick={() => (simple ? toggleOpened("hypotheses") : collapsedSidebar.toggle("hypotheses"))}
-      >{folded("hypotheses") ? "▸" : "▾"}</button>
-      <h2>Hypotheses{#if simple}{" "}({hypotheses.length}){/if}</h2>
-    </header>
+    {@render foldHeader("hypotheses", "Hypotheses", simple ? hypotheses.length : undefined)}
     {#if !folded("hypotheses")}
       {#if hypotheses.length === 0}
         <p class="none">No hypotheses yet.</p>
@@ -75,15 +75,8 @@
   </section>
 
   <section>
-    <header>
-      <button
-        type="button" class="collapse" aria-pressed={collapsedSidebar.has("findings")} aria-expanded={!collapsedSidebar.has("findings")}
-        title={collapsedSidebar.has("findings") ? "Expand" : "Collapse"} aria-label={collapsedSidebar.has("findings") ? "Expand Findings" : "Collapse Findings"}
-        onclick={() => collapsedSidebar.toggle("findings")}
-      >{collapsedSidebar.has("findings") ? "▸" : "▾"}</button>
-      <h2>Findings</h2>
-    </header>
-    {#if !collapsedSidebar.has("findings")}
+    {@render foldHeader("findings", "Findings")}
+    {#if !folded("findings")}
       {#if findings.length === 0}
         <p class="none">No findings yet.</p>
       {:else}
@@ -111,15 +104,8 @@
 
   {#if !simple && orphans.length > 0}
     <section>
-      <header>
-        <button
-          type="button" class="collapse" aria-pressed={collapsedSidebar.has("annotations")} aria-expanded={!collapsedSidebar.has("annotations")}
-          title={collapsedSidebar.has("annotations") ? "Expand" : "Collapse"} aria-label={collapsedSidebar.has("annotations") ? "Expand Annotations on closed panels" : "Collapse Annotations on closed panels"}
-          onclick={() => collapsedSidebar.toggle("annotations")}
-        >{collapsedSidebar.has("annotations") ? "▸" : "▾"}</button>
-        <h2>Annotations on closed panels</h2>
-      </header>
-      {#if !collapsedSidebar.has("annotations")}
+      {@render foldHeader("annotations", "Annotations on closed panels")}
+      {#if !folded("annotations")}
         <ul class="orphans">
           {#each orphans as a (a.id)}
             <li id="annotation-{a.id}">
@@ -134,27 +120,13 @@
 
   {#if !simple && runs.length > 0}
     <section aria-label="Code runs">
-      <header>
-        <button
-          type="button" class="collapse" aria-pressed={collapsedSidebar.has("code")} aria-expanded={!collapsedSidebar.has("code")}
-          title={collapsedSidebar.has("code") ? "Expand" : "Collapse"} aria-label={collapsedSidebar.has("code") ? "Expand Code runs" : "Collapse Code runs"}
-          onclick={() => collapsedSidebar.toggle("code")}
-        >{collapsedSidebar.has("code") ? "▸" : "▾"}</button>
-        <h2>Code runs</h2>
-      </header>
-      {#if !collapsedSidebar.has("code")}<CodeRuns {runs} onopen={onopencode} />{/if}
+      {@render foldHeader("code", "Code runs")}
+      {#if !folded("code")}<CodeRuns {runs} onopen={onopencode} />{/if}
     </section>
   {/if}
 
   <section>
-    <header>
-      <button
-        type="button" class="collapse" aria-pressed={folded("gaps")} aria-expanded={!folded("gaps")}
-        title={folded("gaps") ? "Expand" : "Collapse"} aria-label={folded("gaps") ? `Expand Gaps${simple ? ` (${gaps.length})` : ""}` : "Collapse Gaps"}
-        onclick={() => (simple ? toggleOpened("gaps") : collapsedSidebar.toggle("gaps"))}
-      >{folded("gaps") ? "▸" : "▾"}</button>
-      <h2>Gaps{#if simple}{" "}({gaps.length}){/if}</h2>
-    </header>
+    {@render foldHeader("gaps", "Gaps", simple ? gaps.length : undefined)}
     {#if !folded("gaps")}
       {#if gaps.length === 0}
         <p class="none">No gaps yet.</p>
