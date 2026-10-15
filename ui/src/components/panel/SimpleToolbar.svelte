@@ -41,9 +41,13 @@
   const offers = $derived(data && yst && yIsValues && (data.kind === "time" || data.kind === "fleet") ? yViewOffers(data.kind, yst, yctx) : []);
   // Claude's y-view suggestions (the nerd row's "· Claude:" buttons), as option values "s:<id>"
   const suggestions = $derived(offers.length > 0 ? panel.spec.y.views ?? [] : []);
-  const activeKey = $derived(offers.find((o) => yViewIsOn(o, chosen, bandPick)));
+  // a band pick in progress shows "band…" (yViewIsOn would match auto first while nothing is chosen)
+  const activeKey = $derived(
+    bandPick ? offers.find((o) => o.mode === "band") : offers.find((o) => yViewIsOn(o, chosen, bandPick)),
+  );
   const yValue = $derived(
-    chosen?.id && suggestions.some((v) => v.id === chosen.id) ? `s:${chosen.id}` : activeKey ? yViewKey(activeKey) : "",
+    !bandPick && chosen?.id && suggestions.some((v) => v.id === chosen.id) ? `s:${chosen.id}`
+      : activeKey ? yViewKey(activeKey) : "",
   );
   const chips = $derived(data?.kind === "time" && data.overlays?.flags ? overlayChips(data.overlays) : []);
   const onChips = $derived(chips.filter((c) => c.on).length);
@@ -54,14 +58,14 @@
     const o = offers.find((x) => yViewKey(x) === key);
     if (!o) return;
     const a = yViewAction(o);
-    if (a.kind === "band") bandPick = !bandPick;
+    if (a.kind === "band") bandPick = true; // a select picks, it cannot toggle: Esc cancels the pick
     else if (a.kind === "indexed") pickIndexed(a.baseline);
     else pick(a.body, a.optimistic);
   };
 </script>
 
 {#if data && (data.kind === "time" || offers.length > 0)}
-  <div class="simple-toolbar" data-simple-toolbar role="toolbar" aria-label="Panel controls">
+  <div class="simple-toolbar" data-simple-toolbar role="group" aria-label="Panel controls">
     {#if data.kind === "time"}
       <span class="presets" role="group" aria-label="Time range">
         {#each ["15m", "1h", "6h", "24h", "7d"] as const as preset}
@@ -94,9 +98,11 @@
     {#if data.kind === "time" && data.filter}
       <select aria-label="Data view" value={viewNow ?? ""} onchange={(e) => pickView(e.currentTarget.value as DataViewName)}>
         {#each data.filter.offered as v (v)}
-          <option value={v}>{VIEW_LABELS[v]}{v === data.filter.default ? " · Claude" : ""}</option>
+          <option value={v} title={v === data.filter.default ? `Claude's pick: ${data.filter.reason}` : ""}
+          >{VIEW_LABELS[v]}{v === data.filter.default ? " · Claude" : ""}</option>
         {/each}
       </select>
+      <span class="hint">{data.filter.filter}; dashed: filter edge (unreliable)</span>
     {/if}
     {#if chips.length > 0}
       <details class="layers">

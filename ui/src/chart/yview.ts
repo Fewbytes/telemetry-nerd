@@ -202,7 +202,7 @@ export function yViewOffers(kind: string, st: YStats, ctx: YContext | null): Off
   return offeredViews(st, ctx).filter((o) => kind === "time" || !["indexed", "meaningful", "log"].includes(o.mode));
 }
 
-export const nonZeroOrigin =(min: number, max: number, log: boolean): boolean => !log && (min > 0 || max < 0);
+export const nonZeroOrigin = (min: number, max: number, log: boolean): boolean => !log && (min > 0 || max < 0);
 
 /** What the context strip is drawn against: the metric's closed natural bounds (a zoom shows where
  *  it sits within them), else the reference extent, else the data. */

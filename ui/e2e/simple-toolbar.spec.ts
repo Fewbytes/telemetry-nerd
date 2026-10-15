@@ -66,3 +66,41 @@ test("simple mode: Claude's y-view suggestions are in the same dropdown", async 
   await expect(y.locator("option:checked")).toHaveText("fit the wiggles");
   await expect(el.locator('[data-note="y_view"]')).toContainText("fit the wiggles");
 });
+
+test("simple mode: picking band… keeps it selected until Esc cancels the pick", async ({ page }) => {
+  const panel = await seedPanel(page.request, "simple: band pick in a dropdown");
+  await page.goto("/");
+  const el = page.locator(`[data-panel-id="${panel.id}"]`);
+  await expect(el.locator("canvas").first()).toBeVisible();
+  await page.locator("[data-mode-toggle=simple]").click();
+
+  const bar = el.locator("[data-simple-toolbar]");
+  const y = bar.getByLabel("Y-axis view");
+  await expect(y.locator("option:checked")).toHaveText("auto");
+  await y.selectOption({ label: "band…" });
+  await expect(y.locator("option:checked")).toHaveText("band…");
+  await expect(bar.getByText("drag vertically on the plot · Esc cancels")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(bar.getByText("drag vertically on the plot · Esc cancels")).toHaveCount(0);
+  await expect(y.locator("option:checked")).toHaveText("auto");
+});
+
+test("simple mode: a filtered panel keeps the filter-edge caveat next to its data view", async ({ page, request }) => {
+  const q = await request.post("/api/query", {
+    data: { expr: "tn_demo_latency_seconds", start: "now-3h", end: "now-10m", step: "1m" },
+  });
+  expect(q.ok()).toBeTruthy();
+  const { dataset } = await q.json();
+  const f = await mcpTool(request, "filter", { dataset, kind: "lowpass", period: "15m", reason: "the trend under the jitter" });
+  const { panel } = await mcpTool(request, "show", { dataset: f.dataset, question: "simple: is the filter caveat kept?" });
+  await page.goto("/");
+  const el = page.locator(`[data-panel-id="${panel}"]`);
+  await expect(el.getByRole("group", { name: "Data view" })).toContainText("dashed: filter edge (unreliable)"); // nerd
+  await page.locator("[data-mode-toggle=simple]").click();
+
+  const bar = el.locator("[data-simple-toolbar]");
+  const view = bar.getByLabel("Data view");
+  await expect(view).toBeVisible();
+  await expect(bar.locator(".hint", { hasText: "dashed: filter edge (unreliable)" })).toBeVisible();
+  await expect(view.locator("option", { hasText: "· Claude" })).toHaveAttribute("title", "Claude's pick: the trend under the jitter");
+});
