@@ -4,6 +4,7 @@
   import type { Highlights } from "../lib/highlights";
   import { flash, hoverOff, hoverOn } from "../lib/refHighlight";
   import type { RefTarget } from "../lib/refs";
+  import { mode } from "../lib/mode.svelte";
 
   let { highlights }: { highlights: Highlights } = $props();
   const targets = getContext<(() => Map<string, RefTarget>) | undefined>("refs") ?? (() => new Map());
@@ -17,7 +18,7 @@
     {#each entries as h (h.id)}
       {@const t = targets().get(h.id)}
       <li class="highlight-item" data-highlight-author={h.author} data-id={h.id}>
-        <span class="badge author {h.author}">{h.author}</span>
+        {#if mode.effective === "nerd"}<span class="badge author {h.author}">{h.author}</span>{/if}
         <button
           type="button"
           class="ref-chip obj-id"

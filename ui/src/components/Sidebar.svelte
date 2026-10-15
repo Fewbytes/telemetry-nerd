@@ -8,6 +8,7 @@
   import { orphanedAnnotations } from "../lib/orphans";
   import { chatThread } from "../lib/refs";
   import { collapsedSidebar } from "../lib/collapsed.svelte";
+  import { mode } from "../lib/mode.svelte";
 
   let { snapshot, onopencode }: { snapshot: Snapshot | null; onopencode: (id: string) => void } = $props();
   const runs = $derived(snapshot?.code ?? []);
@@ -24,10 +25,22 @@
 
   let showRejected = $state(false);
 
+  // simple mode: hypotheses and gaps are one-line headers, unfolded by local state so the persisted
+  // nerd fold preferences stay untouched; code runs and closed-panel annotations are not rendered
+  const simple = $derived(mode.effective === "simple");
+  let opened = $state(new Set<string>());
+  const toggleOpened = (k: string) => {
+    const n = new Set(opened);
+    if (n.has(k)) n.delete(k);
+    else n.add(k);
+    opened = n;
+  };
+  const folded = (key: string) => (simple ? !opened.has(key) && (key === "hypotheses" || key === "gaps") : collapsedSidebar.has(key));
+
   // each section folds independently (telemetry-nerd-prli), freeing vertical space; once every
   // section present is folded, the sidebar itself hides and the panel grid reclaims its column
   const sections = $derived(["chat", "hypotheses", "findings", ...(orphans.length > 0 ? ["annotations"] : []), ...(runs.length > 0 ? ["code"] : []), "gaps"]);
-  const allCollapsed = $derived(sections.every((s) => collapsedSidebar.has(s)));
+  const allCollapsed = $derived(!simple && sections.every((s) => collapsedSidebar.has(s)));
 </script>
 
 <aside class="sidebar" class:all-collapsed={allCollapsed}>
@@ -46,13 +59,13 @@
   <section>
     <header>
       <button
-        type="button" class="collapse" aria-pressed={collapsedSidebar.has("hypotheses")} aria-expanded={!collapsedSidebar.has("hypotheses")}
-        title={collapsedSidebar.has("hypotheses") ? "Expand" : "Collapse"} aria-label={collapsedSidebar.has("hypotheses") ? "Expand Hypotheses" : "Collapse Hypotheses"}
-        onclick={() => collapsedSidebar.toggle("hypotheses")}
-      >{collapsedSidebar.has("hypotheses") ? "▸" : "▾"}</button>
-      <h2>Hypotheses</h2>
+        type="button" class="collapse" aria-pressed={folded("hypotheses")} aria-expanded={!folded("hypotheses")}
+        title={folded("hypotheses") ? "Expand" : "Collapse"} aria-label={folded("hypotheses") ? "Expand Hypotheses" : "Collapse Hypotheses"}
+        onclick={() => (simple ? toggleOpened("hypotheses") : collapsedSidebar.toggle("hypotheses"))}
+      >{folded("hypotheses") ? "▸" : "▾"}</button>
+      <h2>Hypotheses{#if simple} ({hypotheses.length}){/if}</h2>
     </header>
-    {#if !collapsedSidebar.has("hypotheses")}
+    {#if !folded("hypotheses")}
       {#if hypotheses.length === 0}
         <p class="none">No hypotheses yet.</p>
       {:else}
@@ -96,7 +109,7 @@
     {/if}
   </section>
 
-  {#if orphans.length > 0}
+  {#if !simple && orphans.length > 0}
     <section>
       <header>
         <button
@@ -119,7 +132,7 @@
     </section>
   {/if}
 
-  {#if runs.length > 0}
+  {#if !simple && runs.length > 0}
     <section aria-label="Code runs">
       <header>
         <button
@@ -136,13 +149,13 @@
   <section>
     <header>
       <button
-        type="button" class="collapse" aria-pressed={collapsedSidebar.has("gaps")} aria-expanded={!collapsedSidebar.has("gaps")}
-        title={collapsedSidebar.has("gaps") ? "Expand" : "Collapse"} aria-label={collapsedSidebar.has("gaps") ? "Expand Gaps" : "Collapse Gaps"}
-        onclick={() => collapsedSidebar.toggle("gaps")}
-      >{collapsedSidebar.has("gaps") ? "▸" : "▾"}</button>
-      <h2>Gaps</h2>
+        type="button" class="collapse" aria-pressed={folded("gaps")} aria-expanded={!folded("gaps")}
+        title={folded("gaps") ? "Expand" : "Collapse"} aria-label={folded("gaps") ? "Expand Gaps" : "Collapse Gaps"}
+        onclick={() => (simple ? toggleOpened("gaps") : collapsedSidebar.toggle("gaps"))}
+      >{folded("gaps") ? "▸" : "▾"}</button>
+      <h2>Gaps{#if simple} ({gaps.length}){/if}</h2>
     </header>
-    {#if !collapsedSidebar.has("gaps")}
+    {#if !folded("gaps")}
       {#if gaps.length === 0}
         <p class="none">No gaps yet.</p>
       {:else}
