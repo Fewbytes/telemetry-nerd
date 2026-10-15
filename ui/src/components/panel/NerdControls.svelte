@@ -3,12 +3,13 @@
   // Panel, which passes them in, so other controls (e.g. a compact toolbar) can share them.
   import type { Panel, PanelData, YContext, YView, selectYView } from "../../lib/api";
   import type { Viewport } from "../../chart/viewport";
-  import type { PreviewRender } from "../../chart/preview";
+  import type { PreviewRender as PreviewRenderData } from "../../chart/preview";
   import { VIEW_LABELS, type DataViewName } from "../../chart/dataview";
   import { overlayChips } from "../../chart/overlays";
-  import { offeredViews, type YStats } from "../../chart/yview";
+  import { yViewAction, yViewIsOn, yViewKey, yViewOffers, type YStats } from "../../chart/yview";
   import { intervalLegend } from "../../lib/panelNotes";
-  import { fmtRange } from "../../lib/format";
+  import RangeStatus from "./RangeStatus.svelte";
+  import PreviewRender from "./PreviewRender.svelte";
 
   let {
     data, panel, yst, yctx, yIsValues, chosen, bandPick = $bindable(), idxBusy, indexedOn,
@@ -33,7 +34,7 @@
     rangeBusy: boolean;
     rangeError: string | null;
     viewport: Viewport | null;
-    previewRender: PreviewRender | null;
+    previewRender: PreviewRenderData | null;
     viewNow: DataViewName | null;
     previewEl: HTMLDivElement | null;
     toggleOverlay: (key: "normal" | "limit" | "ghost", on: boolean) => void;
@@ -84,11 +85,16 @@
 {#if (data?.kind === "time" || data?.kind === "fleet") && yIsValues && yst}
   <div class="legend y-views" role="group" aria-label="Y-axis view">
     y:
-    {#each offeredViews(yst, yctx).filter((o) => data?.kind === "time" || !["indexed", "meaningful", "log"].includes(o.mode)) as o (o.mode + (o.baseline ?? ""))}
+    {#each yViewOffers(data?.kind ?? "", yst, yctx) as o (yViewKey(o))}
       <button
         type="button" disabled={!o.enabled} title={o.title} class:suggest={o.suggest}
-        class:on={o.mode === "band" ? bandPick || (chosen?.mode === "band" && !chosen?.id) : (chosen?.mode ?? "auto") === o.mode && !chosen?.id && (o.baseline ?? null) === (chosen?.baseline ?? null)}
-        onclick={() => o.mode === "band" ? (bandPick = !bandPick) : o.mode === "indexed" ? pickIndexed(o.baseline!) : pick({ mode: o.mode }, o.mode === "auto" ? null : { mode: o.mode, label: o.label })}
+        class:on={yViewIsOn(o, chosen, bandPick)}
+        onclick={() => {
+          const a = yViewAction(o);
+          if (a.kind === "band") bandPick = !bandPick;
+          else if (a.kind === "indexed") pickIndexed(a.baseline);
+          else pick(a.body, a.optimistic);
+        }}
       >{o.label}</button>
     {/each}
     {#if (panel.spec.y.views ?? []).length}
@@ -111,25 +117,9 @@
       type="text" placeholder="now-3h" disabled={rangeBusy}
       onkeydown={(e) => e.key === "Enter" && pickTyped((e.target as HTMLInputElement).value)}
     />
-    {#if viewport && !rangeBusy && !rangeError}
-      <span class="hint" data-preview-badge>
-        {#if previewRender}
-          previewing {fmtRange(previewRender.start_ms, previewRender.end_ms)}
-            ({previewRender.source === "local" ? "from data already loaded" : "fetched"}) — not this panel's evidence
-        {:else}
-          selected {fmtRange(viewport.start_ms, viewport.end_ms)} — summary only, no chart for this kind of data
-        {/if}
-      </span>
-      <button type="button" disabled={rangeBusy} onclick={keepThisRange}>keep this range</button>
-    {/if}
-    {#if rangeError}<span class="hint" data-range-error>{rangeError}</span>{/if}
+    <RangeStatus {viewport} {previewRender} {rangeBusy} {rangeError} {keepThisRange} />
   </div>
-  {#if previewRender}
-    <div class="preview-render" data-preview-render={previewRender.source}>
-      <span class="preview-tag">preview — not {panel.id}'s evidence</span>
-      <div bind:this={previewEl} class="preview-plot"></div>
-    </div>
-  {/if}
+  <PreviewRender {panel} {previewRender} bind:previewEl />
 {/if}
 {#if data?.kind === "time" && data.filter}
   <div class="legend y-views" role="group" aria-label="Data view">
