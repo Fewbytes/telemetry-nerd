@@ -3,13 +3,13 @@
   // the band legend, then time range and step. Full provenance, dataset and query are nerd-only.
   import type { PanelData } from "../../lib/api";
   import { fmtInstant, fmtStep } from "../../lib/format";
-  import { intervalLegend, shownWhat, shownWhatCompact } from "../../lib/panelNotes";
+  import { intervalLegend, shownWhat, shownWhatCompact, type FleetView, type HeatView } from "../../lib/panelNotes";
   import CompactText from "./CompactText.svelte";
 
   let { data, heatView, fleetView }: {
     data: PanelData;
-    heatView: "heatmap" | "percentiles";
-    fleetView: "band" | "quantiles" | "heat" | "multiples";
+    heatView: HeatView;
+    fleetView: FleetView;
   } = $props();
 </script>
 

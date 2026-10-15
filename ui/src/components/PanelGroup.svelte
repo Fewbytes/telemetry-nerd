@@ -21,7 +21,6 @@
 
   const roles = $derived(orderedRoles(group, members));
   const byRole = $derived(new Map(group.roles.map((r) => [r.role, r])));
-  const fmtTime = fmtGroupTime;
   // simple mode: the binding line, role details and notes are one line each, opened in place; the
   // member panels follow the mode on their own
   const simple = $derived(mode.effective === "simple");
@@ -59,7 +58,7 @@
   <p class="group-meta"><CompactText text={groupMetaText(group)} /></p>
   {:else}
   <p class="group-meta">
-    {basisText(group)} · {fmtTime(group.start_ms)} – {fmtTime(group.end_ms)} · step {fmtStep(group.step_ms)}
+    {basisText(group)} · {fmtGroupTime(group.start_ms)} – {fmtGroupTime(group.end_ms)} · step {fmtStep(group.step_ms)}
     · one time axis; hover or drag on any panel to see it on all
     {#if group.join_on.length} · members by {group.join_on.join(", ")}{/if}
     {#if Object.keys(group.matchers).length} · {Object.entries(group.matchers).map(([k, v]) => `${k}="${v}"`).join(", ")}{/if}

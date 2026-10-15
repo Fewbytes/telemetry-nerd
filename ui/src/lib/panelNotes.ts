@@ -322,18 +322,18 @@ export function describeShown(
   return `Average per ${step} bucket (line) with its min–max envelope (band).`;
 }
 
-/** The panel's "what is shown" sentence (its aggregation/estimator), for the panel's current views. */
+/** The panel's local view switches: the heatmap payload's two views, the fleet's four. */
+export type HeatView = "heatmap" | "percentiles";
+export type FleetView = "band" | "quantiles" | "heat" | "multiples";
+
 /** Simple mode shows the "what" sentence as one line only where it ends in the bin-scheme list
  * (heatmap view, histogram bars/ECDF); elsewhere the sentence is the estimator basis and stays in full. */
-export function shownWhatCompact(data: PanelData, heatView: "heatmap" | "percentiles"): boolean {
+export function shownWhatCompact(data: PanelData, heatView: HeatView): boolean {
   if (data.kind === "heatmap") return heatView === "heatmap";
   return data.kind === "histogram" && data.mark !== "ccdf" && data.mark !== "quantile_curve";
 }
 
-export function shownWhat(
-  data: PanelData,
-  heatView: "heatmap" | "percentiles",
-  fleetView: "band" | "quantiles" | "heat" | "multiples",
-): string {
+/** The panel's "what is shown" sentence (its aggregation/estimator), for the panel's current views. */
+export function shownWhat(data: PanelData, heatView: HeatView, fleetView: FleetView): string {
   return describeShown(data.dataset, fmtStep(data.effective_step_ms), data.kind, "mark" in data ? (data.kind === "heatmap" ? heatView === "percentiles" ? "percentiles" : "" : data.mark) : "", fleetView, data.kind === "fleet" && (data.clusters?.length ?? 0) >= 2);
 }

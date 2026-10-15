@@ -1,13 +1,13 @@
 <script lang="ts">
   // what the panel shows (dataset, step, provenance, time range) and the query behind it
   import type { PanelData } from "../../lib/api";
-  import { provenanceParts, provenanceText, shownWhat } from "../../lib/panelNotes";
+  import { provenanceParts, provenanceText, shownWhat, type FleetView, type HeatView } from "../../lib/panelNotes";
   import { fmtInstant, fmtStep } from "../../lib/format";
 
   let { data, heatView, fleetView, openCode }: {
     data: PanelData;
-    heatView: "heatmap" | "percentiles";
-    fleetView: "band" | "quantiles" | "heat" | "multiples";
+    heatView: HeatView;
+    fleetView: FleetView;
     openCode: ((id: string) => void) | undefined;
   } = $props();
 

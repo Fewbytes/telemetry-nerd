@@ -10,7 +10,7 @@
   import { sliceSeries, type PreviewRender } from "./chart/preview";
   import { rgba, seriesName, toUplot } from "./chart/toUplot";
   import { drawRug, facetTop, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, rugMoreLabel, type RugCell } from "./chart/rug";
-  import { panelNotes } from "./lib/panelNotes";
+  import { panelNotes, type FleetView, type HeatView } from "./lib/panelNotes";
   import { panelLoadingState } from "./lib/loading";
   import { getContext } from "svelte";
   import { windowBadge } from "./lib/coverage";
@@ -478,7 +478,7 @@
     setMarginal(panel.id, ref).catch((e) => (error = String(e))).finally(() => (margBusy = false));
   };
 
-  let fleetView = $state<"band" | "quantiles" | "heat" | "multiples">("band");
+  let fleetView = $state<FleetView>("band");
   // the heat view's y axis is members, not values: no y-view chips, badge, context strip or y notes there
   const yIsValues = $derived(!(data?.kind === "fleet" && fleetView === "heat"));
   const notes = $derived(
@@ -529,7 +529,7 @@
   let heatCmap = $state<"viridis" | "cividis">("viridis");
   let heatQ = $state<number | null>(null);
   // percentile-band view of the same payload: no refetch, the server already sent the bands
-  let heatView = $state<"heatmap" | "percentiles">("heatmap");
+  let heatView = $state<HeatView>("heatmap");
   let heatQs = $state<number[]>(DEFAULT_QUANTILES);
   // follow the spec when Claude re-shows the panel with other quantiles; local picks last until then
   let specQsKey: string | null = null;
