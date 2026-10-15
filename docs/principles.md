@@ -317,3 +317,15 @@ presented with its assumptions, never as a fact); it contradicts neither.
   in `src/telemetry_nerd/analysis/diagnostics.py`; the `merge.basis` text of
   `docs/superpowers/specs/2026-10-04-bucket-merging-design.md` §5); `skills/evidence/SKILL.md`
   ("Results are model outputs").
+
+## 18. Same truth, less chrome
+
+Simple mode and nerd mode show the same truth. Simple mode never drops a caveat or an
+uncertainty that changes the reading: bands, coverage rugs, scoped-claim notes, the preview
+badge and the `y ≠ 0` badge all stay. It hides controls, methodology text and secondary readouts
+only. Notes and caveats may collapse to one line (full text on hover or focus, graph highlight
+kept), never disappear. This applies principles 3, 11 and 13 to the display mode.
+
+- Decided: 2026-10-14, user (simple/nerd modes brainstorm, epic 2knd).
+- Enforced by: `docs/superpowers/specs/2026-10-14-simple-nerd-modes-design.md` (panel anatomy
+  table); the simple-mode e2e specs in `ui/e2e/simple-*.spec.ts`; a review rule for new panel parts.

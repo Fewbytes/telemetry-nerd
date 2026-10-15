@@ -189,6 +189,7 @@ Commands: `/telemetry-nerd:start` (connect, learn, open), `/telemetry-nerd:conne
 Full details, the container path and network-security notes: [docs/install.md](docs/install.md).
 How the graphs are designed and why: [docs/telemetry-graphing-guide.md](docs/telemetry-graphing-guide.md).
 Known quirks of real data sources: [docs/data-source-quirks.md](docs/data-source-quirks.md).
+Simple and nerd display modes: [docs/modes.md](docs/modes.md).
 The terms used for time intervals (series interval, query window, query step, ...): [docs/glossary.md](docs/glossary.md).
 
 ## Development

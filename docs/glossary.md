@@ -62,6 +62,8 @@ Only terms that recur across specs; each points at where it is defined.
 | **point model** | The plain (or bias-corrected) estimate a two-model test reports as context; optimistic. Its p is `p` (or `p_poisson`, `p_baseline_model`, `p_point_model` in evidence). A result only it supports is **undetermined**. | principle 16; e.g. `stability.shifts[].p` (`analysis/stability.py: SHIFT_METHOD`) |
 | **cautious model** | The more conservative alternative of a two-model test (autocorrelation, clustering, overdispersion, heavier tails, a parameter at the edge of its uncertainty); a label rests on it (`label_rests_on: cautious`). | principle 16; `p_cautious`, `p_clustered` |
 | **Little's law window** | The sub-range of the time range over which L and λW are averaged (`window`, default ~range/12). | Little's law spec |
+| **simple mode** | The default display mode: minimal panels (question, plot, rugs, annotations, legend, notes) and a compact toolbar. Hides controls, methodology text and secondary readouts, never a caveat. The header toggle overrides the default for the session; the default is a user setting. A panel can show its **nerd view** (peek) without changing the mode. | simple/nerd modes spec; principle 18 |
+| **nerd mode** | The display mode that shows everything: all controls, the "Shown" block, the query, metric card, marginal histogram. | simple/nerd modes spec |
 
 ## Words we don't use
 
