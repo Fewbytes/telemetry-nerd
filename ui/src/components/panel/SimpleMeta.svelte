@@ -14,8 +14,9 @@
   const fmtTime = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z");
 </script>
 
-<!-- the non-time kinds' sentences carry long scheme lists (le buckets, estimators): one line, opens in place -->
-<p class="simple-what" data-simple-what>{#if data.kind === "time"}{shownWhat(data, heatView, fleetView)}{:else}<CompactText text={shownWhat(data, heatView, fleetView)} />{/if}</p>
+<!-- heatmap and histogram sentences end in the bin-scheme list (le buckets): one line, opens in place;
+     every other kind's sentence is its aggregation/estimator basis and stays in full -->
+<p class="simple-what" data-simple-what>{#if data.kind === "heatmap" || data.kind === "histogram"}<CompactText text={shownWhat(data, heatView, fleetView)} />{:else}{shownWhat(data, heatView, fleetView)}{/if}</p>
 {#if data.kind === "time" && data.series.some((s) => s.lo)}
   {@const bandLegend = intervalLegend(data.dataset)}
   {#if bandLegend}<div class="legend" data-interval-legend>band: {bandLegend}</div>{/if}

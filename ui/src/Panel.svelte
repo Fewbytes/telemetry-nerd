@@ -959,7 +959,7 @@
         <!-- simple mode: colormap and outline pickers are appearance/analysis knobs (the peek has them);
              an outline already on keeps its basis -->
         {#if simple}
-          {#if heatQ !== null}<span data-heat-outline>· {heatOutlineText(heatQ)}</span>{/if}
+          {#if heatQ !== null && heatView === "heatmap"}<span data-heat-outline>· {heatOutlineText(heatQ)}</span>{/if}
         {:else}
         · colormap:
         <button type="button" class:on={heatCmap === "viridis"} onclick={() => (heatCmap = "viridis")}>viridis</button>

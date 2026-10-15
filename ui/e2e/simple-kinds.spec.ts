@@ -77,6 +77,15 @@ async function expectCompact(c: Locator, contains: string): Promise<void> {
   await expect(c).toHaveAttribute("aria-expanded", "false");
 }
 
+/** The aggregation sentence of kinds without a bin-scheme tail: in full, not one line (P4). */
+async function expectFullWhat(el: Locator, contains: string): Promise<void> {
+  const what = el.locator("[data-simple-what]");
+  await expect(what).toBeVisible();
+  await expect(what).toContainText(contains);
+  await expect(what.locator("[data-compact-text]")).toHaveCount(0);
+  expect(await what.evaluate((e) => getComputedStyle(e).whiteSpace)).not.toBe("nowrap");
+}
+
 async function open(page: Page, id: string, hash = "/"): Promise<Locator> {
   await page.goto(hash);
   const el = page.locator(`[data-panel-id="${id}"]`);
@@ -129,6 +138,9 @@ test("simple heatmap: view and colour switches and the colour key stay, colormap
   await el.getByRole("button", { name: "p95", exact: true }).click();
   await el.locator("[data-peek=simple]").click();
   await expect(el.locator("[data-heat-outline]")).toHaveText("· outline: bucket holding p95 (only where n ≥ 200)");
+  // the outline is drawn on the heatmap only: the percentile view does not claim it
+  await el.getByRole("button", { name: "percentile bands" }).click();
+  await expect(el.locator("[data-heat-outline]")).toHaveCount(0);
 });
 
 test("simple histogram: views and bar modes stay, the drag hint goes, |ΔF| is one line", async ({ page, request }) => {
@@ -151,6 +163,7 @@ test("simple histogram: views and bar modes stay, the drag hint goes, |ΔF| is o
   }
   await expect(facet.locator(".legend")).toContainText("n =");
   await expectCompact(facet.locator("[data-compact-text]").first(), "max |ΔF| at bucket edges");
+  await expectCompact(el.locator("[data-simple-what] [data-compact-text]"), "classic le buckets");
 });
 
 test("simple spc: the supplementary run rules checkbox goes, the legend is one line", async ({ page, request }) => {
@@ -165,6 +178,7 @@ test("simple spc: the supplementary run rules checkbox goes, the legend is one l
   await expect(spc.locator("[data-spc-supplementary]")).toHaveCount(0);
   await expect(spc.locator(".verdict")).toBeVisible();
   await expectCompact(spc.locator(".legend [data-compact-text]"), "99% intervals");
+  await expectFullWhat(el, "computed from the baseline only");
 });
 
 test("simple fleet: view switch, encoding and key stay, the summary is one line", async ({ page, request }) => {
@@ -179,6 +193,7 @@ test("simple fleet: view switch, encoding and key stay, the summary is one line"
   await expect(el.locator("[data-fleet-encoding]")).toBeVisible();
   await expect(el.locator("[data-fleet-key]")).toBeVisible();
   await expectCompact(el.locator("[data-fleet-legend] [data-compact-text]"), "members");
+  await expectFullWhat(el, "the key above the plot gives the encoding");
 });
 
 test("simple littles: verdict/raw switch stays, the legend is one line", async ({ page, request }) => {
@@ -196,6 +211,7 @@ test("simple littles: verdict/raw switch stays, the legend is one line", async (
   await expect(lt.locator("[data-littles-view-raw]")).toBeVisible();
   await expect(lt.locator(".key")).toBeVisible();
   await expectCompact(lt.locator(".legend [data-compact-text]"), "Whole range");
+  await expectFullWhat(el, "shaded windows break the law");
 });
 
 test("simple seasonal: cycles/ratio switch and reasons stay, the legend is one line", async ({ page, request }) => {
@@ -212,6 +228,32 @@ test("simple seasonal: cycles/ratio switch and reasons stay, the legend is one l
   await toSimple(page);
   await expect(sz.locator(".views button").first()).toBeVisible();
   await expectCompact(sz.locator(".legend [data-compact-text]"), "median");
+  await expectFullWhat(el, "dots are points too extreme for any previous cycle");
+});
+
+test("simple spectrum and spectrogram: the legend is one line, the sentence stays in full", async ({ page, request }) => {
+  const q = await request.post("/api/query", {
+    data: { expr: 'tn_demo_latency_seconds{instance="b"}', start: "now-6h", end: "now-10m", step: "1m" },
+  });
+  const { dataset } = await q.json();
+  const ids: string[] = [];
+  for (const extra of [{ mark: "spectrum" }, { mark: "spectrogram", segment: "1h" }]) {
+    const s = await request.post("/api/show", { data: { dataset, question: `simple kinds: ${extra.mark}`, ...extra } });
+    expect(s.ok(), await s.text()).toBeTruthy();
+    ids.push((await s.json()).panel.id);
+  }
+  await page.goto("/");
+  const [sp, sg] = ids.map((id) => page.locator(`[data-panel-id="${id}"]`));
+  await expect(sp.locator("[data-spectrum-peaks]")).toBeVisible();
+  await expect(sg.locator("canvas.spectrogram").first()).toBeVisible();
+  await expect(sp.locator(".legend")).toContainText("false-alarm level");
+  await expect(sp.locator("[data-compact-text]")).toHaveCount(0);
+
+  await toSimple(page);
+  await expectCompact(sp.locator(".spectrum .legend [data-compact-text]"), "false-alarm level");
+  await expectFullWhat(sp, "Periodogram");
+  await expectCompact(sg.locator(".legend [data-compact-text]"), "share of window variance");
+  await expectFullWhat(sg, "Spectrogram");
 });
 
 test("simple binding group: id, kind, key and metrics stay, the binding line and role details are one line", async ({ page, request, uniq }) => {
