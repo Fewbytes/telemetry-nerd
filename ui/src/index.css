@@ -128,7 +128,7 @@ button.compact-text:hover { color: var(--fg); }
 
 .mode-toggle { display: inline-flex; }
 .mode-toggle button { padding: 2px 10px; cursor: pointer; }
-.mode-toggle button.on { font-weight: 600; background: var(--grid); }
+.mode-toggle button.on { font-weight: 600; background: var(--grid); position: relative; } /* above its neighbour's overlapped border: one line between the halves */
 .mode-toggle button:first-child { border-radius: 4px 0 0 4px; }
 .mode-toggle button:last-child { border-radius: 0 4px 4px 0; margin-left: -1px; }
 .settings > button { border-radius: 4px; padding: 2px 8px; cursor: pointer; }

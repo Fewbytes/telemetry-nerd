@@ -48,3 +48,29 @@ test("re-choosing the current default clears the session override", async ({ pag
   await expect(page.locator("html")).toHaveAttribute("data-mode", "nerd");
   expect(await page.evaluate(() => sessionStorage.getItem("tn-mode"))).toBeNull();
 });
+
+// qbd4: the header holds a mode toggle, workspace switcher, PDF export, connection pill, Settings,
+// build id and theme; on narrow windows the controls wrap instead of overflowing the page.
+test("header controls wrap without horizontal overflow at narrow widths", async ({ page }) => {
+  for (const width of [360, 600, 800]) {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto("/");
+    const settings = page.getByRole("button", { name: "Settings", exact: true });
+    await expect(settings).toBeVisible();
+    const fits = () => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+    expect(await fits()).toBe(true);
+    for (const el of [page.locator("[data-mode-toggle=simple]"), page.locator("[data-mode-toggle=nerd]"), settings, page.getByLabel("Theme")]) {
+      const box = await el.boundingBox();
+      expect(box).not.toBeNull();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+    }
+    await settings.click(); // the open dialog stays on screen too
+    const pop = await page.getByRole("dialog", { name: "Settings" }).boundingBox();
+    expect(pop!.x).toBeGreaterThanOrEqual(0);
+    expect(pop!.x + pop!.width).toBeLessThanOrEqual(width);
+    expect(await fits()).toBe(true);
+    await page.locator("[data-mode-toggle=simple]").click(); // reachable: a click lands
+    await expect(page.locator("html")).toHaveAttribute("data-mode", "simple");
+  }
+});

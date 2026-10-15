@@ -48,7 +48,7 @@
 
 <style>
   .settings { position: relative; display: inline-block; }
-  .pop { position: absolute; right: 0; top: 100%; z-index: 20; min-width: 16rem; padding: 0.75rem; background: var(--bg); border: 1px solid var(--grid); border-radius: 6px; }
+  .pop { position: absolute; right: 0; top: 100%; z-index: 20; min-width: 16rem; max-width: calc(100vw - 1.5rem); box-sizing: border-box; padding: 0.75rem; background: var(--bg); color: var(--fg); border: 1px solid var(--border); box-shadow: 0 2px 8px rgb(0 0 0 / 0.25); border-radius: 6px; }
   .modes { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
   .modes > span { flex-basis: 100%; }
   .hint { color: var(--muted); font-size: 0.85em; margin: 0.5rem 0 0; }
