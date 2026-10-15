@@ -27,10 +27,13 @@
 
 <span class="overflow" bind:this={root}>
   <button
-    type="button" bind:this={trigger} aria-haspopup="true" aria-expanded={open} aria-label={label}
+    type="button" bind:this={trigger} aria-expanded={open} aria-label={label}
     onclick={() => (open = !open)}
   >⋯</button>
   {#if open}
-    <span class="overflow-pop" role="group" aria-label={label}>{@render children()}</span>
+    <!-- an item's own click handler runs first, then the menu closes -->
+    <!-- svelte-ignore a11y_click_events_have_key_events (the items are buttons: Enter/Space on one is a click that bubbles here) -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions (same: this only observes its items' clicks) -->
+    <span class="overflow-pop" role="group" aria-label={label} onclick={() => queueMicrotask(() => (open = false))}>{@render children()}</span>
   {/if}
 </span>

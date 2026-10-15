@@ -41,6 +41,7 @@
   import NerdControls from "./components/panel/NerdControls.svelte";
   import OverflowMenu from "./components/panel/OverflowMenu.svelte";
   import SimpleMeta from "./components/panel/SimpleMeta.svelte";
+  import SimpleToolbar from "./components/panel/SimpleToolbar.svelte";
   import { mode } from "./lib/mode.svelte";
   import PinButton from "./components/PinButton.svelte";
   import MetricCard from "./components/MetricCard.svelte";
@@ -810,8 +811,16 @@
     >⟳</button>
     {#if simple}
       <OverflowMenu label="Panel actions">
-        <button type="button" class="export" data-export="png" disabled={!!exportBusy || collapsed} onclick={() => doExport("png")}>{exportBusy === "png" ? "…" : "Export PNG"}</button>
-        <button type="button" class="export" data-export="pdf" disabled={!!exportBusy || collapsed} onclick={() => doExport("pdf")}>{exportBusy === "pdf" ? "…" : "Export PDF"}</button>
+        <button
+          type="button" class="export" data-export="png" disabled={!!exportBusy || collapsed}
+          title={collapsed ? "Expand the panel to export" : "Save this panel's chart as a PNG image"} aria-label="Export panel as PNG"
+          onclick={() => doExport("png")}
+        >{exportBusy === "png" ? "…" : "Export PNG"}</button>
+        <button
+          type="button" class="export" data-export="pdf" disabled={!!exportBusy || collapsed}
+          title={collapsed ? "Expand the panel to export" : "Save this panel's chart as a one-page PDF"} aria-label="Export panel as PDF"
+          onclick={() => doExport("pdf")}
+        >{exportBusy === "pdf" ? "…" : "Export PDF"}</button>
       </OverflowMenu>
     {:else}
       <span class="export-group" role="group" aria-label="Export panel">
@@ -830,7 +839,14 @@
     <button class="close" type="button" aria-label="Close panel" onclick={close}>×</button>
   </header>
   {#if !collapsed}
-  {#if error}<div class="error">{error}</div>{/if}
+  <!-- the toolbar follows the error with no whitespace between: nerd mode's DOM stays as it was -->
+  {#if error}<div class="error">{error}</div>{/if}{#if simple}
+    <SimpleToolbar
+      {data} {panel} {yst} {yctx} {yIsValues} {chosen} bind:bandPick {idxBusy} {overlayBusy} {rangeBusy} {rangeError}
+      {viewport} {previewRender} {viewNow} bind:previewEl
+      {toggleOverlay} {pick} {pickIndexed} {pickView} {pickPreset} {keepThisRange}
+    />
+  {/if}
   <!-- svelte-ignore a11y_no_static_element_interactions (pointer tracking for the linked crosshair; the plot itself is the interactive element) -->
   <div bind:this={plotEl} class="plot" style="position: relative"
     onmousemove={link ? onLinkedMove : undefined} onmouseleave={link ? () => link.hover(null) : undefined}>
@@ -1048,7 +1064,7 @@
   {/if}
   {#if data}
     {#if simple}
-      <SimpleMeta {data} />
+      <SimpleMeta {data} {heatView} {fleetView} />
     {:else}
       <ShownBlock {data} {heatView} {fleetView} {openCode} />
     {/if}
