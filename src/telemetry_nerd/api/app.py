@@ -261,7 +261,11 @@ def create_app(
         except ValueError:
             return _error(400, "width must be an integer")
         try:
-            out = service.panel_data(request.path_params["id"], width)
+            out = service.panel_data(
+                request.path_params["id"],
+                width,
+                marginal=request.query_params.get("marginal") != "0",
+            )
         except NotFound as e:
             return _error(404, str(e))
         except ValueError as e:  # e.g. a spectrum panel whose series no longer qualifies

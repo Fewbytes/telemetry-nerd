@@ -228,7 +228,8 @@
     const id = ++requestId;
     fetchWidth = width;
     loading = true;
-    return fetchPanelData(panel.id, width)
+    // untracked: callers are effects, and a mode flip alone must not refetch (only a changed dataKey does)
+    return fetchPanelData(panel.id, width, untrack(() => !simple))
       .then((d) => {
         if (id !== requestId) return;
         // a reload can drop or move the note that drove the band: no mouseleave/blur will clear it
@@ -466,8 +467,9 @@
   }
   const marg = $derived(!simple && data?.kind === "time" && !indexedOn ? (data.marginal ?? null) : null);
   const margW = $derived(marg ? MARGINAL_W : 0);
-  // refetch panel data when what the server computes for it changes (marginal, indexed baseline)
-  const dataKey = $derived(JSON.stringify([panel.spec.marginal ?? null, (panel.spec.y.selected?.mode as string | undefined) === "indexed" ? panel.spec.y.selected : null]));
+  // refetch panel data when what the server computes for it changes (marginal, indexed baseline);
+  // simple mode never asks for the marginal, so leaving it for nerd mode (toggle or peek) refetches it
+  const dataKey = $derived(JSON.stringify([simple ? null : (panel.spec.marginal ?? null), (panel.spec.y.selected?.mode as string | undefined) === "indexed" ? panel.spec.y.selected : null]));
   let lastKey: string | null = null;
   $effect(() => {
     const k = dataKey;

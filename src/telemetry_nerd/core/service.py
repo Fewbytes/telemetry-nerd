@@ -2420,7 +2420,7 @@ class TelemetryService:
                               "others": [named[s] for s in rest]}  # fmt: skip
         return [ValidationIssue(rule="series_cut", severity="warning", message=note + not_fleet)]
 
-    def panel_data(self, panel_id: str, width_px: int) -> dict:
+    def panel_data(self, panel_id: str, width_px: int, marginal: bool = True) -> dict:
         panel = self.workspace.get_panel(panel_id)
         dataset_id = panel.dataset_ids[0]
         layer0 = panel.spec["layers"][0]
@@ -2525,7 +2525,9 @@ class TelemetryService:
         return {
             **extra,
             "kind": "time",
-            "marginal": marginal_payload(self.datasets, ChartSpec.model_validate(panel.spec), meta),
+            "marginal": marginal_payload(self.datasets, ChartSpec.model_validate(panel.spec), meta)
+            if marginal
+            else None,
             "index": index_payload(
                 self.datasets, ChartSpec.model_validate(panel.spec), meta, result, width_px
             ),

@@ -395,8 +395,9 @@ export const fetchCode = (id: string) => fetch(`/api/code/${encodeURIComponent(i
 /** Run a node's code again on the same inputs: answers with the NEW node once it has finished. */
 export const rerunCode = (id: string) => postJSON<CodeNode>(`/api/code/${encodeURIComponent(id)}/rerun`);
 
-export const fetchPanelData = (id: string, width: number) =>
-  fetch(`/api/panels/${id}/data?width=${width}`).then((r) => json<PanelData>(r));
+/** `marginal: false` asks the server to skip the marginal reference fetch (simple mode never shows it). */
+export const fetchPanelData = (id: string, width: number, marginal = true) =>
+  fetch(`/api/panels/${id}/data?width=${width}${marginal ? "" : "&marginal=0"}`).then((r) => json<PanelData>(r));
 
 export const reportRender = (r: { panel_id: string; render_ms: number; points: number; width_px: number; height_px?: number }) =>
   postJSON<{ budget_exceeded: boolean }>("/api/render-report", r);
