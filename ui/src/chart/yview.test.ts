@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { SeriesData, YContext, YView } from "../lib/api";
-import { badgeText, contextStrip, stripExtent, nonZeroOrigin, offeredViews, refExtent, resolveY, yStats } from "./yview";
+import {
+  badgeText, contextStrip, stripExtent, nonZeroOrigin, offeredViews, refExtent, resolveY, yStats,
+  yViewAction, yViewIsOn, yViewKey, yViewOffers, type Offer,
+} from "./yview";
 
 const q = (avg: (number | null)[], count: (number | null)[]): SeriesData => ({
   id: "s", labels: {}, ts: avg.map((_, i) => i * 1000), avg, min: avg, max: avg, count,
@@ -247,5 +250,62 @@ describe("jitter below a physical lower bound (I2)", () => {
   });
   it("no contradiction when everything is inside", () => {
     expect(resolveY(null, yStats([q([0.1, 0.2], [1, 1])], { quantile: false, nMin: null }), c).outside).toBe(0);
+  });
+});
+
+const offer = (o: Partial<Offer> & Pick<Offer, "mode">): Offer =>
+  ({ label: o.mode, enabled: true, suggest: false, title: "", ...o });
+
+describe("yViewAction", () => {
+  it("band toggles the vertical pick", () => {
+    expect(yViewAction(offer({ mode: "band" }))).toEqual({ kind: "band" });
+  });
+  it("indexed carries its baseline", () => {
+    expect(yViewAction(offer({ mode: "indexed", baseline: "week" }))).toEqual({ kind: "indexed", baseline: "week" });
+  });
+  it("auto picks with no optimistic view; others carry mode+label", () => {
+    expect(yViewAction(offer({ mode: "auto" }))).toEqual({ kind: "pick", body: { mode: "auto" }, optimistic: null });
+    expect(yViewAction(offer({ mode: "zero", label: "from zero" }))).toEqual({
+      kind: "pick", body: { mode: "zero" }, optimistic: { mode: "zero", label: "from zero" },
+    });
+  });
+});
+
+describe("yViewIsOn", () => {
+  it("no chosen view means auto is on", () => {
+    expect(yViewIsOn(offer({ mode: "auto" }), null, false)).toBe(true);
+    expect(yViewIsOn(offer({ mode: "zero" }), null, false)).toBe(false);
+  });
+  it("a suggestion (chosen.id) turns every mode off", () => {
+    expect(yViewIsOn(offer({ mode: "zero" }), { mode: "zero", id: "s1", label: "x" } as never, false)).toBe(false);
+  });
+  it("band is on while picking or when chosen without an id", () => {
+    expect(yViewIsOn(offer({ mode: "band" }), null, true)).toBe(true);
+    expect(yViewIsOn(offer({ mode: "band" }), { mode: "band" } as never, false)).toBe(true);
+  });
+  it("indexed matches on baseline", () => {
+    const ch = { mode: "indexed", baseline: "week" } as never;
+    expect(yViewIsOn(offer({ mode: "indexed", baseline: "week" }), ch, false)).toBe(true);
+    expect(yViewIsOn(offer({ mode: "indexed", baseline: "previous" }), ch, false)).toBe(false);
+  });
+});
+
+describe("yViewKey", () => {
+  it("is unique per mode+baseline", () => {
+    expect(yViewKey(offer({ mode: "indexed", baseline: "week" }))).toBe("indexedweek");
+    expect(yViewKey(offer({ mode: "auto" }))).toBe("auto");
+  });
+});
+
+describe("yViewOffers", () => {
+  const st = yStats([q([2, 3], [1, 1])], { quantile: false, nMin: null });
+  it("a time panel gets every offered view", () => {
+    expect(yViewOffers("time", st, null)).toEqual(offeredViews(st, null));
+  });
+  it("a fleet panel drops indexed, meaningful-only and log", () => {
+    const modes = yViewOffers("fleet", st, null).map((o) => o.mode);
+    expect(modes).not.toContain("indexed");
+    expect(modes).not.toContain("log");
+    expect(modes).toEqual(offeredViews(st, null).map((o) => o.mode).filter((m) => !["indexed", "meaningful", "log"].includes(m)));
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { YContext } from "./api";
-import { caveatText, contextNotes, describeShown, intervalLegend, panelNotes, provenanceParts, provenanceText } from "./panelNotes";
+import { caveatText, contextNotes, describeShown, intervalLegend, panelNotes, provenanceParts, provenanceText, shownWhat } from "./panelNotes";
 
 describe("panelNotes", () => {
   it("turns caveat keys into sentences and keeps unknown keys visible", () => {
@@ -255,5 +255,24 @@ describe("query-chosen (linear) bucket schemes", () => {
   it("keeps the Prometheus bucket-edge wording for the percentile-band and quantile-curve marks on a classic scheme", () => {
     expect(describeShown({ ...dist, scheme: classic }, "1m", "heatmap", "percentiles")).toContain("the source bucket holding each percentile");
     expect(describeShown({ ...dist, scheme: classic }, "1m", "histogram", "quantile_curve")).toContain("source-bucket boxes");
+  });
+});
+
+describe("shownWhat", () => {
+  const scheme = { kind: "classic", edges: [0.1, 1], schema: null, per_decade: null, description: "classic le buckets: 0.1, 1" };
+  it("is describeShown for a time panel (its mark, the effective step)", () => {
+    const data = { kind: "time", effective_step_ms: 60_000, dataset: { representation: "bucket_agg", quantile: null } } as never;
+    expect(shownWhat(data, "heatmap", "band")).toBe(describeShown({ representation: "bucket_agg", quantile: null }, "1m", "time", ""));
+  });
+  it("follows the heatmap view, not the panel's mark", () => {
+    const dataset = { representation: "distribution", quantile: null, scheme };
+    const data = { kind: "heatmap", mark: "heatmap", effective_step_ms: 60_000, dataset } as never;
+    expect(shownWhat(data, "percentiles", "band")).toBe(describeShown(dataset as never, "1m", "heatmap", "percentiles"));
+    expect(shownWhat(data, "heatmap", "band")).toBe(describeShown(dataset as never, "1m", "heatmap", ""));
+  });
+  it("words a fleet with two or more clusters as grouped", () => {
+    const dataset = { representation: "bucket_agg", quantile: null };
+    const data = { kind: "fleet", effective_step_ms: 60_000, dataset, clusters: [{}, {}] } as never;
+    expect(shownWhat(data, "heatmap", "quantiles")).toBe(describeShown(dataset, "1m", "fleet", "", "quantiles", true));
   });
 });

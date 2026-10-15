@@ -177,7 +177,32 @@ export function offeredViews(st: YStats, ctx: YContext | null = null): Offer[] {
   return out;
 }
 
-export const nonZeroOrigin = (min: number, max: number, log: boolean): boolean => !log && (min > 0 || max < 0);
+/** What picking an offered view does (shared by the nerd button row and the simple dropdown). */
+export type YViewAction =
+  | { kind: "band" }
+  | { kind: "indexed"; baseline: "window" | "previous" | "week" }
+  | { kind: "pick"; body: { mode: YView["mode"] }; optimistic: { mode: YView["mode"]; label: string } | null };
+
+export function yViewAction(o: Offer): YViewAction {
+  if (o.mode === "band") return { kind: "band" };
+  if (o.mode === "indexed") return { kind: "indexed", baseline: o.baseline! };
+  return { kind: "pick", body: { mode: o.mode }, optimistic: o.mode === "auto" ? null : { mode: o.mode, label: o.label } };
+}
+
+/** The offer is the active view: a chosen Claude suggestion (chosen.id) turns every offer off. */
+export function yViewIsOn(o: Offer, chosen: YView | null, bandPick: boolean): boolean {
+  if (o.mode === "band") return bandPick || (chosen?.mode === "band" && !chosen?.id);
+  return (chosen?.mode ?? "auto") === o.mode && !chosen?.id && (o.baseline ?? null) === (chosen?.baseline ?? null);
+}
+
+export const yViewKey = (o: Offer): string => o.mode + (o.baseline ?? "");
+
+/** offers shown for a panel kind: fleet drops indexed/meaningful/log */
+export function yViewOffers(kind: string, st: YStats, ctx: YContext | null): Offer[] {
+  return offeredViews(st, ctx).filter((o) => kind === "time" || !["indexed", "meaningful", "log"].includes(o.mode));
+}
+
+export const nonZeroOrigin =(min: number, max: number, log: boolean): boolean => !log && (min > 0 || max < 0);
 
 /** What the context strip is drawn against: the metric's closed natural bounds (a zoom shows where
  *  it sits within them), else the reference extent, else the data. */

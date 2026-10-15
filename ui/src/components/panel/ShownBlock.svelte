@@ -1,7 +1,7 @@
 <script lang="ts">
   // what the panel shows (dataset, step, provenance, time range) and the query behind it
   import type { PanelData } from "../../lib/api";
-  import { describeShown, provenanceParts, provenanceText } from "../../lib/panelNotes";
+  import { provenanceParts, provenanceText, shownWhat } from "../../lib/panelNotes";
   import { fmtStep } from "../../lib/format";
 
   let { data, heatView, fleetView, openCode }: {
@@ -16,7 +16,7 @@
 </script>
 
 <div class="shown">
-  <p class="what">{describeShown(data.dataset, fmtStep(data.effective_step_ms), data.kind, "mark" in data ? (data.kind === "heatmap" ? heatView === "percentiles" ? "percentiles" : "" : data.mark) : "", fleetView, data.kind === "fleet" && (data.clusters?.length ?? 0) >= 2)}</p>
+  <p class="what">{shownWhat(data, heatView, fleetView)}</p>
   <p class="where">
     <span data-provenance>{#if parts}{@const [pre, node, post] = parts}{pre}<button type="button" class="ref-chip obj-id" data-code-link={node} title="View the code of {node}" onclick={() => openCode?.(node)}>{node}</button>{post}{:else}{provenanceText(data.dataset)}{/if}</span> · {fmtTime(data.dataset.start_ms)} – {fmtTime(data.dataset.end_ms)} · step
         {fmtStep(data.effective_step_ms)}

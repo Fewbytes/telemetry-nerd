@@ -1,6 +1,7 @@
 import { provenance } from "../chart/overlays";
-import type { Caveat, DatasetMeta, Where, YContext } from "./api";
+import type { Caveat, DatasetMeta, PanelData, Where, YContext } from "./api";
 import { fmtValue } from "../chart/axis";
+import { fmtStep } from "./format";
 import { caveatSource, type VariationSource } from "./sources";
 
 export interface Note {
@@ -319,4 +320,13 @@ export function describeShown(
     return `${q} at each ${step} query step (over the query window), never aggregated; ${est}.`;
   }
   return `Average per ${step} bucket (line) with its min–max envelope (band).`;
+}
+
+/** The panel's "what is shown" sentence (its aggregation/estimator), for the panel's current views. */
+export function shownWhat(
+  data: PanelData,
+  heatView: "heatmap" | "percentiles",
+  fleetView: "band" | "quantiles" | "heat" | "multiples",
+): string {
+  return describeShown(data.dataset, fmtStep(data.effective_step_ms), data.kind, "mark" in data ? (data.kind === "heatmap" ? heatView === "percentiles" ? "percentiles" : "" : data.mark) : "", fleetView, data.kind === "fleet" && (data.clusters?.length ?? 0) >= 2);
 }
