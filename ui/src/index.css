@@ -88,6 +88,10 @@ a.obj-id:hover { text-decoration: underline; }
 .panel .note.compact.caveat .note-icon { color: var(--warn); }
 .panel .note.compact .note-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .panel .note.compact.open .note-text { white-space: normal; overflow: visible; }
+/* simple mode: a dense caption as one ellipsised line, click opens it in place (CompactText) */
+button.compact-text { display: inline-block; max-width: 100%; min-width: 0; box-sizing: border-box; padding: 0; margin: 0; font: inherit; color: inherit; background: none; border: 0; text-align: left; vertical-align: bottom; cursor: pointer; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+button.compact-text.open { white-space: normal; overflow: visible; }
+button.compact-text:hover { color: var(--fg); }
 .panel .note.compact .note-source { display: block; padding: 0 8px 4px 26px; font-size: 11px; color: var(--muted); }
 .error { color: var(--error); }
 .empty { color: var(--muted); }

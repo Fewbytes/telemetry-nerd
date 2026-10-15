@@ -4,6 +4,7 @@
   import type { PanelData } from "../../lib/api";
   import { fmtStep } from "../../lib/format";
   import { intervalLegend, shownWhat } from "../../lib/panelNotes";
+  import CompactText from "./CompactText.svelte";
 
   let { data, heatView, fleetView }: {
     data: PanelData;
@@ -13,7 +14,8 @@
   const fmtTime = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z");
 </script>
 
-<p class="simple-what" data-simple-what>{shownWhat(data, heatView, fleetView)}</p>
+<!-- the non-time kinds' sentences carry long scheme lists (le buckets, estimators): one line, opens in place -->
+<p class="simple-what" data-simple-what>{#if data.kind === "time"}{shownWhat(data, heatView, fleetView)}{:else}<CompactText text={shownWhat(data, heatView, fleetView)} />{/if}</p>
 {#if data.kind === "time" && data.series.some((s) => s.lo)}
   {@const bandLegend = intervalLegend(data.dataset)}
   {#if bandLegend}<div class="legend" data-interval-legend>band: {bandLegend}</div>{/if}
