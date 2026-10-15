@@ -37,6 +37,7 @@
   import { plotColors, theme } from "./lib/theme.svelte";
   import SelectionMenu from "./components/SelectionMenu.svelte";
   import PanelThread from "./components/PanelThread.svelte";
+  import ThreadSummary from "./components/panel/ThreadSummary.svelte";
   import NotesList from "./components/panel/NotesList.svelte";
   import ShownBlock from "./components/panel/ShownBlock.svelte";
   import NerdControls from "./components/panel/NerdControls.svelte";
@@ -1071,7 +1072,7 @@
     {:else}
       <ShownBlock {data} {heatView} {fleetView} {openCode} />
     {/if}
-    <NotesList {notes} {activeNotes} {setFocus} />
+    <NotesList {notes} {activeNotes} {setFocus} compact={simple} />
   {/if}
   {#if data && !simple}
     <MetricCard panelId={panel.id} />
@@ -1079,7 +1080,7 @@
   {#if panelThreads.length > 0}
     <div class="threads">
       {#each panelThreads as thread (thread.id)}
-        <PanelThread {thread} />
+        {#if simple}<ThreadSummary {thread} />{:else}<PanelThread {thread} />{/if}
       {/each}
     </div>
   {/if}
