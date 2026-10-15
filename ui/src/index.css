@@ -54,6 +54,9 @@ a.obj-id:hover { text-decoration: underline; }
 }
 /* what the graph shows, then the query (folded), then warnings: three distinct blocks */
 .panel .shown { margin-top: 8px; font-size: 13px; }
+.simple-meta { margin: 0.25rem 0; color: var(--muted); font-size: 0.85em; }
+.overflow { position: relative; display: inline-block; }
+.overflow-pop { position: absolute; right: 0; top: 100%; z-index: 20; display: flex; flex-direction: column; gap: 2px; padding: 4px; background: var(--bg); border: 1px solid var(--grid); border-radius: 6px; }
 .panel .shown p { margin: 0; }
 .panel .shown .where { font-size: 12px; color: var(--muted); }
 .panel details.query { margin-top: 6px; font-size: 12px; color: var(--muted); }

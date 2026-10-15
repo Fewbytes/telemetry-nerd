@@ -39,6 +39,9 @@
   import NotesList from "./components/panel/NotesList.svelte";
   import ShownBlock from "./components/panel/ShownBlock.svelte";
   import NerdControls from "./components/panel/NerdControls.svelte";
+  import OverflowMenu from "./components/panel/OverflowMenu.svelte";
+  import SimpleMeta from "./components/panel/SimpleMeta.svelte";
+  import { mode } from "./lib/mode.svelte";
   import PinButton from "./components/PinButton.svelte";
   import MetricCard from "./components/MetricCard.svelte";
   import HeatmapPlot from "./components/HeatmapPlot.svelte";
@@ -446,7 +449,8 @@
   }
   let margBusy = $state(false);
   const indexedOn = $derived((chosen?.mode as string | undefined) === "indexed");
-  const marg = $derived(data?.kind === "time" && !indexedOn ? (data.marginal ?? null) : null);
+  const simple = $derived(mode.effective === "simple");
+  const marg = $derived(!simple && data?.kind === "time" && !indexedOn ? (data.marginal ?? null) : null);
   const margW = $derived(marg ? MARGINAL_W : 0);
   // refetch panel data when what the server computes for it changes (marginal, indexed baseline)
   const dataKey = $derived(JSON.stringify([panel.spec.marginal ?? null, (panel.spec.y.selected?.mode as string | undefined) === "indexed" ? panel.spec.y.selected : null]));
@@ -786,7 +790,9 @@
       title={collapsed ? "Expand panel" : "Collapse panel"} aria-label={collapsed ? "Expand panel" : "Collapse panel"}
       onclick={toggleCollapsed}
     >{collapsed ? "▸" : "▾"}</button>
-    <a class="obj-id" href="#/panel/{panel.id}" title="Panel {panel.id}">{panel.id}</a>
+    {#if !simple}
+      <a class="obj-id" href="#/panel/{panel.id}" title="Panel {panel.id}">{panel.id}</a>
+    {/if}
     <span class="question">Q: {panel.question}</span>
     {#if panel.answered_by}
       <a class="status answered-by" href="#finding-{panel.answered_by}">answered → {panel.answered_by}</a>
@@ -794,24 +800,33 @@
       <span class="status {panel.status}">{panel.status}</span>
     {/if}
     {#if loading}<span class="loading-tag" data-panel-loading><span class="spinner" aria-hidden="true"></span>{data ? "updating" : "loading"}</span>{/if}
-    <PinButton object={panel.id} />
+    {#if !simple}
+      <PinButton object={panel.id} />
+    {/if}
     <button
       type="button" class="refresh" data-refresh disabled={collapsed || loading}
       title={collapsed ? "Expand the panel to refresh" : "Reload this panel's data"} aria-label="Refresh panel"
       onclick={doRefresh}
     >⟳</button>
-    <span class="export-group" role="group" aria-label="Export panel">
-      <button
-        type="button" class="export" data-export="png" disabled={!!exportBusy || collapsed}
-        title={collapsed ? "Expand the panel to export" : "Save this panel's chart as a PNG image"} aria-label="Export panel as PNG"
-        onclick={() => doExport("png")}
-      >{exportBusy === "png" ? "…" : "PNG"}</button>
-      <button
-        type="button" class="export" data-export="pdf" disabled={!!exportBusy || collapsed}
-        title={collapsed ? "Expand the panel to export" : "Save this panel's chart as a one-page PDF"} aria-label="Export panel as PDF"
-        onclick={() => doExport("pdf")}
-      >{exportBusy === "pdf" ? "…" : "PDF"}</button>
-    </span>
+    {#if simple}
+      <OverflowMenu label="Panel actions">
+        <button type="button" class="export" data-export="png" disabled={!!exportBusy || collapsed} onclick={() => doExport("png")}>{exportBusy === "png" ? "…" : "Export PNG"}</button>
+        <button type="button" class="export" data-export="pdf" disabled={!!exportBusy || collapsed} onclick={() => doExport("pdf")}>{exportBusy === "pdf" ? "…" : "Export PDF"}</button>
+      </OverflowMenu>
+    {:else}
+      <span class="export-group" role="group" aria-label="Export panel">
+        <button
+          type="button" class="export" data-export="png" disabled={!!exportBusy || collapsed}
+          title={collapsed ? "Expand the panel to export" : "Save this panel's chart as a PNG image"} aria-label="Export panel as PNG"
+          onclick={() => doExport("png")}
+        >{exportBusy === "png" ? "…" : "PNG"}</button>
+        <button
+          type="button" class="export" data-export="pdf" disabled={!!exportBusy || collapsed}
+          title={collapsed ? "Expand the panel to export" : "Save this panel's chart as a one-page PDF"} aria-label="Export panel as PDF"
+          onclick={() => doExport("pdf")}
+        >{exportBusy === "pdf" ? "…" : "PDF"}</button>
+      </span>
+    {/if}
     <button class="close" type="button" aria-label="Close panel" onclick={close}>×</button>
   </header>
   {#if !collapsed}
@@ -1007,7 +1022,7 @@
       {/key}
     {/if}
   </div>
-  {#if data?.kind === "time" || data?.kind === "spectrogram" || (data?.kind === "fleet" && (fleetView === "band" || fleetView === "quantiles"))}
+  {#if !simple && (data?.kind === "time" || data?.kind === "spectrogram" || (data?.kind === "fleet" && (fleetView === "band" || fleetView === "quantiles")))}
     <!-- svelte-ignore a11y_no_static_element_interactions (pointer-drag resize handle; ArrowUp/ArrowDown is the keyboard path) -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex (a focusable splitter: role=separator is not in svelte-check's interactive-role list) -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions (same: the role communicates it to assistive tech even though svelte-check does not recognise it) -->
@@ -1023,17 +1038,23 @@
   {#if data?.kind === "time" && data.bucket_state_more}
     <div class="rug-more">{rugMoreLabel(data.bucket_state_more)}</div>
   {/if}
-  <NerdControls
-    {data} {panel} {yst} {yctx} {yIsValues} {chosen} bind:bandPick {idxBusy} {indexedOn}
-    {overlayBusy} {splitBusy} {splitNote} {reframeBusy} {margBusy} {rangeBusy} {rangeError}
-    {viewport} {previewRender} {viewNow} bind:previewEl
-    {toggleOverlay} {split} {reframe} {pick} {pickIndexed} {pickView} {pickPreset} {pickTyped} {keepThisRange} {toggleMarginal}
-  />
-  {#if data}
-    <ShownBlock {data} {heatView} {fleetView} {openCode} />
-    <NotesList {notes} {activeNotes} {setFocus} />
+  {#if !simple}
+    <NerdControls
+      {data} {panel} {yst} {yctx} {yIsValues} {chosen} bind:bandPick {idxBusy} {indexedOn}
+      {overlayBusy} {splitBusy} {splitNote} {reframeBusy} {margBusy} {rangeBusy} {rangeError}
+      {viewport} {previewRender} {viewNow} bind:previewEl
+      {toggleOverlay} {split} {reframe} {pick} {pickIndexed} {pickView} {pickPreset} {pickTyped} {keepThisRange} {toggleMarginal}
+    />
   {/if}
   {#if data}
+    {#if simple}
+      <SimpleMeta {data} />
+    {:else}
+      <ShownBlock {data} {heatView} {fleetView} {openCode} />
+    {/if}
+    <NotesList {notes} {activeNotes} {setFocus} />
+  {/if}
+  {#if data && !simple}
     <MetricCard panelId={panel.id} />
   {/if}
   {#if panelThreads.length > 0}
