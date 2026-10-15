@@ -786,6 +786,14 @@
 
 <svelte:window onkeydown={(e) => { if (e.key === "Escape") bandPick = false; }} />
 
+{#snippet exportButton(kind: "png" | "pdf", label: string)}
+  <button
+    type="button" class="export" data-export={kind} disabled={!!exportBusy || collapsed}
+    title={collapsed ? "Expand the panel to export" : `Save this panel's chart as ${kind === "png" ? "a PNG image" : "a one-page PDF"}`} aria-label="Export panel as {kind.toUpperCase()}"
+    onclick={() => doExport(kind)}
+  >{exportBusy === kind ? "…" : label}</button>
+{/snippet}
+
 <section
   class="panel"
   bind:this={sectionEl}
@@ -835,29 +843,13 @@
           type="button" class="export" data-peek="nerd"
           title="Show this panel's full nerd rendering, until you switch it back" onclick={() => setPeek(true)}
         >Show nerd view</button>
-        <button
-          type="button" class="export" data-export="png" disabled={!!exportBusy || collapsed}
-          title={collapsed ? "Expand the panel to export" : "Save this panel's chart as a PNG image"} aria-label="Export panel as PNG"
-          onclick={() => doExport("png")}
-        >{exportBusy === "png" ? "…" : "Export PNG"}</button>
-        <button
-          type="button" class="export" data-export="pdf" disabled={!!exportBusy || collapsed}
-          title={collapsed ? "Expand the panel to export" : "Save this panel's chart as a one-page PDF"} aria-label="Export panel as PDF"
-          onclick={() => doExport("pdf")}
-        >{exportBusy === "pdf" ? "…" : "Export PDF"}</button>
+        {@render exportButton("png", "Export PNG")}
+        {@render exportButton("pdf", "Export PDF")}
       </OverflowMenu>
     {:else}
       <span class="export-group" role="group" aria-label="Export panel">
-        <button
-          type="button" class="export" data-export="png" disabled={!!exportBusy || collapsed}
-          title={collapsed ? "Expand the panel to export" : "Save this panel's chart as a PNG image"} aria-label="Export panel as PNG"
-          onclick={() => doExport("png")}
-        >{exportBusy === "png" ? "…" : "PNG"}</button>
-        <button
-          type="button" class="export" data-export="pdf" disabled={!!exportBusy || collapsed}
-          title={collapsed ? "Expand the panel to export" : "Save this panel's chart as a one-page PDF"} aria-label="Export panel as PDF"
-          onclick={() => doExport("pdf")}
-        >{exportBusy === "pdf" ? "…" : "PDF"}</button>
+        {@render exportButton("png", "PNG")}
+        {@render exportButton("pdf", "PDF")}
       </span>
     {/if}
     <button class="close" type="button" aria-label="Close panel" onclick={close}>×</button>
