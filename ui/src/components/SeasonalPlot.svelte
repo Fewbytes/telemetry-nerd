@@ -3,6 +3,7 @@
   import "uplot/dist/uPlot.min.css";
   import { flagMarks, seasonalLegend, seriesDisplayName, toSeasonalUplot, verdictText, type SeasonalView } from "../chart/seasonal";
   import { drawDots, plotAxes, axisGutterSize } from "../chart/plotKit";
+  import { seriesName } from "../chart/toUplot";
   import { shortNamer } from "../chart/seriesNames";
   import { fmtRatio } from "../chart/indexed";
   import { fmtSI } from "../lib/format";
@@ -69,7 +70,7 @@
 
 <div class="seasonal" data-seasonal-verdict={series.verdict} data-seasonal-view={view} data-seasonal-flags={(series.flagged ?? []).length}>
   <div class="head">
-    <span>{seriesDisplayName(series, data.dataset.expr, short)}: <b>{verdictText(series)}</b></span>
+    <span title={seriesName(series.labels)}>{seriesDisplayName(series, data.dataset.expr, short)}: <b>{verdictText(series)}</b></span>
     {#if canRatio}
       <span class="views" role="group" aria-label="view">
         <button class:on={view === "overlay"} onclick={() => (view = "overlay")}>cycles</button>

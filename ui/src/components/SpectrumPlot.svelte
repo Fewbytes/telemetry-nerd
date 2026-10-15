@@ -32,6 +32,12 @@
         ],
         cursor: { drag: { x: false, y: false } },
         hooks: {
+          ready: [
+            (p: uPlot) => {
+              const rows = p.root.querySelectorAll(".u-legend .u-series");
+              m.fullNames.forEach((full, i) => { if (full) rows[i]?.setAttribute("title", full); });
+            },
+          ],
           draw: [
             (p: uPlot) => {
               const c = p.ctx, dpr = window.devicePixelRatio || 1;

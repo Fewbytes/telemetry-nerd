@@ -110,6 +110,8 @@ export interface ToUplotOpts {
   overlays?: OverlayDraw;
   /** per-theme series colours (seriesPalette(mode)); defaults to the dark-safe PALETTE */
   palette?: string[];
+  /** short names from the panel's whole series set; defaults to naming within `series` (a subset would rename rows) */
+  namer?: (labels: Record<string, string>) => string;
 }
 
 export const LIMIT_COLOR = "#D55E00"; // Okabe-Ito vermilion: a hazard, not a series colour
@@ -147,7 +149,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
   const palette = opts.palette ?? PALETTE;
   // uplot index where each series' rows start, with its full selector (rows after it, up to the next start, are its derived rows)
   const rowStarts: [number, string][] = [];
-  const short = shortNamer(series.filter((s) => !s.summary && s.labels).map((s) => s.labels));
+  const short = opts.namer ?? shortNamer(series.filter((s) => !s.summary && s.labels).map((s) => s.labels));
 
   /** `values` (one per time in `ts`) laid onto the shared x grid; null where a series has no point. */
   const onGrid = (ts: number[], values: (number | null)[]): (number | null)[] => {

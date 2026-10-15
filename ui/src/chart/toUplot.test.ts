@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { REFERENCE_COLOR, isolatedPointsFilter, seriesName, stepify, toUplot } from "./toUplot";
+import { shortNamer } from "./seriesNames";
 import type { SeriesData } from "../lib/api";
 import type uPlot from "uplot";
 
@@ -206,5 +207,40 @@ describe("others band (14y)", () => {
     expect(m.series[1].label).toBe('service=checkout');
     expect(m.series[1].dash).toBeUndefined();
     expect(m.bands).toHaveLength(2); // the others keep their min–max envelope
+  });
+});
+
+describe("panel-wide names and full-selector rows", () => {
+  it("a subset drawn with the full set's namer keeps the full-set names", () => {
+    const all = [s("a", { __name__: "m", i: "a" }, [1000], [1]), s("b", { __name__: "m", i: "b" }, [1000], [2])];
+    const namer = shortNamer(all.map((x) => x.labels));
+    expect(toUplot([all[1]], undefined, { namer }).series[1].label).toBe("b");
+    // without the namer the lone series is named from itself (the old, view-dependent behaviour)
+    expect(toUplot([all[1]]).series[1].label).toBe("m");
+  });
+
+  it("every row (band, ghost, raw twin, min/max) maps to its own series' full selector", () => {
+    const a = s("a", { i: "a" }, [1000, 2000], [1, 2]);
+    const b = s("b", { i: "b" }, [1000, 2000], [3, 4]);
+    const m = toUplot([a, b], undefined, {
+      overlays: {
+        normal: { a: { ts: [1000, 2000], lo: [0, 1], hi: [2, 3] }, b: { ts: [1000, 2000], lo: [2, 3], hi: [4, 5] } },
+        ghost: [{ id: "b", ts: [1000, 2000], avg: [3, 3], count: [4, 4] }],
+      } as never,
+      context: { role: "raw", series: [a, b] },
+    });
+    const own = (label: string) => m.series.findIndex((x) => x.label === label);
+    let prev = "";
+    m.series.forEach((x, i) => {
+      if (i === 0) return;
+      const label = String(x.label);
+      // blank-labelled helper rows (raw twin's min/max) belong to the row before them
+      const expected = label.startsWith("a") ? '{i="a"}' : label.startsWith("b") ? '{i="b"}' : label === "" ? prev : "";
+      prev = expected;
+      expect(m.fullNames[i], label).toBe(expected);
+    });
+    expect(own("a normal low")).toBeGreaterThan(0);
+    expect(own("b last week")).toBeGreaterThan(0);
+    expect(m.fullNames).toHaveLength(m.series.length);
   });
 });

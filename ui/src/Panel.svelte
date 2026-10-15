@@ -27,6 +27,7 @@
   import SeasonalPlot from "./components/SeasonalPlot.svelte";
   import FleetPlot from "./components/FleetPlot.svelte";
   import { fleetStats, fleetY } from "./chart/fleet";
+  import { shortNamer } from "./chart/seriesNames";
   import { fmtRatio, indexSeries, ratioTicks } from "./chart/indexed";
   import { drawMarginal, marginalHeader } from "./chart/marginal";
   import { overlayDraw } from "./chart/overlays";
@@ -260,7 +261,7 @@
   // indexed view: series ÷ baseline (log, 1 centred); everything downstream draws `drawn`
   const ix = $derived(
     data?.kind === "time" && (chosen?.mode as string | undefined) === "indexed" && data.index
-      ? indexSeries(data.series, data.index, { quantile: data.dataset.representation === "quantile", nMin: data.dataset.n_min ?? null })
+      ? indexSeries(data.series, data.index, { quantile: data.dataset.representation === "quantile", nMin: data.dataset.n_min ?? null, namer: shortNamer(data.series.map((s) => s.labels)) })
       : null,
   );
   // filtered/raw data views (4ok.9): the user's pick, else Claude's default; optimistic until the snapshot catches up
@@ -623,6 +624,7 @@
         edges: untrack(() => (viewNow === "raw" ? undefined : d.filter?.edges)),
         overlays: overlayDraw(d.overlays),
         palette,
+        namer: shortNamer(d.series.map((s) => s.labels)),
       },
     );
     const width = (el.clientWidth || 800) - margW;

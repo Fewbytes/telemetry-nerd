@@ -8,6 +8,7 @@ describe("seriesLabels", () => {
   it("drops a shared __name__ but keeps a varying one", () => {
     expect(seriesLabels([{ __name__: "m", i: "a" }, { __name__: "m", i: "b" }])).toEqual(["a", "b"]);
     expect(seriesLabels([{ __name__: "m1" }, { __name__: "m2" }])).toEqual(["m1", "m2"]);
+    expect(seriesLabels([{ __name__: "m1", i: "a" }, { __name__: "m2", i: "a" }, { __name__: "m2", i: "b" }])).toEqual(["m1 · i=a", "m2 · i=a", "m2 · i=b"]);
   });
   it("joins several varying keys sorted by key", () => {
     expect(seriesLabels([{ z: "1", a: "x" }, { z: "2", a: "y" }])).toEqual(["a=x, z=1", "a=y, z=2"]);
@@ -18,16 +19,20 @@ describe("seriesLabels", () => {
     expect(seriesLabels([{}])).toEqual(["total"]);
   });
   it("disambiguates identical short names", () => {
-    expect(seriesLabels([{ i: "a" }, { i: "a" }])).toEqual(["i=a", "i=a #2"]);
-    expect(seriesLabels([{ i: "a", j: "1" }, { i: "b", j: "1" }, { i: "b", j: "1" }])).toEqual(["a", "b", "b #3"]);
+    expect(seriesLabels([{ i: "a" }, { i: "a" }, { i: "a" }])).toEqual(["i=a", "i=a #2", "i=a #3"]);
+    expect(seriesLabels([{ i: "a", j: "1" }, { i: "b", j: "1" }, { i: "b", j: "1" }])).toEqual(["a", "b", "b #2"]);
+    // a literal "a #2" cannot collide with a generated suffix
+    expect(seriesLabels([{ i: "a" }, { i: "a" }, { i: "a #2" }])).toEqual(["a", "a #3", "a #2"]);
   });
   it("renders a missing key as an em dash", () => {
     expect(seriesLabels([{ i: "a" }, {}])).toEqual(["a", "—"]);
     expect(seriesLabels([{ i: "a", j: "1" }, { j: "2" }])).toEqual(["i=a, j=1", "i=—, j=2"]);
   });
-  it("is deterministic", () => {
-    const all = [{ b: "1", a: "2" }, { b: "2", a: "2" }];
-    expect(seriesLabels(all)).toEqual(seriesLabels(all));
+  it("does not depend on input order", () => {
+    const all = [{ b: "1", a: "2" }, { b: "2", a: "3" }, { b: "3", a: "2" }];
+    const pick = (ls: Record<string, string>[]) => { const n = shortNamer(ls); return all.map((l) => n(l)); };
+    expect(pick([...all].reverse())).toEqual(pick(all));
+    expect(pick([all[1], all[2], all[0]])).toEqual(pick(all));
   });
 });
 

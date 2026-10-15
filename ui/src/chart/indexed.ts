@@ -4,20 +4,21 @@ import { seriesName } from "./toUplot";
 
 export interface Indexed { series: SeriesData[]; skipped: string[]; hidden: number; nonPositive: number; refused: string | null }
 
-export function indexSeries(series: SeriesData[], ix: IndexPayload, o: { quantile: boolean; nMin: number | null }): Indexed {
+export function indexSeries(series: SeriesData[], ix: IndexPayload, o: { quantile: boolean; nMin: number | null; namer?: (labels: Record<string, string>) => string }): Indexed {
   const out: Indexed = { series: [], skipped: [], hidden: 0, nonPositive: 0, refused: ix.refused ?? null };
   if (out.refused) return out;
   const refs = new Map((ix.series ?? []).map((r) => [r.id, new Map(r.ts.map((t, i) => [t, i]))]));
   const refById = new Map((ix.series ?? []).map((r) => [r.id, r]));
+  const name = o.namer ?? seriesName;
   for (const s of series) {
     let base: (i: number) => number | null;
     if (ix.values) {
       const b = ix.values[s.id];
-      if (b == null || !(b > 0)) { out.skipped.push(seriesName(s.labels)); continue; }
+      if (b == null || !(b > 0)) { out.skipped.push(name(s.labels)); continue; }
       base = () => b;
     } else {
       const r = refById.get(s.id), at = refs.get(s.id);
-      if (!r || !at) { out.skipped.push(seriesName(s.labels)); continue; }
+      if (!r || !at) { out.skipped.push(name(s.labels)); continue; }
       base = (i) => {
         const j = at.get(s.ts[i]);
         if (j === undefined) return null;

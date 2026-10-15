@@ -113,7 +113,7 @@
   };
   const msAt = (px: number) => cols.x0Ms + (px / plotW) * cols.spanMs;
 
-  const short = $derived(shortNamer(series.map((s) => s.labels)));
+  const short = $derived(shortNamer(data.series.map((s) => s.labels)));
   function move(e: MouseEvent) {
     const p = local(e);
     if (drag) { drag = { ...drag, to: Math.max(0, Math.min(plotW, p.x)) }; return; }
@@ -148,7 +148,7 @@
 <div class="facet">
   <div class="facet-label">
     {#if overlaid}
-      {#each series as s, i (s.id)}<span class="sw" style="background: {palette[i % palette.length]}" title={seriesName(s.labels)}></span>{short(s.labels)}{" "}{/each}
+      {#each series as s, i (s.id)}<span class="sw" style="background: {palette[i % palette.length]}"></span><span title={seriesName(s.labels)}>{short(s.labels)}</span>{" "}{/each}
       · {qLabel(qs[0])}
     {:else}
       <span title={seriesName(series[0].labels)}>{short(series[0].labels)}</span>
