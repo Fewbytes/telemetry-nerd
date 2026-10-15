@@ -1,6 +1,7 @@
 // Panel groups (bead czt.3): a USE / RED / Little's law binding drawn as one linked set of panels.
 // Pure helpers: which panels belong to which group, in what order, and how the roles read.
-import type { Panel, PanelGroup, RoleVerdict } from "./api";
+import type { GroupRole, Panel, PanelGroup, RoleVerdict } from "./api";
+import { fmtStep } from "./format";
 import { sourceText } from "./sources";
 
 /** Role order per binding kind (the catalog's BINDING_ROLES). */
@@ -101,6 +102,28 @@ export function basisText(g: Pick<PanelGroup, "basis" | "binding_origin" | "sugg
   return g.basis === "binding"
     ? `confirmed binding${g.binding_origin ? ` (${g.binding_origin})` : ""}`
     : `suggestion ${g.suggestion ?? ""}, not confirmed`;
+}
+
+/** Header times of a group: minutes, UTC. */
+export const fmtGroupTime = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ") + "Z";
+
+/** The group's meta line as one string (simple mode shows it as one line that opens in place). */
+export function groupMetaText(g: Pick<PanelGroup, "basis" | "binding_origin" | "suggestion" | "start_ms" | "end_ms" | "step_ms" | "join_on" | "matchers" | "reframed_from">): string {
+  const parts = [
+    basisText(g), `${fmtGroupTime(g.start_ms)} – ${fmtGroupTime(g.end_ms)}`, `step ${fmtStep(g.step_ms)}`,
+    "one time axis; hover or drag on any panel to see it on all",
+  ];
+  if (g.join_on.length) parts.push(`members by ${g.join_on.join(", ")}`);
+  if (Object.keys(g.matchers).length) parts.push(Object.entries(g.matchers).map(([k, v]) => `${k}="${v}"`).join(", "));
+  if (g.reframed_from) parts.push(`reframed from ${g.reframed_from}`);
+  return parts.join(" · ");
+}
+
+/** A role's form and member count, as the role label prints them. */
+export function roleDetailText(r: Pick<GroupRole, "form" | "members" | "view">): string {
+  const form = r.form ? (FORM_LABELS[r.form] ?? r.form) : "";
+  const members = r.members ? `${r.members} member${r.members === 1 ? "" : "s"}${r.view === "fleet" ? " · fleet" : ""}` : "";
+  return [form, members].filter(Boolean).join(" · ");
 }
 
 /** A role's verdict badge (bead czt.4): what moved, how, from when; title = the full sentence. */

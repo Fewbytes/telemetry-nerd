@@ -4,9 +4,11 @@
   import { setContext } from "svelte";
   import PanelView from "../Panel.svelte";
   import { closeGroup, reframeGroup, type Annotation, type Panel, type PanelGroup, type Thread } from "../lib/api";
-  import { basisText, FORM_LABELS, groupDomain, KIND_LABELS, orderedRoles, roleName, roleTitle, verdictBadge } from "../lib/groups";
+  import { basisText, fmtGroupTime, FORM_LABELS, groupDomain, groupMetaText, KIND_LABELS, orderedRoles, roleDetailText, roleName, roleTitle, verdictBadge } from "../lib/groups";
   import { GroupLink } from "../lib/groupLink.svelte";
   import { fmtStep } from "../lib/format";
+  import { mode } from "../lib/mode.svelte";
+  import CompactText from "./panel/CompactText.svelte";
 
   let { group, members, annotations = [], threads = [] }: {
     group: PanelGroup; members: Record<string, Panel>; annotations?: Annotation[]; threads?: Thread[];
@@ -19,7 +21,10 @@
 
   const roles = $derived(orderedRoles(group, members));
   const byRole = $derived(new Map(group.roles.map((r) => [r.role, r])));
-  const fmtTime = (ms: number) => new Date(ms).toISOString().slice(0, 16).replace("T", " ") + "Z";
+  const fmtTime = fmtGroupTime;
+  // simple mode: the binding line, role details and notes are one line each, opened in place; the
+  // member panels follow the mode on their own
+  const simple = $derived(mode.effective === "simple");
   let error = $state<string | null>(null);
   let busy = $state(false);
 
@@ -50,6 +55,9 @@
     {/if}
     <button class="close" type="button" aria-label="Close group" title="Close the group and all its panels" onclick={close}>×</button>
   </header>
+  {#if simple}
+  <p class="group-meta"><CompactText text={groupMetaText(group)} /></p>
+  {:else}
   <p class="group-meta">
     {basisText(group)} · {fmtTime(group.start_ms)} – {fmtTime(group.end_ms)} · step {fmtStep(group.step_ms)}
     · one time axis; hover or drag on any panel to see it on all
@@ -57,6 +65,7 @@
     {#if Object.keys(group.matchers).length} · {Object.entries(group.matchers).map(([k, v]) => `${k}="${v}"`).join(", ")}{/if}
     {#if group.reframed_from} · reframed from {group.reframed_from}{/if}
   </p>
+  {/if}
   {#if group.verdict}
     <p class="group-verdict" data-group-verdict data-first-mover={group.verdict.first ?? ""}>
       {group.verdict.text}
@@ -72,14 +81,18 @@
       <div class="role-label">
         <span class="role-name">{roleTitle(role)}</span>
         {#if r?.metric}<code>{r.metric}</code>{/if}
+        {#if simple}
+          {#if r && roleDetailText(r)}<span class="detail"><CompactText text={roleDetailText(r)} /></span>{/if}
+        {:else}
         {#if r?.form}<span class="form">{FORM_LABELS[r.form] ?? r.form}</span>{/if}
         {#if r?.members}<span class="members">{r.members} member{r.members === 1 ? "" : "s"}{r.view === "fleet" ? " · fleet" : ""}</span>{/if}
+        {/if}
         {#if badge}
           <span class="verdict {badge.tone}" data-role-verdict={r?.verdict?.status} title={badge.title}>{badge.label}</span>
         {/if}
       </div>
       {#if r?.notes?.length}
-        <ul class="role-notes">{#each r.notes as n (n)}<li>{n}</li>{/each}</ul>
+        <ul class="role-notes">{#each r.notes as n (n)}<li>{#if simple}<CompactText text={n} />{:else}{n}{/if}</li>{/each}</ul>
       {/if}
       {#if p && !p.closed}
         <PanelView panel={p} {annotations} {threads} />
@@ -121,6 +134,7 @@
   .role-label code { font-size: 12px; color: var(--muted); }
   .form, .members { font-size: 12px; color: var(--muted); }
   .form::before, .members::before { content: "· "; }
+  .detail { min-width: 0; font-size: 12px; color: var(--muted); }
   .role-notes { margin: 0 0 4px; padding-left: 16px; font-size: 12px; color: var(--muted); }
   .gap-card { border: 1px dashed var(--border); border-radius: 8px; padding: 10px 12px; margin-bottom: 16px; font-size: 13px; background: var(--badge); color: var(--fg); }
   .gap-title { font-weight: 600; margin-bottom: 4px; }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Panel, PanelGroup } from "./api";
-import { basisText, groupDomain, layoutItems, msAt, orderedRoles, roleTitle, verdictBadge, xAt } from "./groups";
+import { basisText, groupDomain, groupMetaText, layoutItems, msAt, orderedRoles, roleDetailText, roleTitle, verdictBadge, xAt } from "./groups";
 
 const panel = (id: string, t: number, group?: { id: string; role: string }): Panel => ({
   id, question: `q ${id}`, status: "open", dataset_ids: ["d1"], created_at_ms: t, answered_by: null, closed: false,
@@ -88,5 +88,27 @@ describe("verdictBadge", () => {
     expect(und?.title).toBe("source undetermined: rate lower (level)");
     expect(verdictBadge({ status: "no_change", direction: null, pattern: null, at_capacity: false, text: "rate: no change", source: "common_cause" })?.title).toBe("common cause: rate: no change");
     expect(verdictBadge({ status: "no_change", direction: null, pattern: null, at_capacity: false, text: "rate: no change (common cause)", source: "common_cause" })?.title).toBe("rate: no change (common cause)");
+  });
+});
+
+describe("groupMetaText / roleDetailText (simple mode's one-line forms)", () => {
+  it("joins basis, range, step, the shared axis and the join", () => {
+    expect(groupMetaText(group("pg1", 0, [], { basis: "binding", binding_origin: "claude", join_on: ["service"] }))).toBe(
+      "confirmed binding (claude) · 1970-01-01 00:00Z – 1970-01-01 01:00Z · step 1m · one time axis; hover or drag on any panel to see it on all · members by service",
+    );
+  });
+
+  it("adds matchers and the reframed-from group, and drops an empty join", () => {
+    const t = groupMetaText(group("pg2", 0, [], { join_on: [], matchers: { env: "prod" }, reframed_from: "pg1" }));
+    expect(t).toBe(
+      "suggestion RED:otel_http, not confirmed · 1970-01-01 00:00Z – 1970-01-01 01:00Z · step 1m · one time axis; hover or drag on any panel to see it on all · env=\"prod\" · reframed from pg1",
+    );
+  });
+
+  it("role detail: form label and member count", () => {
+    const [r] = group("pg1", 0, ["rate"]).roles;
+    expect(roleDetailText({ ...r, members: 2 })).toBe("per-second rate · 2 members");
+    expect(roleDetailText({ ...r, members: 1, view: "fleet" })).toBe("per-second rate · 1 member · fleet");
+    expect(roleDetailText({ ...r, form: null, members: 0 })).toBe("");
   });
 });
