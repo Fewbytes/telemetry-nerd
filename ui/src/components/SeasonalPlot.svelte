@@ -9,9 +9,12 @@
   import { fmtSI } from "../lib/format";
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { SeasonalPanelData } from "../lib/api";
+  import CompactText from "./panel/CompactText.svelte";
 
-  let { data, series, width, height = 220, onRendered, onPlot }: {
+  let { data, series, width, height = 220, compact = false, onRendered, onPlot }: {
     data: SeasonalPanelData; series: SeasonalPanelData["series"][number]; width: number; height?: number;
+    /** simple mode: dense captions as one line (CompactText), analysis knobs hidden */
+    compact?: boolean;
     onRendered: (ms: number, points: number) => void;
     onPlot?: (u: uPlot) => void;
   } = $props();
@@ -79,7 +82,7 @@
     {/if}
   </div>
   <div bind:this={el}></div>
-  <div class="legend">{seasonalLegend(series, data.tz, view)}</div>
+  <div class="legend">{#if compact}<CompactText text={seasonalLegend(series, data.tz, view)} />{:else}{seasonalLegend(series, data.tz, view)}{/if}</div>
   {#if series.reasons.length && series.verdict !== "insufficient_history"}
     <ul class="reasons">{#each series.reasons as r, i (i)}<li>{r}</li>{/each}</ul>
   {/if}

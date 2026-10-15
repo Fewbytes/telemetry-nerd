@@ -5,8 +5,15 @@
   import { layoutPeakLabels, limitZones, peakMarks, toSpectrumUplot } from "../chart/spectrum";
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { SpectrumPanelData } from "../lib/api";
+  import { spectrumLegend } from "../lib/captions";
+  import CompactText from "./panel/CompactText.svelte";
 
-  let { data, width, onRendered }: { data: SpectrumPanelData; width: number; onRendered: (ms: number, points: number) => void } = $props();
+  let { data, width, compact = false, onRendered }: {
+    data: SpectrumPanelData; width: number;
+    /** simple mode: the legend as one line (CompactText) */
+    compact?: boolean;
+    onRendered: (ms: number, points: number) => void;
+  } = $props();
 
   let el = $state<HTMLDivElement | null>(null);
   const significant = $derived(data.series.reduce((n, s) => n + s.peaks.filter((p) => p.significant).length, 0));
@@ -82,6 +89,6 @@
 <div class="spectrum" data-spectrum-peaks={significant}>
   <div bind:this={el}></div>
   <div class="legend">
-    Lomb-Scargle, linear trend removed · step {Math.round(data.effective_step_ms / 1000)}s · dashed: 1% false-alarm level (white noise) · dotted: 1% level against AR(1) red noise (significant = above both){redNoise ? "; long periods overstated by white noise (autocorrelation)" : ""} · {significant} significant peak{significant === 1 ? "" : "s"}
+    {#if compact}<CompactText text={spectrumLegend(data.effective_step_ms, significant, redNoise)} />{:else}{spectrumLegend(data.effective_step_ms, significant, redNoise)}{/if}
   </div>
 </div>

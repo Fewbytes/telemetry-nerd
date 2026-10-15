@@ -13,10 +13,13 @@
   import FleetHeat from "./FleetHeat.svelte";
   import { GROUP_LABEL_PX } from "../lib/groupLink.svelte";
   import FleetSmallMultiples from "./FleetSmallMultiples.svelte";
+  import CompactText from "./panel/CompactText.svelte";
 
   type View = "band" | "quantiles" | "heat" | "multiples";
-  let { data, width, height = 260, range = null, unit = null, view = $bindable("band"), onRendered, xRange = null, gutter = null, onPlot }: {
+  let { data, width, height = 260, range = null, unit = null, view = $bindable("band"), compact = false, onRendered, xRange = null, gutter = null, onPlot }: {
     data: FleetPanelData; width: number; height?: number; range?: [number, number] | null; unit?: string | null; view?: View;
+    /** simple mode: dense captions as one line (CompactText), analysis knobs hidden */
+    compact?: boolean;
     onRendered: (ms: number, points: number, heightPx?: number) => void;
     /** a panel group's shared x domain (seconds) and y gutter, so the role lines up with the others */
     xRange?: [number, number] | null; gutter?: number | null;
@@ -243,11 +246,11 @@
     <div class="wrap"><div bind:this={el}></div>{#if tip}<i class="hov" style:left="{tip.px}px" style:top="{tip.py}px" style:background={tipColor}></i><div class="tip" style:left="{tip.x}px" style:top="{tip.y}px">{tip.text}</div>{/if}</div>
   {/if}
   {#if view === "heat"}
-    <FleetHeat {data} {width} {onRendered} />
+    <FleetHeat {data} {width} {compact} {onRendered} />
   {:else if view === "multiples"}
     <FleetSmallMultiples {data} {width} {range} {onRendered} />
   {:else}
-    <div class="legend" data-fleet-legend>{fleetLegend(data, bv)}</div>
+    <div class="legend" data-fleet-legend>{#if compact}<CompactText text={fleetLegend(data, bv)} />{:else}{fleetLegend(data, bv)}{/if}</div>
     {#if data.outliers.length}
       <ul class="outliers">
         {#each data.outliers as o, i (o.id)}

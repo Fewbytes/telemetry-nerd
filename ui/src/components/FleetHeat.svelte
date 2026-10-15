@@ -6,9 +6,12 @@
   import { setupCanvas } from "../chart/canvas";
   import { fmtTimeZ } from "../lib/format";
   import { theme } from "../lib/theme.svelte";
+  import CompactText from "./panel/CompactText.svelte";
 
-  let { data, width, onRendered }: {
+  let { data, width, compact = false, onRendered }: {
     data: FleetData; width: number;
+    /** simple mode: dense captions as one line (CompactText), analysis knobs hidden */
+    compact?: boolean;
     onRendered: (ms: number, cells: number, heightPx: number) => void;
   } = $props();
 
@@ -119,7 +122,7 @@
       <span>{bar.hi}</span>
       <span class="ends">purple: below the fleet · 0: at the median · orange: above</span>
     </div>
-    <div class="legend">{heatLegendText(heat, heat.rows.length)}</div>
+    <div class="legend">{#if compact}<CompactText text={heatLegendText(heat, heat.rows.length)} />{:else}{heatLegendText(heat, heat.rows.length)}{/if}</div>
   </div>
 {:else}
   <div class="legend" data-fleet-heat-missing>no member × time matrix in this payload</div>

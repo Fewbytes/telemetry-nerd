@@ -7,9 +7,12 @@
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { LittlesPanelData } from "../lib/api";
   import ChartTip from "./ChartTip.svelte";
+  import CompactText from "./panel/CompactText.svelte";
 
-  let { data, series, width, height = 200, onRendered, onPlot }: {
+  let { data, series, width, height = 200, compact = false, onRendered, onPlot }: {
     data: LittlesPanelData; series: LittlesPanelData["series"][number]; width: number; height?: number;
+    /** simple mode: dense captions as one line (CompactText), analysis knobs hidden */
+    compact?: boolean;
     onRendered: (ms: number, points: number) => void;
     onPlot?: (u: uPlot) => void;
   } = $props();
@@ -32,6 +35,7 @@
   const promoted = $derived(promotedSpans(series));
   const sysLabel = $derived(systematicLabel(series));
   const warning = $derived(series.common_cause?.warning ?? null);
+  const RAW_LEGEND = "raw sub-steps, not judged: throughput, latency, and observed vs calculated (λ·W) concurrency";
 
   /**
    * Transient windows: special cause solid (investigate), common cause hatched (do not chase).
@@ -220,14 +224,14 @@
       {/if}
     </div>
     {#if warning}<div class="warn" data-littles-common-cause>{warning}</div>{/if}
-    <div class="legend">{littlesLegend(series, data.window_ms)}</div>
+    <div class="legend">{#if compact}<CompactText text={littlesLegend(series, data.window_ms)} />{:else}{littlesLegend(series, data.window_ms)}{/if}</div>
   {:else}
     <div class="plot raw" data-littles-raw>
       <div bind:this={rawThroughput}></div>
       <div bind:this={rawLatency}></div>
       <div bind:this={rawConcurrency}></div>
     </div>
-    <div class="legend">raw sub-steps, not judged: throughput, latency, and observed vs calculated (λ·W) concurrency</div>
+    <div class="legend">{#if compact}<CompactText text={RAW_LEGEND} />{:else}{RAW_LEGEND}{/if}</div>
   {/if}
 </div>
 

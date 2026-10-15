@@ -8,9 +8,12 @@
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { SpcPanelData } from "../lib/api";
   import ChartTip from "./ChartTip.svelte";
+  import CompactText from "./panel/CompactText.svelte";
 
-  let { data, series, width, height = 220, onRendered, onPlot }: {
+  let { data, series, width, height = 220, compact = false, onRendered, onPlot }: {
     data: SpcPanelData; series: SpcPanelData["series"][number]; width: number; height?: number;
+    /** simple mode: dense captions as one line (CompactText), analysis knobs hidden */
+    compact?: boolean;
     onRendered: (ms: number, points: number) => void;
     onPlot?: (u: uPlot) => void;
   } = $props();
@@ -111,9 +114,14 @@
     {/if}
   </div>
   <div class="legend">
+    {#if compact}
+      <!-- the run-rules checkbox is an analysis knob (the peek has it); the legend says whether they are on -->
+      <CompactText text={spcLegend(series, data.baseline, supplementary)} />
+    {:else}
     {spcLegend(series, data.baseline, supplementary)}
     {#if hasSupplementary}
       <label class="supp"><input type="checkbox" bind:checked={supplementary} data-spc-supplementary /> supplementary run rules</label>
+    {/if}
     {/if}
   </div>
 </div>

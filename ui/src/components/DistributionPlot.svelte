@@ -11,12 +11,15 @@
   import { fmtValue, valueTicks } from "../chart/axis";
   import { fmtRange } from "../lib/format";
   import type { HistogramPanelData, WindowHist } from "../lib/api";
+  import CompactText from "./panel/CompactText.svelte";
 
-  let { data, series, width, unit, onRendered }: {
+  let { data, series, width, unit, compact = false, onRendered }: {
     data: HistogramPanelData;
     series: HistogramPanelData["series"][number];
     width: number;
     unit: string | null;
+    /** simple mode: the |ΔF| line as one line (CompactText), the drag hint hidden */
+    compact?: boolean;
     onRendered: (ms: number, points: number) => void;
   } = $props();
   const short = $derived(shortNamer(data.series.map((s) => s.labels)));
@@ -380,12 +383,16 @@
       </div>
     {/each}
     {#if gap}
+      {#if compact}
+        <div><CompactText text={`max |ΔF| at bucket edges = ${gap.gap.toFixed(2)} at ${fmtValue(gap.at, unit)} (lower bound, edges where both ECDFs are exact)`} /></div>
+      {:else}
       <div>max |ΔF| at bucket edges = {gap.gap.toFixed(2)} at {fmtValue(gap.at, unit)} (lower bound, edges where both ECDFs are exact)</div>
+      {/if}
     {/if}
     {#if (view === "histogram" || view === "ecdf") && thresh !== null}
       {#each readout(thresh) as line (line)}<div>threshold: {line}</div>{/each}
       <div><button type="button" onclick={() => (thresh = null)}>clear threshold</button></div>
-    {:else if view === "histogram" || view === "ecdf"}
+    {:else if !compact && (view === "histogram" || view === "ecdf")}
       <div class="hint">drag on the plot to read the share below / in-bucket / above a threshold</div>
     {/if}
     {#if view === "ccdf" && pinned !== null}

@@ -39,6 +39,8 @@
   import PanelThread from "./components/PanelThread.svelte";
   import ThreadSummary from "./components/panel/ThreadSummary.svelte";
   import NotesList from "./components/panel/NotesList.svelte";
+  import CompactText from "./components/panel/CompactText.svelte";
+  import { heatOutlineText, heatPercentileHint, spectrogramLegend } from "./lib/captions";
   import ShownBlock from "./components/panel/ShownBlock.svelte";
   import NerdControls from "./components/panel/NerdControls.svelte";
   import OverflowMenu from "./components/panel/OverflowMenu.svelte";
@@ -947,13 +949,18 @@
             <button type="button" class:on={heatQs.includes(q)} disabled={!heatQs.includes(q) && heatQs.length >= MAX_QUANTILES}
               onclick={() => (heatQs = toggleQuantile(heatQs, q))}>{qLabel(q)}</button>
           {/each}
-          <span class="hint">bucket holding q per {fmtStep(hm.effective_step_ms)} column, only where n ≥ 10/(1−q); faded lane: too few observations</span>
+          {#if !simple}<span class="hint">{heatPercentileHint(hm.effective_step_ms)}</span>{/if}
         {/if}
-      </div>
+      </div>{#if simple && heatView === "percentiles"}<div class="legend" data-heat-hint><CompactText text={heatPercentileHint(hm.effective_step_ms)} /></div>{/if}
       <div class="legend heat-controls">
         colour:
         <button type="button" class:on={heatColor === "count"} onclick={() => (heatColor = "count")}>count</button>
         <button type="button" class:on={heatColor === "density"} onclick={() => (heatColor = "density")}>share of column</button>
+        <!-- simple mode: colormap and outline pickers are appearance/analysis knobs (the peek has them);
+             an outline already on keeps its basis -->
+        {#if simple}
+          {#if heatQ !== null}<span data-heat-outline>· {heatOutlineText(heatQ)}</span>{/if}
+        {:else}
         · colormap:
         <button type="button" class:on={heatCmap === "viridis"} onclick={() => (heatCmap = "viridis")}>viridis</button>
         <button type="button" class:on={heatCmap === "cividis"} onclick={() => (heatCmap = "cividis")}>cividis</button>
@@ -962,6 +969,7 @@
           <button type="button" class:on={heatQ === q} onclick={() => (heatQ = q)}>{q === null ? "none" : `p${q * 100}`}</button>
         {/each}
         {#if heatQ !== null}(only where n ≥ {Math.ceil(10 / (1 - heatQ))}){/if}
+        {/if}
       </div>
       {@const cm = colormap(heatCmap)}
       {@const cmax = colorMaxOf(hm.series, heatColor)}
@@ -976,19 +984,19 @@
       </div>
     {/if}
     {#if data && data.kind === "spectrum"}
-      <SpectrumPlot data={data} width={fetchWidth} onRendered={(ms, pts) => onFacetRendered(0, 1, ms, pts, 240)} />
+      <SpectrumPlot data={data} width={fetchWidth} compact={simple} onRendered={(ms, pts) => onFacetRendered(0, 1, ms, pts, 240)} />
     {/if}
     {#if data && data.kind === "spc"}
       {@const sc = data}
       {#each sc.series as s, i (s.id)}
-        <SpcPlot data={sc} series={s} width={fetchWidth}
+        <SpcPlot data={sc} series={s} width={fetchWidth} compact={simple}
           onRendered={(ms, pts) => onFacetRendered(i, sc.series.length, ms, pts, 220)} onPlot={attachBrush} />
       {/each}
     {/if}
     {#if data && data.kind === "littles"}
       {@const lt = data}
       {#each lt.series as s, i (s.id)}
-        <LittlesPlot data={lt} series={s} width={fetchWidth}
+        <LittlesPlot data={lt} series={s} width={fetchWidth} compact={simple}
           onRendered={(ms, pts) => onFacetRendered(i, lt.series.length, ms, pts, 300)} onPlot={attachBrush} />
       {/each}
       {#if lt.unmatched.length}
@@ -999,12 +1007,12 @@
     {#if data && data.kind === "seasonal"}
       {@const sz = data}
       {#each sz.series as s, i (s.id)}
-        <SeasonalPlot data={sz} series={s} width={fetchWidth}
+        <SeasonalPlot data={sz} series={s} width={fetchWidth} compact={simple}
           onRendered={(ms, pts) => onFacetRendered(i, sz.series.length, ms, pts, 220)} onPlot={attachBrush} />
       {/each}
     {/if}
     {#if data && data.kind === "fleet"}
-      <FleetPlot data={data} width={fetchWidth} height={chartHeight} range={yres?.range ?? null} unit={panel.spec.y.unit ?? null} bind:view={fleetView} onRendered={(ms, pts, h) => onFacetRendered(0, 1, ms, pts, h ?? chartHeight, true)}
+      <FleetPlot data={data} width={fetchWidth} height={chartHeight} range={yres?.range ?? null} unit={panel.spec.y.unit ?? null} bind:view={fleetView} compact={simple} onRendered={(ms, pts, h) => onFacetRendered(0, 1, ms, pts, h ?? chartHeight, true)}
         xRange={link ? [link.domain[0] / 1000, link.domain[1] / 1000] : null} gutter={link ? GROUP_GUTTER_PX : null}
         onPlot={(u) => { if (link) areaOf(u); attachBrush(u); }} />
       <!-- fleet puts a view switcher + encoding/key text ahead of its chart, at a height that
@@ -1023,7 +1031,7 @@
         <SpectrogramPlot data={sg} series={s} width={fetchWidth} height={chartHeight}
           onRendered={(ms, cells) => onFacetRendered(i, sg.series.length, ms, cells, chartHeight)} />
       {/each}
-      <div class="legend">window {fmtStep(sg.segment_ms)} · hop {fmtStep(sg.hop_ms)} ({Math.round(sg.overlap * 100)}% overlap): each column summarizes one window · period resolution 1/{fmtStep(sg.segment_ms)}, rows show the max within the row · periods {Math.round(sg.limits.shortest_s)}s–{Math.round(sg.limits.longest_s)}s · colour: share of window variance, linear 0–1 · faint: below the 1% false-alarm level · hatched: window under 50% covered</div>
+      <div class="legend">{#if simple}<CompactText text={spectrogramLegend(sg)} />{:else}{spectrogramLegend(sg)}{/if}</div>
     {/if}
     {#if data && data.kind === "histogram"}
       {@const hg = data}
@@ -1032,7 +1040,7 @@
       {/each}
       {#each hg.series as s, i (s.id)}
         <DistributionPlot
-          data={hg} series={s} width={fetchWidth} unit={hg.panel.spec.y.unit}
+          data={hg} series={s} width={fetchWidth} unit={hg.panel.spec.y.unit} compact={simple}
           onRendered={(ms, points) => onFacetRendered(i, hg.series.length, ms, points, 220)}
         />
       {/each}
