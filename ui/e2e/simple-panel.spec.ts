@@ -50,6 +50,7 @@ test("simple mode: minimal chrome, essentials kept, nerd restored by the toggle"
   const [png] = await Promise.all([page.waitForEvent("download"), el.locator("[data-export=png]").click()]);
   expect(png.suggestedFilename()).toBe(`telemetry-nerd-${panel.id}.png`);
   await expect(el.locator("[data-export=png]")).toHaveCount(0);
+  await expect(actions).toBeFocused(); // focus returns to the trigger, not <body>
 
   await page.locator("[data-mode-toggle=nerd]").click();
   await expect(el.locator(".shown")).toBeVisible();

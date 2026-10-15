@@ -60,10 +60,10 @@
     <header>
       <button
         type="button" class="collapse" aria-pressed={folded("hypotheses")} aria-expanded={!folded("hypotheses")}
-        title={folded("hypotheses") ? "Expand" : "Collapse"} aria-label={folded("hypotheses") ? "Expand Hypotheses" : "Collapse Hypotheses"}
+        title={folded("hypotheses") ? "Expand" : "Collapse"} aria-label={folded("hypotheses") ? `Expand Hypotheses${simple ? ` (${hypotheses.length})` : ""}` : "Collapse Hypotheses"}
         onclick={() => (simple ? toggleOpened("hypotheses") : collapsedSidebar.toggle("hypotheses"))}
       >{folded("hypotheses") ? "▸" : "▾"}</button>
-      <h2>Hypotheses{#if simple} ({hypotheses.length}){/if}</h2>
+      <h2>Hypotheses{#if simple}{" "}({hypotheses.length}){/if}</h2>
     </header>
     {#if !folded("hypotheses")}
       {#if hypotheses.length === 0}
@@ -150,10 +150,10 @@
     <header>
       <button
         type="button" class="collapse" aria-pressed={folded("gaps")} aria-expanded={!folded("gaps")}
-        title={folded("gaps") ? "Expand" : "Collapse"} aria-label={folded("gaps") ? "Expand Gaps" : "Collapse Gaps"}
+        title={folded("gaps") ? "Expand" : "Collapse"} aria-label={folded("gaps") ? `Expand Gaps${simple ? ` (${gaps.length})` : ""}` : "Collapse Gaps"}
         onclick={() => (simple ? toggleOpened("gaps") : collapsedSidebar.toggle("gaps"))}
       >{folded("gaps") ? "▸" : "▾"}</button>
-      <h2>Gaps{#if simple} ({gaps.length}){/if}</h2>
+      <h2>Gaps{#if simple}{" "}({gaps.length}){/if}</h2>
     </header>
     {#if !folded("gaps")}
       {#if gaps.length === 0}

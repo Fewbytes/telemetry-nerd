@@ -49,6 +49,7 @@
     !bandPick && chosen?.id && suggestions.some((v) => v.id === chosen.id) ? `s:${chosen.id}`
       : activeKey ? yViewKey(activeKey) : "",
   );
+  const activeOffer = $derived(offers.find((o) => yViewKey(o) === yValue));
   const chips = $derived(data?.kind === "time" && data.overlays?.flags ? overlayChips(data.overlays) : []);
   const onChips = $derived(chips.filter((c) => c.on).length);
 
@@ -76,13 +77,13 @@
     {/if}
     <span class="spacer"></span>
     {#if offers.length > 0}
-      <select aria-label="Y-axis view" value={yValue} disabled={idxBusy}
+      <select aria-label="Y-axis view" value={yValue} title={activeOffer?.title ?? ""} disabled={idxBusy}
         onchange={(e) => {
           applyView(e.currentTarget.value);
           e.currentTarget.value = yValue; // the panel's state decides what is shown (a failed pick shows the old view)
         }}>
         {#each offers as o (yViewKey(o))}
-          <option value={yViewKey(o)} disabled={!o.enabled} title={o.title}>{o.label}</option>
+          <option value={yViewKey(o)} disabled={!o.enabled} title={o.title}>{o.label}{o.suggest ? " (suggested)" : ""}</option>
         {/each}
         {#if suggestions.length}
           <optgroup label="Claude suggests">
@@ -96,7 +97,8 @@
       {#if idxBusy}<span class="hint">fetching baseline…</span>{/if}
     {/if}
     {#if data.kind === "time" && data.filter}
-      <select aria-label="Data view" value={viewNow ?? ""} onchange={(e) => pickView(e.currentTarget.value as DataViewName)}>
+      <select aria-label="Data view" value={viewNow ?? ""}
+        title={viewNow && viewNow === data.filter.default ? `Claude's pick: ${data.filter.reason}` : ""} onchange={(e) => pickView(e.currentTarget.value as DataViewName)}>
         {#each data.filter.offered as v (v)}
           <option value={v} title={v === data.filter.default ? `Claude's pick: ${data.filter.reason}` : ""}
           >{VIEW_LABELS[v]}{v === data.filter.default ? " · Claude" : ""}</option>
@@ -108,13 +110,16 @@
       <details class="layers">
         <summary aria-label="Reference layers">Layers{onChips ? ` (${onChips})` : ""}</summary>
         <div class="layers-pop">
-          {#each chips as c (c.key)}
-            <label title={c.title}>
-              <input type="checkbox" checked={c.on} disabled={!c.enabled || overlayBusy}
-                onchange={(e) => toggleOverlay(c.key, e.currentTarget.checked)} />
-              {c.label}
-            </label>
-          {/each}
+          <!-- checked is one-way: remount once a request settles so a failed toggle shows the real state -->
+          {#key overlayBusy}
+            {#each chips as c (c.key)}
+              <label title={c.title}>
+                <input type="checkbox" checked={c.on} disabled={!c.enabled || overlayBusy}
+                  onchange={(e) => toggleOverlay(c.key, e.currentTarget.checked)} />
+                {c.label}
+              </label>
+            {/each}
+          {/key}
         </div>
       </details>
     {/if}
