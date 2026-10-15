@@ -28,7 +28,7 @@
           onmouseenter={() => setFocus(hasFocus(note) ? note.where ?? null : null)} onmouseleave={() => setFocus(null)}
         >
           <button
-            type="button" class="note-row" aria-expanded={open} title={src ? `${note.text} (${src})` : note.text}
+            type="button" class="note-row" aria-expanded={open} title={open ? src || undefined : src ? `${note.text} (${src})` : note.text}
             onclick={() => toggle(note.key)}
             onfocus={() => setFocus(hasFocus(note) ? note.where ?? null : null)} onblur={() => setFocus(null)}
           >

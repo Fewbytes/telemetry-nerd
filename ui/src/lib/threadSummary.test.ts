@@ -16,4 +16,12 @@ describe("threadSummary", () => {
   });
   it("collapses whitespace", () =>
     expect(threadSummary(t([["u", "a\n\n b"]]))).toBe('1 message · u: "a b"'));
+  it("exactly SNIPPET code points is not truncated", () =>
+    expect(threadSummary(t([["u", "b".repeat(60)]]))).toBe(`1 message · u: "${"b".repeat(60)}"`));
+  it("never splits an astral character at the boundary", () => {
+    const out = threadSummary(t([["u", "c".repeat(59) + "😀" + "d".repeat(10)]]));
+    expect(out).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/);
+    expect(out).toBe(`1 message · u: "${"c".repeat(59)}😀…"`);
+    expect([...out].join("")).toBe(out);
+  });
 });

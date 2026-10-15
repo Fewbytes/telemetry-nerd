@@ -8,6 +8,7 @@ export function threadSummary(thread: Thread): string {
   if (n === 0) return "No messages yet";
   const last = thread.messages[n - 1];
   const text = last.text.replace(/\s+/g, " ").trim();
-  const snippet = text.length > SNIPPET ? `${text.slice(0, SNIPPET)}…` : text;
+  const cps = [...text]; // by code point: a UTF-16 slice could split a surrogate pair
+  const snippet = cps.length > SNIPPET ? `${cps.slice(0, SNIPPET).join("")}…` : text;
   return `${n} message${n === 1 ? "" : "s"} · ${last.author}: "${snippet}"`;
 }
