@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { EvidenceRef, Scope, TimeSpan } from "./api";
-import { flagLabel, fmtRange, fmtSI, fmtTime, refLabel, scopeLine, statLine, type StatisticRef } from "./format";
+import { flagLabel, fmtInstant, fmtRange, fmtSI, fmtTime, refLabel, scopeLine, statLine, type StatisticRef } from "./format";
 
 const span = (startMs: number, endMs: number): TimeSpan => ({ start_ms: startMs, end_ms: endMs });
 const minutes = (h: number, m: number) => Date.UTC(2026, 8, 30, h, m);
@@ -132,5 +132,12 @@ describe("refLabel", () => {
 
   it("renders statistic refs through statLine", () => {
     expect(refLabel(statRef({}))).toBe("p99 = 2.5 [2.1, 3.2] (bootstrap)");
+  });
+});
+
+describe("fmtInstant", () => {
+  it("prints the ISO instant, dropping zero milliseconds only", () => {
+    expect(fmtInstant(Date.UTC(2026, 0, 2, 3, 4, 5))).toBe("2026-01-02T03:04:05Z");
+    expect(fmtInstant(Date.UTC(2026, 0, 2, 3, 4, 5, 250))).toBe("2026-01-02T03:04:05.250Z");
   });
 });

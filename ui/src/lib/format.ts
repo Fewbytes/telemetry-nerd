@@ -62,6 +62,8 @@ export const fmtStep = (ms: number): string => (ms % 60_000 === 0 ? `${ms / 60_0
 
 /** HH:MMZ, for fleet times that are always UTC. */
 export const fmtTimeZ = (ms: number): string => `${fmtTime(ms)}Z`;
+/** full ISO instant, UTC, without zero milliseconds: a panel's time range */
+export const fmtInstant = (ms: number): string => new Date(ms).toISOString().replace(".000Z", "Z");
 
 const sig = (v: number): string => String(Number(v.toPrecision(3)));
 
