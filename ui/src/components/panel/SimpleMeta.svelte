@@ -3,7 +3,7 @@
   // the band legend, then time range and step. Full provenance, dataset and query are nerd-only.
   import type { PanelData } from "../../lib/api";
   import { fmtStep } from "../../lib/format";
-  import { intervalLegend, shownWhat } from "../../lib/panelNotes";
+  import { intervalLegend, shownWhat, shownWhatCompact } from "../../lib/panelNotes";
   import CompactText from "./CompactText.svelte";
 
   let { data, heatView, fleetView }: {
@@ -14,9 +14,9 @@
   const fmtTime = (ms: number) => new Date(ms).toISOString().replace(".000Z", "Z");
 </script>
 
-<!-- heatmap and histogram sentences end in the bin-scheme list (le buckets): one line, opens in place;
-     every other kind's sentence is its aggregation/estimator basis and stays in full -->
-<p class="simple-what" data-simple-what>{#if data.kind === "heatmap" || data.kind === "histogram"}<CompactText text={shownWhat(data, heatView, fleetView)} />{:else}{shownWhat(data, heatView, fleetView)}{/if}</p>
+<!-- a sentence ending in the bin-scheme list (le buckets) is one line, opened in place; every other
+     sentence is the aggregation/estimator basis and stays in full -->
+<p class="simple-what" data-simple-what>{#if shownWhatCompact(data, heatView)}<CompactText text={shownWhat(data, heatView, fleetView)} />{:else}{shownWhat(data, heatView, fleetView)}{/if}</p>
 {#if data.kind === "time" && data.series.some((s) => s.lo)}
   {@const bandLegend = intervalLegend(data.dataset)}
   {#if bandLegend}<div class="legend" data-interval-legend>band: {bandLegend}</div>{/if}

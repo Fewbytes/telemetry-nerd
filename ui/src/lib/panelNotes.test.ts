@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { YContext } from "./api";
-import { caveatText, contextNotes, describeShown, intervalLegend, panelNotes, provenanceParts, provenanceText, shownWhat } from "./panelNotes";
+import { caveatText, contextNotes, describeShown, intervalLegend, panelNotes, provenanceParts, provenanceText, shownWhat, shownWhatCompact } from "./panelNotes";
 
 describe("panelNotes", () => {
   it("turns caveat keys into sentences and keeps unknown keys visible", () => {
@@ -274,5 +274,23 @@ describe("shownWhat", () => {
     const dataset = { representation: "bucket_agg", quantile: null };
     const data = { kind: "fleet", effective_step_ms: 60_000, dataset, clusters: [{}, {}] } as never;
     expect(shownWhat(data, "heatmap", "quantiles")).toBe(describeShown(dataset, "1m", "fleet", "", "quantiles", true));
+  });
+});
+
+describe("shownWhatCompact (simple mode: only sentences ending in the bin-scheme list are one line)", () => {
+  const d = (kind: string, mark?: string) => ({ kind, mark, effective_step_ms: 60_000, dataset: {} }) as never;
+  it("heatmap: the heatmap view ends in the scheme, the percentile view carries the estimator and n rule", () => {
+    expect(shownWhatCompact(d("heatmap", "heatmap"), "heatmap")).toBe(true);
+    expect(shownWhatCompact(d("heatmap", "heatmap"), "percentiles")).toBe(false);
+  });
+  it("histogram: bar and ECDF marks end in the scheme, CCDF and quantile curve do not", () => {
+    expect(shownWhatCompact(d("histogram", "histogram"), "heatmap")).toBe(true);
+    expect(shownWhatCompact(d("histogram", "ecdf"), "heatmap")).toBe(true);
+    expect(shownWhatCompact(d("histogram", "ccdf"), "heatmap")).toBe(false);
+    expect(shownWhatCompact(d("histogram", "quantile_curve"), "heatmap")).toBe(false);
+  });
+  it("every other kind is in full", () => {
+    expect(shownWhatCompact(d("time"), "heatmap")).toBe(false);
+    expect(shownWhatCompact(d("spc"), "heatmap")).toBe(false);
   });
 });

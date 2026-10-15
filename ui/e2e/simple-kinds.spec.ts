@@ -130,6 +130,7 @@ test("simple heatmap: view and colour switches and the colour key stay, colormap
   await el.getByRole("button", { name: "percentile bands" }).click();
   await expect(el.getByRole("button", { name: "p99", exact: true })).toBeVisible();
   await expectCompact(el.locator("[data-heat-hint] [data-compact-text]"), "faded lane");
+  await expectFullWhat(el, "only where the column has n ≥ 10/(1−q)");
 
   // an outline set in the nerd peek keeps its basis on the way back to simple
   await el.getByRole("button", { name: "heatmap", exact: true }).click();
@@ -248,6 +249,8 @@ test("simple spectrum and spectrogram: the legend is one line, the sentence stay
   await expect(sg.locator("canvas.spectrogram").first()).toBeVisible();
   await expect(sp.locator(".legend")).toContainText("false-alarm level");
   await expect(sp.locator("[data-compact-text]")).toHaveCount(0);
+  await expect(sg.locator(".legend")).toContainText("share of window variance");
+  await expect(sg.locator("[data-compact-text]")).toHaveCount(0);
 
   await toSimple(page);
   await expectCompact(sp.locator(".spectrum .legend [data-compact-text]"), "false-alarm level");

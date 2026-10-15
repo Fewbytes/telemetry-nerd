@@ -323,6 +323,13 @@ export function describeShown(
 }
 
 /** The panel's "what is shown" sentence (its aggregation/estimator), for the panel's current views. */
+/** Simple mode shows the "what" sentence as one line only where it ends in the bin-scheme list
+ * (heatmap view, histogram bars/ECDF); elsewhere the sentence is the estimator basis and stays in full. */
+export function shownWhatCompact(data: PanelData, heatView: "heatmap" | "percentiles"): boolean {
+  if (data.kind === "heatmap") return heatView === "heatmap";
+  return data.kind === "histogram" && data.mark !== "ccdf" && data.mark !== "quantile_curve";
+}
+
 export function shownWhat(
   data: PanelData,
   heatView: "heatmap" | "percentiles",
