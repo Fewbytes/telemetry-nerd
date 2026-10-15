@@ -19,14 +19,13 @@
   // Claude's y-view suggestions (the nerd row's "· Claude:" buttons), as option values "s:<id>"
   const suggestions = $derived(offers.length > 0 ? panel.spec.y.views ?? [] : []);
   // a band pick in progress shows "band…" (yViewIsOn would match auto first while nothing is chosen)
-  const activeKey = $derived(
+  const activeOffer = $derived(
     bandPick ? offers.find((o) => o.mode === "band") : offers.find((o) => yViewIsOn(o, chosen, bandPick)),
   );
   const yValue = $derived(
     !bandPick && chosen?.id && suggestions.some((v) => v.id === chosen.id) ? `s:${chosen.id}`
-      : activeKey ? yViewKey(activeKey) : "",
+      : activeOffer ? yViewKey(activeOffer) : "",
   );
-  const activeOffer = $derived(offers.find((o) => yViewKey(o) === yValue));
   const chips = $derived(data?.kind === "time" && data.overlays?.flags ? overlayChips(data.overlays) : []);
   const onChips = $derived(chips.filter((c) => c.on).length);
 
