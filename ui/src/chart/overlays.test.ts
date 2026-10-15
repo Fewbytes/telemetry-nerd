@@ -79,7 +79,7 @@ describe("toUplot overlays", () => {
   it("puts the band under its series, hidden from the legend, filling between lo and hi", () => {
     const m = toUplot(main, undefined, { overlays: overlayDraw(ov()) });
     const li = m.series.findIndex((x) => String(x.label).includes("normal low"));
-    const mainIdx = m.series.findIndex((x) => x.label === 'i="a"' || (String(x.label).includes('i="a"') && !String(x.label).includes("normal")));
+    const mainIdx = m.series.findIndex((x) => x.label === 'i=a' || (String(x.label).includes('i=a') && !String(x.label).includes("normal")));
     expect(li).toBeGreaterThan(0);
     expect(li).toBeLessThan(mainIdx); // drawn first, underneath
     expect(m.legendHidden).toContain(li);

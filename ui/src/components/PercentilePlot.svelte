@@ -7,6 +7,7 @@
   import { fmtValue, valueTicks } from "../chart/axis";
   import { bandRects, overlay, qKey, qLabel, QUANTILE_CHOICES, thinColumns } from "../chart/percentiles";
   import { seriesName, seriesPalette } from "../chart/toUplot";
+  import { shortNamer } from "../chart/seriesNames";
   import { theme } from "../lib/theme.svelte";
   import { fmtRange } from "../lib/format";
   import { focusRects } from "../chart/focus";
@@ -112,6 +113,7 @@
   };
   const msAt = (px: number) => cols.x0Ms + (px / plotW) * cols.spanMs;
 
+  const short = $derived(shortNamer(series.map((s) => s.labels)));
   function move(e: MouseEvent) {
     const p = local(e);
     if (drag) { drag = { ...drag, to: Math.max(0, Math.min(plotW, p.x)) }; return; }
@@ -122,7 +124,7 @@
       const i = s.ts.indexOf(ts);
       if (i < 0) continue;
       const n = s.n[i];
-      const head = `${series.length > 1 ? seriesName(s.labels) + " · " : ""}n ${Number(n.toPrecision(4))}`;
+      const head = `${series.length > 1 ? short(s.labels) + " · " : ""}n ${Number(n.toPrecision(4))}`;
       const parts = qs.map((q) => {
         const b = s.quantiles?.[qKey(q)];
         const j = b ? b.ts.indexOf(ts) : -1;
@@ -146,10 +148,10 @@
 <div class="facet">
   <div class="facet-label">
     {#if overlaid}
-      {#each series as s, i (s.id)}<span class="sw" style="background: {palette[i % palette.length]}"></span>{seriesName(s.labels)}{" "}{/each}
+      {#each series as s, i (s.id)}<span class="sw" style="background: {palette[i % palette.length]}" title={seriesName(s.labels)}></span>{short(s.labels)}{" "}{/each}
       · {qLabel(qs[0])}
     {:else}
-      {seriesName(series[0].labels)}
+      <span title={seriesName(series[0].labels)}>{short(series[0].labels)}</span>
     {/if}
   </div>
   <canvas

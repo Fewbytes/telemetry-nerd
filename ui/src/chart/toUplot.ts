@@ -1,6 +1,7 @@
 import type uPlot from "uplot";
 import type { OthersSummary, SeriesData } from "../lib/api";
 import type { OverlayDraw } from "./overlays";
+import { shortNamer } from "./seriesNames";
 
 // Okabe-Ito: colorblind-safe categorical palette. The series budget (≤5) fits it.
 // Dark-theme values: all ≥3:1 against --bg #16181d (WCAG SC 1.4.11).
@@ -24,6 +25,8 @@ export interface UplotModel {
   bands: uPlot.Band[];
   /** series indices whose legend row is hidden (envelope edges, faded low-n twins) */
   legendHidden: number[];
+  /** full selector per uplot series index ("" where the label is not a series identity): the legend row's hover title */
+  fullNames: string[];
   points: number;
 }
 
@@ -142,6 +145,9 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
   const bands: uPlot.Band[] = [];
   const legendHidden: number[] = [];
   const palette = opts.palette ?? PALETTE;
+  // uplot index where each series' rows start, with its full selector (rows after it, up to the next start, are its derived rows)
+  const rowStarts: [number, string][] = [];
+  const short = shortNamer(series.filter((s) => !s.summary && s.labels).map((s) => s.labels));
 
   /** `values` (one per time in `ts`) laid onto the shared x grid; null where a series has no point. */
   const onGrid = (ts: number[], values: (number | null)[]): (number | null)[] => {
@@ -155,9 +161,10 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
   const contextColumn = (c: SeriesData, f: "avg" | "min" | "max") => onGrid(c.ts, c[f]);
 
   series.forEach((s, k) => {
+    rowStarts.push([uSeries.length, s.summary || !s.labels ? "" : seriesName(s.labels)]);
     // the "others" band (14y) is a summary, not a series: neutral grey, dashed, said in its label
     const color = s.summary ? REFERENCE_COLOR : palette[k % palette.length];
-    const base = s.summary ? othersLabel(s.summary) : s.labels ? seriesName(s.labels) : s.id;
+    const base = s.summary ? othersLabel(s.summary) : s.labels ? short(s.labels) : s.id;
     const band = ov?.normal?.[s.id];
     if (band) {
       // the normal range for this hour: faint, underneath everything; the chips are its legend
@@ -187,7 +194,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
       });
     }
     const column = (values: (number | null)[]) => onGrid(s.ts, values);
-    const name = s.summary ? base : seriesName(s.labels);
+    const name = s.summary ? base : short(s.labels);
     if (opts.quantile) {
       // Percentiles are never aggregated: no min/max envelope. Buckets with too few
       // observations are drawn faded so they are not read as real percentiles.
@@ -283,6 +290,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
     }
   });
 
+  const linesStart = uSeries.length;
   ov?.lines?.forEach((l) => {
     // context lines (2as.15): a hard limit in the hazard colour, thresholds by tone, references faint
     const style = lineStyle(l);
@@ -291,7 +299,7 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
     columns.forEach((col, i) => {
       legendHidden.push(data.length);
       data.push(col);
-      const suffix = l.series && l.series.length > 1 && l.series[i]?.labels ? ` ${seriesName(l.series[i].labels)}` : "";
+      const suffix = l.series && l.series.length > 1 && l.series[i]?.labels ? ` ${short(l.series[i].labels)}` : "";
       uSeries.push({ label: `${name}${suffix}`, stroke: style.stroke, width: style.width, dash: style.dash, spanGaps: false, points: { show: false } });
     });
   });
@@ -299,5 +307,10 @@ export function toUplot(series: SeriesData[], grid?: Grid, opts: ToUplotOpts = {
   const stepped = grid !== undefined && opts.stepped !== false;
   const out = stepped ? stepify(data, grid.step / 1000) : data;
   final = out;
-  return { data: out as uPlot.AlignedData, series: uSeries, bands, legendHidden, points: xs.length * series.length };
+  const fullNames = uSeries.map((_, i) => {
+    if (i >= linesStart) return "";
+    const own = rowStarts.filter(([at]) => at <= i).pop();
+    return own?.[1] ?? "";
+  });
+  return { data: out as uPlot.AlignedData, series: uSeries, bands, legendHidden, fullNames, points: xs.length * series.length };
 }

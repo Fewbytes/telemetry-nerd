@@ -7,6 +7,7 @@
   import { fmtValue, valueTicks } from "../chart/axis";
   import { drawRug, hitRug, rugAxisExtra, rugCells, rugHeight, rugTop, rugHint, type RugCell } from "../chart/rug";
   import { rgba, seriesName } from "../chart/toUplot";
+  import { shortNamer } from "../chart/seriesNames";
   import { fmtRange } from "../lib/format";
   import { focusRects, notesAt, unknownReasons } from "../chart/focus";
   import type { Note } from "../lib/panelNotes";
@@ -36,6 +37,7 @@
   const plotW = $derived(Math.max(10, width - AXIS_LEFT));
   const plotH = $derived(Math.max(10, height - AXIS_BOTTOM));
   // the rug sits between the plot floor and the time tick labels: the canvas grows by its height
+  const short = $derived(shortNamer(data.series.map((s) => s.labels)));
   const rugExtra = $derived(series.state ? rugAxisExtra(1) : 0);
   const cmap = $derived(colormap(cmapName));
 
@@ -183,7 +185,7 @@
 </script>
 
 <div class="facet">
-  <div class="facet-label">{seriesName(series.labels)}</div>
+  <div class="facet-label" title={seriesName(series.labels)}>{short(series.labels)}</div>
   <canvas
     bind:this={canvas}
     class="heatmap"

@@ -71,8 +71,8 @@ export function flagMarks(s: SeasonalSeries, view: SeasonalView) {
  * label including __name__), which reads as a blank prefix ahead of the verdict.
  * Fall back to the dataset expression so there's still a name to show.
  */
-export function seriesDisplayName(s: SeasonalSeries, exprFallback: string): string {
-  return Object.keys(s.labels).length ? seriesName(s.labels) : exprFallback;
+export function seriesDisplayName(s: SeasonalSeries, exprFallback: string, short: (l: Record<string, string>) => string = seriesName): string {
+  return Object.keys(s.labels).length ? short(s.labels) : exprFallback;
 }
 
 export function verdictText(s: SeasonalSeries): string {

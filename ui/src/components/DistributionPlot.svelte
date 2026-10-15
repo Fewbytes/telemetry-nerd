@@ -1,5 +1,6 @@
 <script lang="ts">
   import { seriesName, seriesPalette } from "../chart/toUplot";
+  import { shortNamer } from "../chart/seriesNames";
   import { theme } from "../lib/theme.svelte";
   import {
     bars, ecdf, exactWindow, fractionOver, maxEcdfGapAtEdges, quantileAxis, quantileBoxes, survival, type BarMode,
@@ -18,6 +19,7 @@
     unit: string | null;
     onRendered: (ms: number, points: number) => void;
   } = $props();
+  const short = $derived(shortNamer(data.series.map((s) => s.labels)));
   // per-theme series colours: the light theme needs darker variants for 3:1 contrast
   const palette = $derived(seriesPalette(theme.effective));
 
@@ -320,7 +322,7 @@
 </script>
 
 <div class="facet">
-  <div class="facet-label">{seriesName(series.labels)}</div>
+  <div class="facet-label" title={seriesName(series.labels)}>{short(series.labels)}</div>
   <div class="dist-controls">
     <button type="button" class:on={view === "histogram"} onclick={() => (view = "histogram")}>histogram</button>
     <button type="button" class:on={view === "ecdf"} onclick={() => (view = "ecdf")}>ECDF</button>

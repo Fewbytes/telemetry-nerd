@@ -60,8 +60,8 @@ test("seasonal panel: verdicts, overlay and ratio views, dark mode", async ({ pa
   const el = page.locator(`[data-panel-id="${panel.id}"]`);
   const plots = el.locator(".seasonal");
   await expect(plots).toHaveCount(2);
-  const boost = plots.filter({ hasText: 'case="boost"' });
-  const normal = plots.filter({ hasText: 'case="normal"' });
+  const boost = plots.filter({ hasText: /^boost:/ });
+  const normal = plots.filter({ hasText: /^normal:/ });
   await expect(boost).toHaveAttribute("data-seasonal-verdict", "unusual");
   await expect(normal).toHaveAttribute("data-seasonal-verdict", "usual");
   await expect(boost).toHaveAttribute("data-seasonal-view", "overlay");

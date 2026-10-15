@@ -4,6 +4,7 @@
   import { baselineSpan, DECIDING, markTip, nearestMark, spcLegend, toSpcUplot, violationMarks, type SpcMark } from "../chart/spc";
   import { drawDots, HIDDEN_SERIES, plotAxes, tipAt, type HoverTip } from "../chart/plotKit";
   import { seriesName } from "../chart/toUplot";
+  import { shortNamer } from "../chart/seriesNames";
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { SpcPanelData } from "../lib/api";
   import ChartTip from "./ChartTip.svelte";
@@ -14,6 +15,7 @@
     onPlot?: (u: uPlot) => void;
   } = $props();
 
+  const short = $derived(shortNamer(data.series.map((s) => s.labels)));
   let el = $state<HTMLDivElement | null>(null);
   let wrap = $state<HTMLDivElement | null>(null);
   /** supplementary run rules (2 of 3, 4 of 5, 8 in a row): drawn hollow, can be hidden */
@@ -50,7 +52,7 @@
         width, height,
         series: [
           {},
-          { label: seriesName(series.labels), stroke: "#0072B2", width: 1.25 },
+          { label: short(series.labels), stroke: "#0072B2", width: 1.25 },
           { label: "centre", stroke, width: 1, dash: [6, 3], points: { show: false } },
           { label: "−3σ", stroke: grid, width: 1, points: { show: false } },
           { label: "+3σ", stroke: grid, width: 1, points: { show: false } },
@@ -101,7 +103,7 @@
 </script>
 
 <div class="spc" data-spc-violations={marks.length} data-spc-mode={series.mode} data-spc-seasonal={series.seasonal ?? "none"}>
-  <div class="verdict">{seriesName(series.labels)}: <b>{series.verdict.replace("_", " ")}</b>{series.also.length ? ` (also ${series.also.join(", ").replaceAll("_", " ")})` : ""}</div>
+  <div class="verdict" title={seriesName(series.labels)}>{short(series.labels)}: <b>{series.verdict.replace("_", " ")}</b>{series.also.length ? ` (also ${series.also.join(", ").replaceAll("_", " ")})` : ""}</div>
   <div class="plot" bind:this={wrap} role="presentation" onmouseleave={() => (tip = null)}>
     <div bind:this={el}></div>
     {#if tip}

@@ -667,6 +667,7 @@
                 (u: uPlot) => {
                   const rows = u.root.querySelectorAll(".u-legend .u-series");
                   model.legendHidden.forEach((i) => rows[i]?.classList.add("tn-hidden"));
+                  model.fullNames.forEach((full, i) => { if (full) rows[i]?.setAttribute("title", full); });
                 },
               ],
               draw: [

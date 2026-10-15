@@ -3,6 +3,7 @@
   import "uplot/dist/uPlot.min.css";
   import { flagMarks, seasonalLegend, seriesDisplayName, toSeasonalUplot, verdictText, type SeasonalView } from "../chart/seasonal";
   import { drawDots, plotAxes, axisGutterSize } from "../chart/plotKit";
+  import { shortNamer } from "../chart/seriesNames";
   import { fmtRatio } from "../chart/indexed";
   import { fmtSI } from "../lib/format";
   import { plotColors, theme } from "../lib/theme.svelte";
@@ -14,6 +15,7 @@
     onPlot?: (u: uPlot) => void;
   } = $props();
 
+  const short = $derived(shortNamer(data.series.map((s) => s.labels)));
   let el = $state<HTMLDivElement | null>(null);
   let view = $state<SeasonalView>("overlay");
   const NOW = "#0072B2", FLAG = "#D55E00";
@@ -35,7 +37,7 @@
       hi: { label: "band 95%", stroke: grid, width: 1, points: { show: false } },
       centre: { label: "median of cycles", stroke, width: 1, dash: [6, 3], points: { show: false } },
       neutral: { label: series.ratio?.kind === "difference" ? "0" : "1", stroke, width: 1, dash: [6, 3], points: { show: false } },
-      now: { label: seriesDisplayName(series, data.dataset.expr), stroke: NOW, width: 1.75 },
+      now: { label: seriesDisplayName(series, data.dataset.expr, short), stroke: NOW, width: 1.75 },
     };
     const logY = v === "ratio" && series.ratio?.kind === "ratio";
     const unit = data.panel.spec.y.unit;
@@ -67,7 +69,7 @@
 
 <div class="seasonal" data-seasonal-verdict={series.verdict} data-seasonal-view={view} data-seasonal-flags={(series.flagged ?? []).length}>
   <div class="head">
-    <span>{seriesDisplayName(series, data.dataset.expr)}: <b>{verdictText(series)}</b></span>
+    <span>{seriesDisplayName(series, data.dataset.expr, short)}: <b>{verdictText(series)}</b></span>
     {#if canRatio}
       <span class="views" role="group" aria-label="view">
         <button class:on={view === "overlay"} onclick={() => (view = "overlay")}>cycles</button>

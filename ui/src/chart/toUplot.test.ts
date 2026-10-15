@@ -35,7 +35,7 @@ describe("toUplot", () => {
     const m = toUplot([iv]);
     expect(m.data.slice(1)).toEqual([[5, 6], [4, 5.5], [7, 6.5]]);
     expect(m.bands).toEqual([{ series: [3, 2], fill: expect.stringMatching(/^rgba\(/) }]);
-    expect(m.series[2].label).toBe('{i="a"} lo');
+    expect(m.series[2].label).toBe('i=a lo');
     const both = toUplot([{ ...iv, min: [3, 5], max: [8, 7] }]);
     expect(both.data.length).toBe(6); // + dotted min/max, no second band
     expect(both.bands.length).toBe(1);
@@ -135,7 +135,7 @@ describe("toUplot filter context", () => {
     expect(String(m.series[1].stroke)).toMatch(/rgba\(.*0\.35/);
     expect(m.series.some((x) => x.dash && String(x.label).includes("edge"))).toBe(true);
     // the edge point is moved from the solid line to the twin
-    const solid = m.series.findIndex((x) => x.label === '{job="x"}');
+    const solid = m.series.findIndex((x) => x.label === 'job=x');
     expect(m.data[solid][0]).toBeNull();
   });
   it("removed part is a dashed line over the main series", () => {
@@ -184,6 +184,14 @@ it("legend envelope reads the bucket under a stepped (doubled) index", () => {
   for (const i of [0, 1]) expect(value({}, 10, 1, i)).toMatch(/9.*11/);
 });
 
+describe("short legend names", () => {
+  it("labels each row by what distinguishes it and keeps the full selector for hover", () => {
+    const m = toUplot([s("a", { __name__: "m", i: "a" }, [1000], [1]), s("b", { __name__: "m", i: "b" }, [1000], [2])]);
+    expect(m.series.slice(1).map((x) => x.label)).toEqual(["a", "a min", "a max", "b", "b min", "b max"]);
+    expect(m.fullNames).toEqual(["", ...['m{i="a"}', 'm{i="b"}'].flatMap((n) => [n, n, n])]);
+  });
+});
+
 describe("others band (14y)", () => {
   it("draws the summary of the series not drawn as lines in grey, dashed, saying what it pools", () => {
     const others: SeriesData = {
@@ -195,7 +203,7 @@ describe("others band (14y)", () => {
     expect(line.label).toBe("others (3 series): median, min–max");
     expect(line.stroke).toBe(REFERENCE_COLOR);
     expect(line.dash).toEqual([6, 3]);
-    expect(m.series[1].label).toBe('{service="checkout"}');
+    expect(m.series[1].label).toBe('service=checkout');
     expect(m.series[1].dash).toBeUndefined();
     expect(m.bands).toHaveLength(2); // the others keep their min–max envelope
   });

@@ -4,6 +4,7 @@
   import { fmtPeriod, periodTicks } from "../chart/period";
   import { layoutSpectrogram } from "../chart/spectrogram";
   import { seriesName } from "../chart/toUplot";
+  import { shortNamer } from "../chart/seriesNames";
   import { fmtRange } from "../lib/format";
   import type { SpectrogramPanelData } from "../lib/api";
 
@@ -12,6 +13,7 @@
     onRendered: (ms: number, cells: number) => void;
   } = $props();
 
+  const short = $derived(shortNamer(data.series.map((s) => s.labels)));
   const AXIS_LEFT = 64, AXIS_BOTTOM = 16;
   let canvas = $state<HTMLCanvasElement | null>(null);
   let tip = $state<{ x: number; y: number; text: string } | null>(null);
@@ -74,7 +76,7 @@
 </script>
 
 <div class="facet">
-  <div class="facet-label">{seriesName(series.labels)}</div>
+  <div class="facet-label" title={seriesName(series.labels)}>{short(series.labels)}</div>
   <canvas bind:this={canvas} class="spectrogram" onmousemove={move} onmouseleave={() => (tip = null)}></canvas>
   {#if tip}<div class="tip" style="left: {tip.x}px; top: {tip.y}px">{tip.text}</div>{/if}
 </div>

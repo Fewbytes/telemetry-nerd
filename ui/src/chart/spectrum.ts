@@ -1,5 +1,6 @@
 import type uPlot from "uplot";
-import { PALETTE, seriesName } from "./toUplot";
+import { PALETTE } from "./toUplot";
+import { shortNamer } from "./seriesNames";
 import { fmtPeriod } from "./period";
 
 export interface SpectrumPeak { period_s: number; interval_s: [number, number]; power: number; significant: boolean; fap: number; fap_red_noise?: number }
@@ -16,11 +17,12 @@ export function toSpectrumUplot(d: SpectrumData): { data: uPlot.AlignedData; ser
   const index = new Map(xs.map((x, i) => [x, i]));
   const data: (number | null)[][] = [xs];
   const series: uPlot.Series[] = [{}];
+  const short = shortNamer(d.series.map((s) => s.labels));
   d.series.forEach((s, k) => {
     const col: (number | null)[] = Array(xs.length).fill(null);
     s.periods_s.forEach((p, i) => (col[index.get(p)!] = s.power[i]));
     data.push(col);
-    series.push({ label: seriesName(s.labels), stroke: PALETTE[k % PALETTE.length], width: 1.5, spanGaps: true });
+    series.push({ label: short(s.labels), stroke: PALETTE[k % PALETTE.length], width: 1.5, spanGaps: true });
   });
   const lvl = Math.max(...d.series.map((s) => s.level));
   data.push(xs.map(() => lvl));
@@ -30,7 +32,7 @@ export function toSpectrumUplot(d: SpectrumData): { data: uPlot.AlignedData; ser
     const col: (number | null)[] = Array(xs.length).fill(null);
     s.periods_s.forEach((p, i) => (col[index.get(p)!] = s.red_level![i]));
     data.push(col);
-    series.push({ label: `1% level, AR(1) red noise${d.series.length > 1 ? ` (${seriesName(s.labels)})` : ""}`, stroke: PALETTE[k % PALETTE.length], width: 1, dash: [1, 3], spanGaps: true, points: { show: false } });
+    series.push({ label: `1% level, AR(1) red noise${d.series.length > 1 ? ` (${short(s.labels)})` : ""}`, stroke: PALETTE[k % PALETTE.length], width: 1, dash: [1, 3], spanGaps: true, points: { show: false } });
   });
   return { data: data as uPlot.AlignedData, series, xRange: [d.limits.shortest_s / 1.6, d.limits.longest_s * 1.6] };
 }
