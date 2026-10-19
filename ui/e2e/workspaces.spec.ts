@@ -4,6 +4,14 @@ import { seedPanel } from "./helpers.js";
 
 test("workspace switcher: new investigation, reopen, follow, archive", async ({ page, request }, testInfo) => {
   const panel = await seedPanel(request, "Is checkout latency in the workspace switcher test elevated?");
+  // hold the create response back: the pushed snapshot (header title) then lands while the popover is still
+  // open, the interleaving that made this test flaky under CPU throttle (telemetry-nerd-43z2)
+  await page.route("**/api/workspaces", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    const res = await route.fetch();
+    await new Promise((done) => setTimeout(done, 1000));
+    await route.fulfill({ response: res });
+  });
   await page.goto("/");
   const first = await (await request.get("/api/workspace")).json();
   const firstTitle: string = first.workspace.title;
@@ -44,12 +52,16 @@ test("workspace switcher: new investigation, reopen, follow, archive", async ({ 
   expect(mine).toHaveLength(1);
   const secondId: string = mine[0].id;
 
-  // reopen the first: its panel is back, on both pages
+  // reopen the first: its panel is back, on both pages.
+  // The header title follows the pushed snapshot, which can land before the create response closes the
+  // popover; clicking the trigger while it is still open would toggle it shut. Wait for the close.
+  await expect(page.locator("#ws-popover")).toHaveCount(0);
   await header.click();
   await page.locator(`[data-workspace-id="${firstId}"]`).locator(".ws-open").click();
   await expect(board).toBeVisible();
   await expect(other.locator(`[data-panel-id="${panel.id}"]`)).toBeVisible();
   await expect(header).toContainText(firstTitle);
+  await expect(page.locator("#ws-popover")).toHaveCount(0); // same race: the open response closes it
 
   // rename inline: Esc cancels, Enter saves (the row of the inactive workspace)
   await header.click();
