@@ -92,7 +92,8 @@ jobs:
   unit:
     name: unit x K (hash + randomly seeds)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # one pass takes 6-11 min on the runner; K passes must fit (telemetry-nerd-gcq4)
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v7
         with:
