@@ -154,7 +154,7 @@ async def test_kernel_that_died_while_idle_is_replaced(mgr):
     os.kill(pid, signal.SIGKILL)
     assert _wait_gone(pid)
     r = await mgr.execute("idle-death", "2")
-    assert (r.status, r.result, r.restarted) == ("ok", "2", True)
+    assert (r.status, r.result, r.restarted) == ("ok", "2", True), r.error
 
 
 @module_loop
