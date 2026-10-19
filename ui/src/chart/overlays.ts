@@ -67,7 +67,8 @@ export interface OverlayDraw {
 
 /** What toUplot should draw: only layers that are switched on, available, and carry data. */
 export function overlayDraw(ov: OverlaysPayload | null | undefined): OverlayDraw | undefined {
-  if (!ov) return undefined;
+  // the daemon sends `{}` for panels that have no reference layers (filtered, non-line marks)
+  if (!ov?.flags) return undefined;
   const out: OverlayDraw = {};
   if (ov.flags.normal && ov.normal.available && ov.normal.series) out.normal = ov.normal.series;
   if (ov.flags.limit && ov.limit.available && ov.limit.lines?.length) out.lines = ov.limit.lines;

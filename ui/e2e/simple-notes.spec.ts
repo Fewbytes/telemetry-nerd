@@ -63,10 +63,15 @@ test("simple mode: caveat keeps its styling and plot focus; nerd keeps the tag",
   const over = await el.locator(".u-over").first().boundingBox();
   if (!rug || !over) throw new Error("rug or plot not laid out");
   await expect(note).not.toHaveClass(/active/);
+  // the rug stacks one row per series (8px + 2px gap) in the daemon's order, which the test does not
+  // control: sweep every row, not just the first (telemetry-nerd-s9t4)
   let lit = false;
   for (let i = 1; i < 40 && !lit; i++) {
-    await page.mouse.move(over.x + (over.width * i) / 40, rug.y + 4);
-    lit = (await el.locator(`${sel}.active`).count()) > 0;
+    for (const rowY of [5, 15]) {
+      await page.mouse.move(over.x + (over.width * i) / 40, rug.y + rowY);
+      lit = (await el.locator(`${sel}.active`).count()) > 0;
+      if (lit) break;
+    }
   }
   expect(lit).toBe(true);
 });

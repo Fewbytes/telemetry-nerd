@@ -50,7 +50,12 @@ export const test = base.extend<Isolation>({
     await page.addInitScript(() => {
       if (!localStorage.getItem("tn-mode-default")) localStorage.setItem("tn-mode-default", "nerd");
     });
+    // An uncaught page error is a bug, not noise: a render crash left a filtered panel without its
+    // chart and showed up only as a timing-dependent click timeout (telemetry-nerd-fckf).
+    const errors: string[] = [];
+    page.on("pageerror", (e) => errors.push(e.message));
     await use(page);
+    expect(errors, "uncaught page errors").toEqual([]);
   },
   uniq: async ({}, use, testInfo) => {
     const nonce = Math.random().toString(36).slice(2, 8);

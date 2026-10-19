@@ -60,6 +60,9 @@ describe("provenance", () => {
 });
 
 describe("overlayDraw", () => {
+  it("draws nothing for the empty payload the daemon sends for panels without layers", () => {
+    expect(overlayDraw({} as never)).toBeUndefined();
+  });
   it("draws only layers that are on, available and carry data", () => {
     const d = overlayDraw(ov())!;
     expect(Object.keys(d)).toEqual(["normal", "lines"]);
