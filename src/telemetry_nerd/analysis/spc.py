@@ -35,6 +35,14 @@ MEDIAN_SE = 1.2533  # se(median) = 1.2533 sigma / sqrt(n) for a normal
 CONSERVATIVE_Z = 1.645  # one-sided 95% for the baseline-estimation scenario
 NEAR_RANDOM_WALK = 0.9
 _N = NormalDist()
+_erfc = np.vectorize(math.erfc, otypes=[float])
+
+
+def _norm_cdf(x: np.ndarray) -> np.ndarray:
+    """Standard normal cdf, elementwise. NormalDist.cdf under np.vectorize made the first
+    control chart of a process take ~1.4 s (its ARL tables), enough to time out a UI test."""
+    return 0.5 * _erfc(-x / math.sqrt(2))
+
 
 _p2, _p1 = 1 - _N.cdf(2), 1 - _N.cdf(1)
 #: per-window false-alarm rate of each rule for iid N(0, 1) with known parameters
@@ -151,20 +159,22 @@ def ewma_arl(
     c = -ucl + w * (np.arange(m) + 0.5)
     hi = (c[None, :] + w / 2 - (1 - lam) * c[:, None]) / lam
     lo = (c[None, :] - w / 2 - (1 - lam) * c[:, None]) / lam
-    cdf = np.vectorize(_N.cdf)
-    p = cdf((hi - mu) / r) - cdf((lo - mu) / r)
+    p = _norm_cdf((hi - mu) / r) - _norm_cdf((lo - mu) / r)
     return _arl(p, n)
 
 
 def _cusum_one_sided(k: float, h: float, mu: float, r: float, n: int) -> float:
     w = h / (n - 0.5)
     v = np.arange(n) * w  # state 0 is exactly 0
-    cdf = np.vectorize(_N.cdf)
     p = np.empty((n, n))
-    p[:, 0] = cdf((w / 2 - v + k - mu) / r)
-    up = (v[None, 1:] + w / 2 - v[:, None] + k - mu) / r
-    dn = (v[None, 1:] - w / 2 - v[:, None] + k - mu) / r
-    p[:, 1:] = cdf(up) - cdf(dn)
+    p[:, 0] = _norm_cdf((w / 2 - v + k - mu) / r)
+    # The transition from state i to j > 0 depends only on j - i: evaluate the cdf once per
+    # offset, not once per cell.
+    offset = np.arange(-(n - 1), n)
+    up = _norm_cdf((offset * w + w / 2 + k - mu) / r)
+    dn = _norm_cdf((offset * w - w / 2 + k - mu) / r)
+    cell = np.arange(1, n)[None, :] - np.arange(n)[:, None] + (n - 1)
+    p[:, 1:] = up[cell] - dn[cell]
     return _arl(p, 0)
 
 

@@ -1,8 +1,13 @@
 """SPC: detectors, ARL theory, and false-alarm rates on stationary noise vs theory (seeded)."""
 
+import os
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 
+from telemetry_nerd.analysis import spc
 from telemetry_nerd.analysis.spc import (
     RULE_RATES,
     control_chart,
@@ -22,6 +27,17 @@ def chart(y, n_base, harmonics=None, t_s=None):
     pos = np.arange(y.size)
     base = pos < n_base
     return control_chart(pos, pos * 60.0 if t_s is None else t_s, y, base, harmonics)
+
+
+def test_cusum_arl_evaluates_the_normal_cdf_once_per_state_offset(monkeypatch):
+    n = 200
+    evaluated = []
+    real = spc._norm_cdf
+    monkeypatch.setattr(spc, "_norm_cdf", lambda x: evaluated.append(np.size(x)) or real(x))
+    spc.cusum_arl.cache_clear()
+    spc.cusum_arl(mu=0.25, n=n)
+    # per side: n starting cells + two tables of 2n - 1 offsets; a cell-by-cell evaluation is 2n^2
+    assert sum(evaluated) == 2 * (n + 2 * (2 * n - 1))
 
 
 def test_markov_chain_arl_matches_published_tables():
@@ -276,3 +292,12 @@ def test_profile_is_not_used_when_the_baseline_fits_the_cycle_itself():
     c_short = control_chart(pos, t, y, pos < 200, h, shape, 86400.0)
     assert c_short.seasonal == "profile" and "seasonal_not_in_baseline" not in c_short.caveats
     assert c_short.in_control
+
+
+def test_importing_the_package_pins_openblas_to_one_thread():
+    env = {k: v for k, v in os.environ.items() if k != "OPENBLAS_NUM_THREADS"}
+    out = subprocess.run(
+        [sys.executable, "-c", "import telemetry_nerd, os; print(os.environ['OPENBLAS_NUM_THREADS'])"],
+        env=env, capture_output=True, text=True, check=True,
+    )  # fmt: skip
+    assert out.stdout.strip() == "1"
