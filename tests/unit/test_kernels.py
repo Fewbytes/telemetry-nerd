@@ -43,6 +43,20 @@ def _gone(pid: int) -> bool:
     return out.stdout.strip().startswith("Z") or out.returncode != 0
 
 
+def _wait_exited(pid: int, within_s: float = 10.0) -> bool:
+    """Wait until child `pid` can be reaped (all its threads are gone), without reaping it.
+
+    `_gone` is not enough before a liveness check: a killed multi-threaded process shows state
+    `Z` while its other threads still exit, and until they do waitpid (hence Popen.poll, hence
+    the manager's is_alive) still reports it running. az4t."""
+    deadline = time.monotonic() + within_s
+    while time.monotonic() < deadline:
+        if os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None:
+            return True
+        time.sleep(0.01)
+    return False
+
+
 def _wait_gone(pid: int, within_s: float = 10.0) -> bool:
     deadline = time.monotonic() + within_s
     while time.monotonic() < deadline:
@@ -152,7 +166,7 @@ async def test_kernel_that_died_while_idle_is_replaced(mgr):
     await mgr.execute("idle-death", "1")
     pid = mgr.kernel_pid("idle-death")
     os.kill(pid, signal.SIGKILL)
-    assert _wait_gone(pid)
+    assert _wait_exited(pid)
     r = await mgr.execute("idle-death", "2")
     assert (r.status, r.result, r.restarted) == ("ok", "2", True), r.error
 
