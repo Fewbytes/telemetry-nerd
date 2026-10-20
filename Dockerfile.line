@@ -27,6 +27,10 @@ ENV UV_PYTHON=${PYTHON_VERSION} \
 WORKDIR /tmp/warm
 COPY pyproject.toml uv.lock ./
 COPY ui/package.json ui/package-lock.json ui/
+# procps: tests/unit/test_kernels.py asks `ps` whether a killed kernel is a zombie.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends procps
 RUN set -eux; \
     uv python install "${PYTHON_VERSION}"; \
     uv sync --locked --no-install-project; \
