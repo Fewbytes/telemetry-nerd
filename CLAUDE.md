@@ -94,4 +94,9 @@ _Add a brief overview of your project architecture_
   display bucket, time range, ...): `docs/glossary.md`. Specs, skills, tool descriptions and panel
   text use it; JSON keys and code identifiers keep their names.
 
+- Hosted on a sweatshop assembly line (`docs/line.md`): `just ci` is the required check and runs in
+  the `Dockerfile.line` image; `justfile`, `Dockerfile.line`, `.github/**` and
+  `scripts/check_version.py` are gemba-gated (a maker cannot change them). Integration tests stay
+  GitHub-only. Every dependency or Playwright bump needs a `just line-image` rebuild on the line host.
+
 _Add your project-specific conventions here_
