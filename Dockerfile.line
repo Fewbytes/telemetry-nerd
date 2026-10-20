@@ -1,0 +1,39 @@
+# syntax=docker/dockerfile:1
+# The sweatshop assembly line's image for telemetry-nerd: makers work in it and the witness runs
+# `just ci` (the constitution's required check) in it. Distinct from the shipped daemon image
+# (Dockerfile). Build: `just line-image`. Convention and rationale: docs/line.md.
+#
+# It extends the line's station image (claude, sweatshop, just, uv, node, git, rg, fd) with this
+# project's toolchain, baked so a check does not depend on the network: managed Python (the base
+# image's bookworm python is 3.11, below requires-python), warmed uv and npm caches, Chromium for
+# the Playwright e2e. The caches are an optimisation only: a changed lockfile just downloads
+# the difference. No secrets and no checkout are baked in.
+
+ARG BASE=localhost/sweatshop-station:dev
+FROM ${BASE}
+
+# Match the GitHub CI python job; uv installs it as a managed interpreter.
+ARG PYTHON_VERSION=3.14
+
+USER root
+ENV UV_PYTHON=${PYTHON_VERSION} \
+    UV_PYTHON_INSTALL_DIR=/opt/line/uv-python \
+    UV_CACHE_DIR=/opt/line/uv-cache \
+    UV_LINK_MODE=copy \
+    NPM_CONFIG_CACHE=/opt/line/npm-cache \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/line/pw-browsers
+
+# Only the manifests are copied: enough to resolve and download, never the source.
+WORKDIR /tmp/warm
+COPY pyproject.toml uv.lock ./
+COPY ui/package.json ui/package-lock.json ui/
+RUN set -eux; \
+    uv python install "${PYTHON_VERSION}"; \
+    uv sync --locked --no-install-project; \
+    (cd ui && npm ci && npx playwright install --with-deps chromium); \
+    rm -rf /var/lib/apt/lists/* /tmp/warm; \
+    chown -R agent:agent /opt/line; \
+    chmod -R a+rX /opt/line
+
+USER agent
+WORKDIR /work

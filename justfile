@@ -5,6 +5,26 @@ default: test
 test:
     uv run pytest
 
+# The assembly line's required check (sweatshop constitution `checks.required`): the witness and
+# every maker run it in the Dockerfile.line image. It mirrors the GitHub python, ui and e2e jobs
+# and is non-interactive and deterministic. Integration (`-m integration`: testcontainers needs a
+# container socket) and network (`-m network`: public internet) stay GitHub-only on purpose, see
+# docs/line.md.
+ci:
+    uv sync --locked
+    just lint
+    python3 scripts/check_version.py
+    uv run pytest
+    cd ui && npm ci
+    cd ui && npm test
+    just ui-check
+    just e2e
+
+# Build the line image (see Dockerfile.line): the toolchain and warmed dependency caches `just ci`
+# runs in. `base` is the sweatshop-station image of the line it will run on.
+line-image base="localhost/sweatshop-station:dev" tag="telemetry-nerd-line:dev":
+    podman build -f Dockerfile.line --build-arg BASE={{base}} -t {{tag}} .
+
 # Container tests (testcontainers: needs a Docker-compatible socket). Required in CI.
 # Rootless Podman/applehv (macOS): Ryuk's cleanup sidecar fails to start (socket-mount volume
 # rejected), so set TESTCONTAINERS_RYUK_DISABLED=true. Also point DOCKER_HOST at the podman
