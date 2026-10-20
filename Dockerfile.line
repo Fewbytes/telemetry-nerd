@@ -30,6 +30,9 @@ COPY ui/package.json ui/package-lock.json ui/
 RUN set -eux; \
     uv python install "${PYTHON_VERSION}"; \
     uv sync --locked --no-install-project; \
+    # the project's own build backend (pyproject build-system.requires + hatchling's editable hook)
+    uv venv /tmp/warm/build-env; \
+    uv pip install --python /tmp/warm/build-env hatchling editables; \
     (cd ui && npm ci && npx playwright install --with-deps chromium); \
     rm -rf /var/lib/apt/lists/* /tmp/warm; \
     chown -R agent:agent /opt/line; \
