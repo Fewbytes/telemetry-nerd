@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import subprocess
 from collections.abc import Awaitable, Callable, Sequence
 from functools import cache
@@ -126,7 +127,11 @@ def _optional(body: dict, key: str, typ: type):
 def _daemon_commit() -> str:
     """Short git commit this process runs from (same idea as the UI's build-time __GIT_SHA__:
     api/health reports it so the two can be compared). "unknown" outside a git checkout (an
-    installed wheel, a container without .git) -- cached since it never changes mid-process."""
+    installed wheel, a container without .git) -- cached since it never changes mid-process.
+    TN_COMMIT (baked into the image by `--build-arg GIT_SHA`, see deploy/staging) wins, so a
+    container can say which master build it is."""
+    if baked := os.environ.get("TN_COMMIT"):
+        return baked
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],

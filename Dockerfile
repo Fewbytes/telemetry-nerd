@@ -62,11 +62,14 @@ RUN apt-get update -qq && apt-get install -y -qq --no-install-recommends binutil
  && /opt/venv/bin/python -c 'import ipykernel.ipkernel, jupyter_client, zmq; from ipykernel.debugger import _is_debugpy_available as d; assert not d'
 
 FROM python:3.14-slim-trixie
+# The image has no .git, so /api/health reports the build's commit from this (deploy/staging).
+ARG GIT_SHA=""
 RUN useradd --system --create-home --uid 10001 tn \
  && mkdir /data && chown tn:tn /data
 COPY --from=build /opt/venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
+    TN_COMMIT=$GIT_SHA \
     TN_DATA_DIR=/data \
     TN_HOST=0.0.0.0 \
     TN_PORT=7070

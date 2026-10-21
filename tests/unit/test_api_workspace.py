@@ -29,12 +29,24 @@ def test_health(client):
     assert body["commit"] and body["commit"] != "unknown"
 
 
+def test_health_commit_comes_from_tn_commit_when_set(client, monkeypatch):
+    from telemetry_nerd.api import app as app_module
+
+    monkeypatch.setenv("TN_COMMIT", "abc1234")
+    app_module._daemon_commit.cache_clear()
+    try:
+        assert client.get("/api/health").json()["commit"] == "abc1234"
+    finally:
+        app_module._daemon_commit.cache_clear()
+
+
 def test_health_commit_is_unknown_outside_a_git_checkout(client, monkeypatch):
     from telemetry_nerd.api import app as app_module
 
     def no_git(*a, **k):
         raise FileNotFoundError("git not found")
 
+    monkeypatch.delenv("TN_COMMIT", raising=False)
     app_module._daemon_commit.cache_clear()
     monkeypatch.setattr(app_module.subprocess, "run", no_git)
     try:
