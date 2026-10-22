@@ -101,7 +101,7 @@
   // Brush-select + annotation rendering for a chart kind that renders its own uPlot instance
   // (fleet, seasonal, spc, littles -- "time" wires both of these itself inline below, and
   // heatmap/percentile wire brush-select via their own onBrush prop but draw no annotations,
-  // their x-axis being a derived tile/window index). The child component only needs cursor.drag
+  // their x-axis being a derived tile/window index; spectrogram does both on its own canvas). The child component only needs cursor.drag
   // enabled for x; setSelect reads the selection the same way "time"'s own inline hook does,
   // correcting for the child's own position within .plot via live getBoundingClientRect (never a
   // guessed offset -- the fleet badge bug today was exactly that mistake). draw re-renders
@@ -1023,7 +1023,8 @@
     {#if data && data.kind === "spectrogram"}
       {@const sg = data}
       {#each sg.series as s, i (s.id)}
-        <SpectrogramPlot data={sg} series={s} width={fetchWidth} height={chartHeight}
+        <SpectrogramPlot data={sg} series={s} width={fetchWidth} height={chartHeight} annotations={panelAnns}
+          onBrush={(b) => (selection = { ...b, top: 4 + i * (chartHeight + 14) })}
           onRendered={(ms, cells) => onFacetRendered(i, sg.series.length, ms, cells, chartHeight)} />
       {/each}
       <div class="legend"><CompactText text={spectrogramLegend(sg)} compact={simple} /></div>

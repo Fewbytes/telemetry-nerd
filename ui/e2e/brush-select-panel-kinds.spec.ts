@@ -73,6 +73,35 @@ test("brush-select → Mark event works on a seasonal panel (bead a8u9)", async 
   await expect(el).toHaveAttribute("data-annotation-count", "1");
 });
 
+test("brush-select → Mark region works on a spectrogram panel and the region is drawn (bead 2psp)", async ({ page, request }) => {
+  const q = await request.post("/api/query", {
+    data: { expr: 'tn_demo_latency_seconds{instance="b"}', start: "now-6h", end: "now-10m", step: "1m" },
+  });
+  const { dataset } = await q.json();
+  const shown = await request.post("/api/show", { data: { dataset, question: "spectrogram brush e2e", mark: "spectrogram", segment: "1h" } });
+  expect(shown.ok(), await shown.text()).toBeTruthy();
+  const id = (await shown.json()).panel.id;
+
+  await page.goto("/");
+  const el = page.locator(`[data-panel-id="${id}"]`);
+  const canvas = el.locator("canvas.spectrogram");
+  await expect(canvas).toBeVisible();
+  const pixels = () => canvas.evaluate((c: HTMLCanvasElement) => c.toDataURL());
+  const before = await pixels();
+
+  await brushMiddleThird(page, id);
+  const menu = page.locator(".selection-menu");
+  await expect(menu).toBeVisible();
+  await menu.getByRole("button", { name: "Mark region" }).click();
+  await menu.getByPlaceholder("Region label").fill("spectrogram e2e region");
+  await menu.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(menu).toBeHidden();
+
+  const ws = await (await request.get("/api/workspace")).json();
+  expect(ws.annotations.find((a: { label: string }) => a.label === "spectrogram e2e region")).toMatchObject({ kind: "region", author: "user", panel: id });
+  await expect.poll(pixels).not.toBe(before);
+});
+
 test.afterAll(async ({ request }) => {
   await request.post(`${FIXTURE}/api/v1/admin/tsdb/delete_series?match[]={__name__="${PREFIX}"}`);
 });
