@@ -768,3 +768,50 @@ async def test_stale_ended_is_unknown_for_victoriametrics_and_for_expressions():
         await _stale_ended_instances("prometheus", "prometheus", "sum(rate(up[1m]))", series)
         is None
     )
+
+
+# --- counter resets (1h9.20): buckets whose step window held a reset --------------------------
+
+
+async def _fetch_with_resets(flavor: str, backend: str):
+    def responder(request):
+        if request.url.params["query"].startswith("resets("):
+            return httpx.Response(
+                200,
+                json=matrix(
+                    [
+                        {
+                            "metric": {"instance": "a"},
+                            "values": [[1_700_000_040, "0"], [1_700_000_100, "1"]],
+                        },
+                        {"metric": {"instance": "b"}, "values": [[1_700_000_100, "0"]]},
+                    ]
+                ),
+            )
+        return httpx.Response(
+            200,
+            json=matrix(
+                [
+                    {
+                        "metric": {"instance": i},
+                        "values": [[1_700_000_040, "1"], [1_700_000_100, "1"]],
+                    }
+                    for i in ("a", "b")
+                ]
+            ),
+        )
+
+    with respx.mock:
+        respx.get(**ROUTE).mock(side_effect=responder)
+        return await PromQLSource("src", BASE, flavor=flavor, backend=backend).fetch(
+            "requests_total", RNG, 60_000
+        )
+
+
+async def test_bucket_with_a_counter_reset_is_a_reset_cell_where_the_step_window_sees_resets():
+    res = await _fetch_with_resets("victoriametrics", "victoriametrics")
+    assert res.reset_cells == ((series_id("src", {"instance": "a"}), 1_700_000_100_000),)
+
+
+async def test_reset_cells_are_unknown_where_step_windows_miss_boundary_resets():
+    assert (await _fetch_with_resets("prometheus", "prometheus")).reset_cells is None

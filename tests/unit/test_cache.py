@@ -350,3 +350,18 @@ async def test_stale_ended_series_survive_the_cache_and_unknown_stays_unknown(ca
     # chunks fetched by a source that cannot tell: unknown, not "none ended"
     other = await cache.get("src", "other", rng, STEP, FakeFetcher())
     assert other.stale_ended is None
+
+
+async def test_reset_cells_survive_the_cache_and_unknown_stays_unknown(cache):
+    class Resetting(FakeFetcher):
+        async def __call__(self, rng):
+            res = await super().__call__(rng)
+            cells = (("s1", 1_260_000),) if rng.start_ms == 1_200_000 else ()
+            return FetchResult(res.buckets, res.series, reset_cells=cells)
+
+    rng = TimeRange(1_200_000, 2_400_000)
+    await cache.get("src", "up", rng, STEP, Resetting())
+    cached = await cache.get("src", "up", rng, STEP, FakeFetcher())
+    assert cached.reset_cells == (("s1", 1_260_000),)
+    other = await cache.get("src", "other", rng, STEP, FakeFetcher())
+    assert other.reset_cells is None

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
@@ -178,6 +178,7 @@ def derive_states(meta: DatasetMeta, result: FetchResult) -> pa.Table:
         failed=[(a, b, str(reason)) for a, b, reason in meta.failed_spans],
         semantics_flags=meta.semantics_flags,
         stale_ended=meta.stale_ended_series or (),
+        reset_cells=[(sid, ts) for sid, ts in meta.reset_cells or ()],
         mode="presence" if meta.representation == "quantile" else "samples",
     )
 
@@ -193,6 +194,7 @@ def _states(
     failed: list[tuple[int, int, str]],
     semantics_flags: dict,
     stale_ended: Collection[str] = (),
+    reset_cells: Sequence[tuple[str, int]] = (),
     mode: Literal["samples", "presence"] = "samples",
 ) -> pa.Table:
     return compute(
@@ -212,6 +214,7 @@ def _states(
         # an assumed (default) resolution is no evidence of the series' interval (principle 15)
         interval_known=bool(semantics_flags.get("series_interval_known")),
         stale_ended=stale_ended,
+        reset_cells=reset_cells,
     )
 
 

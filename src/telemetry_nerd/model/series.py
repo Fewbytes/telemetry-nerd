@@ -46,6 +46,9 @@ class FetchResult:
     # plus the lookback): the end is not trustworthy as "gone" (SUSPECT, 1h9.14).
     # None = the source cannot tell, which is not the same as none.
     stale_ended: tuple[str, ...] | None = None
+    # (series id, bucket ts_ms) of buckets whose window held a counter reset (`resets(x[step])`
+    # above 0): bucket_state flags them RESET. None = the source cannot see resets at this step.
+    reset_cells: tuple[tuple[str, int], ...] | None = None
 
 
 def empty_result() -> FetchResult:

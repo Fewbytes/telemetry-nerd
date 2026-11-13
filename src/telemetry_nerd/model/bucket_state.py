@@ -24,7 +24,7 @@ class State(IntEnum):
 
 class Flag(IntFlag):
     NONE = 0
-    RESET = 1
+    RESET = 1  # the bucket window held a counter reset (source resets(x[step]); OK/PARTIAL kept)
     INTERVAL_CHANGE = 2
     STALE_MARKER = 4
     SOURCE_FILLED = 8  # the expression's counts are subquery evaluations, not samples (UNKNOWN)
@@ -92,6 +92,7 @@ def compute(
     post_gap_buckets: int = 0,
     interval_known: bool = False,
     stale_ended: Collection[str] = (),
+    reset_cells: Collection[tuple[str, int]] = (),
 ) -> pa.Table:
     """`stale_ended`: ids of series a staleness marker ended (FetchResult.stale_ended; None means
     the source cannot tell, pass ()). Their silence after the last sample reads SUSPECT +
@@ -105,7 +106,9 @@ def compute(
     reaches back over the gap, so the first n OK/PARTIAL buckets after an EMPTY/UNKNOWN one
     (stopping at the next gap) are flagged POST_GAP (state unchanged); 0 turns it off.
     `interval_known`: `resolution_ms` is the source's configured or learned series interval, not
-    an assumed default; only then may it confirm a cadence a little slower than the step."""
+    an assumed default; only then may it confirm a cadence a little slower than the step.
+    `reset_cells`: (series_id, ts_ms) of buckets whose window held a counter reset (the source's
+    `resets(x[step])`); those buckets are flagged RESET, state unchanged."""
     ts = grid(start_ms, end_ms, step_ms)
     if not ts or not series_ids:
         return STATE_SCHEMA.empty_table()
@@ -186,6 +189,19 @@ def compute(
         if step_ms >= resolution_ms:
             df, changed = _interval_change(df)
             flags = flags | changed
+    if reset_cells:
+        marked = (
+            pl.DataFrame(
+                {"series_id": [c[0] for c in reset_cells], "ts_ms": [c[1] for c in reset_cells]},
+                schema={"series_id": pl.String, "ts_ms": pl.Int64},
+            )
+            .unique()
+            .with_columns(pl.lit(True).alias("_reset"))
+        )
+        df = df.join(marked, on=["series_id", "ts_ms"], how="left").sort("series_id", "ts_ms")
+        flags = flags | pl.when(pl.col("_reset").fill_null(False)).then(int(Flag.RESET)).otherwise(
+            0
+        )
     if post_gap_buckets > 0:  # (df is sorted by series, ts)
         is_gap = pl.col("state").is_in([int(State.EMPTY), int(State.UNKNOWN)])
         df = df.with_columns(is_gap.cum_sum().over("series_id").alias("_gap_no"))

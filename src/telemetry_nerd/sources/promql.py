@@ -295,6 +295,30 @@ class PromQLSource:
                 ended.append(series_id(self.name, labels))
         return tuple(sorted(ended))
 
+    async def _reset_cells(
+        self, expr: str, rng: TimeRange, step_ms: int, sids: list[str]
+    ) -> tuple[tuple[str, int], ...] | None:
+        """(series id, ts_ms) of fetched buckets whose step window held a counter reset: the
+        steps where `resets(x[step])` is above 0. None unless the profile says a reset falling between
+        two step windows is seen by it (`reset_visible_in_step_window`): a missed reset would
+        read as "no reset", so the source reports unknown instead."""
+        if not self.semantics.reset_visible_in_step_window.value:
+            return None
+        kept = set(sids)
+        matrix = await self._query_range(f"resets({self._window(expr, step_ms)})", rng, step_ms)
+        cells: list[tuple[str, int]] = []
+        for item in matrix.result:
+            try:
+                labels = dict(item["metric"])
+                samples = [(round(float(t) * 1000), float(v)) for t, v in item["values"]]
+            except (KeyError, TypeError, ValueError) as e:
+                raise _malformed(f"malformed series {item!r} in query result") from e
+            labels.pop("__name__", None)
+            sid = series_id(self.name, labels)
+            if sid in kept:
+                cells += [(sid, ts) for ts, v in samples if v > 0]
+        return tuple(sorted(cells))
+
     async def fetch(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
         steps = (rng.end_ms - rng.start_ms) // step_ms + 1
         if steps > MAX_STEPS_PER_QUERY:
@@ -432,6 +456,7 @@ class PromQLSource:
             failed=failed,
             notes=(*notes, *notes_extra),
             stale_ended=await self._stale_ended_in(expr, rng, step_ms, sids),
+            reset_cells=await self._reset_cells(expr, rng, step_ms, sids),
         )
 
     async def _attempt(

@@ -1234,3 +1234,18 @@ def test_coarsened_stale_ended_silence_stays_suspect():
         stale_run({"a"}), 3 * STEP
     )  # buckets ending 3 (OK, OK, SUSPECT) and 6 (SUSPECT x2)
     assert states(out) == [State.PARTIAL, State.SUSPECT]
+
+
+def test_bucket_with_a_counter_reset_is_flagged_reset_and_keeps_its_state():
+    rows = [(t * STEP, "a", 1.0, 4) for t in range(1, 6)]
+    out = compute(
+        buckets(rows), ("a",), start_ms=STEP, end_ms=5 * STEP, step_ms=STEP, resolution_ms=RES,
+        mode="samples", reset_cells=[("a", 3 * STEP), ("other", 2 * STEP)],
+    )  # fmt: skip
+    assert out["flags"].to_pylist() == [0, 0, int(Flag.RESET), 0, 0]
+    assert states(out) == [State.OK] * 5
+
+
+def test_monotonic_counter_has_no_reset_flag():
+    rows = [(t * STEP, "a", 1.0, 4) for t in range(1, 6)]
+    assert all(f & int(Flag.RESET) == 0 for f in run(rows)["flags"].to_pylist())

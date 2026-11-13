@@ -42,6 +42,8 @@ class DatasetMeta:
     semantics_flags: dict = field(default_factory=dict)
     # ids of series a staleness marker ended (FetchResult.stale_ended); None = not determinable
     stale_ended_series: list[str] | None = None
+    # [series id, ts_ms] of buckets that held a counter reset (FetchResult.reset_cells)
+    reset_cells: list[list] | None = None
     # Tier-2 code outputs (spec §5.2). Lineage: the producing code node and the input datasets.
     producer: dict | None = None  # {"kind": "code", "node", "output", "description"}
     parents: list[str] = field(default_factory=list)
@@ -163,6 +165,9 @@ class DatasetStore:
             failed_spans=[list(f) for f in result.failed],
             semantics_flags=dict(semantics_flags or {}),
             stale_ended_series=None if result.stale_ended is None else list(result.stale_ended),
+            reset_cells=None
+            if result.reset_cells is None
+            else [list(c) for c in result.reset_cells],
             query_language=query_language,
             source_caveats=_union(
                 lineage.caveats if lineage else (),

@@ -190,3 +190,17 @@ def test_stale_ended_series_round_trip_and_unknown_is_not_empty(store):
     assert store.meta(put(("s1",)).id).stale_ended_series == ["s1"]
     assert store.meta(put(()).id).stale_ended_series == []
     assert store.meta(put(None).id).stale_ended_series is None
+
+
+def test_reset_cells_round_trip_and_unknown_is_not_empty(store):
+    base = result()
+
+    def put(cells):
+        return store.put(
+            source="s", expr="up", rng=TimeRange(0, 60_000), step_ms=1000, resolution_ms=1000,
+            result=FetchResult(base.buckets, base.series, reset_cells=cells),
+        )  # fmt: skip
+
+    assert store.meta(put((("s1", 5000),)).id).reset_cells == [["s1", 5000]]
+    assert store.meta(put(()).id).reset_cells == []
+    assert store.meta(put(None).id).reset_cells is None
