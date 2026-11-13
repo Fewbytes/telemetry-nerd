@@ -11,11 +11,12 @@
   import { plotColors, theme } from "../lib/theme.svelte";
   import type { FleetPanelData } from "../lib/api";
   import FleetHeat from "./FleetHeat.svelte";
+  import FleetCloud from "./FleetCloud.svelte";
   import { GROUP_LABEL_PX } from "../lib/groupLink.svelte";
   import FleetSmallMultiples from "./FleetSmallMultiples.svelte";
   import CompactText from "./panel/CompactText.svelte";
 
-  type View = "band" | "quantiles" | "heat" | "multiples";
+  type View = "band" | "quantiles" | "heat" | "cloud" | "multiples";
   let { data, width, height = 260, range = null, unit = null, view = $bindable("band"), compact = false, onRendered, xRange = null, gutter = null, onPlot }: {
     data: FleetPanelData; width: number; height?: number; range?: [number, number] | null; unit?: string | null; view?: View;
     /** simple mode: dense captions as one line (CompactText), analysis knobs hidden */
@@ -28,7 +29,7 @@
 
   // SPC band + outliers (default: the reference the tests use), the descriptive quantile spread,
   // member x time heatmap, or small multiples of the top outliers
-  const views: [View, string][] = [["band", "SPC band + outliers"], ["quantiles", "spread (quantiles)"], ["heat", "member × time"], ["multiples", "small multiples"]];
+  const views: [View, string][] = [["band", "SPC band + outliers"], ["quantiles", "spread (quantiles)"], ["heat", "member × time"], ["cloud", "density cloud"], ["multiples", "small multiples"]];
 
   let el = $state<HTMLDivElement | null>(null);
   let tip = $state<{ x: number; y: number; px: number; py: number; text: string } | null>(null);
@@ -230,7 +231,7 @@
   <div class="legend views" role="group" aria-label="Fleet view">
     view:
     {#each views as [v, label] (v)}
-      {#if v === "band" || v === "quantiles" || (v === "heat" && data.heat) || (v === "multiples" && data.outliers.length)}
+      {#if v === "band" || v === "quantiles" || (v === "heat" && data.heat) || (v === "cloud" && data.cloud) || (v === "multiples" && data.outliers.length)}
         <button type="button" class:on={view === v} aria-pressed={view === v} data-fleet-view-btn={v} onclick={() => (view = v)}>{label}</button>
       {/if}
     {/each}
@@ -247,6 +248,8 @@
   {/if}
   {#if view === "heat"}
     <FleetHeat {data} {width} {compact} {onRendered} />
+  {:else if view === "cloud"}
+    <FleetCloud {data} {width} {height} {compact} {onRendered} />
   {:else if view === "multiples"}
     <FleetSmallMultiples {data} {width} {range} {onRendered} />
   {:else}

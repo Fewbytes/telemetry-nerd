@@ -16,6 +16,7 @@ from typing import NamedTuple
 
 import numpy as np
 import polars as pl
+import pyarrow as pa
 
 from telemetry_nerd.analysis import sources
 from telemetry_nerd.analysis.fleet import (
@@ -53,7 +54,7 @@ from telemetry_nerd.catalog.rules import Facts
 from telemetry_nerd.core.signal_ops import SignalOps
 from telemetry_nerd.core.wire import Memo, measurement_caveats, sig, sig_list, statistic
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
-from telemetry_nerd.model.bucket_state import Flag, State, coarsen, grid
+from telemetry_nerd.model.bucket_state import Flag, State, coarsen, grid, merge
 from telemetry_nerd.model.caveats import (
     CADENCE_REASON,
     MAX_WHERE_SERIES,
@@ -66,6 +67,7 @@ from telemetry_nerd.model.caveats import (
 from telemetry_nerd.model.companions import dataset_bundle
 from telemetry_nerd.model.time import TimeRange, format_duration, iso
 
+FLEET_GROUP = "fleet"  # the one group merge() folds every member into
 MAX_STEPS = 1440  # longer ranges are averaged per member to a coarser step first
 MAX_LISTED = 10
 MAX_DRAWN = 6
@@ -93,6 +95,7 @@ class Coverage(NamedTuple):
     stale: np.ndarray | None  # members x steps: STALE_MARKER flag
     located: list[Caveat]  # structured caveats, where = {series ids, spans}
     cadence: np.ndarray | None = None  # members x steps: CADENCE flag (an unknown's reason)
+    group: pa.Table | None = None  # merge() of the members' bucket_state (GROUP_SCHEMA, one group)
 
 
 class FleetRun(NamedTuple):
@@ -229,6 +232,7 @@ class FleetOps:
             (flags & int(Flag.STALE_MARKER)) > 0,
             list(bundle.caveats),
             (flags & int(Flag.CADENCE)) > 0,
+            merge(states, dict.fromkeys(sids, FLEET_GROUP)),
         )
 
     @staticmethod

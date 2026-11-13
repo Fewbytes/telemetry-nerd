@@ -1,6 +1,7 @@
 import type uPlot from "uplot";
 import type { Caveat, YContext, YView } from "../lib/api";
 import { sourceText, type VariationSource } from "../lib/sources";
+import type { FleetCloud } from "./fleetCloud";
 import { resolveY, yStats, type YResolved } from "./yview";
 
 /** Fleet panel (bead lkn.3): many series of one metric as a group band + outlying members. */
@@ -59,7 +60,7 @@ export interface FleetHeatRow { id: string; z: Col; rank: number | null; first: 
 export interface FleetHeat { z_cap: number; rows_total: number; rows: FleetHeatRow[] }
 export interface FleetData {
   ts: number[]; members: number; normalise: "none" | "member"; scale: "log" | "linear";
-  band: FleetBand; n: number[]; alive: number[]; outliers: FleetOutlier[]; outlier_count: number; heat?: FleetHeat;
+  band: FleetBand; n: number[]; alive: number[]; outliers: FleetOutlier[]; outlier_count: number; heat?: FleetHeat; cloud?: FleetCloud;
   clusters?: FleetCluster[]; located?: Caveat[];
   /** the whole fleet's SPC band; absent when split into behaviour groups (each has its own) */
   spc?: FleetSpc; band_bounds?: FleetBandBounds; member_error_note?: string;

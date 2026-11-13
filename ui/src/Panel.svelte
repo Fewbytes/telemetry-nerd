@@ -483,7 +483,7 @@
 
   let fleetView = $state<FleetView>("band");
   // the heat view's y axis is members, not values: no y-view chips, badge, context strip or y notes there
-  const yIsValues = $derived(!(data?.kind === "fleet" && fleetView === "heat"));
+  const yIsValues = $derived(!(data?.kind === "fleet" && (fleetView === "heat" || fleetView === "cloud")));
   const notes = $derived(
     data
       ? panelNotes(data.caveats, {

@@ -11,7 +11,8 @@ import math
 import numpy as np
 
 from telemetry_nerd.analysis.fleet import Fleet
-from telemetry_nerd.core.fleet_ops import FleetOps
+from telemetry_nerd.core.fleet_ops import FLEET_GROUP, FleetOps, FleetRun
+from telemetry_nerd.model.bucket_state import State
 
 MAX_HEAT_ROWS = 200  # more members than this: the most deviating rows only, disclosed
 Z_CLIP = 12.0  # +-inf (zero-spread steps) and wild values stay finite on the wire
@@ -63,3 +64,63 @@ def heat(ops: FleetOps, dataset_id: str, cfg: dict) -> dict:
     """Heatmap payload for a stored dataset (the analysis is memoised by FleetOps.run)."""
     run = ops.run(dataset_id, cfg.get("by"), cfg.get("scale", "auto"), cfg.get("normalise", "none"))
     return heat_rows(run.fleet, run.names)
+
+
+MAX_CLOUD_BINS = 48
+MAX_SILENT_NAMED = 8
+
+
+def cloud_rows(run: FleetRun) -> dict:
+    """Density cloud behind the group view (spec 2026-10-02 §7.1): per step, the share of the
+    members alive at that step in each value bin. Normalised by alive, not by reporting, so
+    silent members thin the column (its sum is reporting / alive) rather than being dropped from
+    the denominator. Silent members are named like outliers, and the group's merged bucket_state
+    rides along as the group rug row."""
+    f, cov = run.fleet, run.coverage
+    values = f.values
+    finite = values[np.isfinite(values)]
+    lo, hi = (float(finite.min()), float(finite.max())) if finite.size else (0.0, 1.0)
+    log = f.scale == "log" and lo > 0
+    edges = np.linspace(np.log(lo) if log else lo, np.log(hi) if log else hi, MAX_CLOUD_BINS + 1)
+    if hi == lo:
+        edges = edges + np.linspace(-0.5, 0.5, MAX_CLOUD_BINS + 1)
+    alive = f.spread.alive
+    density = np.zeros((values.shape[1], MAX_CLOUD_BINS))
+    for t in range(values.shape[1]):
+        col = values[:, t]
+        col = np.log(col[np.isfinite(col)]) if log else col[np.isfinite(col)]
+        if alive[t] > 0 and col.size:
+            counts, _ = np.histogram(col, bins=edges)
+            density[t] = counts / alive[t]
+    seen = np.maximum.accumulate(np.isfinite(values), axis=1)
+    silent = seen & ~np.isfinite(values)
+    if cov.state is not None:
+        silent &= cov.state != State.UNKNOWN
+    silent_steps = silent.sum(axis=1)
+    named = sorted(
+        (i for i in range(len(run.names)) if silent_steps[i]), key=lambda i: -silent_steps[i]
+    )
+    out: dict = {
+        "edges": [float(np.exp(e) if log else e) for e in edges],
+        "log": log,
+        "density": [[round(float(v), 3) for v in row] for row in density],
+        "silent_n": [int(v) for v in silent.sum(axis=0)],
+        "silent_members": [
+            {"id": run.names[i], "steps": int(silent_steps[i])} for i in named[:MAX_SILENT_NAMED]
+        ],
+        "silent_more": max(0, len(named) - MAX_SILENT_NAMED),
+    }
+    if cov.group is not None and cov.group.num_rows:
+        g = cov.group.to_pydict()
+        out["rug"] = {
+            "id": FLEET_GROUP, "ts": g["ts_ms"], "state": g["state"], "observed": g["observed"],
+            "expected": g["expected"], "flags": g["flags"], "alive": g["alive"],
+            "reporting": g["reporting"],
+        }  # fmt: skip
+    return out
+
+
+def cloud(ops: FleetOps, dataset_id: str, cfg: dict) -> dict:
+    """Cloud payload for a stored dataset (the analysis is memoised by FleetOps.run)."""
+    run = ops.run(dataset_id, cfg.get("by"), cfg.get("scale", "auto"), cfg.get("normalise", "none"))
+    return cloud_rows(run)

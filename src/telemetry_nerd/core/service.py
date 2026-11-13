@@ -2485,6 +2485,7 @@ class TelemetryService:
             cfg = layer0.get("fleet") or {}
             analysis = self.fleets.panel(dataset_id, cfg)
             analysis["heat"] = fleet_payloads.heat(self.fleets, dataset_id, cfg)
+            analysis["cloud"] = fleet_payloads.cloud(self.fleets, dataset_id, cfg)
         elif mark == "seasonal":
             analysis = self.seasonal.panel(dataset_id, layer0["seasonal"])
         elif mark == "littles":

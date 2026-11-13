@@ -264,6 +264,7 @@ export function describeShown(
   if (kind === "spectrum") return "Periodogram (Lomb-Scargle): the share of variance a sinusoid of each period explains, with the 1% false-alarm level; peaks carry intervals.";
   if (kind === "spc") return "Control chart: the series against a centre line and 3σ band computed from the baseline only (shaded, or an earlier time range named below); flagged points break SPC rules.";
   if (kind === "fleet" && fleetView === "heat") return "Member × time: one row per member, one column per step; colour is the member's deviation from the fleet median in robust σ (orange above, purple below, capped), dots where a live member was silent.";
+  if (kind === "fleet" && fleetView === "cloud") return "Density cloud: time across, value up; shade is the share of the members alive at that step in each value range (silent members thin it), the median line over it, and the group's merged coverage below.";
   if (kind === "fleet" && fleetView === "multiples") return "Small multiples: one panel per outlying member on the same y range, its line against the reference band it was judged against.";
   if (kind === "fleet" && fleetGrouped && fleetView === "quantiles") return "Fleet in behaviour groups: the whole fleet's min–max shaded, and per group (members that behave alike) its 25–75% band and median line; outliers, judged within their own group, drawn as lines.";
   if (kind === "fleet" && fleetGrouped) return "Fleet in behaviour groups: per group (members that behave alike) its own reference band and median; outliers, judged within their own group, drawn as lines.";
@@ -327,7 +328,7 @@ export function describeShown(
 
 /** The panel's local view switches: the heatmap payload's two views, the fleet's four. */
 export type HeatView = "heatmap" | "percentiles";
-export type FleetView = "band" | "quantiles" | "heat" | "multiples";
+export type FleetView = "band" | "quantiles" | "heat" | "cloud" | "multiples";
 
 /** Simple mode shows the "what" sentence as one line only where it ends in the bin-scheme list
  * (heatmap view, histogram bars/ECDF); elsewhere the sentence is the estimator basis and stays in full. */
