@@ -108,6 +108,14 @@ from telemetry_nerd.core.code_outputs import (
 from telemetry_nerd.core.entity_ops import EntityOps
 from telemetry_nerd.core.events import Actor, EventLog
 from telemetry_nerd.core.fleet_ops import FleetOps
+from telemetry_nerd.core.inline_series import (
+    INLINE_EXPR,
+    INLINE_NODE,
+    INLINE_OUTPUT,
+    INLINE_SOURCE,
+    inline_data,
+    parse_inline_series,
+)
 from telemetry_nerd.core.littles_ops import LittlesOps
 from telemetry_nerd.core.panel_payloads import (
     ghost_payload,
@@ -1111,6 +1119,37 @@ class TelemetryService:
                     )
                     return self.show(rate, question, actor, auto=form, **kw)
         return self.show(dataset_id, question, actor, raw_ok=raw, **kw)
+
+    def plot_inline(
+        self,
+        question: str,
+        series: list[dict],
+        unit: str | None = None,
+        actor: Actor = "claude",
+    ) -> ShowResult:
+        """Draw series the caller supplied (no source query) as a panel in the workspace.
+
+        Stored as fixed data (see core.inline_series), so the panel is an ordinary line panel
+        that nothing re-fetches. Raises ValueError for malformed series."""
+        data = inline_data(parse_inline_series(series, self.clock()))
+        meta = self.datasets.put(
+            source=INLINE_SOURCE,
+            expr=INLINE_EXPR,
+            rng=TimeRange(data.start_ms, data.end_ms),
+            step_ms=data.step_ms,
+            resolution_ms=data.step_ms,
+            result=data.result,
+            lineage=Lineage(
+                producer={
+                    "kind": "code",
+                    "node": INLINE_NODE,
+                    "output": INLINE_OUTPUT,
+                    "description": f"values supplied inline by {actor}, not queried",
+                },
+            ),
+        )
+        self.log.append(actor, "dataset.created", meta.id, {"expr": INLINE_EXPR})
+        return self.show(meta.id, question, actor, unit=unit)
 
     async def show_binding(self, **kw) -> PanelGroup:
         """A bound USE / RED / Little's law metric set as one linked panel group (bead czt.3)."""

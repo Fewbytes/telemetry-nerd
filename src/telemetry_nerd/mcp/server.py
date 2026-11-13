@@ -1983,6 +1983,31 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         return _dump(out)
 
     @mcp.tool()
+    def plot_data(question: str, series: list[dict[str, Any]], unit: str | None = None) -> str:
+        """Draw data YOU supply as a line panel in the shared workspace: no source query.
+
+        For showing the user numbers you hold (a computation, a table from the conversation, a
+        comparison), not for investigating a source: use query + show for that. The data is
+        fixed, never re-fetched, and labelled as supplied by you.
+
+        question is REQUIRED: what this graph answers.
+        series: [{label, ts: [...], values: [...]}]; one entry per line. ts are epoch
+        milliseconds or ISO-8601 with timezone, strictly increasing, whole seconds; values are
+        finite numbers, same length as ts. Points missing from a series show as gaps.
+        unit: optional y-axis unit, recorded as "provided by claude".
+        Returns {panel, url, warnings}.
+        """
+        try:
+            res = service.plot_inline(question, series, unit=unit)
+        except (ChartRejected, ValueError) as e:
+            raise ToolError(str(e)) from e
+        return _dump({
+            "panel": res.panel.id,
+            "url": f"{ui_url}/#/panel/{res.panel.id}",
+            "warnings": [i.message for i in res.issues],
+        })  # fmt: skip
+
+    @mcp.tool()
     async def split_outcome(dataset: str) -> str:
         """Latency by outcome: for a histogram-backed dataset (latency distribution or
         histogram_quantile series) open TWO new panels, successful and failed requests, so fast errors
