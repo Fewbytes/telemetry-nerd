@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from dataclasses import dataclass, field, replace
 from typing import Literal
 
@@ -176,6 +177,7 @@ def derive_states(meta: DatasetMeta, result: FetchResult) -> pa.Table:
         resolution_ms=meta.resolution_ms,
         failed=[(a, b, str(reason)) for a, b, reason in meta.failed_spans],
         semantics_flags=meta.semantics_flags,
+        stale_ended=meta.stale_ended_series or (),
         mode="presence" if meta.representation == "quantile" else "samples",
     )
 
@@ -190,6 +192,7 @@ def _states(
     resolution_ms: int,
     failed: list[tuple[int, int, str]],
     semantics_flags: dict,
+    stale_ended: Collection[str] = (),
     mode: Literal["samples", "presence"] = "samples",
 ) -> pa.Table:
     return compute(
@@ -208,6 +211,7 @@ def _states(
         ),
         # an assumed (default) resolution is no evidence of the series' interval (principle 15)
         interval_known=bool(semantics_flags.get("series_interval_known")),
+        stale_ended=stale_ended,
     )
 
 

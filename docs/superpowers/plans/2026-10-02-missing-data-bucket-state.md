@@ -49,6 +49,17 @@ nothing sets them until phase 5.
    (not born yet). After its last sample it is `empty` (silent), not `absent`. We cannot prove a
    series ended until phase 5 adds staleness markers. Silence is the conservative reading, and it
    is the case we care about most: the OOM-killed pod.
+
+   **Amended 2026-11-13 (1h9.19; revisable).** Phase 5 now proves some ends: a series the fetch
+   reports in `FetchResult.stale_ended` (a staleness marker cut it, see `docs/data-source-quirks.md`)
+   reads `suspect` after its last sample, with `Flag.STALE_MARKER`, not `absent` and not `empty`.
+   Why not `absent`: the series did have data, and a scrape-failure marker also ends an OOM-killed
+   pod's series, so `absent` would hide exactly the case this decision protects. Why not `empty`:
+   the marker says the end is not an alive miss either. So it stays visible and doubtful.
+   `suspect` is a generic reason, usable for other doubtful readings later. Trailing silence of a
+   series without proven staleness (or from a source that cannot tell) stays `empty`. Coarsen and
+   merge keep `suspect` where nothing was seen. Revisit if users find `suspect` too noisy or
+   want the end shown as `absent`.
 2. **Partial tolerates jitter.** A bucket is `partial` when observed < expected − max(1,
    0.1·expected). The rule allows one sample of scrape jitter, so 3 of 4 counts as ok while 2 of
    4 is partial. Spec §5.1 says "< 0.9"; this is the jitter-safe form of the same rule.

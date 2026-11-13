@@ -3,7 +3,7 @@ be trusted (spec 2026-10-02 §5). Computed on read from bucket counts; never sto
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from enum import IntEnum, IntFlag
 from typing import Literal
 
@@ -17,6 +17,9 @@ class State(IntEnum):
     EMPTY = 2  # alive, no samples (also: silent after the last sample; spec decision 1)
     ABSENT = 3  # before the first sample in the window: not alive yet
     UNKNOWN = 4  # fetch failed / source cannot tell
+    # data exists but the reading is doubtful (generic). Now: silence after a staleness marker
+    # ended the series (STALE_MARKER); not gone-proven like ABSENT, not an alive miss like EMPTY
+    SUSPECT = 5
 
 
 class Flag(IntFlag):
@@ -88,8 +91,12 @@ def compute(
     source_filled: bool = False,
     post_gap_buckets: int = 0,
     interval_known: bool = False,
+    stale_ended: Collection[str] = (),
 ) -> pa.Table:
-    """`source_filled`: the counts are not observed samples (expression cannot tell), so every
+    """`stale_ended`: ids of series a staleness marker ended (FetchResult.stale_ended; None means
+    the source cannot tell, pass ()). Their silence after the last sample reads SUSPECT +
+    STALE_MARKER instead of EMPTY; silence of any other series stays EMPTY (plan decision 1).
+    `source_filled`: the counts are not observed samples (expression cannot tell), so every
     bucket is UNKNOWN + SOURCE_FILLED. `resolution_ms`: the source's configured scrape interval; in
     samples mode a step at least that coarse also judges INTERVAL_CHANGE from counts (a finer step
     holds under one sample per bucket, which counts cannot show), presence mode ignores it.
@@ -126,7 +133,7 @@ def compute(
     first = (
         df.filter(pl.col("observed") > 0)
         .group_by("series_id")
-        .agg(pl.col("ts_ms").min().alias("first_seen"))
+        .agg(pl.col("ts_ms").min().alias("first_seen"), pl.col("ts_ms").max().alias("last_seen"))
     )
     df = df.join(first, on="series_id", how="left").sort("series_id", "ts_ms")
     if mode == "samples":
@@ -157,9 +164,19 @@ def compute(
         pl.when(unknown).then(0.0).otherwise(pl.col("observed")).alias("observed"),
         pl.when(unknown).then(0.0).otherwise(pl.col("expected")).alias("expected"),
     )
-    flags = pl.lit(int(Flag.SOURCE_FILLED) if source_filled else 0) | pl.when(
-        pl.col("_undet")
-    ).then(int(Flag.CADENCE)).otherwise(0)
+    suspect = (
+        (pl.col("state") == int(State.EMPTY))
+        & pl.col("series_id").is_in(list(stale_ended))
+        & (pl.col("ts_ms") > pl.col("last_seen"))
+    )
+    df = df.with_columns(
+        pl.when(suspect).then(int(State.SUSPECT)).otherwise(pl.col("state")).alias("state")
+    )
+    flags = (
+        pl.lit(int(Flag.SOURCE_FILLED) if source_filled else 0)
+        | pl.when(pl.col("_undet")).then(int(Flag.CADENCE)).otherwise(0)
+        | pl.when(pl.col("state") == int(State.SUSPECT)).then(int(Flag.STALE_MARKER)).otherwise(0)
+    )
     if mode == "samples" and not source_filled:
         # a series with a slower-than-step stretch shows its rate in the gaps between samples (at
         # any step); the others in their counts, when the step holds several samples
@@ -809,6 +826,7 @@ _ALIVE = pl.col("state") != int(State.ABSENT)
 # (PARTIAL, the flag kept), not an unknown for the whole coarse or group bucket; alone it stays
 # unknown. Any other unknown is no information at all
 _CADENCE = (pl.col("state") == int(State.UNKNOWN)) & ((pl.col("flags") & int(Flag.CADENCE)) != 0)
+_SUSPECT = pl.col("state") == int(State.SUSPECT)
 _HARD_UNKNOWN = (pl.col("state") == int(State.UNKNOWN)) & ~_CADENCE
 # UNKNOWN is neither present nor missing (no trustworthy information): `compute` gives such a bucket
 # observed = expected = 0, so the plain sums over alive buckets below leave it out of coverage
@@ -816,7 +834,11 @@ _HARD_UNKNOWN = (pl.col("state") == int(State.UNKNOWN)) & ~_CADENCE
 
 
 def _classify(
-    any_alive: pl.Expr, any_unknown: pl.Expr, nothing_seen: pl.Expr, any_gap: pl.Expr
+    any_alive: pl.Expr,
+    any_unknown: pl.Expr,
+    nothing_seen: pl.Expr,
+    any_gap: pl.Expr,
+    any_suspect: pl.Expr,
 ) -> pl.Expr:
     """Shared by coarsen and merge; works from states, never re-applies jitter to sums."""
     return (
@@ -824,6 +846,8 @@ def _classify(
         .then(int(State.ABSENT))
         .when(any_unknown)
         .then(int(State.UNKNOWN))
+        .when(nothing_seen & any_suspect)
+        .then(int(State.SUSPECT))
         .when(nothing_seen)
         .then(int(State.EMPTY))
         .when(any_gap)
@@ -848,7 +872,11 @@ def coarsen(states: pa.Table, new_step_ms: int) -> pa.Table:
             _ALIVE.any().alias("_alive"),
             _HARD_UNKNOWN.any().alias("_unknown"),
             _CADENCE.any().alias("_cadence"),
-            (pl.col("state").is_in([int(State.PARTIAL), int(State.EMPTY)]) | _CADENCE)
+            _SUSPECT.any().alias("_suspect"),
+            (
+                pl.col("state").is_in([int(State.PARTIAL), int(State.EMPTY), int(State.SUSPECT)])
+                | _CADENCE
+            )
             .any()
             .alias("_gap"),
             # state-based, not observed == 0: a slower-than-step series' fine buckets are OK with
@@ -862,6 +890,7 @@ def coarsen(states: pa.Table, new_step_ms: int) -> pa.Table:
                 pl.col("_unknown") | (pl.col("_cadence") & ~pl.col("_seen")),
                 ~pl.col("_seen"),
                 pl.col("_gap"),
+                pl.col("_suspect"),
             ).alias("state")
         )
         .sort("series_id", "ts_ms")
@@ -889,6 +918,7 @@ def merge(states: pa.Table, group_of: Mapping[str, str]) -> pa.Table:
             pl.col("expected").filter(_ALIVE).sum().alias("expected"),
             _HARD_UNKNOWN.any().alias("_unknown"),
             _CADENCE.any().alias("_cadence"),
+            _SUSPECT.any().alias("_suspect"),
             pl.col("flags").bitwise_or().alias("flags"),
             pl.col("series_id").filter(pl.col("state") == int(State.EMPTY)).sort().alias("silent"),
         )
@@ -898,6 +928,7 @@ def merge(states: pa.Table, group_of: Mapping[str, str]) -> pa.Table:
                 pl.col("_unknown") | (pl.col("_cadence") & (pl.col("reporting") == 0)),
                 pl.col("reporting") == 0,
                 pl.col("reporting") < pl.col("alive"),
+                pl.col("_suspect"),
             ).alias("state")
         )
         .sort("group", "ts_ms")

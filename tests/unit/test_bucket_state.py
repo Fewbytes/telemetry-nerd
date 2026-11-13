@@ -1199,3 +1199,38 @@ def test_coarse_cadence_partial_names_its_reason():
     [c] = [c for c in from_bucket_state(out, {"a": "A", "b": "B"}, 20 * S15)
            if c.code == "missing_data"]  # fmt: skip
     assert CADENCE_REASON in c.message
+
+
+def stale_run(stale_ended):
+    rows = [(t * STEP, "a", 1.0, 4) for t in range(1, 3)]  # samples stop after bucket 2
+    return compute(
+        buckets(rows),
+        ("a",),
+        start_ms=STEP,
+        end_ms=5 * STEP,
+        step_ms=STEP,
+        resolution_ms=RES,
+        mode="samples",
+        stale_ended=stale_ended,
+    )
+
+
+def test_stale_ended_series_reads_suspect_with_stale_marker_flag_after_its_last_sample():
+    out = stale_run({"a"})
+    assert states(out) == [State.OK, State.OK, State.SUSPECT, State.SUSPECT, State.SUSPECT]
+    assert out["flags"].to_pylist() == [0, 0] + [int(Flag.STALE_MARKER)] * 3
+
+
+def test_trailing_silence_without_a_proven_stale_end_stays_empty():
+    out = stale_run(())
+    assert states(out)[2:] == [State.EMPTY] * 3
+    assert out["flags"].to_pylist() == [0] * 5
+
+
+def test_coarsened_stale_ended_silence_stays_suspect():
+    from telemetry_nerd.model.bucket_state import coarsen
+
+    out = coarsen(
+        stale_run({"a"}), 3 * STEP
+    )  # buckets ending 3 (OK, OK, SUSPECT) and 6 (SUSPECT x2)
+    assert states(out) == [State.PARTIAL, State.SUSPECT]
