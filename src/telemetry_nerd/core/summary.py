@@ -236,12 +236,21 @@ def summarize(
     )
     if df["count"].null_count() and "counts_unknown" not in caveats:
         caveats.append("counts_unknown")
+    kind = meta.merge_kind
+    # the count-weighted mean is the sample mean: only a raw selector's counts weigh its values
+    if kind == "sample_mean":
+        mean = pl.when(known.all()).then(weighted).otherwise(pl.col("avg").mean())
+    elif kind == "time_mean":
+        mean = pl.col("avg").mean()
+    else:  # sum: a total is reported instead; max/min: the extreme; ratio/unknown: not combinable
+        mean = pl.lit(None, dtype=pl.Float64)
     per = (
         df.group_by("series_id")
         .agg(
             pl.col("min").min().alias("min"),
             pl.col("max").max().alias("max"),
-            pl.when(known.all()).then(weighted).otherwise(pl.col("avg").mean()).alias("mean"),
+            mean.alias("mean"),
+            pl.col("avg").sum().alias("total"),
             # a bucket kept with count 0 holds a spilled scrape's own value (uup): data, no gap
             ((pl.col("count") > 0) | pl.col("avg").is_not_null()).sum().alias("with_data"),
         )
@@ -253,8 +262,9 @@ def summarize(
     )
     if per["gaps"].sum() > 0:
         caveats.insert(0, "gaps")
-    series = [
-        {
+    series = []
+    for r in per.head(top).to_dicts():
+        row = {
             "labels": labels.get(r["series_id"], {}),
             "min": _round(r["min"]),
             "max": _round(r["max"]),
@@ -262,10 +272,18 @@ def summarize(
             "gaps": int(r["gaps"]),
             "coverage": coverage.get(r["series_id"]),
         }
-        for r in per.head(top).to_dicts()
-    ]
+        if kind == "sum":  # tiles of events: the total over the range, and its rate
+            row["total"] = _round(r["total"])
+            covered_s = (expected - r["gaps"]) * meta.step_ms / 1000
+            row["per_s"] = _round(r["total"] / covered_s) if covered_s > 0 else None
+        series.append(row)
+    if kind == "sum" and per["gaps"].sum() > 0:
+        caveats.append("total_lower_bound")  # a gap's events are not in the total
+    if kind in ("ratio", "unknown"):
+        base["mean_unavailable"] = kind
     return {
         **base,
+        "merge": kind,
         "series_count": per.height,
         "series": series,
         "more_series": max(0, per.height - top),

@@ -395,3 +395,48 @@ def test_cadence_or_loss_buckets_are_unknown_with_their_reason():
     # an assumed default says nothing (principle 15)
     out = run(meta(end=240_000, resolution=1100), result(rows, {"a": "a"}))
     assert "untrusted_data" in out["caveats"]
+
+
+def kind_rows(values, counts):
+    return [
+        (t, "a", v, v, v, c) for t, v, c in zip(range(0, 4001, 1000), values, counts, strict=True)
+    ]
+
+
+def test_rate_summary_mean_is_the_time_mean_not_count_weighted():
+    m = replace(meta(), expr="rate(x[1m])")
+    r = result(kind_rows([10, 10, 30, 10, 10], [3, 3, 1, 1, 3]), {"a": "a"})
+    out = run(m, r)
+    assert out["merge"] == "time_mean"
+    assert out["series"][0]["mean"] == 14.0
+
+
+def test_increase_tiles_summary_reports_total_and_per_second_rate():
+    m = replace(meta(), expr="increase(x[1s])")
+    r = result(kind_rows([150, 150, 450, 150, 150], [3, 3, 1, 1, 3]), {"a": "a"})
+    row = run(m, r)["series"][0]
+    assert (row["total"], row["per_s"], row["mean"]) == (1050.0, 210.0, None)
+
+
+def test_increase_tiles_total_is_flagged_as_lower_bound_when_a_bucket_is_missing():
+    m = replace(meta(), expr="increase(x[1s])")
+    rows = kind_rows([100, 100, 100, 100, 100], [1] * 5)[:4]
+    out = run(m, result(rows, {"a": "a"}))
+    assert "total_lower_bound" in out["caveats"]
+    assert out["series"][0]["per_s"] == 100.0
+
+
+def test_ratio_summary_has_no_mean():
+    m = replace(meta(), expr="rate(a[1m]) / rate(b[1m])")
+    out = run(m, result(kind_rows([1, 2, 3, 4, 5], [1] * 5), {"a": "a"}))
+    assert out["series"][0]["mean"] is None
+    assert out["mean_unavailable"] == "ratio"
+
+
+def test_code_outputs_and_other_query_languages_keep_the_sample_mean():
+    code = replace(meta(), expr="code:n/out", producer={"kind": "code", "node": "n"})
+    assert code.merge_kind == "sample_mean"
+    assert replace(meta(), expr="status:500", query_language="elasticsearch").merge_kind == (
+        "sample_mean"
+    )
+    assert replace(meta(), expr="rate(x[1m])", representation="quantile").merge_kind == "quantile"

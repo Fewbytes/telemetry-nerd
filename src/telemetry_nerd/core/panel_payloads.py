@@ -333,7 +333,9 @@ def reference_series(datasets, ref, meta, width_px: int) -> list[dict]:
     _, rres = datasets.get(ref.series)
     table = shifted(rres.buckets, ref.shift_ms)
     if meta.representation != "quantile":  # same range and step as the panel => identical LOD grid
-        table, _ = lod(table, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px)
+        table, _ = lod(
+            table, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px, meta.merge_kind
+        )
     return [
         {
             "id": sid,

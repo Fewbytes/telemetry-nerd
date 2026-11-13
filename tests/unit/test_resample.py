@@ -2,6 +2,7 @@
 import math
 
 import pyarrow as pa
+import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -143,3 +144,56 @@ def test_rebucket_mixes_count_only_and_valued_buckets_without_bias():
     assert (by["b"]["avg"], by["b"]["count"]) == (None, 10)
     assert (by["c"]["avg"], by["c"]["max"]) == (4.0, 4.0)
     assert math.isnan(by["d"]["avg"]) and by["d"]["count"] == 10
+
+
+def minute_of_quarter_buckets(count_of_spike):
+    """Four 15 s buckets: 10, 10, 30, 10 with sample counts 3, 3, `count_of_spike`, 1."""
+    values = (10.0, 10.0, 30.0, 10.0)
+    counts = (3, 3, count_of_spike, 1)
+    return table(
+        [
+            (15_000 * (i + 1), "s", v, v - 1, v + 1, c)
+            for i, (v, c) in enumerate(zip(values, counts, strict=True))
+        ]
+    )
+
+
+def test_time_mean_ignores_sample_counts_of_the_underlying_selector():
+    # the count-weighted mean reads (30+30+30+10)/8 = 12.5; the rate over the minute is 15
+    out = rebucket(minute_of_quarter_buckets(1), 60_000, "time_mean").to_pylist()
+    assert [r["avg"] for r in out] == [15.0]
+    assert (out[0]["min"], out[0]["max"], out[0]["count"]) == (9.0, 31.0, 8)
+
+
+def test_sample_mean_stays_count_weighted():
+    out = rebucket(minute_of_quarter_buckets(1), 60_000, "sample_mean").to_pylist()
+    assert [r["avg"] for r in out] == [12.5]
+
+
+def test_sum_tiles_merge_to_the_per_tile_mean():
+    # tiles of increase(x[15s]): 150, 150, 450, 150 is 900 in the minute, 225 per tile
+    t = table(
+        [(15_000 * (i + 1), "s", v, v, v, c) for i, (v, c) in enumerate(zip(
+            (150.0, 150.0, 450.0, 150.0), (3, 3, 1, 1), strict=True))]
+    )  # fmt: skip
+    assert [r["avg"] for r in rebucket(t, 60_000, "sum").to_pylist()] == [225.0]
+
+
+def test_max_and_min_merge_to_the_extreme_of_the_envelope():
+    t = minute_of_quarter_buckets(1)
+    assert rebucket(t, 60_000, "max").to_pylist()[0]["avg"] == 31.0
+    assert rebucket(t, 60_000, "min").to_pylist()[0]["avg"] == 9.0
+
+
+def test_time_mean_skips_empty_buckets_instead_of_counting_zero():
+    t = table([(15_000, "s", 10.0, 10.0, 10.0, 2), (30_000, "s", None, None, None, 0)])
+    assert rebucket(t, 60_000, "time_mean").to_pylist()[0]["avg"] == 10.0
+
+
+def test_unmergeable_kinds_refuse_to_rebucket_and_lod_keeps_their_step():
+    t = minute_of_quarter_buckets(1)
+    rng = TimeRange(0, 60_000)
+    for kind in ("ratio", "quantile", "unknown"):
+        with pytest.raises(ValueError, match="cannot be merged"):
+            rebucket(t, 60_000, kind)
+        assert lod(t, STEP, rng, 1, kind) == (t, STEP)

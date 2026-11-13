@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass, field
 import duckdb
 import pyarrow as pa
 
+from telemetry_nerd.analysis.mergekind import MergeKind, merge_kind
 from telemetry_nerd.datasets.db import fetch_arrow, upsert_series
 from telemetry_nerd.model.distribution import COLUMN_SCHEMA, DIST_SCHEMA, BucketScheme, DistResult
 from telemetry_nerd.model.errors import NotFound
@@ -53,6 +54,16 @@ class DatasetMeta:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+    @property
+    def merge_kind(self) -> MergeKind:
+        """How this dataset's buckets combine across time. Code outputs and non-PromQL sources
+        have no expression to classify: they keep the sample mean (count-weighted)."""
+        if self.representation == "quantile":
+            return "quantile"
+        if self.code_node is not None or self.query_language != "promql":
+            return "sample_mean"
+        return merge_kind(self.expr, self.step_ms, self.resolution_ms)
 
     @property
     def code_node(self) -> str | None:

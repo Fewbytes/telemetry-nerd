@@ -1174,7 +1174,11 @@ class TelemetryService:
             table, effective_step = result.buckets, meta.step_ms
         else:
             table, effective_step = lod(
-                result.buckets, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px
+                result.buckets,
+                meta.step_ms,
+                TimeRange(meta.start_ms, meta.end_ms),
+                width_px,
+                meta.merge_kind,
             )
         labels = series_labels(result.series)
         return series_payload(table, labels, interval), effective_step
@@ -2466,7 +2470,11 @@ class TelemetryService:
             table, effective_step = result.buckets, meta.step_ms
         else:
             table, effective_step = lod(
-                result.buckets, meta.step_ms, TimeRange(meta.start_ms, meta.end_ms), width_px
+                result.buckets,
+                meta.step_ms,
+                TimeRange(meta.start_ms, meta.end_ms),
+                width_px,
+                meta.merge_kind,
             )
         labels = series_labels(result.series)
         series = series_payload(table, labels, interval)
