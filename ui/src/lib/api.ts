@@ -163,7 +163,7 @@ export interface HeatmapPanelData extends PanelDataBase {
   kind: "heatmap"; mark: "heatmap" | "percentiles"; effective_step_ms: number; value_merge: number; facet_height_px: number; series: HeatSeries[];
 }
 export interface HistogramPanelData extends PanelDataBase {
-  kind: "histogram"; mark: "histogram" | "ecdf" | "quantile_curve" | "ccdf"; effective_step_ms: number; value_merge: number;
+  kind: "histogram"; mark: "histogram" | "ecdf" | "quantile_curve" | "ccdf" | "qq"; effective_step_ms: number; value_merge: number;
   series: { id: string; labels: Record<string, string>; windows: WindowHist[] }[];
 }
 export type PanelData = TimePanelData | HeatmapPanelData | HistogramPanelData | SpectrumPanelData | SpectrogramPanelData | SpcPanelData | SeasonalPanelData | FleetPanelData | LittlesPanelData;

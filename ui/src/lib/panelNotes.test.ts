@@ -235,6 +235,9 @@ describe("query-chosen (linear) bucket schemes", () => {
   it("words the CCDF as at or above on lower-inclusive buckets", () => {
     expect(describeShown({ ...dist, scheme }, "1m", "histogram", "ccdf")).toMatch(/^Share of observations at or above each value, P\(X ≥ x\)/);
   });
+  it("words the Q-Q plot as first range against second with a y = x reference", () => {
+    expect(describeShown({ ...dist, scheme }, "1m", "histogram", "qq")).toMatch(/^Q-Q plot: .*y = x/);
+  });
   it("keeps the Prometheus wording for source buckets", () => {
     expect(describeShown({ ...dist, scheme: classic }, "1m", "heatmap")).toContain("from increase() of the histogram; bins are the source buckets");
     expect(describeShown({ ...dist, scheme: classic }, "1m", "histogram", "ccdf")).toMatch(/^Share of observations above each value/);
@@ -288,6 +291,7 @@ describe("shownWhatCompact (simple mode: only sentences ending in the bin-scheme
     expect(shownWhatCompact(d("histogram", "ecdf"), "heatmap")).toBe(true);
     expect(shownWhatCompact(d("histogram", "ccdf"), "heatmap")).toBe(false);
     expect(shownWhatCompact(d("histogram", "quantile_curve"), "heatmap")).toBe(false);
+    expect(shownWhatCompact(d("histogram", "qq"), "heatmap")).toBe(false);
   });
   it("every other kind is in full", () => {
     expect(shownWhatCompact(d("time"), "heatmap")).toBe(false);

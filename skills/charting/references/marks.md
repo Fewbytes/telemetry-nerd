@@ -30,6 +30,7 @@ A filtered dataset (`filter`) is drawn with the raw series as context; `view` pi
 | `mark="ecdf"` | `windows` 1-4 | shares below each edge, window against window |
 | `mark="quantile_curve"` | `windows` 1-4 | inverse ECDF as bucket boxes: the honest "percentile curve" |
 | `mark="ccdf"` | `windows` 1-4 | tails: P(X > x) on log-log, exact at bucket edges |
+| `mark="qq"` | `windows` exactly 2 | quantiles of window 1 (x) against window 2 (y) as bucket boxes, y = x reference: before vs after a deploy |
 
 The number behind a distribution claim is `fraction_over(dataset, x, start, end)` (exact at a
 bucket edge, bounded inside one, Wilson interval, n): cite its `evidence`, draw the heatmap or

@@ -45,6 +45,7 @@ The rules below apply principles 3, 10 and 11 (`docs/principles.md`).
 | How are latencies distributed over time? | `query_distribution` | `show(dataset, question)` (auto: heatmap) |
 | How did the p50 / p95 move (only where n suffices)? | distribution | `show(dataset, question, mark="percentiles", quantiles=[0.5, 0.95])` |
 | Spike vs before: did the distribution change shape? | distribution | `show(dataset, question, mark="histogram", windows=[spike, baseline])`, or `mark="ecdf"` / `mark="quantile_curve"` |
+| Did the whole distribution shift or scale between two periods? | distribution | `show(dataset, question, mark="qq", windows=[before, after])` (on `y = x`: same; above: the second is larger) |
 | How heavy is the tail? | distribution | `show(dataset, question, mark="ccdf", windows=[...])` |
 | What share of requests was slower than X? | distribution | `fraction_over(dataset, x)` (the number), then the heatmap or `ccdf` as the picture |
 | Is it stable, shifted, drifting, in control? | series, after `analyze` | `show(dataset, question, mark="spc")` |

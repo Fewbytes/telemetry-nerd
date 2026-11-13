@@ -116,3 +116,38 @@ export function fractionOver(w: WindowHist, x: number): Over | null {
   });
   return inside === 0 ? { exact: true, f: above / t, count: above } : { exact: false, min: above / t, max: (above + inside) / t, lo, hi };
 }
+
+export interface QqEdges { lo: number | null; hi: number | null }
+export interface QqBox { q0: number; q1: number; a: QqEdges; b: QqEdges; faded: boolean }
+
+/** Why two windows cannot be compared quantile against quantile, or null when they can. */
+export function qqRejection(a: WindowHist, b: WindowHist): string | null {
+  const thin = [a, b].filter((w) => !(w.n >= 2));
+  if (thin.length === 0) return null;
+  return `Q-Q needs at least 2 observations in each time range; ${thin.map((w) => w.label || "a range").join(" and ")} ${thin.length > 1 ? "have" : "has"} fewer.`;
+}
+
+/** Quantiles of `a` against quantiles of `b`. Both windows only know each quantile to within a
+ * source bucket, so the curve is a staircase of boxes: on each probability interval where both
+ * quantile buckets are constant, one box [a.lo, a.hi] x [b.lo, b.hi]. Probabilities beyond
+ * min(q_max) of the two windows (n < 10/(1-q)) are faded. A box straddling the y = x line is
+ * consistent with equal quantiles. */
+export function qqBoxes(a: WindowHist, b: WindowHist): { boxes: QqBox[]; qMax: number } {
+  const stepsA = ecdf(a), stepsB = ecdf(b);
+  const qMax = Math.min(quantileBoxes(a).qMax, quantileBoxes(b).qMax);
+  const cuts = new Set<number>([0, 1]);
+  if (qMax > 0 && qMax < 1) cuts.add(qMax);
+  for (const s of [...stepsA, ...stepsB]) { cuts.add(s.f0); cuts.add(s.f1); }
+  const q = [...cuts].sort((x, y) => x - y);
+  const holding = (steps: EcdfStep[], p: number): QqEdges => {
+    const s = steps.find((x) => x.f0 < p && p <= x.f1)!;
+    return { lo: s.lo, hi: s.hi };
+  };
+  const boxes: QqBox[] = [];
+  for (let i = 0; i + 1 < q.length; i++) {
+    if (q[i + 1] - q[i] < 1e-12) continue;
+    const mid = (q[i] + q[i + 1]) / 2;
+    boxes.push({ q0: q[i], q1: q[i + 1], a: holding(stepsA, mid), b: holding(stepsB, mid), faded: q[i] >= qMax - 1e-12 });
+  }
+  return { boxes, qMax };
+}

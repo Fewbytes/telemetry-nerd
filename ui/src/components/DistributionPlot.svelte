@@ -3,7 +3,7 @@
   import { shortNamer } from "../chart/seriesNames";
   import { theme } from "../lib/theme.svelte";
   import {
-    bars, ecdf, exactWindow, fractionOver, maxEcdfGapAtEdges, quantileAxis, quantileBoxes, survival, type BarMode,
+    bars, ecdf, exactWindow, fractionOver, maxEcdfGapAtEdges, qqBoxes, qqRejection, quantileAxis, quantileBoxes, survival, type BarMode,
   } from "../chart/distribution";
   import { qLabel } from "../chart/percentiles";
   import { setupCanvas } from "../chart/canvas";
@@ -30,7 +30,7 @@
   const AXIS_LEFT = 40;
   const AXIS_BOTTOM = 28;
   let canvas = $state<HTMLCanvasElement | null>(null);
-  type View = "histogram" | "ecdf" | "quantile_curve" | "ccdf";
+  type View = "histogram" | "ecdf" | "quantile_curve" | "ccdf" | "qq";
   let view = $state<View>("histogram");
   let qMode = $state<"linear" | "nines">("nines");
   let yMode = $state<"auto" | "log" | "linear">("auto");
@@ -134,6 +134,41 @@
     return count;
   }
 
+  // Q-Q compares the first two time ranges; the panel spec requires exactly two for mark qq
+  const qqRejected = $derived(multi ? qqRejection(exact[0], exact[1]) : "Q-Q needs two time ranges.");
+
+  /** windows[0] quantiles on x against windows[1] on y, as boxes (each quantile is only known to a
+   * source bucket), with the y = x line: boxes on it mean equal quantiles. */
+  function drawQq(ctx: CanvasRenderingContext2D, v: (n: string) => string): number {
+    ctx.save();
+    ctx.translate(AXIS_LEFT, 0);
+    const { lo, hi } = edgesLoHi();
+    const xa = valueAxis(lo, hi, plotW, "auto");
+    const ya = valueAxis(lo, hi, plotH, "auto");
+    ctx.strokeStyle = v("--grid"); ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, plotH); ctx.lineTo(plotW, plotH); ctx.stroke();
+    ctx.setLineDash([4, 3]); ctx.strokeStyle = v("--muted");
+    ctx.beginPath(); ctx.moveTo(0, plotH); ctx.lineTo(plotW, 0); ctx.stroke(); ctx.setLineDash([]);
+    const color = palette[0];
+    const { boxes } = qqBoxes(exact[0], exact[1]);
+    for (const b of boxes) {
+      const [x0, x1] = cellSpan(xa, b.a.lo, b.a.hi);
+      const [y0, y1] = cellSpan(ya, b.b.lo, b.b.hi);
+      ctx.fillStyle = color; ctx.strokeStyle = color;
+      ctx.globalAlpha = b.faded ? 0.08 : 0.25;
+      ctx.fillRect(x0, plotH - y1, Math.max(x1 - x0, 1), Math.max(y1 - y0, 1));
+      ctx.globalAlpha = b.faded ? 0.3 : 1;
+      ctx.strokeRect(x0 + 0.5, plotH - y1, Math.max(x1 - x0 - 1, 1), Math.max(y1 - y0, 1));
+      ctx.globalAlpha = 1;
+    }
+    ctx.fillStyle = v("--muted"); ctx.font = "10px sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "top";
+    for (const t of valueTicks(xa)) ctx.fillText(fmtValue(t, unit), xa.pos(t), plotH + 3);
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    for (const t of valueTicks(ya)) ctx.fillText(fmtValue(t, unit), -4, plotH - ya.pos(t));
+    ctx.restore();
+    return boxes.length;
+  }
+
   const over = (x: number): string[] =>
     exact.map((w, k) => {
       const r = fractionOver(w, x);
@@ -172,6 +207,12 @@
     const t0 = performance.now();
     const ctx = setupCanvas(el, width, HEIGHT);
     if (!ctx) return;
+    if (view === "qq") {
+      if (qqRejected !== null) { onRendered(performance.now() - t0, 0); return; }
+      const css = getComputedStyle(el);
+      onRendered(performance.now() - t0, drawQq(ctx, (name) => css.getPropertyValue(name).trim()));
+      return;
+    }
     if (view === "quantile_curve" || view === "ccdf") {
       const css = getComputedStyle(el);
       const points = drawCumulative(ctx, (name) => css.getPropertyValue(name).trim());
@@ -292,6 +333,21 @@
       tip = { x: p.x + AXIS_LEFT + 8, y: p.y + 8, text: over(x).join("\n") };
       return;
     }
+    if (view === "qq") {
+      if (qqRejected !== null) { tip = null; return; }
+      const { lo, hi } = edgesLoHi();
+      const x = valueAt(valueAxis(lo, hi, plotW, "auto"), p.x);
+      const box = qqBoxes(exact[0], exact[1]).boxes.find((b) => (b.a.lo ?? -Infinity) < x && x <= (b.a.hi ?? Infinity));
+      if (!box) { tip = null; return; }
+      const edge = (e: number | null, inf: string) => (e === null ? inf : fmtValue(e, unit));
+      const range = (r: { lo: number | null; hi: number | null }) => `(${edge(r.lo, "−∞")}, ${edge(r.hi, "+∞")}]`;
+      const names = exact.map((w, k) => w.label || `range ${k + 1}`);
+      tip = {
+        x: p.x + AXIS_LEFT + 8, y: p.y + 8,
+        text: `${qLabel(box.q0)}–${qLabel(box.q1)}: ${names[0]} ${range(box.a)} vs ${names[1]} ${range(box.b)}${box.faded ? " · n too small for this tail" : ""}`,
+      };
+      return;
+    }
     if (view === "quantile_curve") {
       const q = qMode === "linear" ? p.x / plotW : 1 - 10 ** (-(p.x / plotW) * logTop);
       if (!(q > 0 && q < 1)) { tip = null; return; }
@@ -331,6 +387,9 @@
     <button type="button" class:on={view === "ecdf"} onclick={() => (view = "ecdf")}>ECDF</button>
     <button type="button" class:on={view === "quantile_curve"} onclick={() => (view = "quantile_curve")}>quantile</button>
     <button type="button" class:on={view === "ccdf"} onclick={() => (view = "ccdf")}>CCDF</button>
+    {#if multi}
+      <button type="button" class:on={view === "qq"} onclick={() => (view = "qq")}>Q-Q</button>
+    {/if}
     {#if view === "quantile_curve"}
       {#each ["linear", "nines"] as m (m)}
         <button type="button" class:on={qMode === m} onclick={() => (qMode = m as "linear" | "nines")}>x: {m}</button>
@@ -390,6 +449,13 @@
       <div><button type="button" onclick={() => (thresh = null)}>clear threshold</button></div>
     {:else if !compact && (view === "histogram" || view === "ecdf")}
       <div class="hint">drag on the plot to read the share below / in-bucket / above a threshold</div>
+    {/if}
+    {#if view === "qq"}
+      {#if qqRejected !== null}
+        <div data-qq-rejected>{qqRejected}</div>
+      {:else}
+        <div>x: {exact[0].label || "range 1"} quantiles · y: {exact[1].label || "range 2"} quantiles · dashed line y = x (equal quantiles); boxes are source buckets, faded where n is too small for the tail</div>
+      {/if}
     {/if}
     {#if view === "ccdf" && pinned !== null}
       {#each over(pinned) as line (line)}<div>pinned: {line}</div>{/each}

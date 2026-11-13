@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  bars, ecdf, exactWindow, fractionOver, maxEcdfGapAtEdges, quantileAxis, quantileBoxes, survival,
+  bars, ecdf, exactWindow, fractionOver, maxEcdfGapAtEdges, qqBoxes, qqRejection, quantileAxis, quantileBoxes, survival,
 } from "./distribution";
 import type { WindowHist } from "../lib/api";
 
@@ -75,5 +75,48 @@ describe("cumulative views", () => {
     const m = { ...a, source: { lo: [null, 0.1, 0.5, 1], hi: [0.1, 0.5, 1, null], c: [60, 20, 10, 10] } };
     expect(exactWindow(m).c).toEqual([60, 20, 10, 10]);
     expect(exactWindow(a)).toBe(a);
+  });
+});
+
+describe("Q-Q", () => {
+  const edges = { lo: [0, 1, 2, 3], hi: [1, 2, 3, 4] };
+  const a = w(edges.lo, edges.hi, [250, 250, 250, 250]); // n = 1000
+  const shifted = w([1, 2, 3, 4], [2, 3, 4, 5], [250, 250, 250, 250]); // a + 1
+
+  it("identical samples lie on y = x: every box pairs a bucket with itself", () => {
+    const { boxes } = qqBoxes(a, a);
+    expect(boxes.length).toBe(4 + 1); // 4 buckets, the last split at q_max = 0.99
+    for (const b of boxes) expect(b.b).toEqual(b.a);
+  });
+
+  it("a sample shifted by one bucket sits one unit above y = x", () => {
+    const { boxes } = qqBoxes(a, shifted);
+    for (const b of boxes) {
+      expect(b.b.lo).toBe((b.a.lo as number) + 1);
+      expect(b.b.hi).toBe((b.a.hi as number) + 1);
+    }
+  });
+
+  it("a scaled sample (x2 per bucket edge) gives a line of slope 2 through the origin", () => {
+    const scaled = w([0, 2, 4, 6], [2, 4, 6, 8], [250, 250, 250, 250]);
+    for (const b of qqBoxes(a, scaled).boxes) {
+      expect(b.b.lo).toBe(2 * (b.a.lo as number));
+      expect(b.b.hi).toBe(2 * (b.a.hi as number));
+    }
+  });
+
+  it("splits at the other window's bucket edges and fades beyond the thinner window's q_max", () => {
+    const coarse = w([0], [4], [20]); // n = 20: q_max = 0.5
+    const { boxes, qMax } = qqBoxes(a, coarse);
+    expect(qMax).toBeCloseTo(0.5);
+    expect(boxes.map((x) => [x.q0, x.q1, x.a.hi, x.b.hi, x.faded])).toEqual([
+      [0, 0.25, 1, 4, false], [0.25, 0.5, 2, 4, false], [0.5, 0.75, 3, 4, true], [0.75, 1, 4, 4, true],
+    ]);
+  });
+
+  it("rejects a window with fewer than 2 observations, naming it", () => {
+    expect(qqRejection(a, shifted)).toBeNull();
+    expect(qqRejection(a, w([0], [1], [1], "tiny"))).toMatch(/at least 2 observations.*tiny has fewer/);
+    expect(qqRejection(w([], [], [], "none"), w([0], [1], [0], "zero"))).toMatch(/none and zero have fewer/);
   });
 });

@@ -282,6 +282,9 @@ export function describeShown(
       ? "Value at each quantile, as a TDigest estimate over the query's value tiles (approximate, not bucket boxes); the dashed line marks where n stops supporting a quantile (faded beyond it)."
       : "Value at each quantile, as source-bucket boxes [F(lo), F(hi)]; the dashed line marks where n stops supporting a quantile (faded beyond it).";
   }
+  if (mark === "qq") {
+    return "Q-Q plot: the first time range's quantiles (x) against the second's (y), as source-bucket boxes; boxes on the dashed y = x line mean equal quantiles, above it the second range is larger; faded where n stops supporting the tail.";
+  }
   if (mark === "ccdf") {
     return isLinear(d)
       ? "Share of observations at or above each value, P(X ≥ x) (log-log; the query's buckets are [lo, hi)), exact at bucket edges and bounded inside a bucket; hover reads a threshold, click pins it."
@@ -330,7 +333,7 @@ export type FleetView = "band" | "quantiles" | "heat" | "multiples";
  * (heatmap view, histogram bars/ECDF); elsewhere the sentence is the estimator basis and stays in full. */
 export function shownWhatCompact(data: PanelData, heatView: HeatView): boolean {
   if (data.kind === "heatmap") return heatView === "heatmap";
-  return data.kind === "histogram" && data.mark !== "ccdf" && data.mark !== "quantile_curve";
+  return data.kind === "histogram" && data.mark !== "ccdf" && data.mark !== "quantile_curve" && data.mark !== "qq";
 }
 
 /** The panel's "what is shown" sentence (its aggregation/estimator), for the panel's current views. */

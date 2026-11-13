@@ -1891,7 +1891,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         percentiles (per step, the SOURCE bucket holding each of `quantiles`, 1-4 of 0.5, 0.9,
         0.95, 0.99, 0.999, drawn only where n >= 10/(1-q); never interpolated), histogram,
         ecdf, quantile_curve (inverse ECDF as bucket boxes), ccdf (P(X > x), log-log, exact at
-        bucket edges). The last four need windows.
+        bucket edges), qq (quantiles of windows[0] against windows[1], y=x = same distribution;
+        needs exactly 2 windows, e.g. before vs after a deploy). The last five need windows.
         spc (time series): control chart from analyze: series, centre line, 3-sigma band,
         violations, shaded baseline; windows=[{start, end}] is the baseline (default first half).
         seasonal (time series, after compare_seasonal): now vs previous cycles (faint), their
@@ -1903,7 +1904,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         spectrum / spectrogram (time series): periodicity panels; spectrogram needs `segment`
         (e.g. "30m", state it in your answer) and takes `overlap` (default 0.5). view: for a panel
         drawn from filter(): the default view (overlay | filtered | removed | raw).
-        windows (histogram/ecdf): 1-4 [{start, end, label}] compared on one chart, e.g. the
+        windows (histogram/ecdf/qq): 1-4 [{start, end, label}] compared on one chart, e.g. the
         spike vs the preceding baseline; each time range sums whole query steps, n is shown per
         time range.
         More series than a line chart draws (5) are never dropped: members of one group (pods,

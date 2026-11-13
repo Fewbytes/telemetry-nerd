@@ -212,6 +212,20 @@ def test_quantile_curve_and_ccdf_compare_windows():
         assert _errors(ChartSpec(layers=[Layer(mark=mark, data="d", windows=w)])) == set()
 
 
+def test_qq_compares_exactly_two_windows():
+    from telemetry_nerd.charts.spec import Window
+
+    w = [
+        Window(start_ms=0, end_ms=60_000, label="a"),
+        Window(start_ms=60_000, end_ms=120_000, label="b"),
+    ]
+    layer = lambda ws: ChartSpec(layers=[Layer(mark="qq", data="d", windows=ws)])
+    assert _errors(layer([])) == {"windows"}
+    assert _errors(layer(w[:1])) == {"windows"}
+    assert _errors(layer(w)) == set()
+    assert _errors(layer(w + w)) == {"windows"}
+
+
 def test_a_cut_layer_counts_its_kept_lines_and_one_band():
     # 14y: 9 series drawn as 4 lines + an "others" band fit the budget; 5 kept + band do not
     cut = Layer(mark="line+envelope", data="d", top={"keep": ["a", "b", "c", "d"], "total": 9})

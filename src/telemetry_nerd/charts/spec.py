@@ -22,6 +22,7 @@ Mark = Literal[
     "ecdf",
     "quantile_curve",
     "ccdf",
+    "qq",
     "spectrum",
     "spectrogram",
     "spc",
@@ -30,7 +31,7 @@ Mark = Literal[
     "littles",
 ]
 SPECTRAL_MARKS = {"spectrum", "spectrogram"}
-WINDOW_MARKS = {"histogram", "ecdf", "quantile_curve", "ccdf"}
+WINDOW_MARKS = {"histogram", "ecdf", "quantile_curve", "ccdf", "qq"}
 DISTRIBUTION_MARKS = {"heatmap", "percentiles", *WINDOW_MARKS}
 MAX_QUANTILES = 4
 FACET_BUDGET = 12
@@ -319,6 +320,11 @@ def validate(
             issues.append(ValidationIssue(
                 rule="windows", severity="error",
                 message=f"{layer.mark} needs 1 to {MAX_WINDOWS} time ranges to compare",
+            ))  # fmt: skip
+        if layer.mark == "qq" and len(layer.windows) != 2:
+            issues.append(ValidationIssue(
+                rule="windows", severity="error",
+                message="qq plots the quantiles of one time range against another: it needs exactly 2",
             ))  # fmt: skip
         if layer.mark in DISTRIBUTION_MARKS and series_counts.get(layer.data, 0) > FACET_BUDGET:
             issues.append(ValidationIssue(
