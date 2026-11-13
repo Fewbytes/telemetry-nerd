@@ -23,5 +23,5 @@ export default defineConfig({
   },
   define: { __GIT_SHA__: JSON.stringify(gitSha) },
   // shuffled order surfaces order-dependent tests; the seed is printed, replay with --sequence.seed=<n>
-  test: { include: ["src/**/*.test.ts"], sequence: { shuffle: true } },
+  test: { include: ["src/**/*.test.ts", "../pi/**/*.test.ts"], sequence: { shuffle: true } },
 });

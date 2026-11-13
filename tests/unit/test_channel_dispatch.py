@@ -121,3 +121,20 @@ def test_presence_frame_carries_cursor(dispatch, log, presence):
         "since_ms": None,
         "delivered_up_to": 1,
     }
+
+
+def test_pi_and_claude_sessions_on_one_workspace_do_not_steal_events(dispatch, log, presence):
+    """A live pi channel and a Claude hook claim keep separate cursors and refusals."""
+    _ask(log)
+    pi_conn = presence.connect("pi-s1", "channel")
+    presence.update(pi_conn, ready=True)
+
+    claude_claim = dispatch.claim("claude-s1")  # hook session of another kind: not refused
+    assert claude_claim["content"] is not None
+    assert "why?" in claude_claim["content"]
+
+    frame = dispatch.next_delivery("pi-s1", pi_conn)  # pi still gets the same event
+    assert frame is not None
+    assert "why?" in frame["content"]
+    dispatch.ack("pi-s1", pi_conn, frame["up_to"])
+    assert dispatch.claim("claude-s1")["content"] is None

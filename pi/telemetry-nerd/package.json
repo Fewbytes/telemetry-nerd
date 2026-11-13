@@ -1,0 +1,9 @@
+{
+  "name": "telemetry-nerd-pi",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "pi package: telemetry-nerd workspace events delivered into a pi session",
+  "keywords": ["pi-package"],
+  "pi": { "extensions": ["./index.ts"] }
+}
