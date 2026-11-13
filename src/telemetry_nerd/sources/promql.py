@@ -267,6 +267,34 @@ class PromQLSource:
         # samples; consumers learn so from sources.observed.counts_are_observed(expr)
         return queries
 
+    async def _stale_ended(self, expr: str, rng: TimeRange, step_ms: int) -> tuple[str, ...] | None:
+        """Ids of series a staleness marker ended inside `rng`; None when this source or
+        expression cannot tell (non-selector expression, or a profile without a fixed lookback).
+
+        `timestamp(selector)` returns, per step, the time of the sample the instant evaluation
+        used. A series whose last evaluated step still had its next step inside the lookback
+        (and inside `rng`) stopped early: only a staleness marker does that, without one the
+        series lingers for the whole lookback."""
+        lookback = self.semantics.stale_end_lookback()
+        if lookback is None or lookback.max_ms is None or not is_selector(expr):
+            return None
+        matrix = await self._query_range(f"timestamp({expr.strip()})", rng, step_ms)
+        ended: list[str] = []
+        for item in matrix.result:
+            try:
+                labels = dict(item["metric"])
+                last_step, last_sample = item["values"][-1]
+                step_s, sample_s = float(last_step), float(last_sample)
+            except (KeyError, TypeError, ValueError, IndexError) as e:
+                raise _malformed(f"malformed series {item!r} in query result") from e
+            labels.pop("__name__", None)
+            next_step_ms = round(step_s * 1000) + step_ms
+            age_ms = next_step_ms - round(sample_s * 1000)
+            within = age_ms < lookback.max_ms if lookback.exclusive else age_ms <= lookback.max_ms
+            if next_step_ms <= rng.end_ms and within:
+                ended.append(series_id(self.name, labels))
+        return tuple(sorted(ended))
+
     async def fetch(self, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
         steps = (rng.end_ms - rng.start_ms) // step_ms + 1
         if steps > MAX_STEPS_PER_QUERY:
@@ -398,7 +426,12 @@ class PromQLSource:
         )
         failed, notes = _completeness(rng, *results)
         return FetchResult(
-            buckets, series, partial=partial, failed=failed, notes=(*notes, *notes_extra)
+            buckets,
+            series,
+            partial=partial,
+            failed=failed,
+            notes=(*notes, *notes_extra),
+            stale_ended=await self._stale_ended_in(expr, rng, step_ms, sids),
         )
 
     async def _attempt(
@@ -541,7 +574,20 @@ class PromQLSource:
             schema=SERIES_SCHEMA,
         )
         failed, notes = _completeness(rng, matrix, *([count_matrix] if count_matrix else []))
-        return FetchResult(buckets, series, failed=failed, notes=notes)
+        return FetchResult(
+            buckets,
+            series,
+            failed=failed,
+            notes=notes,
+            stale_ended=await self._stale_ended_in(expr, rng, step_ms, sids),
+        )
+
+    async def _stale_ended_in(
+        self, expr: str, rng: TimeRange, step_ms: int, sids: list[str]
+    ) -> tuple[str, ...] | None:
+        """`_stale_ended`, limited to the series the fetch kept."""
+        ended = await self._stale_ended(expr, rng, step_ms)
+        return None if ended is None else tuple(sid for sid in ended if sid in set(sids))
 
     def _observed_cells(self, result: list[dict]) -> set[tuple[str, int]]:
         """(series_id, ts_ms) of buckets with at least one observed sample."""

@@ -127,7 +127,7 @@ class SeriesCache:
             # notes: every chunk's, so a pure cache hit still carries them
             return FetchResult(
                 read.buckets, read.series, partial=read.partial,
-                failed=tuple(failed), notes=read.notes,
+                failed=tuple(failed), notes=read.notes, stale_ended=read.stale_ended,
             )  # fmt: skip
 
     def peek(self, source_identity: str, expr: str, rng: TimeRange, step_ms: int) -> FetchResult:
@@ -199,8 +199,9 @@ class SeriesCache:
             upsert_series(con, result.series)
             con.execute(
                 """INSERT INTO cache_chunks
-                       (qkey, chunk_start, fetched_at, immutable, partial, failed, notes, covered_to)
-                   VALUES ($q, $c, $f, $i, $p, $x, $n, $v)""",
+                       (qkey, chunk_start, fetched_at, immutable, partial, failed, notes, covered_to,
+                    stale_ended)
+                   VALUES ($q, $c, $f, $i, $p, $x, $n, $v, $s)""",
                 {
                     **params,
                     "f": now,
@@ -209,6 +210,7 @@ class SeriesCache:
                     "x": json.dumps(result.failed) if result.failed else None,
                     "n": json.dumps(result.notes) if result.notes else None,
                     "v": covered_to,
+                    "s": None if result.stale_ended is None else json.dumps(result.stale_ended),
                 },
             )
             con.commit()
@@ -222,8 +224,9 @@ class SeriesCache:
         partial = 0
         failed: list[tuple[int, int, str]] = []
         notes: list[str] = []
-        for p, f, n in self._con.execute(
-            """SELECT COALESCE(partial, 0), failed, notes FROM cache_chunks
+        stale_ended: list[str] | None = None  # union over chunks that could tell
+        for p, f, n, st in self._con.execute(
+            """SELECT COALESCE(partial, 0), failed, notes, stale_ended FROM cache_chunks
                WHERE qkey = $q AND chunk_start BETWEEN $a AND $b ORDER BY chunk_start""",
             {"q": qkey, "a": starts[0], "b": starts[-1]},
         ).fetchall():
@@ -234,6 +237,8 @@ class SeriesCache:
                 if b >= rng.start_ms and a <= rng.end_ms
             ]
             notes += json.loads(n) if n else []
+            if st is not None:
+                stale_ended = [*(stale_ended or []), *json.loads(st)]
         buckets = fetch_arrow(
             self._con,
             """SELECT ts_ms, series_id, avg, min, max, count FROM cache_buckets
@@ -253,4 +258,5 @@ class SeriesCache:
         return FetchResult(
             buckets, series, partial=partial, failed=tuple(failed),
             notes=tuple(dict.fromkeys(notes)),
+            stale_ended=None if stale_ended is None else tuple(sorted(set(stale_ended))),
         )  # fmt: skip

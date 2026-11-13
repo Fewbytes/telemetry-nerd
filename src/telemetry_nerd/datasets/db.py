@@ -23,6 +23,8 @@ _SCHEMA = [
     # instant up to which a complete answer made the stored rows authoritative (fetch time minus
     # the settle window); NULL for partial chunks and for chunks stored before this column
     "ALTER TABLE cache_chunks ADD COLUMN IF NOT EXISTS covered_to BIGINT",
+    # series ids a staleness marker ended inside the chunk, as JSON; NULL = could not tell
+    "ALTER TABLE cache_chunks ADD COLUMN IF NOT EXISTS stale_ended VARCHAR",
     "CREATE TABLE IF NOT EXISTS datasets (id VARCHAR PRIMARY KEY, meta VARCHAR NOT NULL)",
     """CREATE TABLE IF NOT EXISTS dataset_rows (
         dataset_id VARCHAR, ts_ms BIGINT, series_id VARCHAR,

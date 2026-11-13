@@ -32,6 +32,7 @@ async def test_selector_fetch_returns_buckets_for_one_series(source):
     assert res.series.num_rows == 1
     assert res.buckets.num_rows > 0
     assert res.partial == 0
+    assert res.stale_ended == ()  # a live series evaluated to the range end
 
 
 async def test_expression_fetch_from_fixtures(source):

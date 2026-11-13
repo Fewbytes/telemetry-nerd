@@ -40,6 +40,8 @@ class DatasetMeta:
     # source semantics that shape how values read, recorded at query time (the dataset is a
     # snapshot; the source may be reconfigured): {"post_gap_increase_spike": True}
     semantics_flags: dict = field(default_factory=dict)
+    # ids of series a staleness marker ended (FetchResult.stale_ended); None = not determinable
+    stale_ended_series: list[str] | None = None
     # Tier-2 code outputs (spec §5.2). Lineage: the producing code node and the input datasets.
     producer: dict | None = None  # {"kind": "code", "node", "output", "description"}
     parents: list[str] = field(default_factory=list)
@@ -160,6 +162,7 @@ class DatasetStore:
             derived=derived,
             failed_spans=[list(f) for f in result.failed],
             semantics_flags=dict(semantics_flags or {}),
+            stale_ended_series=None if result.stale_ended is None else list(result.stale_ended),
             query_language=query_language,
             source_caveats=_union(
                 lineage.caveats if lineage else (),

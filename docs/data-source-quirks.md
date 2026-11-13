@@ -366,6 +366,26 @@ it would take a per-member raw probe around `last_seen`, VictoriaMetrics only (b
 not implemented: a backend-specific extra query per stopped member for one label of churn. The
 consumer (`marked_stale`) is ready and pinned by tests should an adapter ever set the flag.
 
+### Stale-ended series (1h9.18): detected on the fetch side, read as SUSPECT
+
+King's decision 2026-11-13 (revisable): a series whose end a staleness marker proves is neither
+ABSENT nor EMPTY but **SUSPECT**: some data exists, but the end is not trustworthy as "gone".
+SUSPECT is a generic reason, usable for other doubtful cases. Plan decision 1 still holds:
+trailing silence without proven staleness stays EMPTY, so an OOM-killed pod is not hidden; a
+stale-ended series stays visible. The bucket_state side is 1h9.19; this card is the fetch side.
+
+Detection needs no raw probe of the marker itself. `PromQLSource._stale_ended` runs
+`timestamp(<selector>)` as one extra `query_range` (the sample time each step evaluated). A series
+whose last evaluated step still had its next step inside `[last sample, last sample + lookback)`
+(inclusive on Thanos 0.32) and inside the fetched range stopped early, and only a marker does
+that: without one it lingers for the whole lookback. Valid only when
+`MissingDataSemantics.stale_end_lookback()` is set: a fixed lookback, markers on scrape failure,
+and no markers on pushed data (a pushed series always lingers, so it is never read as stale-ended).
+Result: `FetchResult.stale_ended` (series ids) and `DatasetMeta.stale_ended_series`; `None` means
+the source cannot tell (VictoriaMetrics' adaptive fill, non-selector expressions, Elasticsearch),
+which is not the same as `[]`. Limits: a step longer than the lookback proves nothing, and an end
+whose next step falls after a cache chunk's last step is missed (the next chunk no longer has the series).
+
 ## Future sources (not MVP, for `sgb`)
 
 Noted so the profile shape covers them:

@@ -124,8 +124,18 @@ def _replay(backend: str, src: str, routes: dict[str, str]) -> PromQLSource:
 
     def handler(request: httpx.Request) -> httpx.Response:
         query = request.url.params["query"]
+        # timestamp(x) (stale-end detection) is answered from x's fixture: each step's sample
+        # time is taken to be the step itself, i.e. a series that is live at every step
+        timestamps = query.startswith("timestamp(")
+        query = query.removeprefix("timestamp(")
         claim = next(c for prefix, c in routes.items() if query.startswith(prefix))
         body = fx(f"{backend}/{src}__{claim}")["body"]
+        if timestamps:
+            result = [
+                {**s, "values": [[t, str(t)] for t, _ in s["values"]]}
+                for s in body["data"]["result"]
+            ]
+            body = {**body, "data": {**body["data"], "result": result}}
         if query.startswith("rollup("):
             [s] = body["data"]["result"]
             series = [

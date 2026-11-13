@@ -176,3 +176,17 @@ def test_distribution_records_its_query_language(store):
         dist=dist, histogram=None, n_min=20, query_language="es_dsl",
     )  # fmt: skip
     assert store.meta(meta.id).query_language == "es_dsl"
+
+
+def test_stale_ended_series_round_trip_and_unknown_is_not_empty(store):
+    base = result()
+
+    def put(stale):
+        return store.put(
+            source="s", expr="up", rng=TimeRange(0, 60_000), step_ms=1000, resolution_ms=1000,
+            result=FetchResult(base.buckets, base.series, stale_ended=stale),
+        )  # fmt: skip
+
+    assert store.meta(put(("s1",)).id).stale_ended_series == ["s1"]
+    assert store.meta(put(()).id).stale_ended_series == []
+    assert store.meta(put(None).id).stale_ended_series is None

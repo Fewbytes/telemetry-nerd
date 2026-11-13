@@ -1,3 +1,4 @@
+import json
 import math
 
 import httpx
@@ -682,4 +683,88 @@ async def test_dropped_no_value_series_note_reaches_the_query_caveats(tmp_path):
     assert any(
         c.startswith("source_warning:1 series had samples but no value")
         for c in out["summary"]["caveats"]
+    )
+
+
+# --- stale-ended series (1h9.18): ended by a staleness marker, not silent ---------------------
+
+STALE_RNG = TimeRange(1_700_000_000_000, 1_700_000_900_000)  # 900 s
+STALE_STEP_MS = 60_000
+
+
+def _ts_matrix(series: dict[str, tuple[int, int]]):
+    """`timestamp(up)` result: per instance (last evaluated step, its sample time), both epoch s,
+    evaluated every 60 s from the range start."""
+    return matrix(
+        [
+            {
+                "metric": {"instance": inst},
+                "values": [
+                    [t, str(sample if t == last else t)] for t in range(1_700_000_000, last + 1, 60)
+                ],
+            }
+            for inst, (last, sample) in series.items()
+        ]
+    )
+
+
+async def _stale_ended_instances(backend: str, flavor: str, expr: str, series) -> list[str] | None:
+    def responder(request):
+        if request.url.params["query"].startswith("timestamp("):
+            return httpx.Response(200, json=_ts_matrix(series))
+        return httpx.Response(
+            200,
+            json=matrix(
+                [
+                    {"metric": {"instance": inst}, "values": [[1_700_000_060, "1"]]}
+                    for inst in series
+                ]
+            ),
+        )
+
+    with respx.mock:
+        respx.get(**ROUTE).mock(side_effect=responder)
+        src = PromQLSource("src", BASE, flavor=flavor, backend=backend)
+        res = await src.fetch(expr, STALE_RNG, STALE_STEP_MS)
+    if res.stale_ended is None:
+        return None
+    by_sid = {
+        row["series_id"]: json.loads(row["labels"])["instance"] for row in res.series.to_pylist()
+    }
+    return sorted(by_sid[sid] for sid in res.stale_ended)
+
+
+@pytest.mark.parametrize("backend", ["prometheus", "thanos"])
+async def test_series_ended_before_its_lookback_ran_out_is_stale_ended(backend):
+    # live: evaluated to the range end. marker: last sample :060, last step :120 (the next step
+    # :180 is inside the 300 s lookback but absent). silent: no marker, lingered the whole 300 s
+    # lookback after :060 (last step :360, next step :420 is past it).
+    ended = await _stale_ended_instances(
+        backend,
+        "prometheus",
+        "up",
+        {
+            "live": (1_700_000_900, 1_700_000_900),
+            "marker": (1_700_000_120, 1_700_000_060),
+            "silent": (1_700_000_360, 1_700_000_060),
+        },
+    )
+    assert ended == ["marker"]
+
+
+async def test_inclusive_lookback_counts_a_next_step_exactly_one_lookback_later():
+    # last sample :060, last step :300: next step :360 is exactly 300 s after the sample. Thanos
+    # 0.32 lookback is inclusive, so the sample would still be live there and its absence is a
+    # marker; Prometheus 3 is left-open, so the series merely ran out of lookback.
+    series = {"edge": (1_700_000_300, 1_700_000_060)}
+    assert await _stale_ended_instances("prometheus", "prometheus", "up", series) == []
+    assert await _stale_ended_instances("thanos", "prometheus", "up", series) == ["edge"]
+
+
+async def test_stale_ended_is_unknown_for_victoriametrics_and_for_expressions():
+    series = {"marker": (1_700_000_120, 1_700_000_060)}
+    assert await _stale_ended_instances("victoriametrics", "victoriametrics", "up", series) is None
+    assert (
+        await _stale_ended_instances("prometheus", "prometheus", "sum(rate(up[1m]))", series)
+        is None
     )

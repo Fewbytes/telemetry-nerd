@@ -334,3 +334,19 @@ def test_existing_cache_db_is_migrated(tmp_path):
     con.close()
     con = open_duckdb(path)
     assert con.execute("SELECT failed, notes FROM cache_chunks").fetchall() == [(None, None)]
+
+
+async def test_stale_ended_series_survive_the_cache_and_unknown_stays_unknown(cache):
+    class Ending(FakeFetcher):
+        async def __call__(self, rng):
+            res = await super().__call__(rng)
+            ended = ("s-ended",) if rng.start_ms == 1_200_000 else ()
+            return FetchResult(res.buckets, res.series, stale_ended=ended)
+
+    rng = TimeRange(1_200_000, 2_400_000)  # 3 chunks, only the first saw a series end
+    await cache.get("src", "up", rng, STEP, Ending())
+    cached = await cache.get("src", "up", rng, STEP, FakeFetcher())
+    assert cached.stale_ended == ("s-ended",)
+    # chunks fetched by a source that cannot tell: unknown, not "none ended"
+    other = await cache.get("src", "other", rng, STEP, FakeFetcher())
+    assert other.stale_ended is None

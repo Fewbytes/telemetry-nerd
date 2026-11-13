@@ -132,6 +132,22 @@ class MissingDataSemantics:
     def facts(self) -> dict[str, Fact]:
         return {k: v for k, v in self.__dict__.items() if isinstance(v, Fact)}
 
+    def stale_end_lookback(self) -> GapFill | None:
+        """The fixed lookback that tells a stale-ended series from a lingering one, or None when
+        the backend cannot say. A series ending before its last sample plus the lookback was cut
+        by a staleness marker. That holds only if scrape failures write markers, pushed series
+        carry none (a pushed series always lingers, so it is never read as stale-ended) and the
+        lookback is fixed (VictoriaMetrics' adaptive fill has no such bound)."""
+        gap = self.gap_fill.value
+        if (
+            gap.kind == "fixed"
+            and gap.max_ms is not None
+            and self.stale_marker_on_scrape_failure.value
+            and not self.push_stale_markers.value
+        ):
+            return gap
+        return None
+
     def unverified(self) -> list[str]:
         return [k for k, f in self.facts().items() if not f.trusted]
 

@@ -42,6 +42,10 @@ class FetchResult:
     failed: tuple[tuple[int, int, str], ...] = ()
     # informational source warnings (not missing data): shown as `source_warning` caveats
     notes: tuple[str, ...] = ()
+    # ids of series whose end a staleness marker proves (they stopped before their last sample
+    # plus the lookback): the end is not trustworthy as "gone" (SUSPECT, 1h9.14).
+    # None = the source cannot tell, which is not the same as none.
+    stale_ended: tuple[str, ...] | None = None
 
 
 def empty_result() -> FetchResult:
