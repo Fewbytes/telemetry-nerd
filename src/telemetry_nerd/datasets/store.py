@@ -357,10 +357,12 @@ class DatasetStore:
         expr: str,
         columns: Mapping[str, Sequence[float | None]],
         lineage: Lineage,
+        row_labels: Sequence[str] | None = None,
     ) -> DatasetMeta:
         """A windowless sample dataset: the caller's columns of values, kept as supplied, in
         order, with None for a missing value. It has no time axis: start, end and steps are 0,
-        and no window of time selects part of it."""
+        and no window of time selects part of it. `row_labels` names the rows of a matrix (one per
+        value of each column)."""
         if not columns:
             raise ValueError("a sample dataset needs at least one column")
         meta = DatasetMeta(
@@ -376,15 +378,15 @@ class DatasetStore:
             **lineage.fields(),
         )
         rows = [
-            (meta.id, ix, label, value)
+            (meta.id, ix, label, value, row_labels[r] if row_labels else None)
             for ix, (label, values) in enumerate(columns.items())
-            for value in values
+            for r, value in enumerate(values)
         ]
         con = self._con
         con.begin()
         try:
             self._insert_meta(meta)
-            con.executemany("INSERT INTO sample_values VALUES (?, ?, ?, ?)", rows)
+            con.executemany("INSERT INTO sample_values VALUES (?, ?, ?, ?, ?)", rows)
             con.commit()
         except Exception:
             con.rollback()
@@ -403,6 +405,14 @@ class DatasetStore:
         for label, value in rows:
             columns.setdefault(label, []).append(value)
         return meta, columns
+
+    def get_sample_row_labels(self, dataset_id: str) -> list[str] | None:
+        """The matrix row names stored with a sample dataset, or None when rows are unnamed."""
+        rows = self._con.execute(
+            "SELECT row_label FROM sample_values WHERE dataset_id = $id AND column_ix = 0",
+            {"id": dataset_id},
+        ).fetchall()
+        return None if not rows or rows[0][0] is None else [r[0] for r in rows]
 
     def series_count(self, dataset_id: str) -> int:
         representation = self.meta(dataset_id).representation

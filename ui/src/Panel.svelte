@@ -26,6 +26,7 @@
   import BarPlot from "./components/BarPlot.svelte";
   import LittlesPlot from "./components/LittlesPlot.svelte";
   import SeasonalPlot from "./components/SeasonalPlot.svelte";
+  import MatrixHeat from "./components/MatrixHeat.svelte";
   import FleetPlot from "./components/FleetPlot.svelte";
   import { fleetStats, fleetY } from "./chart/fleet";
   import { shortNamer } from "./chart/seriesNames";
@@ -1023,6 +1024,9 @@
       {#if yIsValues && yres && yres.effective && (yres.zoomed || yres.log || yres.effective.mode === "semantic" || (yres.reference && chosen?.mode === "reference"))}
         <div class="y-badge-flow" data-y-badge>{badgeText(yres.effective, yres, panel.spec.y.unit, undefined, yctx)}</div>
       {/if}
+    {/if}
+    {#if data && data.kind === "sample_heatmap"}
+      <MatrixHeat {data} compact={simple} />
     {/if}
     {#if data && data.kind === "spectrogram"}
       {@const sg = data}

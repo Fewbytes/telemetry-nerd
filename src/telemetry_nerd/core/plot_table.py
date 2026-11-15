@@ -23,6 +23,7 @@ MAX_SERIES_PER_PANEL = 8
 MAX_POINTS_PER_TIME_SERIES = 100_000
 MAX_VALUES_PER_SAMPLE = 1_000_000
 MAX_BARS = 50
+MAX_MATRIX_SIDE = 100  # rows and columns of a heatmap matrix
 MAX_CSV_BYTES = 5 * 1024 * 1024
 MAX_LABEL_CHARS = 80
 
@@ -87,13 +88,16 @@ def parse_plot_array(values: object, labels: object = None) -> PlotTable:
 
 
 def parse_plot_columns(
-    columns: Mapping[str, object], labels: object = None, time_column: bool = False
+    columns: Mapping[str, object],
+    labels: object = None,
+    time_column: bool = False,
+    max_columns: int = MAX_SERIES_PER_PANEL,
 ) -> PlotTable:
     """`{"a": [...], "b": [...]}`: every column the same length; keys are the labels.
     `time_column` says one of them is the time axis, so it does not count against the series limit."""
     if not columns:
         raise PlotTableError(PlotReason.EMPTY, "data holds no columns")
-    check_column_count(len(columns) - time_column)
+    check_column_count(len(columns) - time_column, max_columns)
     parsed: list[PlotColumn] = []
     for label, raw in columns.items():
         check_label(label, f"column {label!r}", [c.label for c in parsed])
@@ -118,7 +122,11 @@ def parse_plot_columns(
 
 
 def parse_plot_matrix(
-    rows: object, labels: object = None, columns: object = None, time_column: bool = False
+    rows: object,
+    labels: object = None,
+    columns: object = None,
+    time_column: bool = False,
+    max_columns: int = MAX_SERIES_PER_PANEL,
 ) -> PlotTable:
     """`[[...], [...]]`: rows of equal length. `labels` name the rows, `columns` the columns
     (default `c0, c1, ...`). `time_column` says the first column is the time axis, so it does not
@@ -136,7 +144,7 @@ def parse_plot_matrix(
             raise PlotTableError(
                 PlotReason.RAGGED, f"matrix row {r} has {len(row)} values, row 0 has {width}"
             )
-    check_column_count(width - time_column)
+    check_column_count(width - time_column, max_columns)
     if len(rows) > MAX_VALUES_PER_SAMPLE:
         raise over_limit("values per column", MAX_VALUES_PER_SAMPLE, len(rows), None)
     names = _column_names(columns, width)
@@ -192,9 +200,14 @@ def check_label(label: str, where: str, taken: Sequence[str]) -> None:
         raise PlotTableError(PlotReason.DUPLICATE_LABEL, f"label {label!r} is used twice ({where})")
 
 
-def check_column_count(count: int) -> None:
-    if count > MAX_SERIES_PER_PANEL:
-        raise over_limit("series (columns) per panel", MAX_SERIES_PER_PANEL, count, None)
+def check_column_count(count: int, maximum: int = MAX_SERIES_PER_PANEL) -> None:
+    if count > maximum:
+        raise over_limit("series (columns) per panel", maximum, count, None)
+
+
+def check_matrix_rows(table: PlotTable) -> None:
+    if table.row_count > MAX_MATRIX_SIDE:
+        raise over_limit("matrix rows", MAX_MATRIX_SIDE, table.row_count, None)
 
 
 def check_line_series_count(count: int) -> None:

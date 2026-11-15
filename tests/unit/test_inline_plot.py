@@ -165,3 +165,18 @@ async def test_series_and_data_together_are_refused(tmp_path):
     r = await call(mcp, "plot_data", {"question": "q?", "series": SERIES, "data": {"ts": [1]}})
     assert r.is_error
     assert "exactly one of series or data" in text_of(r)
+
+
+async def test_plot_data_heatmap_kind_draws_a_matrix_and_refuses_series_and_csv(tmp_path):
+    service = make_service(tmp_path)
+    mcp = build_mcp(service, "http://ui")
+    matrix = [[float(r * 10 + c) for c in range(10)] for r in range(10)]
+    r = await call(mcp, "plot_data", {"question": "q?", "kind": "heatmap", "data": matrix})
+    assert not r.is_error, text_of(r)
+    data = service.panel_data(json.loads(text_of(r))["panel"], width_px=800)
+    assert len(data["row_labels"]) == len(data["column_labels"]) == 10
+
+    r = await call(mcp, "plot_data", {"question": "q?", "kind": "heatmap", "series": SERIES})
+    assert r.is_error and "takes data" in text_of(r)
+    r = await call(mcp, "plot_csv", {"question": "q?", "csv": "a,b\n1,2\n", "kind": "heatmap"})
+    assert r.is_error and "not drawable" in text_of(r)

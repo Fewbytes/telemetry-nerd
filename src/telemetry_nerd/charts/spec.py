@@ -34,7 +34,8 @@ Mark = Literal[
 SPECTRAL_MARKS = {"spectrum", "spectrogram"}
 WINDOW_MARKS = {"histogram", "ecdf", "quantile_curve", "ccdf", "qq"}
 SAMPLE_MARKS = {
-    "histogram"
+    "histogram",
+    "heatmap",
 }  # marks that draw a windowless sample dataset (representation "samples")
 DISTRIBUTION_MARKS = {"heatmap", "percentiles", *WINDOW_MARKS}
 MAX_QUANTILES = 4
@@ -300,7 +301,7 @@ def _sample_layer_issues(layer: Layer) -> list[ValidationIssue]:
             rule="windows", severity="error",
             message="a supplied sample has no time axis: compare its columns, not time ranges",
         ))  # fmt: skip
-    if not 1 <= len(layer.columns) <= MAX_WINDOWS:
+    if layer.mark != "heatmap" and not 1 <= len(layer.columns) <= MAX_WINDOWS:
         issues.append(ValidationIssue(
             rule="windows", severity="error",
             message=f"{layer.mark} needs 1 to {MAX_WINDOWS} columns to compare",

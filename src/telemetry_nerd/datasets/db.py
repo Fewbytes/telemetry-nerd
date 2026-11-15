@@ -40,6 +40,8 @@ _SCHEMA = [
     # row per supplied value; value NULL = a missing value the caller supplied as null
     """CREATE TABLE IF NOT EXISTS sample_values (
         dataset_id VARCHAR, column_ix INTEGER, label VARCHAR, value DOUBLE)""",
+    # a matrix row's caller-supplied name, repeated on every value of that row; NULL when unnamed
+    "ALTER TABLE sample_values ADD COLUMN IF NOT EXISTS row_label VARCHAR",
     # declared uncertainty of a value (e.g. a code output's CI); NULL when none was declared
     "ALTER TABLE dataset_rows ADD COLUMN IF NOT EXISTS lo DOUBLE",
     "ALTER TABLE dataset_rows ADD COLUMN IF NOT EXISTS hi DOUBLE",

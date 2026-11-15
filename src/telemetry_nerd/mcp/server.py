@@ -1990,6 +1990,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         kind: str = "line",
         data: dict[str, list[Any]] | list[list[Any]] | None = None,
         columns: list[str] | None = None,
+        labels: list[str] | None = None,
     ) -> str:
         """Draw data YOU supply as a line panel in the shared workspace: no source query.
 
@@ -2007,16 +2008,23 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         epoch milliseconds; every other column is one line; null is a gap.
         At most 5 lines per plot: for 6..8 series call once per group of at most 5 (small
         multiples, same y-range); more than 8 is over_limit.
-        kind: "line" (the only form drawn so far). Circular and 3-D forms are never rendered, with
+        kind: "line" or "heatmap". Circular and 3-D forms are never rendered, with
         no override: such a kind fails with refused_form and nothing is drawn. For parts of a
         whole, call again with kind="bar".
+        kind="heatmap": data is a matrix [[...], ...] or labelled columns, up to 100 rows by
+        100 columns, no time axis; labels name the rows (default r0, r1, ...), columns the
+        matrix columns (default c0, c1, ...). The legend states the colour mapping.
         unit: optional y-axis unit, recorded as "provided by claude".
         Returns {panel, url, warnings}.
         """
         if (series is None) == (data is None):
             raise ToolError("pass exactly one of series or data")
+        if kind == "heatmap" and data is None:
+            raise ToolError("kind=heatmap takes data (a matrix or columns), not series")
         try:
-            if data is not None:
+            if kind == "heatmap":
+                res = service.plot_heatmap(question, data, columns, labels, unit=unit)
+            elif data is not None:
                 res = service.plot_table(question, data, columns, unit=unit, kind=kind)
             else:
                 res = service.plot_inline(question, series or [], unit=unit, kind=kind)

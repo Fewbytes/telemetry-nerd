@@ -136,9 +136,11 @@ from telemetry_nerd.core.panel_payloads import (
 )
 from telemetry_nerd.core.plot_csv import csv_inline_series, parse_plot_csv
 from telemetry_nerd.core.plot_table import (
+    MAX_MATRIX_SIDE,
     PlotTable,
     check_kind,
     check_line_series_count,
+    check_matrix_rows,
     parse_plot_columns,
     parse_plot_matrix,
     with_time_axis,
@@ -146,6 +148,7 @@ from telemetry_nerd.core.plot_table import (
 from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.profiles import ProfileService
 from telemetry_nerd.core.retro_ops import RetroOps
+from telemetry_nerd.core.sample_heatmap import sample_heatmap_payload
 from telemetry_nerd.core.sample_histogram import sample_histogram_payload
 from telemetry_nerd.core.seasonal_dist_ops import SeasonalDistOps
 from telemetry_nerd.core.seasonal_ops import SeasonalOps, seasonal_hint
@@ -1221,20 +1224,45 @@ class TelemetryService:
         unit: str | None = None,
         actor: Actor = "claude",
         mark: str = "histogram",
+        row_labels: Sequence[str] | None = None,
     ) -> ShowResult:
         """Draw the columns of `table` as a distribution of caller values: a windowless sample
         dataset (no time axis, nothing faked) that window marks draw column by column.
 
         Raises ChartRejected when `mark` cannot draw a sample or more than MAX_WINDOWS columns
-        are compared. Like any inline data it is fixed: refuse_requery refuses a re-scope."""
+        are compared. `row_labels` names a matrix's rows. Like any inline data it is fixed: refuse_requery refuses a re-scope."""
         meta = self.datasets.put_samples(
             source=INLINE_SOURCE,
             expr=SAMPLE_EXPR,
             columns={c.label: c.values for c in table.columns},
             lineage=_inline_lineage(SAMPLE_OUTPUT, actor),
+            row_labels=row_labels,
         )
         self.log.append(actor, "dataset.created", meta.id, {"expr": SAMPLE_EXPR})
         return self.show(meta.id, question, actor, unit=unit, mark=mark)
+
+    def plot_heatmap(
+        self,
+        question: str,
+        data: dict[str, list] | list[list],
+        columns: list[str] | None = None,
+        labels: list[str] | None = None,
+        unit: str | None = None,
+        actor: Actor = "claude",
+    ) -> ShowResult:
+        """Draw a matrix (rows x columns, at most MAX_MATRIX_SIDE each way) the caller supplied
+        as a heatmap with row and column labels and a legend stating the colour mapping.
+
+        `labels` name the rows (default r0, r1, ...), `columns` a matrix's columns (default c0,
+        c1, ...). Raises PlotTableError (a ValueError) naming the reason the data was refused."""
+        if isinstance(data, dict):
+            table = parse_plot_columns(data, labels, max_columns=MAX_MATRIX_SIDE)
+        else:
+            table = parse_plot_matrix(data, labels, columns, max_columns=MAX_MATRIX_SIDE)
+        check_matrix_rows(table)
+        return self.plot_sample(
+            question, table, unit=unit, actor=actor, mark="heatmap", row_labels=table.row_labels
+        )
 
     async def show_binding(self, **kw) -> PanelGroup:
         """A bound USE / RED / Little's law metric set as one linked panel group (bead czt.3)."""
@@ -2593,6 +2621,11 @@ class TelemetryService:
                 **analysis,
             }
         representation = self.datasets.meta(dataset_id).representation
+        if representation == "samples" and panel.spec["layers"][0]["mark"] == "heatmap":
+            meta, columns = self.datasets.get_samples(dataset_id)
+            return sample_heatmap_payload(
+                panel, meta, columns, self.datasets.get_sample_row_labels(dataset_id)
+            )
         if representation == "samples":
             return sample_histogram_payload(panel, *self.datasets.get_samples(dataset_id))
         if representation == "distribution":
