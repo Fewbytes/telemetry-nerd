@@ -23,6 +23,15 @@ MAX_BARS = 50
 MAX_CSV_BYTES = 5 * 1024 * 1024
 MAX_LABEL_CHARS = 80
 
+# Spec section 4: a hard rule with no flag or override. The only file under src/ and ui/src that may
+# name these forms; tests/unit/test_no_pie_guard.py scans for any other.
+PIE_LIKE_KINDS = frozenset({"pie", "donut", "doughnut", "radial", "sunburst", "3d_pie"})
+PIE_REFUSAL = (
+    "Pie charts are never rendered: angle and area are read less accurately than length, and "
+    "slices are hard to compare. Use `kind=bar` (sorted, zero baseline) for parts of a whole."
+)
+DRAWABLE_KINDS = ("line",)
+
 ANONYMOUS_COLUMN = "values"
 MATRIX_COLUMN_PREFIX = "c"
 
@@ -39,6 +48,8 @@ class PlotReason(StrEnum):
     CSV_UNSUPPORTED_DELIMITER = "csv_unsupported_delimiter"
     CSV_MALFORMED = "csv_malformed"
     KIND_SHAPE_MISMATCH = "kind_shape_mismatch"
+    UNKNOWN_KIND = "unknown_kind"
+    REFUSED_FORM = "refused_form"
 
 
 class PlotTableError(ValueError):
@@ -192,3 +203,14 @@ def over_limit(limit: str, maximum: int, received: int, column: str | None) -> P
     return PlotTableError(
         PlotReason.OVER_LIMIT, f"{limit}: limit is {maximum}, received {received}{target}"
     )
+
+
+def check_kind(kind: str) -> None:
+    """Refuse a pie-like `kind` (never mapped to bar: the caller re-issues with `kind=bar`) and any
+    kind that cannot be drawn yet. Keys on `kind` only; the question text is not inspected."""
+    if kind.strip().lower() in PIE_LIKE_KINDS:
+        raise PlotTableError(PlotReason.REFUSED_FORM, PIE_REFUSAL)
+    if kind not in DRAWABLE_KINDS:
+        raise PlotTableError(
+            PlotReason.UNKNOWN_KIND, f"kind {kind!r} is not drawable; supported: {DRAWABLE_KINDS}"
+        )

@@ -1983,7 +1983,9 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         return _dump(out)
 
     @mcp.tool()
-    def plot_data(question: str, series: list[dict[str, Any]], unit: str | None = None) -> str:
+    def plot_data(
+        question: str, series: list[dict[str, Any]], unit: str | None = None, kind: str = "line"
+    ) -> str:
         """Draw data YOU supply as a line panel in the shared workspace: no source query.
 
         For showing the user numbers you hold (a computation, a table from the conversation, a
@@ -1994,11 +1996,14 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         series: [{label, ts: [...], values: [...]}]; one entry per line. ts are epoch
         milliseconds or ISO-8601 with timezone, strictly increasing, whole seconds; values are
         finite numbers, same length as ts. Points missing from a series show as gaps.
+        kind: "line" (the only form drawn so far). Circular and 3-D forms are never rendered, with
+        no override: such a kind fails with refused_form and nothing is drawn. For parts of a
+        whole, call again with kind="bar".
         unit: optional y-axis unit, recorded as "provided by claude".
         Returns {panel, url, warnings}.
         """
         try:
-            res = service.plot_inline(question, series, unit=unit)
+            res = service.plot_inline(question, series, unit=unit, kind=kind)
         except (ChartRejected, ValueError) as e:
             raise ToolError(str(e)) from e
         return _dump({
@@ -2008,7 +2013,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         })  # fmt: skip
 
     @mcp.tool()
-    def plot_csv(question: str, csv: str, unit: str | None = None) -> str:
+    def plot_csv(question: str, csv: str, unit: str | None = None, kind: str = "line") -> str:
         """Draw CSV text YOU supply as a line panel in the shared workspace: no source query.
 
         Same purpose as plot_data, for a table you hold as text. There is no file or URL input:
@@ -2019,11 +2024,14 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         column named ts, time or timestamp is the time axis (epoch milliseconds or ISO-8601
         with timezone, strictly increasing); every other column is one line of finite numbers.
         An empty cell is a missing value and shows as a gap. At most 5 MiB, 8 lines.
+        kind: "line" (the only form drawn so far). Circular and 3-D forms are never rendered, with
+        no override: such a kind fails with refused_form and nothing is drawn. For parts of a
+        whole, call again with kind="bar".
         unit: optional y-axis unit, recorded as "provided by claude".
         Returns {panel, url, warnings}.
         """
         try:
-            res = service.plot_csv(question, csv, unit=unit)
+            res = service.plot_csv(question, csv, unit=unit, kind=kind)
         except (ChartRejected, ValueError) as e:
             raise ToolError(str(e)) from e
         return _dump({
