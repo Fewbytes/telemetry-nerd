@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 
 import duckdb
@@ -231,6 +231,8 @@ class DatasetStore:
         meta = self.meta(dataset_id)
         if meta.representation == "distribution":
             raise ValueError(f"dataset {dataset_id} is a distribution; use get_distribution")
+        if meta.representation == "samples":
+            raise ValueError(f"dataset {dataset_id} is a windowless sample; use get_samples")
         params = {"id": dataset_id}
         buckets = fetch_arrow(
             self._con,
@@ -348,12 +350,68 @@ class DatasetStore:
             rows, columns, series, scheme, meta.expr, tuple(meta.source_caveats)
         )
 
-    def series_count(self, dataset_id: str) -> int:
-        table = (
-            "dist_columns"
-            if self.meta(dataset_id).representation == "distribution"
-            else "dataset_rows"
+    def put_samples(
+        self,
+        *,
+        source: str,
+        expr: str,
+        columns: Mapping[str, Sequence[float | None]],
+        lineage: Lineage,
+    ) -> DatasetMeta:
+        """A windowless sample dataset: the caller's columns of values, kept as supplied, in
+        order, with None for a missing value. It has no time axis: start, end and steps are 0,
+        and no window of time selects part of it."""
+        if not columns:
+            raise ValueError("a sample dataset needs at least one column")
+        meta = DatasetMeta(
+            id=self._new_id("d"),
+            source=source,
+            expr=expr,
+            start_ms=0,
+            end_ms=0,
+            step_ms=0,
+            resolution_ms=0,
+            representation="samples",
+            created_at_ms=self._clock(),
+            **lineage.fields(),
         )
+        rows = [
+            (meta.id, ix, label, value)
+            for ix, (label, values) in enumerate(columns.items())
+            for value in values
+        ]
+        con = self._con
+        con.begin()
+        try:
+            self._insert_meta(meta)
+            con.executemany("INSERT INTO sample_values VALUES (?, ?, ?, ?)", rows)
+            con.commit()
+        except Exception:
+            con.rollback()
+            raise
+        return meta
+
+    def get_samples(self, dataset_id: str) -> tuple[DatasetMeta, dict[str, list[float | None]]]:
+        meta = self.meta(dataset_id)
+        if meta.representation != "samples":
+            raise ValueError(f"dataset {dataset_id} is {meta.representation}, not a sample")
+        rows = self._con.execute(
+            "SELECT label, value FROM sample_values WHERE dataset_id = $id ORDER BY column_ix",
+            {"id": dataset_id},
+        ).fetchall()
+        columns: dict[str, list[float | None]] = {}
+        for label, value in rows:
+            columns.setdefault(label, []).append(value)
+        return meta, columns
+
+    def series_count(self, dataset_id: str) -> int:
+        representation = self.meta(dataset_id).representation
+        if representation == "samples":
+            return self._con.execute(
+                "SELECT COUNT(DISTINCT column_ix) FROM sample_values WHERE dataset_id = $id",
+                {"id": dataset_id},
+            ).fetchone()[0]
+        table = "dist_columns" if representation == "distribution" else "dataset_rows"
         row = self._con.execute(
             f"SELECT COUNT(DISTINCT series_id) FROM {table} WHERE dataset_id = $id",
             {"id": dataset_id},

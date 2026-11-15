@@ -113,6 +113,8 @@ from telemetry_nerd.core.inline_series import (
     INLINE_NODE,
     INLINE_OUTPUT,
     INLINE_SOURCE,
+    SAMPLE_EXPR,
+    SAMPLE_OUTPUT,
     InlineSeries,
     inline_data,
     parse_inline_series,
@@ -134,6 +136,7 @@ from telemetry_nerd.core.panel_payloads import (
 )
 from telemetry_nerd.core.plot_csv import csv_inline_series, parse_plot_csv
 from telemetry_nerd.core.plot_table import (
+    PlotTable,
     check_kind,
     check_line_series_count,
     parse_plot_columns,
@@ -143,6 +146,7 @@ from telemetry_nerd.core.plot_table import (
 from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.profiles import ProfileService
 from telemetry_nerd.core.retro_ops import RetroOps
+from telemetry_nerd.core.sample_histogram import sample_histogram_payload
 from telemetry_nerd.core.seasonal_dist_ops import SeasonalDistOps
 from telemetry_nerd.core.seasonal_ops import SeasonalOps, seasonal_hint
 from telemetry_nerd.core.series_diagnostics import SeriesDiagnostics, resolve_baseline
@@ -267,6 +271,18 @@ class ChartRejected(Exception):
 class ShowResult:
     panel: Panel
     issues: list[ValidationIssue]
+
+
+def _inline_lineage(output: str, actor: Actor) -> Lineage:
+    """Provenance of values the caller supplied: a code output, so nothing re-fetches it."""
+    return Lineage(
+        producer={
+            "kind": "code",
+            "node": INLINE_NODE,
+            "output": output,
+            "description": f"values supplied inline by {actor}, not queried",
+        },
+    )
 
 
 def _refuse_derived_rescope(panel_id: str, meta: DatasetMeta, spec: ChartSpec) -> None:
@@ -1193,17 +1209,32 @@ class TelemetryService:
             step_ms=data.step_ms,
             resolution_ms=data.step_ms,
             result=data.result,
-            lineage=Lineage(
-                producer={
-                    "kind": "code",
-                    "node": INLINE_NODE,
-                    "output": INLINE_OUTPUT,
-                    "description": f"values supplied inline by {actor}, not queried",
-                },
-            ),
+            lineage=_inline_lineage(INLINE_OUTPUT, actor),
         )
         self.log.append(actor, "dataset.created", meta.id, {"expr": INLINE_EXPR})
         return self.show(meta.id, question, actor, unit=unit)
+
+    def plot_sample(
+        self,
+        question: str,
+        table: PlotTable,
+        unit: str | None = None,
+        actor: Actor = "claude",
+        mark: str = "histogram",
+    ) -> ShowResult:
+        """Draw the columns of `table` as a distribution of caller values: a windowless sample
+        dataset (no time axis, nothing faked) that window marks draw column by column.
+
+        Raises ChartRejected when `mark` cannot draw a sample or more than MAX_WINDOWS columns
+        are compared. Like any inline data it is fixed: refuse_requery refuses a re-scope."""
+        meta = self.datasets.put_samples(
+            source=INLINE_SOURCE,
+            expr=SAMPLE_EXPR,
+            columns={c.label: c.values for c in table.columns},
+            lineage=_inline_lineage(SAMPLE_OUTPUT, actor),
+        )
+        self.log.append(actor, "dataset.created", meta.id, {"expr": SAMPLE_EXPR})
+        return self.show(meta.id, question, actor, unit=unit, mark=mark)
 
     async def show_binding(self, **kw) -> PanelGroup:
         """A bound USE / RED / Little's law metric set as one linked panel group (bead czt.3)."""
@@ -2276,6 +2307,13 @@ class TelemetryService:
             cfg = self.fleets.last_config(dataset_id)
             self.fleets.panel(dataset_id, cfg)  # validates (percentiles, units, members) now
             spec.layers = [Layer(mark="fleet", data=dataset_id, fleet=cfg)]
+        elif meta.representation == "samples":
+            _, sample = self.datasets.get_samples(dataset_id)
+            spec.layers = [Layer(
+                mark="histogram" if mark == "auto" else mark,  # type: ignore[arg-type]
+                data=dataset_id,
+                columns=list(sample),
+            )]  # fmt: skip
         elif meta.derived and mark == "auto":
             d = meta.derived
             views = offered_views(d["op"])
@@ -2554,7 +2592,10 @@ class TelemetryService:
                 "dataset": self.datasets.meta(dataset_id).to_dict(),
                 **analysis,
             }
-        if self.datasets.meta(dataset_id).representation == "distribution":
+        representation = self.datasets.meta(dataset_id).representation
+        if representation == "samples":
+            return sample_histogram_payload(panel, *self.datasets.get_samples(dataset_id))
+        if representation == "distribution":
             return self._distribution_panel_data(panel, dataset_id, width_px)
         meta, result = self.datasets.get(dataset_id)
         interval = self.datasets.interval(dataset_id)

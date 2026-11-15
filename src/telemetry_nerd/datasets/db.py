@@ -36,6 +36,10 @@ _SCHEMA = [
         bucket_lo DOUBLE, bucket_hi DOUBLE, count DOUBLE)""",
     """CREATE TABLE IF NOT EXISTS dist_columns (
         dataset_id VARCHAR, ts_ms BIGINT, series_id VARCHAR, n DOUBLE)""",
+    # values of a windowless sample dataset (representation "samples"): no time axis, one
+    # row per supplied value; value NULL = a missing value the caller supplied as null
+    """CREATE TABLE IF NOT EXISTS sample_values (
+        dataset_id VARCHAR, column_ix INTEGER, label VARCHAR, value DOUBLE)""",
     # declared uncertainty of a value (e.g. a code output's CI); NULL when none was declared
     "ALTER TABLE dataset_rows ADD COLUMN IF NOT EXISTS lo DOUBLE",
     "ALTER TABLE dataset_rows ADD COLUMN IF NOT EXISTS hi DOUBLE",

@@ -32,6 +32,9 @@ Mark = Literal[
 ]
 SPECTRAL_MARKS = {"spectrum", "spectrogram"}
 WINDOW_MARKS = {"histogram", "ecdf", "quantile_curve", "ccdf", "qq"}
+SAMPLE_MARKS = {
+    "histogram"
+}  # marks that draw a windowless sample dataset (representation "samples")
 DISTRIBUTION_MARKS = {"heatmap", "percentiles", *WINDOW_MARKS}
 MAX_QUANTILES = 4
 FACET_BUDGET = 12
@@ -48,6 +51,7 @@ class Layer(BaseModel):
     mark: Mark
     data: str
     windows: list[Window] = Field(default_factory=list)  # histogram/ecdf: windows compared
+    columns: list[str] = Field(default_factory=list)  # samples: the columns compared, no time
     color: Literal["count", "density"] = "count"  # heatmap colour
     # percentiles: which bands (also the initial chips of a heatmap's percentile view)
     quantiles: list[float] = Field(default_factory=lambda: list(DEFAULT_QUANTILES))
@@ -269,6 +273,30 @@ def auto_spec(
     return ChartSpec(layers=[Layer(mark=mark, data=dataset_id)], y=y)
 
 
+def _sample_layer_issues(layer: Layer) -> list[ValidationIssue]:
+    """A windowless sample has columns, not time ranges: a window would be a faked timestamp."""
+    if layer.mark not in SAMPLE_MARKS:
+        return [ValidationIssue(
+            rule="mark_representation", severity="error",
+            message=(
+                f"{layer.mark} cannot draw {layer.data} (a supplied sample with no time axis): "
+                f"it is drawn as {', '.join(sorted(SAMPLE_MARKS))}"
+            ),
+        )]  # fmt: skip
+    issues = []
+    if layer.windows:
+        issues.append(ValidationIssue(
+            rule="windows", severity="error",
+            message="a supplied sample has no time axis: compare its columns, not time ranges",
+        ))  # fmt: skip
+    if not 1 <= len(layer.columns) <= MAX_WINDOWS:
+        issues.append(ValidationIssue(
+            rule="windows", severity="error",
+            message=f"{layer.mark} needs 1 to {MAX_WINDOWS} columns to compare",
+        ))  # fmt: skip
+    return issues
+
+
 def validate(
     spec: ChartSpec,
     series_counts: dict[str, int],
@@ -295,6 +323,9 @@ def validate(
     reps = representations or {}
     for layer in spec.layers:
         rep = reps.get(layer.data)
+        if rep == "samples":
+            issues += _sample_layer_issues(layer)
+            continue
         if rep is not None and (layer.mark in DISTRIBUTION_MARKS) != (rep == "distribution"):
             issues.append(ValidationIssue(
                 rule="mark_representation", severity="error",

@@ -26,6 +26,8 @@ INLINE_NODE = "inline"
 INLINE_OUTPUT = "plot"
 INLINE_SOURCE = "inline"
 INLINE_EXPR = f"code:{INLINE_NODE}/{INLINE_OUTPUT}"
+SAMPLE_OUTPUT = "sample"
+SAMPLE_EXPR = f"code:{INLINE_NODE}/{SAMPLE_OUTPUT}"
 MIN_STEP_MS = 1_000
 MAX_GRID_BUCKETS = 20_000  # a grid finer than this makes the bucket-state pass needlessly slow
 
