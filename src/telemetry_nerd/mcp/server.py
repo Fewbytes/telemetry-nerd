@@ -1984,7 +1984,12 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
 
     @mcp.tool()
     def plot_data(
-        question: str, series: list[dict[str, Any]], unit: str | None = None, kind: str = "line"
+        question: str,
+        series: list[dict[str, Any]] | None = None,
+        unit: str | None = None,
+        kind: str = "line",
+        data: dict[str, list[Any]] | list[list[Any]] | None = None,
+        columns: list[str] | None = None,
     ) -> str:
         """Draw data YOU supply as a line panel in the shared workspace: no source query.
 
@@ -1996,14 +2001,25 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         series: [{label, ts: [...], values: [...]}]; one entry per line. ts are epoch
         milliseconds or ISO-8601 with timezone, strictly increasing, whole seconds; values are
         finite numbers, same length as ts. Points missing from a series show as gaps.
+        data: instead of series, one shared table. Labelled columns {"ts": [...], "a": [...]}
+        (the column named ts, time or timestamp is the time axis) or a matrix [[ts, a, b], ...]
+        (the first column is the time axis; columns names them, default c0, c1, ...). Time is
+        epoch milliseconds; every other column is one line; null is a gap.
+        At most 5 lines per plot: for 6..8 series call once per group of at most 5 (small
+        multiples, same y-range); more than 8 is over_limit.
         kind: "line" (the only form drawn so far). Circular and 3-D forms are never rendered, with
         no override: such a kind fails with refused_form and nothing is drawn. For parts of a
         whole, call again with kind="bar".
         unit: optional y-axis unit, recorded as "provided by claude".
         Returns {panel, url, warnings}.
         """
+        if (series is None) == (data is None):
+            raise ToolError("pass exactly one of series or data")
         try:
-            res = service.plot_inline(question, series, unit=unit, kind=kind)
+            if data is not None:
+                res = service.plot_table(question, data, columns, unit=unit, kind=kind)
+            else:
+                res = service.plot_inline(question, series or [], unit=unit, kind=kind)
         except (ChartRejected, ValueError) as e:
             raise ToolError(str(e)) from e
         return _dump({

@@ -14,6 +14,9 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
+from itertools import pairwise
+
+from telemetry_nerd.charts.spec import LINE_SERIES_BUDGET
 
 # Limits of spec 2.3: one source of truth, echoed in every over_limit message.
 MAX_SERIES_PER_PANEL = 8
@@ -31,6 +34,7 @@ PIE_REFUSAL = (
     "slices are hard to compare. Use `kind=bar` (sorted, zero baseline) for parts of a whole."
 )
 DRAWABLE_KINDS = ("line",)
+TIME_COLUMN_NAMES = frozenset({"ts", "time", "timestamp"})
 
 ANONYMOUS_COLUMN = "values"
 MATRIX_COLUMN_PREFIX = "c"
@@ -82,11 +86,14 @@ def parse_plot_array(values: object, labels: object = None) -> PlotTable:
     return parse_plot_columns({ANONYMOUS_COLUMN: values}, labels)
 
 
-def parse_plot_columns(columns: Mapping[str, object], labels: object = None) -> PlotTable:
-    """`{"a": [...], "b": [...]}`: every column the same length; keys are the labels."""
+def parse_plot_columns(
+    columns: Mapping[str, object], labels: object = None, time_column: bool = False
+) -> PlotTable:
+    """`{"a": [...], "b": [...]}`: every column the same length; keys are the labels.
+    `time_column` says one of them is the time axis, so it does not count against the series limit."""
     if not columns:
         raise PlotTableError(PlotReason.EMPTY, "data holds no columns")
-    check_column_count(len(columns))
+    check_column_count(len(columns) - time_column)
     parsed: list[PlotColumn] = []
     for label, raw in columns.items():
         check_label(label, f"column {label!r}", [c.label for c in parsed])
@@ -110,9 +117,12 @@ def parse_plot_columns(columns: Mapping[str, object], labels: object = None) -> 
     return PlotTable(tuple(parsed), _row_labels(labels, len(parsed[0].values)))
 
 
-def parse_plot_matrix(rows: object, labels: object = None, columns: object = None) -> PlotTable:
+def parse_plot_matrix(
+    rows: object, labels: object = None, columns: object = None, time_column: bool = False
+) -> PlotTable:
     """`[[...], [...]]`: rows of equal length. `labels` name the rows, `columns` the columns
-    (default `c0, c1, ...`)."""
+    (default `c0, c1, ...`). `time_column` says the first column is the time axis, so it does not
+    count against the series limit."""
     if not isinstance(rows, Sequence) or isinstance(rows, str) or not rows:
         raise PlotTableError(PlotReason.EMPTY, "matrix holds no rows")
     for r, row in enumerate(rows):
@@ -126,7 +136,7 @@ def parse_plot_matrix(rows: object, labels: object = None, columns: object = Non
             raise PlotTableError(
                 PlotReason.RAGGED, f"matrix row {r} has {len(row)} values, row 0 has {width}"
             )
-    check_column_count(width)
+    check_column_count(width - time_column)
     if len(rows) > MAX_VALUES_PER_SAMPLE:
         raise over_limit("values per column", MAX_VALUES_PER_SAMPLE, len(rows), None)
     names = _column_names(columns, width)
@@ -185,6 +195,47 @@ def check_label(label: str, where: str, taken: Sequence[str]) -> None:
 def check_column_count(count: int) -> None:
     if count > MAX_SERIES_PER_PANEL:
         raise over_limit("series (columns) per panel", MAX_SERIES_PER_PANEL, count, None)
+
+
+def check_line_series_count(count: int) -> None:
+    """Spec 3: a line plot holds at most `LINE_SERIES_BUDGET` lines; up to the panel limit the
+    caller is told to split, past it the count is over the limit."""
+    check_column_count(count)
+    if count > LINE_SERIES_BUDGET:
+        raise PlotTableError(
+            PlotReason.KIND_SHAPE_MISMATCH,
+            f"{count} lines in one plot, the limit is {LINE_SERIES_BUDGET}: call plot_data once "
+            f"per group of at most {LINE_SERIES_BUDGET} series (small multiples) and keep the "
+            f"same y-range on each so they compare",
+        )
+
+
+def with_time_axis(table: PlotTable) -> PlotTable:
+    """The table with its time column (named ts, time or timestamp, else the first column) moved
+    to `time_ms`. Values are epoch milliseconds, whole numbers, strictly increasing."""
+    named = [i for i, c in enumerate(table.columns) if c.label.lower() in TIME_COLUMN_NAMES]
+    if len(named) > 1:
+        raise PlotTableError(PlotReason.DUPLICATE_LABEL, "data has more than one time column")
+    at = named[0] if named else 0
+    time = table.columns[at]
+    stamps: list[int] = []
+    for r, v in enumerate(time.values):
+        if v is None or v != int(v):
+            raise PlotTableError(
+                PlotReason.TS_UNPARSEABLE,
+                f"time column {time.label!r}, row {r}: {v!r} is not epoch milliseconds",
+            )
+        stamps.append(int(v))
+    for r, (a, b) in enumerate(pairwise(stamps), start=1):
+        if b <= a:
+            raise PlotTableError(
+                PlotReason.TS_NOT_INCREASING,
+                f"time column {time.label!r}, row {r} does not increase",
+            )
+    rest = table.columns[:at] + table.columns[at + 1 :]
+    if not rest:
+        raise PlotTableError(PlotReason.EMPTY, "data has a time column but no value column")
+    return PlotTable(rest, table.row_labels, tuple(stamps))
 
 
 def number(raw: object, where: str) -> float | None:

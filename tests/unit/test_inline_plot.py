@@ -87,3 +87,81 @@ async def test_csv_with_an_empty_cell_becomes_a_line_panel_with_one_gap(tmp_path
         ("b", NOW - 2 * MINUTE, 4),
         ("b", NOW, 6),
     ]
+
+
+def _lines(count: int) -> list[dict]:
+    return [
+        {"label": f"s{i}", "ts": [NOW - MINUTE, NOW], "values": [i, i + 1]} for i in range(count)
+    ]
+
+
+@pytest.mark.parametrize(("count", "complaint"), [(6, "small multiples"), (8, "small multiples")])
+async def test_six_to_eight_series_are_refused_with_the_small_multiples_hint(
+    tmp_path, count, complaint
+):
+    mcp = build_mcp(make_service(tmp_path), "http://ui")
+    r = await call(mcp, "plot_data", {"question": "q?", "series": _lines(count)})
+    assert r.is_error
+    assert complaint in text_of(r)
+
+
+async def test_nine_series_are_over_the_limit(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://ui")
+    r = await call(mcp, "plot_data", {"question": "q?", "series": _lines(9)})
+    assert r.is_error
+    assert "limit is 8, received 9" in text_of(r)
+
+
+async def test_five_series_are_still_drawn(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://ui")
+    r = await call(mcp, "plot_data", {"question": "q?", "series": _lines(5)})
+    assert not r.is_error
+
+
+async def test_labelled_columns_with_a_null_become_a_line_panel_with_a_gap(tmp_path):
+    service = make_service(tmp_path)
+    mcp = build_mcp(service, "http://ui")
+    data = {"ts": [NOW - 2 * MINUTE, NOW - MINUTE, NOW], "cats": [1, None, 3], "dogs": [4, 5, 6]}
+    r = await call(mcp, "plot_data", {"question": "q?", "data": data})
+    assert not r.is_error
+    panel = service.workspace.get_panel(json.loads(text_of(r))["panel"])
+    _, result = service.datasets.get(panel.dataset_ids[0])
+    points = {}
+    labels = {s["series_id"]: json.loads(s["labels"])["series"] for s in result.series.to_pylist()}
+    for b in result.buckets.to_pylist():
+        points.setdefault(labels[b["series_id"]], []).append(b["ts_ms"])
+    assert points == {
+        "cats": [NOW - 2 * MINUTE, NOW],
+        "dogs": [NOW - 2 * MINUTE, NOW - MINUTE, NOW],
+    }
+
+
+async def test_matrix_time_column_does_not_count_against_the_series_limit(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://ui")
+    rows = [[NOW - MINUTE, *range(8)], [NOW, *range(8)]]
+    r = await call(mcp, "plot_data", {"question": "q?", "data": rows})
+    assert r.is_error
+    assert "small multiples" in text_of(r)
+
+
+async def test_matrix_with_named_columns_draws_one_line_per_value_column(tmp_path):
+    service = make_service(tmp_path)
+    mcp = build_mcp(service, "http://ui")
+    rows = [[NOW - MINUTE, 1, 2], [NOW, 3, 4]]
+    r = await call(
+        mcp, "plot_data", {"question": "q?", "data": rows, "columns": ["when", "a", "b"]}
+    )
+    assert not r.is_error
+    panel = service.workspace.get_panel(json.loads(text_of(r))["panel"])
+    _, result = service.datasets.get(panel.dataset_ids[0])
+    assert sorted(json.loads(s["labels"])["series"] for s in result.series.to_pylist()) == [
+        "a",
+        "b",
+    ]
+
+
+async def test_series_and_data_together_are_refused(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://ui")
+    r = await call(mcp, "plot_data", {"question": "q?", "series": SERIES, "data": {"ts": [1]}})
+    assert r.is_error
+    assert "exactly one of series or data" in text_of(r)

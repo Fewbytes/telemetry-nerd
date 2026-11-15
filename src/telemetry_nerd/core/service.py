@@ -133,7 +133,13 @@ from telemetry_nerd.core.panel_payloads import (
     without_data,
 )
 from telemetry_nerd.core.plot_csv import csv_inline_series, parse_plot_csv
-from telemetry_nerd.core.plot_table import check_kind
+from telemetry_nerd.core.plot_table import (
+    check_kind,
+    check_line_series_count,
+    parse_plot_columns,
+    parse_plot_matrix,
+    with_time_axis,
+)
 from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.profiles import ProfileService
 from telemetry_nerd.core.retro_ops import RetroOps
@@ -1139,6 +1145,27 @@ class TelemetryService:
         check_kind(kind)
         return self._show_inline(question, parse_inline_series(series, self.clock()), unit, actor)
 
+    def plot_table(
+        self,
+        question: str,
+        data: dict[str, list] | list[list],
+        columns: list[str] | None = None,
+        unit: str | None = None,
+        actor: Actor = "claude",
+        kind: str = "line",
+    ) -> ShowResult:
+        """Draw labelled columns or a matrix the caller supplied as a line panel.
+
+        The time axis is the column named ts, time or timestamp (else the first column), in epoch
+        milliseconds; every other column is one line. `columns` names a matrix's columns.
+        Raises PlotTableError (a ValueError) naming the reason the data was refused."""
+        check_kind(kind)
+        if isinstance(data, dict):
+            table = parse_plot_columns(data, time_column=True)
+        else:
+            table = parse_plot_matrix(data, columns=columns, time_column=True)
+        return self._show_inline(question, csv_inline_series(with_time_axis(table)), unit, actor)
+
     def plot_csv(
         self,
         question: str,
@@ -1157,6 +1184,7 @@ class TelemetryService:
     def _show_inline(
         self, question: str, series: list[InlineSeries], unit: str | None, actor: Actor
     ) -> ShowResult:
+        check_line_series_count(len(series))
         data = inline_data(series)
         meta = self.datasets.put(
             source=INLINE_SOURCE,

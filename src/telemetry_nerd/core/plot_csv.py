@@ -12,6 +12,7 @@ from telemetry_nerd.core.inline_series import InlineSeries
 from telemetry_nerd.core.plot_table import (
     MAX_CSV_BYTES,
     MAX_POINTS_PER_TIME_SERIES,
+    TIME_COLUMN_NAMES,
     PlotColumn,
     PlotReason,
     PlotTable,
@@ -23,7 +24,6 @@ from telemetry_nerd.core.plot_table import (
 )
 from telemetry_nerd.model.time import parse_time
 
-TIME_COLUMN_NAMES = frozenset({"ts", "time", "timestamp"})
 REFUSED_DELIMITERS = {";": "semicolon", "\t": "tab"}
 
 
