@@ -137,6 +137,7 @@ The catalog's auto-chart (`show(signal)`) picks the form; explicit specs overrid
 | Error ratio | Wilson band; normalized comparison → funnel plot (P2 phase) | Bare ratio line | TN |
 | Success vs failed latency | **separate series** | One merged latency | P, C T7 |
 | Saturation | most-constrained resource + its limit line; short-window p99 as early signal | Average utilization | P, C T8 |
+| Compare values across categories (supplied data, plot mode) | `bar` (one series) / `bar_grouped` (2..4 series, shared baseline): zero baseline, never truncated, never log; sorted descending unless `order="given"`; horizontal when a label exceeds 12 characters or there are more than 12 bars; value labels when ≤ 12 bars; same label, same hue across panels | Truncated or log baseline, pie, stacked area | P, C A3, spec visualization-service §3 |
 
 **Never draw many series; aggregate and draw the analysis.** [TN] Readability collapses
 past ~8 series, and no tested form keeps individual series readable beyond that ([C] M5,
@@ -464,6 +465,17 @@ sprawl and grafonnet, radial gauges (never), bullet graphs (only if a single-val
 view is ever needed — then follow Few's spec in [C] §8), alert deduplication / blast-radius
 views.
 
+| Form | Status | Refusal wording |
+|---|---|---|
+| `pie` (also `donut`, `doughnut`, `radial`, `sunburst`, `3d_pie`) | **never rendered**; no flag or override. Plot mode (data supplied by Claude through `plot_data` / `plot_values` / `plot_csv`) answers `reason = refused_form` | "Pie charts are never rendered: angle and area are read less accurately than length, and slices are hard to compare. Use `kind=bar` (sorted, zero baseline) for parts of a whole." |
+| Stacked area | not offered; it hides the non-baseline series | Use lines or small multiples. |
+
+Plot mode is a separate mode from the investigation flow: the caller supplies the data, so
+there is no re-query, no source caveats and no `bucket_state` claim about a system. Panels
+carry the footer "supplied by claude; not queried", the unit is "provided by claude", and
+every other rule in this guide applies unchanged. See
+`design-docs/visualization-service-for-claude.md`.
+
 ---
 
 ## 10. Gaps against current code
@@ -491,6 +503,7 @@ Tracked as beads (`bd show <id>`).
 | 17 | Missing data: `bucket_state`, rug, heatmap textures, stepped paths, localized caveats, failed-chunk `unknown` spans | spec 2026-10-02; phases 1–4 done (plan 2026-10-02-missing-data-bucket-state) |
 | 18 | Per-backend missing-data semantics (lookback, staleness, rate edges, tiers, partial responses) | `1h9.10` |
 | 19 | Group density cloud mark with silent members | spec 2026-10-02 §7.1; visual design to brainstorm |
+| 20 | `bar` / `bar_grouped` marks: zero baseline, sort order, label and orientation rules, table view | spec visualization-service §3, card `rnkq.9` |
 
 ## 11. Open questions (no evidence either way)
 
