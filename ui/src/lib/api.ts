@@ -1,6 +1,7 @@
 import type { FleetData } from "../chart/fleet";
 import type { SeasonalSeries } from "../chart/seasonal";
 import type { SpcBaseline, SpcSeries } from "../chart/spc";
+import type { BarInput, BarOrder } from "../chart/bar";
 import type { LittlesSeries, LittlesUnmatched } from "../chart/littles";
 import type { VariationSource } from "./sources";
 export interface ChartSpec {
@@ -112,6 +113,9 @@ export interface LittlesPanelData extends PanelDataBase {
   kind: "littles"; effective_step_ms: number; window_ms: number; substep_ms: number;
   series: LittlesSeries[]; unmatched: LittlesUnmatched[]; more_groups: number;
 }
+export interface BarPanelData extends PanelDataBase {
+  kind: "bar"; effective_step_ms: number; order: BarOrder; rows: BarInput[];
+}
 export interface IndexPayload {
   baseline: "window" | "previous" | "week"; label: string; refused?: string;
   values?: Record<string, number | null>;
@@ -166,7 +170,7 @@ export interface HistogramPanelData extends PanelDataBase {
   kind: "histogram"; mark: "histogram" | "ecdf" | "quantile_curve" | "ccdf" | "qq"; effective_step_ms: number; value_merge: number;
   series: { id: string; labels: Record<string, string>; windows: WindowHist[] }[];
 }
-export type PanelData = TimePanelData | HeatmapPanelData | HistogramPanelData | SpectrumPanelData | SpectrogramPanelData | SpcPanelData | SeasonalPanelData | FleetPanelData | LittlesPanelData;
+export type PanelData = TimePanelData | HeatmapPanelData | HistogramPanelData | SpectrumPanelData | SpectrogramPanelData | SpcPanelData | SeasonalPanelData | FleetPanelData | LittlesPanelData | BarPanelData;
 export interface WorkspaceEvent {
   seq: number; ts_ms: number; actor: "claude" | "user" | "system" | "code"; type: string;
   object_id: string | null; klass: "intentional" | "ambient" | "internal";

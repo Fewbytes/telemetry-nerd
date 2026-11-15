@@ -16,6 +16,7 @@ counter, the handle to analyse further.
 | `mark="spectrum"` | series | at most 5 series; not percentiles or raw counters | only significant peaks with interval; the periods it cannot see (`limits`) |
 | `mark="spectrogram"` | series | `segment` between 16 steps and a quarter of the range; `overlap` default 0.5 | the segment length |
 | `mark="littles"` | the concurrency dataset from `check_littles_law` | the check ran on it | the discrepancy first (L vs λW per window, ratio strip), then the verdict |
+| `mark="bar"` | labelled values (plot mode `kind=bar` once it lands) | at most 50 bars; the baseline is always zero and the scale linear (a non-zero or log axis is refused) | sorted descending unless `order="given"`; horizontal when a label exceeds 12 characters or there are over 12 bars; value labels up to 12 bars; a missing value reads "no value", not zero |
 
 A filtered dataset (`filter`) is drawn with the raw series as context; `view` picks the default
 (overlay | filtered | removed | raw). State the filter and why.

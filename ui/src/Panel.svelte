@@ -23,6 +23,7 @@
   import SpectrumPlot from "./components/SpectrumPlot.svelte";
   import SpectrogramPlot from "./components/SpectrogramPlot.svelte";
   import SpcPlot from "./components/SpcPlot.svelte";
+  import BarPlot from "./components/BarPlot.svelte";
   import LittlesPlot from "./components/LittlesPlot.svelte";
   import SeasonalPlot from "./components/SeasonalPlot.svelte";
   import FleetPlot from "./components/FleetPlot.svelte";
@@ -987,6 +988,9 @@
         <SpcPlot data={sc} series={s} width={fetchWidth} compact={simple}
           onRendered={(ms, pts) => onFacetRendered(i, sc.series.length, ms, pts, 220)} onPlot={attachBrush} />
       {/each}
+    {/if}
+    {#if data && data.kind === "bar"}
+      <BarPlot data={data} width={fetchWidth} unit={panel.spec.y.unit ?? null} />
     {/if}
     {#if data && data.kind === "littles"}
       {@const lt = data}

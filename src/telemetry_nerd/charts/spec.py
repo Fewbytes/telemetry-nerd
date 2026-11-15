@@ -29,6 +29,7 @@ Mark = Literal[
     "seasonal",
     "fleet",
     "littles",
+    "bar",
 ]
 SPECTRAL_MARKS = {"spectrum", "spectrogram"}
 WINDOW_MARKS = {"histogram", "ecdf", "quantile_curve", "ccdf", "qq"}
@@ -39,6 +40,15 @@ DISTRIBUTION_MARKS = {"heatmap", "percentiles", *WINDOW_MARKS}
 MAX_QUANTILES = 4
 FACET_BUDGET = 12
 MAX_WINDOWS = 4
+
+
+class BarSpec(BaseModel):
+    """Bar mark rules of spec section 3: bars encode length, so the baseline is zero and the scale
+    linear. `baseline` and `scale` exist so that `validate` can refuse a spec that asks otherwise."""
+
+    order: Literal["descending", "given"] = "descending"  # "given": labels carry an inherent order
+    baseline: float = 0.0
+    scale: Literal["linear", "log"] = "linear"
 
 
 class Window(BaseModel):
@@ -67,6 +77,7 @@ class Layer(BaseModel):
     #: over the line budget (14y): {"keep": [series ids drawn as lines], "total": n,
     #: "rank": how they were chosen, "note": what was summarised}; the rest are one band
     top: dict | None = None
+    bar: BarSpec = Field(default_factory=BarSpec)  # read only by the bar mark
 
 
 class YLimit(BaseModel):
@@ -334,6 +345,14 @@ def validate(
                     "(query_distribution) are drawn as heatmap, percentiles, histogram, ecdf, "
                     "quantile_curve or ccdf; "
                     "series datasets as lines"
+                ),
+            ))  # fmt: skip
+        if layer.mark == "bar" and (layer.bar.baseline != 0 or layer.bar.scale != "linear"):
+            issues.append(ValidationIssue(
+                rule="bar_axis", severity="error",
+                message=(
+                    "bars encode length: the baseline is always zero and the scale linear "
+                    f"(got baseline {layer.bar.baseline:g}, {layer.bar.scale} scale)"
                 ),
             ))  # fmt: skip
         if layer.mark == "percentiles" and (

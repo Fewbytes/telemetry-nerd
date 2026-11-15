@@ -232,3 +232,26 @@ def test_a_cut_layer_counts_its_kept_lines_and_one_band():
     assert _errors(ChartSpec(layers=[cut]), rep="bucket_agg", n=9) == set()
     wide = Layer(mark="line+envelope", data="d", top={"keep": list("abcde"), "total": 9})
     assert _errors(ChartSpec(layers=[wide]), rep="bucket_agg", n=9) == {"series_budget"}
+
+
+def _bar_spec(**bar) -> ChartSpec:
+    return ChartSpec(layers=[Layer(mark="bar", data="d1", bar=bar)])
+
+
+def test_bar_spec_with_zero_linear_axis_is_valid_and_sorted_descending_by_default():
+    spec = _bar_spec()
+    assert spec.layers[0].bar.order == "descending"
+    assert [i for i in validate(spec, {"d1": 1}) if i.severity == "error"] == []
+
+
+@pytest.mark.parametrize("bar", [{"baseline": 10.0}, {"scale": "log"}, {"baseline": -1.0}])
+def test_bar_spec_rejects_non_zero_baseline_or_log_scale(bar):
+    errors = [i for i in validate(_bar_spec(**bar), {"d1": 1}) if i.severity == "error"]
+    assert [i.rule for i in errors] == ["bar_axis"]
+    assert "baseline is always zero" in errors[0].message
+
+
+def test_bar_order_given_is_accepted_and_other_orders_are_not():
+    assert _bar_spec(order="given").layers[0].bar.order == "given"
+    with pytest.raises(ValidationError):
+        _bar_spec(order="ascending")
