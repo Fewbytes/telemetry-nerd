@@ -150,3 +150,27 @@ def test_a_qq_sample_with_three_columns_fails_spec_validation():
     spec = ChartSpec(layers=[Layer(mark="qq", data="d1", columns=["a", "b", "c"])])
     issues = validate(spec, {"d1": 3}, {"d1": "samples"})
     assert any("exactly 2" in i.message for i in issues)
+
+
+def test_plot_cumulative_draws_a_histogram_of_one_array_and_of_two_columns(tmp_path):
+    svc = make_service(tmp_path)
+    one = svc.plot_cumulative("How are latencies spread?", LATENCIES, kind="histogram", unit="ms")
+    data = svc.panel_data(one.panel.id, width_px=800)
+    assert data["series"][0]["n"] == 1000 and sum(data["series"][0]["counts"]) == 1000
+
+    two = svc.plot_cumulative("Did it shift?", {"a": [1, 2, 3, None], "b": [2, 3, 4]}, "histogram")
+    a, b = svc.panel_data(two.panel.id, width_px=800)["series"]
+    assert (a["n"], a["missing"], b["n"]) == (3, 1, 3)
+
+
+def test_ecdf_draws_an_array_with_n_stated_and_refuses_five_columns(tmp_path):
+    svc = make_service(tmp_path)
+    shown = svc.plot_cumulative("What share is under 10 ms?", LATENCIES, kind="ecdf", unit="ms")
+    data = svc.panel_data(shown.panel.id, width_px=800)
+    (window,) = data["series"][0]["windows"]
+    assert data["mark"] == "ecdf" and window["n"] == 1000.0 and sum(window["c"]) == 1000
+
+    for kind in ("histogram", "ecdf"):
+        with pytest.raises(PlotTableError) as refused:
+            svc.plot_cumulative("q?", {f"c{i}": [1.0, 2.0] for i in range(5)}, kind=kind)
+        assert refused.value.reason == PlotReason.OVER_LIMIT

@@ -1279,7 +1279,7 @@ class TelemetryService:
         actor: Actor = "claude",
     ) -> ShowResult:
         """Draw an array, labelled columns or a matrix the caller supplied as `kind` (one of
-        CUMULATIVE_KINDS), at most MAX_WINDOWS columns compared. A qq takes exactly two columns,
+        SAMPLE_PLOT_KINDS), at most MAX_WINDOWS columns compared. A qq takes exactly two columns,
         of any lengths; each column's n and missing count are stated on the panel.
 
         Raises PlotTableError (a ValueError) naming the reason the data was refused."""

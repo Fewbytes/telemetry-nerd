@@ -35,9 +35,11 @@ PIE_REFUSAL = (
     "slices are hard to compare. Use `kind=bar` (sorted, zero baseline) for parts of a whole."
 )
 DRAWABLE_KINDS = ("line",)
-# Kinds plot_data draws as a distribution of caller columns (core.sample_cumulative); each is also
-# the name of the mark that draws it. plot_csv and plot_inline do not take them.
-CUMULATIVE_KINDS = ("qq", "quantile_curve", "ccdf")
+# Kinds plot_data draws as a cumulative view of caller columns (core.sample_cumulative); each is
+# also the name of the mark that draws it.
+CUMULATIVE_KINDS = ("ecdf", "qq", "quantile_curve", "ccdf")
+# Every kind of caller sample (service.plot_cumulative); plot_csv and plot_inline do not take them.
+SAMPLE_PLOT_KINDS = ("histogram", *CUMULATIVE_KINDS)
 TIME_COLUMN_NAMES = frozenset({"ts", "time", "timestamp"})
 
 ANONYMOUS_COLUMN = "values"
