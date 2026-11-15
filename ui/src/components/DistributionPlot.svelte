@@ -437,7 +437,7 @@
     {#each windows as w, k (k)}
       <div>
         <span class="sw" style="background: {palette[k % palette.length]}"></span>
-        {w.label || `range ${k + 1}`} {fmtRange(w.start_ms, w.end_ms)} · n = {Number(w.n.toPrecision(4))} ({w.columns} steps){#if w.n > 0 && w.n < nMin}
+        {w.label || `range ${k + 1}`} {#if w.missing === undefined}{fmtRange(w.start_ms, w.end_ms)} · n = {Number(w.n.toPrecision(4))} ({w.columns} steps){:else}· n = {Number(w.n.toPrecision(4))}, {w.missing} missing{/if}{#if w.n > 0 && w.n < nMin}
           · low n{/if}
       </div>
     {/each}

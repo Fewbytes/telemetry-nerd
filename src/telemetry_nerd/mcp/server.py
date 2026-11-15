@@ -20,6 +20,7 @@ from telemetry_nerd.core.code_ops import CodeDisabled
 from telemetry_nerd.core.evidence_discipline import citable_statistics
 from telemetry_nerd.core.littles_compact import compact as littles_compact
 from telemetry_nerd.core.littles_compact import statistics as littles_statistics
+from telemetry_nerd.core.plot_table import CUMULATIVE_KINDS
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
 from telemetry_nerd.core.wire import with_cite
 from telemetry_nerd.mcp.shapes import EvidenceContext, ShapeError, finding_in, hypothesis_scope
@@ -1988,7 +1989,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         series: list[dict[str, Any]] | None = None,
         unit: str | None = None,
         kind: str = "line",
-        data: dict[str, list[Any]] | list[list[Any]] | None = None,
+        data: dict[str, list[Any]] | list[Any] | None = None,
         columns: list[str] | None = None,
         labels: list[str] | None = None,
     ) -> str:
@@ -2008,22 +2009,28 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         epoch milliseconds; every other column is one line; null is a gap.
         At most 5 lines per plot: for 6..8 series call once per group of at most 5 (small
         multiples, same y-range); more than 8 is over_limit.
-        kind: "line" or "heatmap". Circular and 3-D forms are never rendered, with
-        no override: such a kind fails with refused_form and nothing is drawn. For parts of a
+        kind: "line", "heatmap", "qq", "quantile_curve" or "ccdf". Circular and 3-D forms are never
+        rendered, with no override: such a kind fails with refused_form and nothing is drawn. For parts of a
         whole, call again with kind="bar".
         kind="heatmap": data is a matrix [[...], ...] or labelled columns, up to 100 rows by
         100 columns, no time axis; labels name the rows (default r0, r1, ...), columns the
         matrix columns (default c0, c1, ...). The legend states the colour mapping.
+        kind="qq"|"quantile_curve"|"ccdf": data is an array [...], labelled columns or a matrix,
+        no time axis, at most 4 columns (more is over_limit). qq takes exactly 2 columns (else
+        kind_shape_mismatch), of any lengths, plots their quantiles against each other and states
+        each n; null values are dropped and counted.
         unit: optional y-axis unit, recorded as "provided by claude".
         Returns {panel, url, warnings}.
         """
         if (series is None) == (data is None):
             raise ToolError("pass exactly one of series or data")
-        if kind == "heatmap" and data is None:
-            raise ToolError("kind=heatmap takes data (a matrix or columns), not series")
+        if (kind == "heatmap" or kind in CUMULATIVE_KINDS) and data is None:
+            raise ToolError(f"kind={kind} takes data (a matrix or columns), not series")
         try:
             if kind == "heatmap":
                 res = service.plot_heatmap(question, data, columns, labels, unit=unit)
+            elif kind in CUMULATIVE_KINDS:
+                res = service.plot_cumulative(question, data, kind, columns, unit=unit)
             elif data is not None:
                 res = service.plot_table(question, data, columns, unit=unit, kind=kind)
             else:

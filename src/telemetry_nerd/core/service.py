@@ -58,6 +58,7 @@ from telemetry_nerd.charts.derived_bounds import derive_bounds
 from telemetry_nerd.charts.series_cut import RANK_TEXT, cut_note, member_label, names, rank, split
 from telemetry_nerd.charts.spec import (
     LINE_SERIES_BUDGET,
+    MAX_WINDOWS,
     SPECTRAL_MARKS,
     WINDOW_MARKS,
     AssertedBounds,
@@ -136,11 +137,14 @@ from telemetry_nerd.core.panel_payloads import (
 )
 from telemetry_nerd.core.plot_csv import csv_inline_series, parse_plot_csv
 from telemetry_nerd.core.plot_table import (
+    CUMULATIVE_KINDS,
     MAX_MATRIX_SIDE,
     PlotTable,
+    check_cumulative_shape,
     check_kind,
     check_line_series_count,
     check_matrix_rows,
+    parse_plot_array,
     parse_plot_columns,
     parse_plot_matrix,
     with_time_axis,
@@ -148,6 +152,7 @@ from telemetry_nerd.core.plot_table import (
 from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.profiles import ProfileService
 from telemetry_nerd.core.retro_ops import RetroOps
+from telemetry_nerd.core.sample_cumulative import sample_cumulative_payload
 from telemetry_nerd.core.sample_heatmap import sample_heatmap_payload
 from telemetry_nerd.core.sample_histogram import sample_histogram_payload
 from telemetry_nerd.core.seasonal_dist_ops import SeasonalDistOps
@@ -1263,6 +1268,29 @@ class TelemetryService:
         return self.plot_sample(
             question, table, unit=unit, actor=actor, mark="heatmap", row_labels=table.row_labels
         )
+
+    def plot_cumulative(
+        self,
+        question: str,
+        data: dict[str, list] | list,
+        kind: str,
+        columns: list[str] | None = None,
+        unit: str | None = None,
+        actor: Actor = "claude",
+    ) -> ShowResult:
+        """Draw an array, labelled columns or a matrix the caller supplied as `kind` (one of
+        CUMULATIVE_KINDS), at most MAX_WINDOWS columns compared. A qq takes exactly two columns,
+        of any lengths; each column's n and missing count are stated on the panel.
+
+        Raises PlotTableError (a ValueError) naming the reason the data was refused."""
+        if isinstance(data, dict):
+            table = parse_plot_columns(data, max_columns=MAX_WINDOWS, unequal_lengths=True)
+        elif all(isinstance(v, int | float | None) for v in data):
+            table = parse_plot_array(data)
+        else:
+            table = parse_plot_matrix(data, columns=columns, max_columns=MAX_WINDOWS)
+        check_cumulative_shape(kind, table)
+        return self.plot_sample(question, table, unit=unit, actor=actor, mark=kind)
 
     async def show_binding(self, **kw) -> PanelGroup:
         """A bound USE / RED / Little's law metric set as one linked panel group (bead czt.3)."""
@@ -2626,6 +2654,8 @@ class TelemetryService:
             return sample_heatmap_payload(
                 panel, meta, columns, self.datasets.get_sample_row_labels(dataset_id)
             )
+        if representation == "samples" and panel.spec["layers"][0]["mark"] in CUMULATIVE_KINDS:
+            return sample_cumulative_payload(panel, *self.datasets.get_samples(dataset_id))
         if representation == "samples":
             return sample_histogram_payload(panel, *self.datasets.get_samples(dataset_id))
         if representation == "distribution":

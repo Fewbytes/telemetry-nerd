@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from itertools import pairwise
 
-from telemetry_nerd.charts.spec import LINE_SERIES_BUDGET
+from telemetry_nerd.charts.spec import LINE_SERIES_BUDGET, MAX_WINDOWS
 
 # Limits of spec 2.3: one source of truth, echoed in every over_limit message.
 MAX_SERIES_PER_PANEL = 8
@@ -35,6 +35,9 @@ PIE_REFUSAL = (
     "slices are hard to compare. Use `kind=bar` (sorted, zero baseline) for parts of a whole."
 )
 DRAWABLE_KINDS = ("line",)
+# Kinds plot_data draws as a distribution of caller columns (core.sample_cumulative); each is also
+# the name of the mark that draws it. plot_csv and plot_inline do not take them.
+CUMULATIVE_KINDS = ("qq", "quantile_curve", "ccdf")
 TIME_COLUMN_NAMES = frozenset({"ts", "time", "timestamp"})
 
 ANONYMOUS_COLUMN = "values"
@@ -92,8 +95,10 @@ def parse_plot_columns(
     labels: object = None,
     time_column: bool = False,
     max_columns: int = MAX_SERIES_PER_PANEL,
+    unequal_lengths: bool = False,
 ) -> PlotTable:
-    """`{"a": [...], "b": [...]}`: every column the same length; keys are the labels.
+    """`{"a": [...], "b": [...]}`: every column the same length (unless `unequal_lengths`, for
+    samples that are compared, not paired); keys are the labels.
     `time_column` says one of them is the time axis, so it does not count against the series limit."""
     if not columns:
         raise PlotTableError(PlotReason.EMPTY, "data holds no columns")
@@ -115,7 +120,7 @@ def parse_plot_columns(
             )
         )
     lengths = {len(c.values) for c in parsed}
-    if len(lengths) > 1:
+    if len(lengths) > 1 and not unequal_lengths:
         detail = ", ".join(f"{c.label!r} has {len(c.values)}" for c in parsed)
         raise PlotTableError(PlotReason.RAGGED, f"columns differ in length: {detail}")
     return PlotTable(tuple(parsed), _row_labels(labels, len(parsed[0].values)))
@@ -277,4 +282,15 @@ def check_kind(kind: str) -> None:
     if kind not in DRAWABLE_KINDS:
         raise PlotTableError(
             PlotReason.UNKNOWN_KIND, f"kind {kind!r} is not drawable; supported: {DRAWABLE_KINDS}"
+        )
+
+
+def check_cumulative_shape(kind: str, table: PlotTable) -> None:
+    """Spec 3: at most `MAX_WINDOWS` samples compared, and a Q-Q plot takes exactly two."""
+    check_column_count(len(table.columns), MAX_WINDOWS)
+    if kind == "qq" and len(table.columns) != 2:
+        raise PlotTableError(
+            PlotReason.KIND_SHAPE_MISMATCH,
+            f"qq plots the quantiles of one column against another: it needs exactly 2 columns, "
+            f"got {len(table.columns)}",
         )

@@ -49,7 +49,7 @@ def test_compared_columns_share_bins_and_count_nulls_as_missing(tmp_path):
 def test_a_mark_that_needs_time_windows_cannot_draw_a_sample(tmp_path):
     svc = make_service(tmp_path)
     with pytest.raises(ChartRejected, match="no time axis"):
-        svc.plot_sample("q?", parse_plot_array([1.0, 2.0]), mark="qq")
+        svc.plot_sample("q?", parse_plot_array([1.0, 2.0]), mark="percentiles")
     assert svc.workspace.list_panels() == []
 
 
@@ -106,3 +106,47 @@ def test_a_heatmap_wider_or_taller_than_100_is_refused(tmp_path):
     with pytest.raises(PlotTableError, match="matrix rows: limit is 100, received 101"):
         svc.plot_heatmap("q?", [[0.0]] * 101)
     assert svc.workspace.list_panels() == []
+
+
+def test_qq_of_two_columns_of_unequal_length_states_both_n(tmp_path):
+    svc = make_service(tmp_path)
+    shown = svc.plot_cumulative(
+        "Did the shift move the tail?", {"before": [1, 2, 3, 4, 5, 6], "after": [2, 3, None, 5]},
+        kind="qq",
+    )  # fmt: skip
+    panel = svc.workspace.get_panel(shown.panel.id)
+    assert panel.spec["layers"][0]["mark"] == "qq"
+    data = svc.panel_data(panel.id, width_px=800)
+    before, after = data["series"][0]["windows"]
+    assert (before["label"], before["n"], before["missing"]) == ("before", 6.0, 0)
+    assert (after["label"], after["n"], after["missing"]) == ("after", 3.0, 1)
+    assert after["lo"] == after["hi"] == [2.0, 3.0, 5.0] and after["c"] == [1, 1, 1]
+
+
+@pytest.mark.parametrize("columns", [{"a": [1.0, 2.0]}, {"a": [1.0], "b": [2.0], "c": [3.0]}])
+def test_qq_needs_exactly_two_columns(tmp_path, columns):
+    svc = make_service(tmp_path)
+    with pytest.raises(PlotTableError) as refused:
+        svc.plot_cumulative("q?", columns, kind="qq")
+    assert refused.value.reason == PlotReason.KIND_SHAPE_MISMATCH
+    assert svc.workspace.list_panels() == []
+
+
+@pytest.mark.parametrize("kind", ["quantile_curve", "ccdf"])
+def test_tail_views_draw_an_array_and_refuse_five_columns(tmp_path, kind):
+    svc = make_service(tmp_path)
+    shown = svc.plot_cumulative("How heavy is the tail?", LATENCIES, kind=kind, unit="ms")
+    data = svc.panel_data(shown.panel.id, width_px=800)
+    (window,) = data["series"][0]["windows"]
+    assert data["mark"] == kind and window["n"] == 1000.0 and sum(window["c"]) == 1000
+
+    five = {f"c{i}": [1.0, 2.0] for i in range(5)}
+    with pytest.raises(PlotTableError) as refused:
+        svc.plot_cumulative("q?", five, kind=kind)
+    assert refused.value.reason == PlotReason.OVER_LIMIT
+
+
+def test_a_qq_sample_with_three_columns_fails_spec_validation():
+    spec = ChartSpec(layers=[Layer(mark="qq", data="d1", columns=["a", "b", "c"])])
+    issues = validate(spec, {"d1": 3}, {"d1": "samples"})
+    assert any("exactly 2" in i.message for i in issues)

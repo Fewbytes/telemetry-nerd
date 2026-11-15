@@ -34,6 +34,10 @@ Mark = Literal[
 SPECTRAL_MARKS = {"spectrum", "spectrogram"}
 WINDOW_MARKS = {"histogram", "ecdf", "quantile_curve", "ccdf", "qq"}
 SAMPLE_MARKS = {
+    "ecdf",
+    "quantile_curve",
+    "ccdf",
+    "qq",
     "histogram",
     "heatmap",
 }  # marks that draw a windowless sample dataset (representation "samples")
@@ -305,6 +309,11 @@ def _sample_layer_issues(layer: Layer) -> list[ValidationIssue]:
         issues.append(ValidationIssue(
             rule="windows", severity="error",
             message=f"{layer.mark} needs 1 to {MAX_WINDOWS} columns to compare",
+        ))  # fmt: skip
+    if layer.mark == "qq" and len(layer.columns) != 2:
+        issues.append(ValidationIssue(
+            rule="windows", severity="error",
+            message="qq plots the quantiles of one column against another: it needs exactly 2",
         ))  # fmt: skip
     return issues
 
