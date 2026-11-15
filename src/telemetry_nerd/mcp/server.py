@@ -2008,6 +2008,31 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         })  # fmt: skip
 
     @mcp.tool()
+    def plot_csv(question: str, csv: str, unit: str | None = None) -> str:
+        """Draw CSV text YOU supply as a line panel in the shared workspace: no source query.
+
+        Same purpose as plot_data, for a table you hold as text. There is no file or URL input:
+        pass the CSV itself.
+
+        question is REQUIRED: what this graph answers.
+        csv: first row is the header; the delimiter is a comma (';' and tab are refused). A
+        column named ts, time or timestamp is the time axis (epoch milliseconds or ISO-8601
+        with timezone, strictly increasing); every other column is one line of finite numbers.
+        An empty cell is a missing value and shows as a gap. At most 5 MiB, 8 lines.
+        unit: optional y-axis unit, recorded as "provided by claude".
+        Returns {panel, url, warnings}.
+        """
+        try:
+            res = service.plot_csv(question, csv, unit=unit)
+        except (ChartRejected, ValueError) as e:
+            raise ToolError(str(e)) from e
+        return _dump({
+            "panel": res.panel.id,
+            "url": f"{ui_url}/#/panel/{res.panel.id}",
+            "warnings": [i.message for i in res.issues],
+        })  # fmt: skip
+
+    @mcp.tool()
     async def split_outcome(dataset: str) -> str:
         """Latency by outcome: for a histogram-backed dataset (latency distribution or
         histogram_quantile series) open TWO new panels, successful and failed requests, so fast errors

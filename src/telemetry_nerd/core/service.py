@@ -113,6 +113,7 @@ from telemetry_nerd.core.inline_series import (
     INLINE_NODE,
     INLINE_OUTPUT,
     INLINE_SOURCE,
+    InlineSeries,
     inline_data,
     parse_inline_series,
 )
@@ -131,6 +132,7 @@ from telemetry_nerd.core.panel_payloads import (
     signal_payload,
     without_data,
 )
+from telemetry_nerd.core.plot_csv import csv_inline_series, parse_plot_csv
 from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.profiles import ProfileService
 from telemetry_nerd.core.retro_ops import RetroOps
@@ -1131,7 +1133,21 @@ class TelemetryService:
 
         Stored as fixed data (see core.inline_series), so the panel is an ordinary line panel
         that nothing re-fetches. Raises ValueError for malformed series."""
-        data = inline_data(parse_inline_series(series, self.clock()))
+        return self._show_inline(question, parse_inline_series(series, self.clock()), unit, actor)
+
+    def plot_csv(
+        self, question: str, csv_text: str, unit: str | None = None, actor: Actor = "claude"
+    ) -> ShowResult:
+        """Draw CSV text the caller supplied as a line panel: the same path as `plot_inline`.
+
+        Raises PlotTableError (a ValueError) naming the reason the CSV was refused."""
+        table = parse_plot_csv(csv_text, self.clock())
+        return self._show_inline(question, csv_inline_series(table), unit, actor)
+
+    def _show_inline(
+        self, question: str, series: list[InlineSeries], unit: str | None, actor: Actor
+    ) -> ShowResult:
+        data = inline_data(series)
         meta = self.datasets.put(
             source=INLINE_SOURCE,
             expr=INLINE_EXPR,

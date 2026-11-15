@@ -34,6 +34,11 @@ class PlotReason(StrEnum):
     DUPLICATE_LABEL = "duplicate_label"
     MISSING_LABEL = "missing_label"
     OVER_LIMIT = "over_limit"
+    TS_NOT_INCREASING = "ts_not_increasing"
+    TS_UNPARSEABLE = "ts_unparseable"
+    CSV_UNSUPPORTED_DELIMITER = "csv_unsupported_delimiter"
+    CSV_MALFORMED = "csv_malformed"
+    KIND_SHAPE_MISMATCH = "kind_shape_mismatch"
 
 
 class PlotTableError(ValueError):
@@ -54,6 +59,7 @@ class PlotColumn:
 class PlotTable:
     columns: tuple[PlotColumn, ...]
     row_labels: tuple[str, ...] | None  # one per row (bar category, matrix row), if supplied
+    time_ms: tuple[int, ...] | None = None  # one per row, strictly increasing: a time axis
 
     @property
     def row_count(self) -> int:
@@ -69,10 +75,10 @@ def parse_plot_columns(columns: Mapping[str, object], labels: object = None) -> 
     """`{"a": [...], "b": [...]}`: every column the same length; keys are the labels."""
     if not columns:
         raise PlotTableError(PlotReason.EMPTY, "data holds no columns")
-    _check_column_count(len(columns))
+    check_column_count(len(columns))
     parsed: list[PlotColumn] = []
     for label, raw in columns.items():
-        _check_label(label, f"column {label!r}", [c.label for c in parsed])
+        check_label(label, f"column {label!r}", [c.label for c in parsed])
         if not isinstance(raw, Sequence) or isinstance(raw, str):
             raise PlotTableError(
                 PlotReason.NOT_FINITE, f"column {label!r} must be a list of numbers"
@@ -80,10 +86,10 @@ def parse_plot_columns(columns: Mapping[str, object], labels: object = None) -> 
         if not raw:
             raise PlotTableError(PlotReason.EMPTY, f"column {label!r} is empty")
         if len(raw) > MAX_VALUES_PER_SAMPLE:
-            raise _over_limit("values per column", MAX_VALUES_PER_SAMPLE, len(raw), label)
+            raise over_limit("values per column", MAX_VALUES_PER_SAMPLE, len(raw), label)
         parsed.append(
             PlotColumn(
-                label, tuple(_number(v, f"column {label!r}, index {i}") for i, v in enumerate(raw))
+                label, tuple(number(v, f"column {label!r}, index {i}") for i, v in enumerate(raw))
             )
         )
     lengths = {len(c.values) for c in parsed}
@@ -109,14 +115,14 @@ def parse_plot_matrix(rows: object, labels: object = None, columns: object = Non
             raise PlotTableError(
                 PlotReason.RAGGED, f"matrix row {r} has {len(row)} values, row 0 has {width}"
             )
-    _check_column_count(width)
+    check_column_count(width)
     if len(rows) > MAX_VALUES_PER_SAMPLE:
-        raise _over_limit("values per column", MAX_VALUES_PER_SAMPLE, len(rows), None)
+        raise over_limit("values per column", MAX_VALUES_PER_SAMPLE, len(rows), None)
     names = _column_names(columns, width)
     parsed: list[PlotColumn] = []
     for c, name in enumerate(names):
-        _check_label(name, f"column {c}", [p.label for p in parsed])
-        values = tuple(_number(row[c], f"column {name!r}, row {r}") for r, row in enumerate(rows))
+        check_label(name, f"column {c}", [p.label for p in parsed])
+        values = tuple(number(row[c], f"column {name!r}, row {r}") for r, row in enumerate(rows))
         parsed.append(PlotColumn(name, values))
     return PlotTable(tuple(parsed), _row_labels(labels, len(rows)))
 
@@ -142,7 +148,7 @@ def _row_labels(labels: object, row_count: int) -> tuple[str, ...] | None:
         )
     seen: list[str] = []
     for i, name in enumerate(names):
-        _check_label(name, f"labels[{i}]", seen)
+        check_label(name, f"labels[{i}]", seen)
         seen.append(name)
     return tuple(names)
 
@@ -156,21 +162,21 @@ def _string_list(raw: object, what: str) -> list[str]:
     return list(raw)
 
 
-def _check_label(label: str, where: str, taken: Sequence[str]) -> None:
+def check_label(label: str, where: str, taken: Sequence[str]) -> None:
     if not label.strip():
         raise PlotTableError(PlotReason.MISSING_LABEL, f"{where} has a blank label")
     if len(label) > MAX_LABEL_CHARS:
-        raise _over_limit("label length", MAX_LABEL_CHARS, len(label), label[:MAX_LABEL_CHARS])
+        raise over_limit("label length", MAX_LABEL_CHARS, len(label), label[:MAX_LABEL_CHARS])
     if label in taken:
         raise PlotTableError(PlotReason.DUPLICATE_LABEL, f"label {label!r} is used twice ({where})")
 
 
-def _check_column_count(count: int) -> None:
+def check_column_count(count: int) -> None:
     if count > MAX_SERIES_PER_PANEL:
-        raise _over_limit("series (columns) per panel", MAX_SERIES_PER_PANEL, count, None)
+        raise over_limit("series (columns) per panel", MAX_SERIES_PER_PANEL, count, None)
 
 
-def _number(raw: object, where: str) -> float | None:
+def number(raw: object, where: str) -> float | None:
     if raw is None:
         return None
     if isinstance(raw, bool) or not isinstance(raw, int | float) or not math.isfinite(raw):
@@ -181,7 +187,7 @@ def _number(raw: object, where: str) -> float | None:
     return float(raw)
 
 
-def _over_limit(limit: str, maximum: int, received: int, column: str | None) -> PlotTableError:
+def over_limit(limit: str, maximum: int, received: int, column: str | None) -> PlotTableError:
     target = f" in column {column!r}" if column is not None else ""
     return PlotTableError(
         PlotReason.OVER_LIMIT, f"{limit}: limit is {maximum}, received {received}{target}"
