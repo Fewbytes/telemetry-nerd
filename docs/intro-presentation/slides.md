@@ -4,7 +4,7 @@ title: "Telemetry Nerd: a power tool for power telemetry users"
 info: |
   DevOpsDays Tel Aviv 2026 — 90-minute hands-on session.
   Open-source investigation workspace where you and Claude work through
-  Prometheus-compatible metrics together.
+  your telemetry together, from any source you can reach.
 author: Avishai Ish-Shalom
 colorSchema: light
 highlighter: shiki
@@ -390,8 +390,11 @@ Verify Kibana's current defaults actually mislead here (spec §4); otherwise cal
 
 # Telemetry Nerd
 
-An open-source **investigation workspace** where you and Claude work through your
-Prometheus-compatible metrics together.
+An open-source **investigation workspace** where you and Claude work through **whatever telemetry
+you can get at**, together.
+
+<div class="grid grid-cols-5 gap-4">
+<div class="col-span-3">
 
 ```mermaid
 flowchart LR
@@ -401,8 +404,26 @@ flowchart LR
   ui <-->|HTTP| tn
   tn --> cat[(Metric catalog)]
   tn --> ws[(Panels, hypotheses,<br/>findings)]
-  tn -->|PromQL| src[(Prometheus /<br/>VictoriaMetrics)]
+  tn --> src[(Data sources)]
+  claude -.->|CSV / tables from<br/>other MCPs, files, APIs| tn
 ```
+
+</div>
+<div class="col-span-2 text-sm">
+
+**Sources**
+
+- Prometheus, VictoriaMetrics, Thanos, Mimir
+- Elasticsearch / OpenSearch (Kibana discovery)
+- Any of these behind your **Grafana**
+- OAuth2, bearer, basic, API key, SigV4
+
+**Anything else**
+
+- Claude pulls data from another MCP server, a file or an API and hands it over as **CSV**, which is drawn with the same rules
+
+</div>
+</div>
 
 Bulk data never enters Claude's context: Claude gets statistics, the browser gets the series.
 
