@@ -5,10 +5,11 @@ description: This skill should be used when investigating a live or recent produ
 
 # Incident triage
 
-A short procedure. Each step names the tools; the methods live in sibling skills: `model-views`
-(bindings, verdicts, Little's law), `evidence` (findings, hypotheses, uncertainty, sources of
-variation), `charting` (which view answers which question), `metric-learning` (what a metric
-means), `tier2-code` (custom statistics). Load them when a step needs them.
+A short procedure; method: the `debugging` skill. Each step names the tools; the methods live
+in sibling skills: `model-views` (bindings, verdicts, Little's law), `evidence` (findings,
+hypotheses, uncertainty, sources of variation), `charting` (which view answers which question),
+`metric-learning` (what a metric means), `tier2-code` (custom statistics). Load them when a step
+needs them.
 
 ## 1. Symptom and time range
 
