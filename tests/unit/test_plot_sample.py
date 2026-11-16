@@ -32,6 +32,8 @@ def test_histogram_of_a_supplied_array_states_n_and_the_bin_rule(tmp_path):
     assert sum(data["series"][0]["counts"]) == 1000
     assert "n=1000" in data["text"] and "Freedman-Diaconis" in data["text"]
     assert len(data["edges"]) == len(data["series"][0]["counts"]) + 1
+    # the panel notes read caveats; absent, the panel threw and drew nothing
+    assert data["caveats"] == [] and data["effective_step_ms"] == 0
 
 
 def test_compared_columns_share_bins_and_count_nulls_as_missing(tmp_path):

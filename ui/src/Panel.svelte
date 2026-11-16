@@ -27,6 +27,7 @@
   import LittlesPlot from "./components/LittlesPlot.svelte";
   import SeasonalPlot from "./components/SeasonalPlot.svelte";
   import MatrixHeat from "./components/MatrixHeat.svelte";
+  import SampleHistogram from "./components/SampleHistogram.svelte";
   import FleetPlot from "./components/FleetPlot.svelte";
   import { fleetStats, fleetY } from "./chart/fleet";
   import { shortNamer } from "./chart/seriesNames";
@@ -1031,6 +1032,9 @@
     {/if}
     {#if data && data.kind === "sample_heatmap"}
       <MatrixHeat {data} compact={simple} />
+    {/if}
+    {#if data && data.kind === "sample_histogram"}
+      <SampleHistogram {data} width={fetchWidth} compact={simple} />
     {/if}
     {#if data && data.kind === "spectrogram"}
       {@const sg = data}

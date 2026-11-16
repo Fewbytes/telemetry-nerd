@@ -172,12 +172,17 @@ export interface HistogramPanelData extends PanelDataBase {
   kind: "histogram"; mark: "histogram" | "ecdf" | "quantile_curve" | "ccdf" | "qq"; effective_step_ms: number; value_merge: number;
   series: { id: string; labels: Record<string, string>; windows: WindowHist[] }[];
 }
+/** A caller-supplied sample (plot_data kind=histogram): `counts` per column over the shared `edges`. */
+export interface SampleHistogramPanelData extends PanelDataBase {
+  kind: "sample_histogram"; mark: "histogram"; effective_step_ms: number; edges: number[];
+  series: { label: string; n: number; missing: number; counts: number[] }[]; bin_rule: string; text: string;
+}
 /** A caller-supplied matrix (plot_data kind=heatmap): `cells` is row-major, null = missing. */
 export interface SampleHeatmapPanelData extends PanelDataBase {
   kind: "sample_heatmap"; effective_step_ms: number; row_labels: string[]; column_labels: string[]; cells: (number | null)[][];
   min: number; max: number; legend: string;
 }
-export type PanelData = TimePanelData | SampleHeatmapPanelData | HeatmapPanelData | HistogramPanelData | SpectrumPanelData | SpectrogramPanelData | SpcPanelData | SeasonalPanelData | FleetPanelData | LittlesPanelData | BarPanelData;
+export type PanelData = TimePanelData | SampleHeatmapPanelData | SampleHistogramPanelData | HeatmapPanelData | HistogramPanelData | SpectrumPanelData | SpectrogramPanelData | SpcPanelData | SeasonalPanelData | FleetPanelData | LittlesPanelData | BarPanelData;
 export interface WorkspaceEvent {
   seq: number; ts_ms: number; actor: "claude" | "user" | "system" | "code"; type: string;
   object_id: string | null; klass: "intentional" | "ambient" | "internal";

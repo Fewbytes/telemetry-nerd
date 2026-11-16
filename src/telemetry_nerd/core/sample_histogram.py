@@ -42,6 +42,8 @@ def sample_histogram_payload(panel, meta, columns: dict[str, list[float | None]]
         "mark": layer["mark"],
         "panel": panel.to_dict(),
         "dataset": meta.to_dict(),
+        "caveats": [],
+        "effective_step_ms": meta.step_ms,  # 0: no time axis
         "edges": edges.tolist(),
         "series": series,
         "bin_rule": rule,
