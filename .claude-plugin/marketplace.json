@@ -16,6 +16,18 @@
       "repository": "https://github.com/Fewbytes/telemetry-nerd",
       "category": "monitoring",
       "keywords": ["telemetry", "observability", "metrics", "prometheus", "victoriametrics", "mcp", "analysis"]
+    },
+    {
+      "name": "debugging",
+      "source": "./plugins/debugging",
+      "description": "Hypothesis-driven debugging method: theory before data, refuting tests, no workaround-as-fix. Standalone; pairs with telemetry-nerd.",
+      "version": "0.1.1",
+      "license": "Apache-2.0",
+      "author": { "name": "Avishai Ish-Shalom" },
+      "homepage": "https://github.com/Fewbytes/telemetry-nerd",
+      "repository": "https://github.com/Fewbytes/telemetry-nerd",
+      "category": "development",
+      "keywords": ["debugging", "root-cause", "troubleshooting", "incident", "method"]
     }
   ]
 }
