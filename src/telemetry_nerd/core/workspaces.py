@@ -6,13 +6,20 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
 
 from telemetry_nerd.core.events import Actor, EventLog
 from telemetry_nerd.sources.registry import SourceRegistry
 from telemetry_nerd.sources.spec import SourceSpec
-from telemetry_nerd.workspace.registry import WorkspaceInfo, WorkspaceRegistry
+from telemetry_nerd.workspace.registry import (
+    QUESTION_MAX,
+    TITLE_MAX,
+    WorkspaceInfo,
+    WorkspaceRegistry,
+)
 from telemetry_nerd.workspace.scope import ActiveWorkspace
+from telemetry_nerd.workspace.store import WorkspaceStore
 
 _log = logging.getLogger(__name__)
 
@@ -30,8 +37,10 @@ class WorkspaceOps:
         sources: SourceRegistry,
         connect: Connect,
         open_threads: Callable[[], list[dict]],
+        panels: WorkspaceStore,
     ) -> None:
         self._registry = registry
+        self._panels = panels
         self._active = active
         self._log = log
         self._sources = sources
@@ -43,6 +52,33 @@ class WorkspaceOps:
     async def create(self, title: str, question: str | None, actor: Actor) -> dict:
         info = self._registry.create(title, question)
         return await self.switch(info.id, actor, created=True)
+
+    @contextmanager
+    def in_charts(self) -> Iterator[None]:
+        """Run the enclosed calls pinned to the Charts workspace (created on first use), so an
+        ad-hoc chart lands there while the active workspace stays as it is."""
+        with self._active.using(self._registry.ensure_charts().id):
+            yield
+
+    async def promote(self, panel_id: str, actor: Actor) -> dict:
+        """Open an investigation seeded with a copy of Charts panel `panel_id`, and switch to it.
+
+        The workspace question is the panel's question. The copy keeps the panel's datasets, so
+        a source-metric panel stays re-queryable; the original stays on the Charts page."""
+        panel = self._panels.get_panel(panel_id)
+        owner = self._registry.get(self._panels.owner(panel_id) or "")
+        if owner.kind != "charts":
+            raise ValueError(
+                f"{panel_id} is not on the Charts page; only a charts panel is promoted"
+            )
+        info = self._registry.create(panel.question[:TITLE_MAX], panel.question[:QUESTION_MAX])
+        with self._active.using(info.id), self._log.transaction():
+            copy = self._panels.create_panel(panel.question, panel.spec, panel.dataset_ids)
+            self._log.append(
+                actor, "panel.created", copy.id,
+                {"question": copy.question, "promoted_from": panel_id},
+            )  # fmt: skip
+        return {**await self.switch(info.id, actor, created=True), "panel": copy.id}
 
     async def switch(self, wid: str, actor: Actor, created: bool = False) -> dict:
         info = self._registry.get(wid)  # NotFound
@@ -75,6 +111,8 @@ class WorkspaceOps:
         archived: bool | None = None,
         actor: Actor,
     ) -> WorkspaceInfo:
+        if archived and self._registry.get(wid).kind == "charts":
+            raise ValueError("the Charts workspace is persistent and cannot be archived")
         if archived and wid == self._active.active:
             raise ValueError(
                 f"{wid} is the active workspace and cannot be archived: switch to another "

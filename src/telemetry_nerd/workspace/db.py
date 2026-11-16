@@ -187,7 +187,8 @@ CREATE TABLE IF NOT EXISTS workspaces (
     opened_at_ms INTEGER NOT NULL,
     archived INTEGER NOT NULL DEFAULT 0,
     settings TEXT NOT NULL DEFAULT '{}',
-    sources TEXT NOT NULL DEFAULT '{}'
+    sources TEXT NOT NULL DEFAULT '{}',
+    kind TEXT NOT NULL DEFAULT 'investigation' CHECK (kind IN ('investigation', 'charts'))
 );
 CREATE TABLE IF NOT EXISTS lessons (
     id TEXT PRIMARY KEY,
@@ -206,6 +207,11 @@ _PANEL_COLUMNS = {
     "closed": "ALTER TABLE panels ADD COLUMN closed INTEGER NOT NULL DEFAULT 0",
 }
 
+
+_WORKSPACE_KIND_COLUMN = (
+    "ALTER TABLE workspaces ADD COLUMN kind TEXT NOT NULL DEFAULT 'investigation'"
+    " CHECK (kind IN ('investigation', 'charts'))"
+)
 
 _METRIC_COLUMNS = {
     "family": "ALTER TABLE catalog_metrics ADD COLUMN family TEXT",
@@ -283,6 +289,8 @@ def open_workspace_db(path: str | Path, clock: Callable[[], int] = now_ms) -> sq
     for column, ddl in _PANEL_COLUMNS.items():
         if column not in existing:
             con.execute(ddl)
+    if "kind" not in {row[1] for row in con.execute("PRAGMA table_info(workspaces)")}:
+        con.execute(_WORKSPACE_KIND_COLUMN)
     have = {row[1] for row in con.execute("PRAGMA table_info(catalog_metrics)")}
     for column, ddl in _METRIC_COLUMNS.items():
         if column not in have:

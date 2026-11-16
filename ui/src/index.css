@@ -101,6 +101,7 @@ button.compact-text:hover { color: var(--fg); }
 .panel button.collapse { background: none; border: none; font-size: 0.9em; cursor: pointer; color: var(--muted); padding: 0 2px; }
 .panel button.collapse:hover { color: var(--fg); }
 .panel button.close { margin-left: auto; background: none; border: none; font-size: 1.2em; cursor: pointer; color: var(--muted); }
+.panel button.investigate { font: inherit; font-size: 12px; background: none; border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px; cursor: pointer; color: var(--fg); }
 .panel button.peek,
 .panel button.refresh {
   font-size: 13px; line-height: 1; padding: 1px 6px; border: 1px solid var(--border); border-radius: 4px;
@@ -175,7 +176,7 @@ button.compact-text:hover { color: var(--fg); }
 /* Two-column layout: panels | sidebar; one column under 900px. Once every sidebar section is
    folded (telemetry-nerd-prli), the sidebar itself hides and the panel grid reclaims the column. */
 .layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
-.layout:has(.sidebar.all-collapsed) { grid-template-columns: 1fr; }
+.layout:has(.sidebar.all-collapsed), .layout.charts-only { grid-template-columns: 1fr; }
 @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
 
 /* Sidebar */

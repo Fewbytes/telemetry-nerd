@@ -368,7 +368,7 @@ class TelemetryService:
         self.ws.current = self._current_workspace
         self.workspaces = WorkspaceOps(
             self.registry, self.active, self.log, self.sources, self.source_connect,
-            self.ws.open_threads,
+            self.ws.open_threads, self.workspace,
         )  # fmt: skip
         self.bindings = BindingOps(self)
         self.retro = RetroOps(self.ws, self.active)
@@ -403,7 +403,7 @@ class TelemetryService:
 
     def _current_workspace(self) -> dict:
         info = self.registry.get(self.active())  # the pinned workspace, not the live pointer
-        return {"id": info.id, "title": info.title, "question": info.question}
+        return {"id": info.id, "title": info.title, "question": info.question, "kind": info.kind}
 
     def _littles_binding(self, source: str, key: str):
         found = self.ws.relations.bindings("catalog", source, kind="littles_law")

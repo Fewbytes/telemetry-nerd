@@ -16,7 +16,8 @@
   import WorkspaceSwitcher from "./components/WorkspaceSwitcher.svelte";
   import CatalogView from "./components/CatalogView.svelte";
   import ProposalsView from "./components/ProposalsView.svelte";
-  import { fetchHealth, fetchProposals, type Proposals } from "./lib/api";
+  import { fetchHealth, fetchProposals, openWorkspace, type Proposals } from "./lib/api";
+  import { chartsHashPanel, chartsWorkspaceId } from "./lib/workspaces";
   import { setContext } from "svelte";
   import { refTargets } from "./lib/refs";
   import CodeView from "./components/CodeView.svelte";
@@ -37,6 +38,32 @@
   const openCode = (id: string): void => { codeOpen = id; };
   setContext("openCode", openCode);
   $effect(() => ws.start());
+
+  // The Charts page is a workspace of kind "charts": panels only, no sidebar or investigation views.
+  const isCharts = $derived(ws.snapshot?.workspace.kind === "charts");
+  setContext("chartsPage", () => isCharts);
+  const chartsId = $derived(chartsWorkspaceId(ws.workspaces));
+  let chartsError = $state<string | null>(null);
+  // `#/charts` and `#/charts/p3` (the url ad-hoc tools return) open the Charts workspace; the list
+  // is refetched once per visit because the page may have been created since it was last loaded;
+  // the hash is rewritten once opened so a later switch away is not undone by this effect
+  let listedFor = "";
+  $effect(() => {
+    if (!location.hash.startsWith("#/charts") || !ws.snapshot || isCharts) return;
+    if (chartsId) {
+      openWorkspace(chartsId)
+        .then((r) => {
+          chartsError = null;
+          const panel = chartsHashPanel(location.hash);
+          history.replaceState(null, "", panel ? `#/panel/${panel}` : "#/panels");
+          ws.applyWorkspace(r.workspace);
+        })
+        .catch((e) => (chartsError = String(e)));
+    } else if (listedFor !== location.hash) {
+      listedFor = location.hash;
+      ws.refreshWorkspaces();
+    }
+  });
 
   // the UI and the daemon are built/deployed separately (bead: "ui version and server/daemon
   // version... could be they don't match"): fetched once, shown next to the UI's own build sha
@@ -67,6 +94,7 @@
   // evidence links (#/panel/p3, #/finding/f2) go back to the panels
   type Route = "panels" | "catalog" | "proposals";
   const routeOf = (h: string): Route => {
+    if (isCharts) return "panels";
     if (h.startsWith("#/catalog")) return "catalog";
     if (h.startsWith("#/proposals")) return "proposals";
     return "panels";
@@ -113,9 +141,9 @@
 
   $effect(() => {
     const scrollToHash = () => {
-      const match = location.hash.match(/^#\/(panel|group|finding)\/(\w+)$/);
+      const match = location.hash.match(/^#\/(panel|group|finding|charts)\/(\w+)$/);
       if (match && panels.length > 0) {
-        document.getElementById(`${match[1]}-${match[2]}`)?.scrollIntoView();
+        document.getElementById(`${match[1] === "charts" ? "panel" : match[1]}-${match[2]}`)?.scrollIntoView();
       }
     };
     scrollToHash();
@@ -129,11 +157,14 @@
   <div class="app-header">
     <h1 class="brand"><img src="/icon.svg" alt="" width="32" height="32" />Telemetry Nerd</h1>
     <nav class="views" aria-label="Views">
-      <a href="#/panels" aria-current={route === "panels" ? "page" : undefined}>Panels</a>
-      <a href="#/catalog" aria-current={route === "catalog" ? "page" : undefined}>Catalog</a>
-      <a href="#/proposals" aria-current={route === "proposals" ? "page" : undefined} data-proposals-link>
-        Proposals{#if pending > 0}<span class="count-badge" data-pending={pending}><span class="sr-only">, </span>{pending}<span class="sr-only"> awaiting review</span></span>{/if}
-      </a>
+      {#if !isCharts}
+        <a href="#/panels" aria-current={route === "panels" ? "page" : undefined}>Panels</a>
+        <a href="#/catalog" aria-current={route === "catalog" ? "page" : undefined}>Catalog</a>
+        <a href="#/proposals" aria-current={route === "proposals" ? "page" : undefined} data-proposals-link>
+          Proposals{#if pending > 0}<span class="count-badge" data-pending={pending}><span class="sr-only">, </span>{pending}<span class="sr-only"> awaiting review</span></span>{/if}
+        </a>
+      {/if}
+      {#if chartsId}<a href="#/charts" data-charts-link aria-current={isCharts ? "page" : undefined}>Charts</a>{/if}
     </nav>
     <div class="header-controls">
       <span class="mode-toggle" role="group" aria-label="Display mode">
@@ -173,16 +204,21 @@
     </div>
   </div>
   {#if ws.error}<div class="error">{ws.error}</div>{/if}
+  {#if chartsError}<div class="error" data-charts-error role="alert">Could not open Charts: {chartsError}</div>{/if}
   {#if exportError}<div class="error" data-export-error role="alert">Export failed: {exportError}</div>{/if}
   <HighlightStrip highlights={ws.highlights} />
   {#if route === "catalog"}<CatalogView />{/if}
   {#if route === "proposals"}
     <ProposalsView data={proposals} active={ws.snapshot?.workspace.id ?? null} error={proposalsError} onreload={loadProposals} />
   {/if}
-  <div class="layout" hidden={route !== "panels"}>
+  <div class="layout" class:charts-only={isCharts} hidden={route !== "panels"}>
     <div class="panels">
       {#if panels.length === 0}
-        <p class="empty">No panels yet in {ws.snapshot?.workspace.title ?? "this workspace"}. Ask Claude a question about your metrics.</p>
+        {#if isCharts}
+          <p class="empty">No charts yet. Ask Claude to graph something.</p>
+        {:else}
+          <p class="empty">No panels yet in {ws.snapshot?.workspace.title ?? "this workspace"}. Ask Claude a question about your metrics.</p>
+        {/if}
       {/if}
       {#each items as item (item.kind === "group" ? item.group.id : item.panel.id)}
         {#if item.kind === "group"}
@@ -192,7 +228,7 @@
         {/if}
       {/each}
     </div>
-    <Sidebar snapshot={ws.snapshot} onopencode={openCode} />
+    {#if !isCharts}<Sidebar snapshot={ws.snapshot} onopencode={openCode} />{/if}
   </div>
   {#if codeOpen}
     <CodeView

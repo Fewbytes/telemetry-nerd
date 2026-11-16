@@ -38,7 +38,14 @@ def test_snapshot_names_the_active_workspace(client, service):
     snap = client.get("/api/workspace").json()
     w1 = service.active.active
     assert snap["workspace"]["id"] == w1
-    assert set(snap["workspace"]) == {"id", "title", "question", "archived", "created_at_ms"}
+    assert set(snap["workspace"]) == {
+        "id",
+        "title",
+        "question",
+        "archived",
+        "kind",
+        "created_at_ms",
+    }
 
 
 def test_create_switches_and_open_brings_panels_back(client, service):
@@ -216,3 +223,19 @@ def test_ui_socket_delivers_events_fanned_out_out_of_seq_order(client, service):
         while (frame := ui.receive_json()).get("seq") != marker:
             seen.append(frame.get("seq"))
     assert sorted(s for s in seen if s is not None) == sorted(seqs)
+
+
+def test_investigate_this_promotes_a_charts_panel_into_a_new_active_investigation(client, service):
+    with service.workspaces.in_charts():
+        panel = service.workspace.create_panel("Cats?", {}, [])
+    assert client.get("/api/workspace").json()["workspace"]["kind"] == "investigation"
+
+    resp = client.post(f"/api/panels/{panel.id}/promote", json={})
+    assert resp.status_code == 200, resp.text
+    snap = client.get("/api/workspace").json()
+    assert snap["workspace"]["kind"] == "investigation"
+    assert snap["workspace"]["question"] == "Cats?"
+    assert [p["question"] for p in snap["panels"]] == ["Cats?"]
+
+    again = client.post(f"/api/panels/{snap['panels'][0]['id']}/promote", json={})
+    assert again.status_code == 400 and "not on the Charts page" in again.text

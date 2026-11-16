@@ -104,3 +104,12 @@ def test_workspace_indexes_exist(tmp_path):
     con = open_workspace_db(tmp_path / "workspace.db")
     names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
     assert {"panels_workspace", "objects_workspace", "events_workspace"} <= names
+
+
+def test_workspace_table_without_kind_gains_it_as_investigation(tmp_path):
+    path = tmp_path / "workspace.db"
+    first = open_workspace_db(path)
+    first.execute("ALTER TABLE workspaces DROP COLUMN kind")
+    first.close()
+    con = open_workspace_db(path)
+    assert con.execute("SELECT id, kind FROM workspaces").fetchall() == [("w1", "investigation")]

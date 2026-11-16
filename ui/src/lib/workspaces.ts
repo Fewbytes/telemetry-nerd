@@ -34,6 +34,13 @@ export const reconcilePanels = (prev: Panel[], next: Panel[]): Panel[] => {
   return anyReused ? out : next;
 };
 
+/** The id of the one Charts workspace, or null before the first ad-hoc chart created it. */
+export const chartsWorkspaceId = (list: WorkspaceInfo[]): string | null =>
+  list.find((w) => w.kind === "charts")?.id ?? null;
+
+/** The panel a Charts link (`#/charts/p3`) points at: null for the bare `#/charts` page link. */
+export const chartsHashPanel = (hash: string): string | null => hash.match(/^#\/charts\/(\w+)$/)?.[1] ?? null;
+
 const pad = (n: number) => String(n).padStart(2, "0");
 
 /** "Investigation 2026-10-03 14:05" in local time. */

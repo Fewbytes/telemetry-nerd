@@ -211,6 +211,14 @@ class WorkspaceService:
     #: the active workspace's {id, title, question}; wired by TelemetryService (None: no registry)
     current: Callable[[], dict] | None = None
 
+    def _refuse_in_charts(self, what: str) -> None:
+        """The Charts page holds panels only: reasoning objects belong in an investigation."""
+        if self.current is not None and self.current()["kind"] == "charts":
+            raise ValueError(
+                f"{what} is not available on the Charts page (panels only): promote the panel "
+                "with workspace_promote to start an investigation, then record it there"
+            )
+
     # annotations --------------------------------------------------------
     @atomic
     def annotate(self, data: AnnotationIn, actor: Actor) -> Annotation:
@@ -236,6 +244,7 @@ class WorkspaceService:
     def hypothesis_create(
         self, statement: str, actor: Actor, scope: HypothesisScope | None = None
     ) -> Hypothesis:
+        self._refuse_in_charts("a hypothesis")
         h = self.objects.create_hypothesis(statement, actor, scope)
         payload: dict = {"statement": h.statement}
         if h.scope is not None:
@@ -563,6 +572,7 @@ class WorkspaceService:
 
     @atomic
     def finding_create(self, data: FindingIn, actor: Actor) -> Finding:
+        self._refuse_in_charts("a finding")
         for ref in data.evidence:
             match ref:
                 case PanelRef(panel=pid):
@@ -634,6 +644,7 @@ class WorkspaceService:
     # gaps ---------------------------------------------------------------
     @atomic
     def gap_create(self, data: GapIn, actor: Actor) -> Gap:
+        self._refuse_in_charts("a gap")
         g = self.objects.create_gap(data, actor)
         self.log.append(
             actor,

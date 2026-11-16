@@ -190,8 +190,10 @@ export interface WorkspaceEvent {
   workspace: string;
 }
 export interface WorkspaceCounts { panels: number; hypotheses: number; findings: number; open_threads: number }
+/** "charts" is the one persistent page of ad-hoc graphs: panels only, no reasoning objects. */
+export type WorkspaceKind = "investigation" | "charts";
 export interface WorkspaceInfo {
-  id: string; title: string; question: string | null; archived: boolean;
+  id: string; title: string; question: string | null; archived: boolean; kind: WorkspaceKind;
   created_at_ms: number; last_activity_ms: number; counts: WorkspaceCounts;
 }
 
@@ -401,6 +403,9 @@ export const setHypothesisHidden = (id: string, hidden: boolean, reason?: string
 export const pinHighlight = (object: string, note?: string) =>
   postJSON<unknown>("/api/highlights", note ? { object, note } : { object });
 export const clearHighlight = (object: string) => postJSON<unknown>(`/api/highlights/${object}/clear`);
+/** "Investigate this": a new investigation seeded with a copy of a Charts panel; it becomes active. */
+export const promotePanel = (id: string) =>
+  postJSON<{ workspace: WorkspaceInfo }>(`/api/panels/${encodeURIComponent(id)}/promote`);
 export const closePanel = (id: string) => postJSON<unknown>(`/api/panels/${id}/close`);
 export const closeGroup = (id: string) => postJSON<PanelGroup>(`/api/groups/${id}/close`);
 /** The same group over a selected window: a new group, this one stays. */
@@ -421,7 +426,7 @@ export const reportRender = (r: { panel_id: string; render_ms: number; points: n
 /** Control frame on every workspace switch or update: no seq, never logged. */
 export interface WorkspaceFrame {
   kind: "workspace";
-  active: Pick<WorkspaceInfo, "id" | "title" | "question" | "archived" | "created_at_ms">;
+  active: Pick<WorkspaceInfo, "id" | "title" | "question" | "archived" | "kind" | "created_at_ms">;
 }
 
 export interface SocketHandlers {

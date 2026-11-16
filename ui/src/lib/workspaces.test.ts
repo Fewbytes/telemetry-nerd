@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Panel, Snapshot, WorkspaceInfo } from "./api";
-import { defaultTitle, reconcilePanels, sortForSwitcher, withWorkspace, workspaceChanged } from "./workspaces";
+import { chartsHashPanel, chartsWorkspaceId, defaultTitle, reconcilePanels, sortForSwitcher, withWorkspace, workspaceChanged } from "./workspaces";
 
 const info = (id: string, last_activity_ms = 0): WorkspaceInfo => ({
-  id, title: id, question: null, archived: false, created_at_ms: 0, last_activity_ms,
+  id, title: id, question: null, archived: false, kind: "investigation", created_at_ms: 0, last_activity_ms,
   counts: { panels: 0, hypotheses: 0, findings: 0, open_threads: 0 },
 });
 const snap = (id: string): Snapshot => ({
@@ -87,5 +87,20 @@ describe("reconcilePanels", () => {
     const next = [panel("p1")];
     reconcilePanels(old, next);
     expect(old[0]).not.toBe(next[0]); // originals untouched; only the returned array is new
+  });
+});
+
+describe("the Charts page", () => {
+  const of = (id: string, kind: WorkspaceInfo["kind"]): WorkspaceInfo => ({ ...info(id), kind });
+
+  it("is found by kind, and absent before the first ad-hoc chart", () => {
+    expect(chartsWorkspaceId([of("w1", "investigation"), of("w2", "charts")])).toBe("w2");
+    expect(chartsWorkspaceId([of("w1", "investigation")])).toBeNull();
+  });
+
+  it("names the panel a charts link points at", () => {
+    expect(chartsHashPanel("#/charts/p12")).toBe("p12");
+    expect(chartsHashPanel("#/charts")).toBeNull();
+    expect(chartsHashPanel("#/panel/p12")).toBeNull();
   });
 });

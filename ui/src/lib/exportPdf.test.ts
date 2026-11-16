@@ -20,7 +20,7 @@ const finding = (id: string, verdict: Finding["verdict"] = null): Finding => ({
 
 const snapshot = (overrides: Partial<Snapshot> = {}): Snapshot => ({
   panels: [], annotations: [], hypotheses: [], findings: [], gaps: [], threads: [], last_seq: 0,
-  workspace: { id: "w1", title: "Demo workspace", question: "why is latency up?", archived: false, created_at_ms: 0 },
+  workspace: { id: "w1", title: "Demo workspace", question: "why is latency up?", archived: false, kind: "investigation", created_at_ms: 0 },
   ...overrides,
 });
 

@@ -9,6 +9,15 @@ Every panel answers one explicit question (`show(dataset, question)`, principle 
 question first, then pick the view that answers it. The chart is evidence only for that question.
 The rules below apply principles 3, 10 and 11 (`docs/principles.md`).
 
+## Ad hoc or investigation
+
+When the user only wants to see something ("graph p99 of checkout", "show me CPU for the last
+day") and asked no why, `query` then `show(..., target="charts")`: the panel goes to the Charts
+page (panels only, newest first) and the active investigation is not touched. Still pass a
+`question`, and still state what the graph shows and its caveats. When they ask why, or you start
+forming hypotheses, use an investigation (triage skill): `workspace_promote(panel)` turns a charts
+panel into one. Findings, hypotheses and gaps are refused on the Charts page.
+
 ## Binding rules
 
 - **Never average percentiles** (principle 10), across series or time. Aggregate the histogram, then draw

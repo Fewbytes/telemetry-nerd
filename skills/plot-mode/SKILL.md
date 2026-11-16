@@ -17,6 +17,12 @@ CSV. Nothing is queried and nothing is re-fetched; the panel is labelled as supp
 | Numbers you hold: series with timestamps, arrays, labelled columns, a matrix | `plot_data` |
 | The same numbers as CSV text | `plot_csv` |
 
+A plot-mode request is ad hoc by nature ("show me a graph of these numbers"): pass
+`target="charts"` so the panel lands on the Charts page and the user's active investigation stays
+as it is. The reply's `url` points at it. If the user then wants to dig into it, call
+`workspace_promote(panel)`: the new investigation carries the panel as an illustration only,
+never as evidence.
+
 Plot mode never replaces an investigation: data typed in by Claude is not evidence about the
 source. If the numbers came from `query`, show the dataset itself.
 

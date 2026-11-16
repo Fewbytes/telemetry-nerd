@@ -7,7 +7,7 @@ import logging
 import re
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
@@ -422,9 +422,19 @@ def _finding_result(f: Finding, ui_url: str) -> dict:
     return out
 
 
+#: where an ad-hoc chart goes: None is the active workspace, "charts" the Charts page
+ChartTarget = Literal["charts"] | None
+
+
 def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
     mcp = TelemetryMCP("telemetry-nerd", instructions=INSTRUCTIONS)
     mcp.pin = service.active.pinned
+
+    def _target_scope(target: ChartTarget) -> AbstractContextManager[None]:
+        return service.workspaces.in_charts() if target == "charts" else nullcontext()
+
+    def _panel_url(panel_id: str, target: ChartTarget) -> str:
+        return f"{ui_url}/#/{'charts' if target == 'charts' else 'panel'}/{panel_id}"
 
     @mcp.tool()
     async def query(
@@ -1865,8 +1875,13 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         raw: bool = False,
         bounds_lo: float | None = None,
         bounds_hi: float | None = None,
+        target: ChartTarget = None,
     ) -> str:
         """Draw a dataset as a panel (mean line + min/max envelope) in the shared workspace.
+
+        target="charts": the user only wants to see something ("graph p99 of checkout"), not
+        investigate it. The panel goes to the Charts page (panels only; created on first use)
+        and the active workspace stays as it is. Omit it to draw in the active workspace.
 
         question is REQUIRED: the explicit question this graph answers, e.g.
         "Did checkout latency rise after the 14:00 deploy?".
@@ -1918,70 +1933,76 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         declared it, a declared interval as the band; ops that re-fetch (compare_seasonal,
         reference time ranges, marginals, profiles) refuse them. A fit (estimate) is not drawn: show
         its _prediction dataset or cite its parameters as statistics.
-        Returns {panel, url, warnings, auto?, y_range_notes?}: the y range defaults to the reference
+        Returns {panel, url, warnings, auto?, y_range_notes?} (url: the panel on the Charts page
+        for target="charts"): the y range defaults to the reference
         range (data, normal range, physical limit); y_range_notes says what was not available.
         """
-        try:
-            wins = [
-                Window(
-                    start_ms=parse_time(str(w["start"]), service.clock()),
-                    end_ms=parse_time(str(w["end"]), service.clock()),
-                    label=str(w.get("label", "")),
+        with _target_scope(target):
+            try:
+                wins = [
+                    Window(
+                        start_ms=parse_time(str(w["start"]), service.clock()),
+                        end_ms=parse_time(str(w["end"]), service.clock()),
+                        label=str(w.get("label", "")),
+                    )
+                    for w in windows or []
+                ]
+                res = await service.show_auto(
+                    dataset,
+                    question,
+                    raw=raw,
+                    unit=unit,
+                    mark=mark,
+                    windows=wins,
+                    quantiles=quantiles,
+                    view=view,
+                    segment=segment,
+                    overlap=overlap,
+                    bounds_lo=bounds_lo,
+                    bounds_hi=bounds_hi,
                 )
-                for w in windows or []
-            ]
-            res = await service.show_auto(
-                dataset,
-                question,
-                raw=raw,
-                unit=unit,
-                mark=mark,
-                windows=wins,
-                quantiles=quantiles,
-                view=view,
-                segment=segment,
-                overlap=overlap,
-                bounds_lo=bounds_lo,
-                bounds_hi=bounds_hi,
-            )
-        except ChartRejected as e:
-            raise ToolError(f"chart rejected: {e}") from e
-        except (NotFound, ValueError) as e:
-            raise ToolError(str(e)) from e
-        ctx = await service.y_context(res.panel.id, "claude")  # catalog bounds, limit, normal range
-        out: dict[str, Any] = {
-            "panel": res.panel.id,
-            "url": f"{ui_url}/#/panel/{res.panel.id}",
-            "warnings": [i.message for i in res.issues],
-        }
-        if res.panel.spec.get("auto"):
-            a = res.panel.spec["auto"]
-            out["auto"] = {
-                "transform": a["transform"],
-                "from": a["source_dataset"],
-                "reason": a["reason"],
+            except ChartRejected as e:
+                raise ToolError(f"chart rejected: {e}") from e
+            except (NotFound, ValueError) as e:
+                raise ToolError(str(e)) from e
+            ctx = await service.y_context(
+                res.panel.id, "claude"
+            )  # catalog bounds, limit, normal range
+            out: dict[str, Any] = {
+                "panel": res.panel.id,
+                "url": _panel_url(res.panel.id, target),
+                "warnings": [i.message for i in res.issues],
             }
-            out["drawn_dataset"] = res.panel.dataset_ids[0]
-        if ctx is not None and ctx.notes:
-            out["y_range_notes"] = ctx.notes
-        if ctx is not None and ctx.reframes:  # proposals: accept one with `reframe`, never silent
-            out["reframings"] = [
-                {"index": i, "title": r.title, "reason": r.reason, "basis": r.basis}
-                for i, r in enumerate(ctx.reframes)
-            ]
-        if ctx is not None and ctx.lines:
-            out["context"] = [
-                {
-                    "kind": ln.kind,
-                    "line": ln.label or ln.metric,
-                    "origin": ln.origin,
-                    "basis": ln.basis,
+            if res.panel.spec.get("auto"):
+                a = res.panel.spec["auto"]
+                out["auto"] = {
+                    "transform": a["transform"],
+                    "from": a["source_dataset"],
+                    "reason": a["reason"],
                 }
-                for ln in ctx.lines
-            ]
-        if hint := service.seasonal_suggestion(dataset, mark):
-            out["suggest"] = hint
-        return _dump(out)
+                out["drawn_dataset"] = res.panel.dataset_ids[0]
+            if ctx is not None and ctx.notes:
+                out["y_range_notes"] = ctx.notes
+            if (
+                ctx is not None and ctx.reframes
+            ):  # proposals: accept one with `reframe`, never silent
+                out["reframings"] = [
+                    {"index": i, "title": r.title, "reason": r.reason, "basis": r.basis}
+                    for i, r in enumerate(ctx.reframes)
+                ]
+            if ctx is not None and ctx.lines:
+                out["context"] = [
+                    {
+                        "kind": ln.kind,
+                        "line": ln.label or ln.metric,
+                        "origin": ln.origin,
+                        "basis": ln.basis,
+                    }
+                    for ln in ctx.lines
+                ]
+            if hint := service.seasonal_suggestion(dataset, mark):
+                out["suggest"] = hint
+            return _dump(out)
 
     @mcp.tool()
     def plot_data(
@@ -1992,6 +2013,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         data: dict[str, list[Any]] | list[Any] | None = None,
         columns: list[str] | None = None,
         labels: list[str] | None = None,
+        target: ChartTarget = None,
     ) -> str:
         """Draw data YOU supply as a line panel in the shared workspace: no source query.
 
@@ -2024,33 +2046,42 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         50 bars) name the bars. Sorted descending, zero baseline; null is drawn as "no value".
         kind="bar_grouped": data is 2 to 4 labelled columns sharing labels; one bar series each.
         unit: optional y-axis unit, recorded as "provided by claude".
+        target="charts": draw on the Charts page instead of the active workspace (see show);
+        the right place for "show me a graph of X" that is not an investigation.
         Returns {panel, url, warnings}.
         """
         if (series is None) == (data is None):
             raise ToolError("pass exactly one of series or data")
         if (kind == "heatmap" or kind in SAMPLE_PLOT_KINDS or kind in BAR_KINDS) and data is None:
             raise ToolError(f"kind={kind} takes data (a matrix or columns), not series")
-        try:
-            if kind == "heatmap":
-                res = service.plot_heatmap(question, data, columns, labels, unit=unit)
-            elif kind in BAR_KINDS:
-                res = service.plot_bars(question, data, kind, labels, unit=unit)
-            elif kind in SAMPLE_PLOT_KINDS:
-                res = service.plot_cumulative(question, data, kind, columns, unit=unit)
-            elif data is not None:
-                res = service.plot_table(question, data, columns, unit=unit, kind=kind)
-            else:
-                res = service.plot_inline(question, series or [], unit=unit, kind=kind)
-        except (ChartRejected, ValueError) as e:
-            raise ToolError(str(e)) from e
-        return _dump({
-            "panel": res.panel.id,
-            "url": f"{ui_url}/#/panel/{res.panel.id}",
-            "warnings": [i.message for i in res.issues],
-        })  # fmt: skip
+        with _target_scope(target):
+            try:
+                if kind == "heatmap":
+                    res = service.plot_heatmap(question, data, columns, labels, unit=unit)
+                elif kind in BAR_KINDS:
+                    res = service.plot_bars(question, data, kind, labels, unit=unit)
+                elif kind in SAMPLE_PLOT_KINDS:
+                    res = service.plot_cumulative(question, data, kind, columns, unit=unit)
+                elif data is not None:
+                    res = service.plot_table(question, data, columns, unit=unit, kind=kind)
+                else:
+                    res = service.plot_inline(question, series or [], unit=unit, kind=kind)
+            except (ChartRejected, ValueError) as e:
+                raise ToolError(str(e)) from e
+            return _dump({
+                "panel": res.panel.id,
+                "url": _panel_url(res.panel.id, target),
+                "warnings": [i.message for i in res.issues],
+            })  # fmt: skip
 
     @mcp.tool()
-    def plot_csv(question: str, csv: str, unit: str | None = None, kind: str = "line") -> str:
+    def plot_csv(
+        question: str,
+        csv: str,
+        unit: str | None = None,
+        kind: str = "line",
+        target: ChartTarget = None,
+    ) -> str:
         """Draw CSV text YOU supply as a line panel in the shared workspace: no source query.
 
         Same purpose as plot_data, for a table you hold as text. There is no file or URL input:
@@ -2065,17 +2096,19 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         no override: such a kind fails with refused_form and nothing is drawn. For parts of a
         whole, call again with kind="bar".
         unit: optional y-axis unit, recorded as "provided by claude".
+        target="charts": draw on the Charts page instead of the active workspace (see show).
         Returns {panel, url, warnings}.
         """
-        try:
-            res = service.plot_csv(question, csv, unit=unit, kind=kind)
-        except (ChartRejected, ValueError) as e:
-            raise ToolError(str(e)) from e
-        return _dump({
-            "panel": res.panel.id,
-            "url": f"{ui_url}/#/panel/{res.panel.id}",
-            "warnings": [i.message for i in res.issues],
-        })  # fmt: skip
+        with _target_scope(target):
+            try:
+                res = service.plot_csv(question, csv, unit=unit, kind=kind)
+            except (ChartRejected, ValueError) as e:
+                raise ToolError(str(e)) from e
+            return _dump({
+                "panel": res.panel.id,
+                "url": _panel_url(res.panel.id, target),
+                "warnings": [i.message for i in res.issues],
+            })  # fmt: skip
 
     @mcp.tool()
     async def split_outcome(dataset: str) -> str:
@@ -2566,6 +2599,23 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         return _dump(
             {**out, "open_threads": threads, **({"more_open_threads": cut} if cut else {})}
         )
+
+    @mcp.tool()
+    async def workspace_promote(panel: str) -> str:
+        """Turn a panel on the Charts page into an investigation: opens a new workspace
+        (the active one from now on) whose question is the panel's question, seeded with a copy
+        of the panel. A source-metric panel keeps its dataset (re-queryable, citable as evidence);
+        a plot_data/plot_csv panel stays an illustration, never evidence. Use it when an ad-hoc
+        graph turns into "why is it like that?". Returns the workspace, the copy's id and url."""
+        try:
+            out = await service.workspaces.promote(panel, "claude")
+        except (ValueError, NotFound) as e:
+            raise _fail(e) from e
+        return _dump({
+            "workspace": _capped_workspace(out["workspace"]),
+            "panel": out["panel"],
+            "url": f"{ui_url}/#/panel/{out['panel']}",
+        })  # fmt: skip
 
     @mcp.tool()
     async def workspace_update(

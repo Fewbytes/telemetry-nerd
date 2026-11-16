@@ -780,6 +780,7 @@ def create_app(
                 "title": info.title,
                 "question": info.question,
                 "archived": info.archived,
+                "kind": info.kind,
                 "created_at_ms": info.created_at_ms,
             },
         }
@@ -799,6 +800,11 @@ def create_app(
     async def workspaces_open(request: Request) -> object:
         await _body(request)
         return await service.workspaces.switch(request.path_params["id"], "user")
+
+    @_api
+    async def panel_promote(request: Request) -> object:
+        await _body(request)
+        return await service.workspaces.promote(request.path_params["id"], "user")
 
     @_api
     async def workspaces_update(request: Request) -> object:
@@ -1029,6 +1035,7 @@ def create_app(
         Route("/api/threads", thread_create, methods=["POST"]),
         Route("/api/threads/{id}/messages", thread_message, methods=["POST"]),
         Route("/api/panels/{id}/close", panel_close, methods=["POST"]),
+        Route("/api/panels/{id}/promote", panel_promote, methods=["POST"]),
         Route("/api/groups/{id}/close", group_close, methods=["POST"]),
         Route("/api/groups/{id}/reframe", group_reframe, methods=["POST"]),
         Route("/api/focus", focus, methods=["POST"]),

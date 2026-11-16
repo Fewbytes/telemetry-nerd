@@ -3,7 +3,7 @@
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
   import {
-    closePanel, fetchPanelData, previewPanel, refreshYContext, reframePanel, rescopePanel, splitOutcome, reportRender, selectYView, setMarginal, selectDataView, setOverlays,
+    closePanel, promotePanel, fetchPanelData, previewPanel, refreshYContext, reframePanel, rescopePanel, splitOutcome, reportRender, selectYView, setMarginal, selectDataView, setOverlays,
     type Annotation, type Panel, type PanelData, type Thread, type Where, type YView,
   } from "./lib/api";
   import { isInBounds, nowAnchor, parseRelative, presetRange, type RangePreset, type Viewport } from "./chart/viewport";
@@ -552,6 +552,9 @@
   });
 
   const close = () => closePanel(panel.id).catch((e) => (error = String(e)));
+  // on the Charts page a panel can start an investigation; the daemon then switches to it
+  const onChartsPage = getContext<(() => boolean) | undefined>("chartsPage");
+  const investigate = () => promotePanel(panel.id).catch((e) => (error = String(e)));
 
   // collapse (telemetry-nerd-y5j4): fold the chart/notes away, keeping just the header. The body
   // below is a bare {#if}, so collapsing unmounts plotEl, which stops the fetch effect that's
@@ -857,6 +860,9 @@
         {@render exportButton("png", "PNG")}
         {@render exportButton("pdf", "PDF")}
       </span>
+    {/if}
+    {#if onChartsPage?.()}
+      <button class="investigate" type="button" data-investigate onclick={investigate}>Investigate this</button>
     {/if}
     <button class="close" type="button" aria-label="Close panel" onclick={close}>×</button>
   </header>

@@ -138,11 +138,11 @@
               <button type="button" class="ws-open" title={w.question ?? undefined} aria-current={w.id === activeId ? "true" : undefined} onclick={() => run(() => openWorkspace(w.id).then((r) => r.workspace), close)}>
                 <span class="ws-name">{w.title}</span>
                 <span class="ws-meta">
-                  {#if w.archived}archived · {/if}{ago(w.last_activity_ms)} · {w.counts.findings} finding{w.counts.findings === 1 ? "" : "s"}
+                  {#if w.archived}archived · {/if}{ago(w.last_activity_ms)} · {#if w.kind === "charts"}{w.counts.panels} chart{w.counts.panels === 1 ? "" : "s"}{:else}{w.counts.findings} finding{w.counts.findings === 1 ? "" : "s"}{/if}
                 </span>
               </button>
               <button type="button" class="ws-act ws-rename" aria-label="Rename {w.title}" onclick={() => (renaming = w.id)}>Rename</button>
-              {#if w.id !== activeId && !w.archived}
+              {#if w.id !== activeId && !w.archived && w.kind !== "charts"}
                 <button type="button" class="ws-act" aria-label="Archive {w.title}" onclick={() => run(() => updateWorkspace(w.id, { archived: true }))}>Archive</button>
               {/if}
             {/if}

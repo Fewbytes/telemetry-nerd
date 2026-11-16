@@ -6,11 +6,14 @@ import json
 import sqlite3
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 from telemetry_nerd.model.errors import NotFound, WrongWorkspace
 
-_COLS = "id, title, question, created_at_ms, opened_at_ms, archived"
+_COLS = "id, title, question, created_at_ms, opened_at_ms, archived, kind"
+
+WorkspaceKind = Literal["investigation", "charts"]
+CHARTS_TITLE = "Charts"
 
 #: stored lengths; switch results and channel lines quote them in full
 TITLE_MAX = 120
@@ -63,6 +66,7 @@ class WorkspaceInfo:
     opened_at_ms: int
     archived: bool
     last_activity_ms: int
+    kind: WorkspaceKind = "investigation"
     counts: dict[str, int] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -91,6 +95,20 @@ class WorkspaceRegistry:
             "INSERT INTO workspaces (id, title, question, created_at_ms, opened_at_ms)"
             " VALUES (?, ?, ?, ?, ?)",
             (wid, title, question, now, now),
+        )
+        return self.get(wid)
+
+    def ensure_charts(self) -> WorkspaceInfo:
+        """The one persistent Charts workspace, created on first use. Created unopened
+        (opened_at_ms 0), so drawing an ad-hoc chart never changes the active workspace."""
+        row = self._con.execute("SELECT id FROM workspaces WHERE kind = 'charts'").fetchone()
+        if row is not None:
+            return self.get(row[0])
+        wid = self._new_id("w")
+        self._con.execute(
+            "INSERT INTO workspaces (id, title, created_at_ms, opened_at_ms, kind)"
+            " VALUES (?, ?, ?, 0, 'charts')",
+            (wid, CHARTS_TITLE, self._clock()),
         )
         return self.get(wid)
 
@@ -207,6 +225,7 @@ class WorkspaceRegistry:
             created_at_ms=row[3],
             opened_at_ms=row[4],
             archived=bool(row[5]),
+            kind=row[6],
             last_activity_ms=last or 0,
             counts=counts,
         )

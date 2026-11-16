@@ -298,7 +298,7 @@ describe("workspace frames in the store", () => {
 
   it("a frame for the shown workspace patches its title and question in place", async () => {
     const { ws, load, stop, send } = await started(snap("w1", 1));
-    send(JSON.stringify({ kind: "workspace", active: { id: "w1", title: "renamed", question: "why?", archived: false, created_at_ms: 0 } }));
+    send(JSON.stringify({ kind: "workspace", active: { id: "w1", title: "renamed", question: "why?", archived: false, kind: "investigation", created_at_ms: 0 } }));
     expect(ws.snapshot?.workspace.title).toBe("renamed");
     expect(ws.snapshot?.workspace.question).toBe("why?");
     expect(ws.highlights.size).toBe(1);
@@ -326,7 +326,7 @@ describe("workspace frames in the store", () => {
 
   describe("a saved mutation (rhe2)", () => {
     const info = (id: string, title: string, archived = false) =>
-      ({ id, title, archived, question: null, created_at_ms: 0, last_activity_ms: 0, counts: { panels: 0, hypotheses: 0, findings: 0, open_threads: 0 } }) as WorkspaceInfo;
+      ({ id, title, archived, question: null, kind: "investigation", created_at_ms: 0, last_activity_ms: 0, counts: { panels: 0, hypotheses: 0, findings: 0, open_threads: 0 } }) as WorkspaceInfo;
     const list = (...ws: WorkspaceInfo[]) => ({ active: "w1", more: 0, workspaces: ws });
     type L = Awaited<ReturnType<typeof fetchWorkspaces>>;
     async function withList(...ws: WorkspaceInfo[]) {
@@ -376,7 +376,7 @@ describe("workspace frames in the store", () => {
 
   it("a frame that changes nothing shown keeps the snapshot (no board-wide panel refetch)", async () => {
     const { ws, stop, send } = await started(snap("w1", 1));
-    const active = { id: "w1", title: "t", question: null, archived: false, created_at_ms: 0 };
+    const active = { id: "w1", title: "t", question: null, archived: false, kind: "investigation", created_at_ms: 0 };
     send(JSON.stringify({ kind: "workspace", active }));
     const before = ws.snapshot;
     send(JSON.stringify({ kind: "workspace", active: { ...active, last_activity_ms: 5 } })); // another workspace was renamed
@@ -391,7 +391,7 @@ describe("workspace frames in the store", () => {
     });
     const withPanels = (id: string, last_seq: number, panels: Panel[]): Snapshot => ({
       panels, annotations: [], hypotheses: [], findings: [], gaps: [], threads: [], last_seq,
-      workspace: { id, title: "t", question: null, archived: false, created_at_ms: 0 },
+      workspace: { id, title: "t", question: null, archived: false, kind: "investigation", created_at_ms: 0 },
     });
     const unchanged = panel("p1", "same throughout");
     const changedBefore = panel("p2", "before");
