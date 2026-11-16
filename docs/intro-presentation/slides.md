@@ -45,8 +45,9 @@ Doors open: this slide stays up. Helpers walk the room checking installs.
 | 0:20 | Setup check (8 min) |
 | 0:28 | **Lab 1** — connect a source, meet the catalog (12 min) |
 | 0:40 | **Lab 2** — catch the lies yourself (18 min) |
-| 0:58 | **Lab 3** — investigate the Nerd Shop incident (22 min) |
-| 1:20 | How it stays honest + wrap-up (10 min) |
+| 0:58 | **Lab 3** — investigate the Nerd Shop incident (17 min) |
+| 1:15 | **Lab 4** — beyond investigation: plot anything (8 min) |
+| 1:23 | How it stays honest + wrap-up (7 min) |
 
 <div class="pt-4 text-sm opacity-80">
 
@@ -643,7 +644,7 @@ layout: section
 ---
 
 # Lab 3
-## A real investigation · 20 min
+## A real investigation · 17 min
 
 ---
 
@@ -734,6 +735,106 @@ Overclaim bait: "so payment is broken in production, right?" / "write that this 
 
 </div>
 </div>
+
+---
+layout: section
+---
+
+# Beyond investigation
+## Telemetry Nerd as Claude's chart tool · 8 min
+
+---
+
+# Claude has numbers. Now draw them right.
+
+Not every chart is an investigation. Often Claude already **holds** the data:
+
+<div class="grid grid-cols-2 gap-8 pt-2">
+<div>
+
+**Where it comes from**
+
+- a CSV or spreadsheet on your laptop
+- another MCP server: GitHub, a database, Sentry, your billing API…
+- a computation Claude just ran
+- a table pasted into the conversation
+
+</div>
+<div>
+
+**What you ask for**
+
+| Question | Drawn as |
+|---|---|
+| How does it move over time? | line |
+| What shape is the sample? | histogram, ECDF |
+| Do two samples differ, and where? | QQ plot |
+| How heavy is the tail? | CCDF, quantile curve |
+| How big is each category? | bar, grouped bar |
+| A matrix of values | heatmap |
+
+</div>
+</div>
+
+<!--
+Tools: plot_data / plot_csv (skill: plot-mode). Nothing is queried; the panel is fixed data.
+-->
+
+---
+
+# Same rules, any data
+
+<v-clicks>
+
+- **Every chart answers a stated question.** `question` is required.
+- **Missing is missing.** Empty cells are gaps in lines, and are dropped *and counted* in distributions. Never zero.
+- **Honest bars:** zero baseline, sorted, never truncated, never log.
+- **No pie charts.** No donuts, no 3-D, no override. Parts of a whole become bars with the total stated.
+- **Provenance on the panel:** "supplied by Claude", with the unit marked as Claude's.
+- **Not a source.** Plot mode says what Claude handed over, not what your systems measured. Findings about a source cite queried data.
+
+</v-clicks>
+
+<!--
+Principles 3 (correct over conventional), 5 (every graph answers a question), 8 (labelled with its source), 11 (missing data).
+TODO(bead): refusing plot-mode panels as finding evidence is not enforced in code yet; until it is, don't claim it on stage.
+-->
+
+---
+
+# Lab 4 — plot anything
+
+Data: **`docs/intro-presentation/data/release-latency.csv`** in the repo. It has checkout latency samples for two releases.
+
+1. > Read release-latency.csv. Did v1.5 get slower than v1.4? Show me, don't summarise.
+
+2. > Count my commits per week in any git repo on this laptop over the last year, and plot it.
+
+3. > Make me a pie chart of my commits by weekday. (Watch what happens.)
+
+<div class="grid grid-cols-2 gap-6 pt-4">
+<div>
+
+**Done when**
+
+- You saw the difference **in the tail**, not in the median, and Claude picked a form that shows it (QQ, ECDF or CCDF)
+- You know how many v1.5 samples were missing, and that they weren't zeroed
+
+</div>
+<div>
+
+**Stretch**
+
+Got another MCP connected (GitHub, Postgres, Linear…)? Pull something from it and plot it.
+
+</div>
+</div>
+
+<!--
+Answer key: same median (~80 ms); v1.5 has 4% on a slow path (~900 ms) vs 0.5% in v1.4. A mean bar chart would look similar.
+23 empty v1.5 cells: dropped and counted. The pie request is refused (refused_form) and comes back as bars.
+Regenerate the CSV: uv run docs/intro-presentation/data/make_release_latency.py
+-->
 
 ---
 layout: section

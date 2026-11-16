@@ -13,4 +13,4 @@ npm run export   # PDF (needs playwright-chromium)
 Attendee setup handout: `PREREQS.md` (send before the session).
 
 Slides live in `slides.md`; speaker notes are the `<!-- ... -->` blocks at the end of each slide.
-Images go in `public/`.
+Images go in `public/`. Lab data: `data/` (regenerate with `uv run data/make_release_latency.py`).
