@@ -4,7 +4,10 @@
 #
 # Resolution order:
 #   1. TN_USE_SOURCE=1 and a source checkout at the plugin root -> `uv run --directory <root>`
-#   2. `telemetry-nerd` on PATH (uv tool install; also the pip/venv case)
+#   2. each `telemetry-nerd` on PATH, in order, that passes a `--help` probe (uv tool install; also
+#      the pip/venv case). A candidate that cannot start (stale editable install missing a
+#      dependency, half-removed venv, wrong Python) is skipped with a stderr note, so a later
+#      working install is still found instead of the bridge dying with a bare "Connection closed".
 #   3. source checkout at the plugin root (pyproject.toml + uv) -> `uv run --directory <root>`
 #   4. TN_CONTAINER=<name> set -> `podman exec -i <name> telemetry-nerd ...` (or docker; see
 #      container_runtime() below). Lets the plugin run with nothing installed on the host at all:
@@ -33,12 +36,47 @@ container_runtime() {
     command -v "$rt" >/dev/null 2>&1 && echo "$rt"
 }
 
+# Sets `cli` to the first PATH entry's telemetry-nerd that can import and run its CLI. Candidates
+# that cannot are skipped; each skip is reported on stderr and collected in `broken` for fail().
+# `--help` imports the whole CLI module, which is what a broken install trips over, and exits 0
+# without touching the daemon.
+broken=""
+find_working_cli() {
+    cli=""
+    seen=""
+    rest="$PATH:"
+    while [ -n "$rest" ]; do
+        dir="${rest%%:*}"
+        rest="${rest#*:}"
+        [ -n "$dir" ] || continue
+        candidate="$dir/telemetry-nerd"
+        [ -f "$candidate" ] && [ -x "$candidate" ] || continue
+        case "$seen" in *"
+$candidate
+"*) continue ;; esac
+        seen="$seen
+$candidate
+"
+        if err="$("$candidate" --help 2>&1 >/dev/null </dev/null)"; then
+            cli="$candidate"
+            return 0
+        fi
+        reason="$(printf '%s\n' "$err" | tail -n 1)"
+        note="telemetry-nerd launcher: skipping broken $candidate: ${reason:-exited non-zero}"
+        echo "$note" >&2
+        broken="$broken$note
+"
+    done
+    return 1
+}
+
 fail() {
     msg="telemetry-nerd launcher: cannot find telemetry-nerd. Install it with
   uv tool install git+https://github.com/Fewbytes/telemetry-nerd
 (or run a source checkout with uv installed, or set TN_CONTAINER=<name> to exec into a running
 telemetry-nerd container, or point TN_DAEMON_URL at a running daemon -- the bridge still needs
-the telemetry-nerd CLI somewhere). See docs/install.md."
+the telemetry-nerd CLI somewhere). See docs/install.md.
+${broken}"
     case "$cmd" in
         ensure) echo "Telemetry Nerd daemon not running: $msg" ;;
         pending) echo "$msg" >&2 ;;
@@ -49,8 +87,8 @@ the telemetry-nerd CLI somewhere). See docs/install.md."
 
 if [ "${TN_USE_SOURCE:-}" = 1 ] && is_source_checkout; then
     exec uv run --directory "$root" telemetry-nerd "$@"
-elif command -v telemetry-nerd >/dev/null 2>&1; then
-    exec telemetry-nerd "$@"
+elif find_working_cli; then
+    exec "$cli" "$@"
 elif is_source_checkout; then
     exec uv run --directory "$root" telemetry-nerd "$@"
 elif [ -n "${TN_CONTAINER:-}" ] && runtime="$(container_runtime)" && [ -n "$runtime" ]; then

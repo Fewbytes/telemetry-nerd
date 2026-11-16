@@ -198,3 +198,36 @@ def test_launcher_ignores_tn_container_without_runtime(tmp_path):
     )
     assert r.returncode == 127
     assert "uv tool install" in r.stderr
+
+
+def _broken_cli(directory: Path) -> Path:
+    directory.mkdir()
+    tn = directory / "telemetry-nerd"
+    tn.write_text(
+        "#!/bin/sh\necho \"ModuleNotFoundError: No module named 'botocore'\" >&2\nexit 1\n"
+    )
+    tn.chmod(0o755)
+    return directory
+
+
+def test_launcher_skips_broken_path_install_for_a_later_working_one(fake_bin, tmp_path):
+    broken = _broken_cli(tmp_path / "stale")
+    r = _run("bridge", path=f"{broken}:{fake_bin}:/usr/bin:/bin")
+    assert r.returncode == 0 and r.stdout == "installed: bridge\n"
+    assert f"skipping broken {broken}/telemetry-nerd" in r.stderr
+    assert "No module named 'botocore'" in r.stderr
+
+
+def test_launcher_ensure_reports_broken_install_in_session_context(tmp_path):
+    broken = _broken_cli(tmp_path / "stale")
+    r = _run("ensure", path=f"{broken}:/usr/bin:/bin", root=tmp_path)
+    assert r.returncode == 0
+    assert f"skipping broken {broken}/telemetry-nerd" in r.stdout
+    assert "No module named 'botocore'" in r.stdout
+
+
+def test_launcher_bridge_with_only_broken_install_fails_naming_it(tmp_path):
+    broken = _broken_cli(tmp_path / "stale")
+    r = _run("bridge", path=f"{broken}:/usr/bin:/bin", root=tmp_path)
+    assert r.returncode == 127 and r.stdout == ""
+    assert "No module named 'botocore'" in r.stderr
