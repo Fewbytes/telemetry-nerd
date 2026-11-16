@@ -20,7 +20,7 @@ from telemetry_nerd.core.code_ops import CodeDisabled
 from telemetry_nerd.core.evidence_discipline import citable_statistics
 from telemetry_nerd.core.littles_compact import compact as littles_compact
 from telemetry_nerd.core.littles_compact import statistics as littles_statistics
-from telemetry_nerd.core.plot_table import SAMPLE_PLOT_KINDS
+from telemetry_nerd.core.plot_table import BAR_KINDS, SAMPLE_PLOT_KINDS
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
 from telemetry_nerd.core.wire import with_cite
 from telemetry_nerd.mcp.shapes import EvidenceContext, ShapeError, finding_in, hypothesis_scope
@@ -2009,7 +2009,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         epoch milliseconds; every other column is one line; null is a gap.
         At most 5 lines per plot: for 6..8 series call once per group of at most 5 (small
         multiples, same y-range); more than 8 is over_limit.
-        kind: "line", "heatmap", "histogram", "ecdf", "qq", "quantile_curve" or "ccdf". Circular and 3-D forms are never
+        kind: "line", "heatmap", "histogram", "ecdf", "qq", "quantile_curve", "ccdf", "bar" or
+        "bar_grouped". Circular and 3-D forms are never
         rendered, with no override: such a kind fails with refused_form and nothing is drawn. For parts of a
         whole, call again with kind="bar".
         kind="heatmap": data is a matrix [[...], ...] or labelled columns, up to 100 rows by
@@ -2019,16 +2020,21 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         no time axis, at most 4 columns (more is over_limit). qq takes exactly 2 columns (else
         kind_shape_mismatch), of any lengths, plots their quantiles against each other and states
         each n; null values are dropped and counted.
+        kind="bar": data is an array or one labelled column; labels (REQUIRED, one per bar, at most
+        50 bars) name the bars. Sorted descending, zero baseline; null is drawn as "no value".
+        kind="bar_grouped": data is 2 to 4 labelled columns sharing labels; one bar series each.
         unit: optional y-axis unit, recorded as "provided by claude".
         Returns {panel, url, warnings}.
         """
         if (series is None) == (data is None):
             raise ToolError("pass exactly one of series or data")
-        if (kind == "heatmap" or kind in SAMPLE_PLOT_KINDS) and data is None:
+        if (kind == "heatmap" or kind in SAMPLE_PLOT_KINDS or kind in BAR_KINDS) and data is None:
             raise ToolError(f"kind={kind} takes data (a matrix or columns), not series")
         try:
             if kind == "heatmap":
                 res = service.plot_heatmap(question, data, columns, labels, unit=unit)
+            elif kind in BAR_KINDS:
+                res = service.plot_bars(question, data, kind, labels, unit=unit)
             elif kind in SAMPLE_PLOT_KINDS:
                 res = service.plot_cumulative(question, data, kind, columns, unit=unit)
             elif data is not None:

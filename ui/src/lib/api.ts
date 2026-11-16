@@ -114,7 +114,7 @@ export interface LittlesPanelData extends PanelDataBase {
   series: LittlesSeries[]; unmatched: LittlesUnmatched[]; more_groups: number;
 }
 export interface BarPanelData extends PanelDataBase {
-  kind: "bar"; effective_step_ms: number; order: BarOrder; rows: BarInput[];
+  kind: "bar"; effective_step_ms: number; order: BarOrder; series: { label: string; rows: BarInput[] }[];
 }
 export interface IndexPayload {
   baseline: "window" | "previous" | "week"; label: string; refused?: string;

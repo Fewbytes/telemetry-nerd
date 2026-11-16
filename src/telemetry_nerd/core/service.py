@@ -140,6 +140,7 @@ from telemetry_nerd.core.plot_table import (
     CUMULATIVE_KINDS,
     MAX_MATRIX_SIDE,
     PlotTable,
+    check_bar_shape,
     check_cumulative_shape,
     check_kind,
     check_line_series_count,
@@ -152,6 +153,7 @@ from telemetry_nerd.core.plot_table import (
 from telemetry_nerd.core.presence import PresenceRegistry
 from telemetry_nerd.core.profiles import ProfileService
 from telemetry_nerd.core.retro_ops import RetroOps
+from telemetry_nerd.core.sample_bar import sample_bar_payload
 from telemetry_nerd.core.sample_cumulative import sample_cumulative_payload
 from telemetry_nerd.core.sample_heatmap import sample_heatmap_payload
 from telemetry_nerd.core.sample_histogram import sample_histogram_payload
@@ -1291,6 +1293,29 @@ class TelemetryService:
             table = parse_plot_matrix(data, columns=columns, max_columns=MAX_WINDOWS)
         check_cumulative_shape(kind, table)
         return self.plot_sample(question, table, unit=unit, actor=actor, mark=kind)
+
+    def plot_bars(
+        self,
+        question: str,
+        data: dict[str, list] | list,
+        kind: str,
+        labels: list[str] | None,
+        unit: str | None = None,
+        actor: Actor = "claude",
+    ) -> ShowResult:
+        """Draw an array or labelled columns the caller supplied as bars named by `labels`.
+
+        `kind` is "bar" (one column, at most MAX_BARS rows) or "bar_grouped" (2 to MAX_WINDOWS
+        columns sharing the labels). A null value is drawn as "no value", never as zero.
+        Raises PlotTableError (a ValueError) naming the reason the data was refused."""
+        if isinstance(data, dict):
+            table = parse_plot_columns(data, labels, max_columns=MAX_WINDOWS)
+        else:
+            table = parse_plot_array(data, labels)
+        check_bar_shape(kind, table)
+        return self.plot_sample(
+            question, table, unit=unit, actor=actor, mark="bar", row_labels=table.row_labels
+        )
 
     async def show_binding(self, **kw) -> PanelGroup:
         """A bound USE / RED / Little's law metric set as one linked panel group (bead czt.3)."""
@@ -2652,6 +2677,11 @@ class TelemetryService:
         if representation == "samples" and panel.spec["layers"][0]["mark"] == "heatmap":
             meta, columns = self.datasets.get_samples(dataset_id)
             return sample_heatmap_payload(
+                panel, meta, columns, self.datasets.get_sample_row_labels(dataset_id)
+            )
+        if representation == "samples" and panel.spec["layers"][0]["mark"] == "bar":
+            meta, columns = self.datasets.get_samples(dataset_id)
+            return sample_bar_payload(
                 panel, meta, columns, self.datasets.get_sample_row_labels(dataset_id)
             )
         if representation == "samples" and panel.spec["layers"][0]["mark"] in CUMULATIVE_KINDS:

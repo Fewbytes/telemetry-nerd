@@ -40,6 +40,9 @@ DRAWABLE_KINDS = ("line",)
 CUMULATIVE_KINDS = ("ecdf", "qq", "quantile_curve", "ccdf")
 # Every kind of caller sample (service.plot_cumulative); plot_csv and plot_inline do not take them.
 SAMPLE_PLOT_KINDS = ("histogram", *CUMULATIVE_KINDS)
+# Kinds plot_data draws as bars of caller columns with row labels (core.sample_bar); both are the
+# `bar` mark, bar_grouped with 2..MAX_WINDOWS columns.
+BAR_KINDS = ("bar", "bar_grouped")
 TIME_COLUMN_NAMES = frozenset({"ts", "time", "timestamp"})
 
 ANONYMOUS_COLUMN = "values"
@@ -296,3 +299,25 @@ def check_cumulative_shape(kind: str, table: PlotTable) -> None:
             f"qq plots the quantiles of one column against another: it needs exactly 2 columns, "
             f"got {len(table.columns)}",
         )
+
+
+def check_bar_shape(kind: str, table: PlotTable) -> None:
+    """Spec 3: bars need a label each (at most `MAX_BARS`); `bar` is one column, `bar_grouped`
+    2 to `MAX_WINDOWS` columns sharing the labels."""
+    if table.row_labels is None:
+        raise PlotTableError(PlotReason.MISSING_LABEL, f"{kind} needs labels: one per bar")
+    if table.row_count > MAX_BARS:
+        raise over_limit("bars per bar chart", MAX_BARS, table.row_count, None)
+    count = len(table.columns)
+    if kind == "bar" and count != 1:
+        raise PlotTableError(
+            PlotReason.KIND_SHAPE_MISMATCH,
+            f"bar draws one column, got {count}: use kind=bar_grouped to compare columns",
+        )
+    if kind == "bar_grouped":
+        check_column_count(count, MAX_WINDOWS)
+        if count < 2:
+            raise PlotTableError(
+                PlotReason.KIND_SHAPE_MISMATCH,
+                "bar_grouped needs 2 to 4 columns: use kind=bar for one",
+            )

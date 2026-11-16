@@ -2,12 +2,12 @@
   import { layoutBars } from "../chart/bar";
   import { PALETTE_DARK, PALETTE_LIGHT } from "../chart/toUplot";
   import { theme } from "../lib/theme.svelte";
-  import type { BarPanelData } from "../lib/api";
+  import type { BarInput, BarOrder } from "../chart/bar";
 
-  let { data, width, unit = null }: { data: BarPanelData; width: number; unit?: string | null } = $props();
+  let { rows, order, width, unit = null, hue = 0 }: { rows: BarInput[]; order: BarOrder; width: number; unit?: string | null; hue?: number } = $props();
 
-  const layout = $derived(layoutBars(data.rows, data.order));
-  const fill = $derived((theme.effective === "light" ? PALETTE_LIGHT : PALETTE_DARK)[0]);
+  const layout = $derived(layoutBars(rows, order));
+  const fill = $derived((theme.effective === "light" ? PALETTE_LIGHT : PALETTE_DARK)[hue]);
   let asTable = $state(false);
 
   const THICKNESS = 22; // px per bar (horizontal) and the chart height when vertical

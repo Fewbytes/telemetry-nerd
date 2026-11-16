@@ -174,3 +174,44 @@ def test_ecdf_draws_an_array_with_n_stated_and_refuses_five_columns(tmp_path):
         with pytest.raises(PlotTableError) as refused:
             svc.plot_cumulative("q?", {f"c{i}": [1.0, 2.0] for i in range(5)}, kind=kind)
         assert refused.value.reason == PlotReason.OVER_LIMIT
+
+
+def test_bars_draw_one_labelled_series_sorted_descending_with_null_as_missing(tmp_path):
+    svc = make_service(tmp_path)
+    shown = svc.plot_bars("Which service errs most?", [3, None, 9], "bar", ["a", "b", "c"])
+    data = svc.panel_data(shown.panel.id, width_px=800)
+    assert data["kind"] == "bar" and data["order"] == "descending"
+    assert data["series"] == [{"label": "values", "rows": [
+        {"label": "a", "value": 3.0}, {"label": "b", "value": None}, {"label": "c", "value": 9.0},
+    ]}]  # fmt: skip
+
+
+def test_grouped_bars_keep_the_caller_label_order_in_every_series(tmp_path):
+    svc = make_service(tmp_path)
+    shown = svc.plot_bars(
+        "Before vs after?", {"before": [1, 2], "after": [3, 4]}, "bar_grouped", ["x", "y"]
+    )
+    data = svc.panel_data(shown.panel.id, width_px=800)
+    assert data["order"] == "given"
+    assert [(s["label"], [r["label"] for r in s["rows"]]) for s in data["series"]] == [
+        ("before", ["x", "y"]), ("after", ["x", "y"])
+    ]  # fmt: skip
+
+
+@pytest.mark.parametrize(
+    ("kind", "data", "labels", "reason"),
+    [
+        ("bar", [1.0] * 51, [f"l{i}" for i in range(51)], PlotReason.OVER_LIMIT),
+        ("bar", [1.0, 2.0], None, PlotReason.MISSING_LABEL),
+        ("bar", [1.0, 2.0], ["a", " "], PlotReason.MISSING_LABEL),
+        ("bar_grouped", {f"s{i}": [1.0] for i in range(5)}, ["a"], PlotReason.OVER_LIMIT),
+        ("bar_grouped", {"only": [1.0]}, ["a"], PlotReason.KIND_SHAPE_MISMATCH),
+        ("bar", {"a": [1.0], "b": [2.0]}, ["x"], PlotReason.KIND_SHAPE_MISMATCH),
+    ],
+)
+def test_bars_refuse_what_cannot_be_drawn_honestly(tmp_path, kind, data, labels, reason):
+    svc = make_service(tmp_path)
+    with pytest.raises(PlotTableError) as refused:
+        svc.plot_bars("q?", data, kind, labels)
+    assert refused.value.reason == reason
+    assert svc.workspace.list_panels() == []
