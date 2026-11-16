@@ -1,0 +1,11 @@
+{
+  "name": "debugging",
+  "description": "Hypothesis-driven debugging method for Claude: theory before data, refuting tests, no workaround-as-fix",
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Avishai Ish-Shalom"
+  },
+  "homepage": "https://github.com/Fewbytes/telemetry-nerd",
+  "repository": "https://github.com/Fewbytes/telemetry-nerd",
+  "keywords": ["debugging", "root-cause", "troubleshooting", "incident", "method"]
+}

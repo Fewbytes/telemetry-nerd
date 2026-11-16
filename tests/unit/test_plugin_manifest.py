@@ -34,8 +34,25 @@ def test_plugin_metadata_complete():
         assert plugin[key]
     assert plugin["repository"] == "https://github.com/Fewbytes/telemetry-nerd"
     market = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text())
-    assert [p["name"] for p in market["plugins"]] == [plugin["name"]]
+    assert [p["name"] for p in market["plugins"]] == [plugin["name"], "debugging"]
     assert market["plugins"][0]["source"] == "./"
+
+
+def test_debugging_plugin_is_standalone():
+    # Installable on its own (own manifest + skill under plugins/debugging) and shipped with the
+    # main plugin too (triage loads it): one copy, listed as an extra skills path in plugin.json.
+    market = json.loads((ROOT / ".claude-plugin/marketplace.json").read_text())
+    entry = next(p for p in market["plugins"] if p["name"] == "debugging")
+    root = ROOT / entry["source"]
+    manifest = json.loads((root / ".claude-plugin/plugin.json").read_text())
+    assert manifest["name"] == "debugging"
+    assert "version" not in manifest  # the marketplace entry carries it (check_version.py)
+    skill = (root / "skills/debugging/SKILL.md").read_text()
+    assert skill.startswith("---\nname: debugging\n")
+    assert not (ROOT / "skills/debugging").exists()
+    main = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
+    assert main["skills"] == ["./skills/", "./plugins/debugging/skills/"]
+    assert "the `debugging` skill" in (ROOT / "skills/triage/SKILL.md").read_text()
 
 
 def test_mcp_and_hooks_use_launcher():
