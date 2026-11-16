@@ -180,3 +180,18 @@ async def test_plot_data_heatmap_kind_draws_a_matrix_and_refuses_series_and_csv(
     assert r.is_error and "takes data" in text_of(r)
     r = await call(mcp, "plot_csv", {"question": "q?", "csv": "a,b\n1,2\n", "kind": "heatmap"})
     assert r.is_error and "not drawable" in text_of(r)
+
+
+async def test_step_is_the_data_interval_not_the_epoch_offset(tmp_path):
+    svc = make_service(tmp_path)
+    mcp = build_mcp(svc, "http://x")
+    start = 1_700_000_000_000
+    ts = [start + i * 300_000 for i in range(6)]
+    r = await call(
+        mcp,
+        "plot_data",
+        {"question": "q?", "series": [{"label": "a", "ts": ts, "values": [1, 2, 3, 4, 5, 6]}]},
+    )
+    assert not r.is_error, text_of(r)
+    meta, _ = svc.datasets.get(svc.workspace.get_panel("p1").dataset_ids[0])
+    assert meta.step_ms == 300_000

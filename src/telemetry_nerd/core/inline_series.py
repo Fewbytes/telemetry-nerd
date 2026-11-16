@@ -44,7 +44,7 @@ class InlineData:
     result: FetchResult
     start_ms: int
     end_ms: int
-    step_ms: int  # the largest step every timestamp is a multiple of
+    step_ms: int  # the largest step every timestamp is a whole number of steps after start_ms
 
 
 def parse_inline_series(raw: list[dict], now_ms: int) -> list[InlineSeries]:
@@ -77,10 +77,13 @@ def parse_inline_series(raw: list[dict], now_ms: int) -> list[InlineSeries]:
 
 def inline_data(series: list[InlineSeries]) -> InlineData:
     """The series as buckets (one sample per bucket: avg = min = max) on the coarsest grid
-    holding every timestamp. Refuses a grid that is too fine or too long to draw."""
+    holding every timestamp, anchored at the first timestamp rather than the epoch: an epoch
+    anchor shrinks the step below the data's own interval, and every bucket without a sample
+    breaks the drawn line. Refuses a grid that is too fine or too long to draw."""
     all_ts = [t for s in series for t in s.ts_ms]
-    step = reduce(math.gcd, all_ts)
     start, end = min(all_ts), max(all_ts)
+    # One timestamp has no interval to measure.
+    step = reduce(math.gcd, (t - start for t in all_ts)) or MIN_STEP_MS
     if step < MIN_STEP_MS:
         raise ValueError(
             f"timestamps share no grid coarser than {MIN_STEP_MS} ms (their common step is "
