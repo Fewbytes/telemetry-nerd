@@ -27,7 +27,7 @@ Avishai Ish-Shalom · DevOpsDays Tel Aviv 2026 · hands-on, 90 min
 
 <div class="pt-10 text-sm">
 
-Setup while we wait: **github.com/Fewbytes/telemetry-nerd** → `docs/into-presentation/PREREQS.md`
+Setup while we wait: **github.com/Fewbytes/telemetry-nerd** → `docs/intro-presentation/PREREQS.md`
 
 </div>
 
@@ -86,7 +86,7 @@ Open the **Nerd Shop** dashboards on your laptop:
 
 <div class="text-2xl py-6 text-center">
 
-**grafana.&lt;workshop-domain&gt;** · **kibana.&lt;workshop-domain&gt;**
+**grafana.workshop.fewbytes.com** · **kibana.workshop.fewbytes.com**
 
 </div>
 
@@ -95,7 +95,7 @@ Open the **Nerd Shop** dashboards on your laptop:
 - For each lie: first the conventional panel, then the same question in Telemetry Nerd
 
 <!--
-TODO(ja1s): final URLs. The dashboards are read-only (anonymous viewer).
+TODO(ja1s): hostnames are provisional until the tunnel exists (9639). The dashboards are read-only (anonymous viewer).
 Local fallback for people with bad Wi-Fi: `just workshop-up` → http://127.0.0.1:3000
 -->
 

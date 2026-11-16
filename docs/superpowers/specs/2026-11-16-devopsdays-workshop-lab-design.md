@@ -1,6 +1,6 @@
 # DevOpsDays TLV 2026 workshop lab environment — design
 
-Status: draft, 2026-11-16. Deck: `docs/into-presentation/`. Epic: see beads (`workshop`).
+Status: draft, 2026-11-16. Deck: `docs/intro-presentation/`. Epic: see beads (`workshop`).
 
 ## 1. Goal
 
@@ -17,6 +17,8 @@ Decisions (user, 2026-11-16):
 - **Shared hosted stack plus a local fallback.** One box we run, read-only for attendees, who
   install only Telemetry Nerd. The same compose file runs on a laptop as a fallback and as a
   take-home.
+- **Host: `sweatshop-1`, exposed through a Cloudflare Tunnel under `fewbytes.com`** (user,
+  2026-11-16). No load test: about 30 attendees, 60 at most.
 - **Elasticsearch + Kibana run on the hosted box only.** They need about 1.5–2 GiB RAM, too heavy
   for laptops. The local fallback has Grafana and VictoriaMetrics only.
 - **Attendees bring their own Claude Code.** People without access pair up.
@@ -24,12 +26,12 @@ Decisions (user, 2026-11-16):
 ## 2. Shape
 
 ```
-                      hosted box (podman compose, Caddy TLS)
+                      sweatshop-1 (podman, cloudflared)     
   attendee laptop    ┌───────────────────────────────────────────────────────────┐
-  ┌──────────────┐   │  Caddy ── grafana.<domain>  Grafana (anonymous Viewer)    │
+  ┌──────────────┐   │  tunnel ─ grafana.<sub>     Grafana (anonymous Viewer)    │
   │ Claude Code  │   │       │                      ├─ DS: VictoriaMetrics       │
   │ + TN plugin  │──────────┘                      └─ DS: Elasticsearch         │
-  │ TN daemon    │   │  Caddy ── kibana.<domain>   Kibana (anonymous, read-only)│
+  │ TN daemon    │   │  tunnel ─ kibana.<sub>      Kibana (anonymous, read-only)│
   │ browser :7070│   │                                                           │
   └──────────────┘   │  workshop-gen ── backfill ──▶ VictoriaMetrics (not public)│
                      │       └── live /metrics ◀── VM scrape (15 s)              │
@@ -107,16 +109,27 @@ common hand-built one and say so on the slide.
 
 ## 6. Hosting
 
-- One cloud VM (4 vCPU / 8 GiB is a starting guess, confirm by load test). Podman compose, with
-  Caddy for TLS on `grafana.<domain>` and `kibana.<domain>`.
-- Capacity: about 60 attendees each running a Telemetry Nerd daemon against one Grafana. Load-test
-  with the lab prompts replayed by N concurrent daemons (bead). Use the Grafana datasource proxy
-  timeout and VM `-search.max*` limits as the guard rails; Telemetry Nerd's public-source
-  politeness (`1h9.7`) applies.
+- **`sweatshop-1`** (8 cores, 62 GiB RAM, ~870 GB free on 2026-11-16). It also runs the assembly
+  line (makers, andon, kaizen), staging and its own `victoria-metrics` for line monitoring. So the
+  workshop gets its own compose project (`tn-workshop`), its own ports and volumes, binds only to
+  127.0.0.1, and never touches the line's containers.
+- **Exposure:** `cloudflared` (not installed yet) runs a named tunnel to the Grafana and Kibana
+  ports under `fewbytes.com`, e.g. `grafana.workshop.fewbytes.com` and
+  `kibana.workshop.fewbytes.com` (names TBD). The tunnel does TLS, there's no inbound port, and VM
+  and ES are reachable only from inside the compose network.
+- **Capacity:** about 30 attendees (60 at most), each running a Telemetry Nerd daemon against one
+  Grafana. No load test (user, 2026-11-16). Guard rails: the Grafana datasource proxy timeout and
+  VM `-search.max*` limits; Telemetry Nerd's public-source politeness (`1h9.7`) applies.
+- **CPU contention with the line:** pause the makers during the session window so a CI run
+  can't starve the workshop (8 cores shared).
 - Up from the day before; backfill on first start; the live generator under a restart policy;
   health check on the instructor laptop.
 - The local fallback is `just workshop-up` with profile `local` (VM + Grafana + generator, no
   ES/Kibana), about 400 MiB. It's also in PREREQS as optional.
+- **Kibana defaults are unverified** (lie 5). The Elastic docs say only that Lens picks "an
+  appropriate aggregation" for a field. They don't give the default for numeric fields (median or
+  average?) or the default for missing values / line interpolation. Check empirically in the
+  Kibana version we deploy (bead) before the lie 5 slide is final.
 
 ## 7. Testing
 

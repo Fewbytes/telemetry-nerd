@@ -3,7 +3,7 @@
 Slidev deck for the 90-minute hands-on session "Telemetry Nerd: a power tool for power telemetry users".
 
 ```bash
-cd docs/into-presentation
+cd docs/intro-presentation
 npm install
 npm run dev      # http://localhost:3030, presenter view at /presenter
 npm run build    # static SPA in dist/
