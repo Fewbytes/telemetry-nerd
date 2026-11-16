@@ -41,11 +41,11 @@ Doors open: this slide stays up. Helpers walk the room checking installs.
 
 | Time | What |
 |---|---|
-| 0:00 | Why your dashboards lie (talk, 15 min) |
-| 0:15 | Setup check (10 min) |
-| 0:25 | **Lab 1** — connect a source, meet the catalog (15 min) |
-| 0:40 | **Lab 2** — catch the lies yourself (20 min) |
-| 1:00 | **Lab 3** — a real investigation (20 min) |
+| 0:00 | Why your dashboards lie: Grafana and Kibana vs Telemetry Nerd, follow along (20 min) |
+| 0:20 | Setup check (8 min) |
+| 0:28 | **Lab 1** — connect a source, meet the catalog (12 min) |
+| 0:40 | **Lab 2** — catch the lies yourself (18 min) |
+| 0:58 | **Lab 3** — investigate the Nerd Shop incident (22 min) |
 | 1:20 | How it stays honest + wrap-up (10 min) |
 
 <div class="pt-4 text-sm opacity-80">
@@ -80,110 +80,218 @@ Not maliciously. Every one of these lies is a sensible default somebody picked t
 
 ---
 
+# Follow along
+
+Open the **Nerd Shop** dashboards on your laptop:
+
+<div class="text-2xl py-6 text-center">
+
+**grafana.&lt;workshop-domain&gt;** · **kibana.&lt;workshop-domain&gt;**
+
+</div>
+
+- A synthetic web shop: `frontend`, `checkout`, `payment`, `cart`, 30 pods, 14 days of history plus live data
+- Every misleading pattern in it was **planted on purpose**, and we know the right answer
+- For each lie: first the conventional panel, then the same question in Telemetry Nerd
+
+<!--
+TODO(ja1s): final URLs. The dashboards are read-only (anonymous viewer).
+Local fallback for people with bad Wi-Fi: `just workshop-up` → http://127.0.0.1:3000
+-->
+
+---
+layout: two-cols-header
+---
+
 # Lie #1: averaged rollups erase the spike
 
-<div class="grid grid-cols-2 gap-8 pt-4">
-<div>
+<div class="text-sm opacity-80">Grafana → <b>Nerd Shop / CPU, 7 days</b> · <code>checkout-7</code></div>
 
-- 15s scrape, 7-day view, ~1000 pixels wide
-- Every pixel is ~10 minutes ≈ 40 samples
-- Default downsampling: **mean**
-- A 30s saturation spike becomes a 5% bump
+::left::
 
-</div>
-<div>
+**Conventional**
 
-<!-- TODO: chart — raw vs mean-rollup vs min/max envelope -->
-<div class="border-2 border-dashed rounded p-8 opacity-50 text-center">
-raw · mean rollup · min/max envelope
+<!-- TODO(ja1s): screenshot of the Grafana panel -->
+<div class="border-2 border-dashed rounded p-8 mr-4 opacity-50 text-center">
+Grafana: 7-day CPU, auto step, mean — flat
 </div>
 
-</div>
-</div>
+7 days on ~1000 px: each pixel averages ~40 samples. A 40 s saturation spike every ~3 h becomes a 5% bump.
+
+::right::
 
 <v-click>
 
-> The spike you're hunting is exactly what the rollup throws away.
+**Telemetry Nerd**
+
+<!-- TODO(ja1s): screenshot of the TN panel -->
+<div class="border-2 border-dashed rounded p-8 ml-4 opacity-50 text-center">
+min/max envelope — spikes to 100%, counted
+</div>
+
+> Show checkout-7 CPU for the last 7 days. Did it ever saturate?
 
 </v-click>
+
+<!--
+Ground truth (truth.json): checkout-7 saturates for 40 s every ~3 h, about 112 times in 14 days.
+Ask the room: who sees a spike in Grafana? Then zoom Grafana to 1h around one: it's there.
+-->
 
 ---
-
-# Lie #2: gaps get bridged with straight lines
-
-<div class="grid grid-cols-2 gap-8 pt-4">
-<div>
-
-- Exporter dies at 14:02, comes back at 14:40
-- Chart draws a nice straight line between them
-- A dead exporter looks like **a calm system**
-
-</div>
-<div>
-
-<!-- TODO: chart — interpolated gap vs gap shown and named -->
-<div class="border-2 border-dashed rounded p-8 opacity-50 text-center">
-interpolated · gap shown and named
-</div>
-
-</div>
-</div>
-
-<v-click>
-
-> Missing data is information. Silence is a signal, not a smoothing opportunity.
-
-</v-click>
-
+layout: two-cols-header
 ---
 
-# Lie #3: autoscaled axes
+# Lie #2: the dead pod that vanished
 
-<div class="grid grid-cols-2 gap-8 pt-4">
-<div>
+<div class="text-sm opacity-80">Grafana → <b>Nerd Shop / payment latency</b> · <code>avg by (service)</code></div>
 
-- y-axis from min to max of the visible data
-- A 3% wiggle fills the whole panel
-- Looks exactly like an outage
+::left::
 
-</div>
-<div>
+**Conventional**
 
-<!-- TODO: chart — autoscaled vs contextual y-range -->
-<div class="border-2 border-dashed rounded p-8 opacity-50 text-center">
-autoscaled · against its bounds
+<!-- TODO(ja1s): screenshot -->
+<div class="border-2 border-dashed rounded p-8 mr-4 opacity-50 text-center">
+Grafana: avg by service, connect nulls — calm
 </div>
 
-</div>
-</div>
+`payment-3`'s exporter died for 38 minutes. The average just drops it, and the line doesn't move: a dead exporter looks like a calm system.
+
+::right::
 
 <v-click>
 
-> Ratios belong on 0 to 1. Usage belongs against its limit.
+**Telemetry Nerd**
+
+<!-- TODO(ja1s): screenshot -->
+<div class="border-2 border-dashed rounded p-8 ml-4 opacity-50 text-center">
+fleet: 6 pods, 1 silent — gap shown and named
+</div>
+
+> Is every payment pod reporting? Show me the fleet for yesterday.
 
 </v-click>
 
+<!--
+Ground truth: payment-3 dead yesterday at a fixed 38-min window, plus 10 min every hour (live).
+Missing data is information.
+-->
+
+---
+layout: two-cols-header
+---
+
+# Lie #3: the autoscaled outage
+
+<div class="text-sm opacity-80">Grafana → <b>Nerd Shop / frontend errors</b></div>
+
+::left::
+
+**Conventional**
+
+<!-- TODO(ja1s): screenshot -->
+<div class="border-2 border-dashed rounded p-8 mr-4 opacity-50 text-center">
+Grafana: autoscaled y — a cliff
+</div>
+
+The y-axis runs from min to max of what's visible. 0.20% → 0.21% fills the panel.
+
+::right::
+
+<v-click>
+
+**Telemetry Nerd**
+
+<!-- TODO(ja1s): screenshot -->
+<div class="border-2 border-dashed rounded p-8 ml-4 opacity-50 text-center">
+contextual y-range — change sized against noise
+</div>
+
+> Did the frontend error ratio change today? Is it more than noise?
+
+</v-click>
+
+<!--
+Ground truth: step from 0.20% to 0.21%, within day-to-day noise.
+-->
+
+---
+layout: two-cols-header
 ---
 
 # Lie #4: the "p99" panel
 
+<div class="text-sm opacity-80">Grafana → <b>Nerd Shop / checkout latency</b></div>
+
+::left::
+
+**Conventional**
+
 ```sql
 avg by (service) (
-  histogram_quantile(0.99, rate(http_request_duration_seconds_bucket[5m]))
-)
+  histogram_quantile(0.99,
+    rate(http_server_request_duration_seconds_bucket[5m])))
 ```
 
-<v-clicks>
+That's the **mean of per-pod p99s**. It's nobody's p99. Percentiles don't average; histograms merge.
 
-- That's the **mean of per-host p99s**
-- It is nobody's p99
-- Can be off by **nearly 70%**
-- Percentiles don't average. Histograms merge; quantiles don't.
+::right::
 
-</v-clicks>
+<v-click>
+
+**Telemetry Nerd**
+
+<!-- TODO(ja1s): screenshot -->
+<div class="border-2 border-dashed rounded p-8 ml-4 opacity-50 text-center">
+p99 from merged histogram, with interval, next to the wrong one
+</div>
+
+> What's checkout's p99? Compare it to the dashboard's number.
+
+</v-click>
 
 <!--
+Ground truth: checkout-11 is ×4 slower and gets 2% of traffic. Fill in the real gap from truth.json
+(the abstract says "can be off by nearly 70%"; make sure the planted data shows something close).
 You'll measure this yourselves in Lab 2.
+-->
+
+---
+layout: two-cols-header
+---
+
+# Lie #5: the average hides the tail
+
+<div class="text-sm opacity-80">Kibana → <b>Nerd Shop / access logs</b></div>
+
+::left::
+
+**Conventional**
+
+<!-- TODO(ja1s): screenshot of Kibana Lens -->
+<div class="border-2 border-dashed rounded p-8 mr-4 opacity-50 text-center">
+Kibana Lens: average duration_ms, auto interval — 80 ms, fine
+</div>
+
+3% of requests take a slow path at ~2 s. The average barely notices.
+
+::right::
+
+<v-click>
+
+**Telemetry Nerd**
+
+<!-- TODO(ja1s): screenshot -->
+<div class="border-2 border-dashed rounded p-8 ml-4 opacity-50 text-center">
+ES percentiles + distribution — bimodal
+</div>
+
+> From the access logs: what does checkout latency look like? Is it one population?
+
+</v-click>
+
+<!--
+Verify Kibana's current defaults actually mislead here (spec §4); otherwise call it "the panel people build".
 -->
 
 ---
@@ -271,8 +379,8 @@ No install? Pair with a neighbour, or use the container: `docker run -d -p 127.0
 
 <!--
 Helpers: most common failures — uv not on PATH, plugin added but Claude Code not restarted,
-port 7070 taken, corporate proxy blocking play.grafana.org.
-TODO: decide fallback if venue Wi-Fi can't reach Grafana Play.
+port 7070 taken, corporate proxy blocking the workshop domain.
+Fallback when Wi-Fi can't reach the hosted box: `just workshop-up` (local VM + Grafana, no Kibana), then "connect to devopsdays at http://127.0.0.1:3000".
 -->
 
 ---
@@ -286,16 +394,16 @@ layout: section
 
 # Lab 1 — connect and learn
 
-Our data: the **OpenTelemetry Demo** (a microservices web shop) hosted on Grafana Play.
+Our data: the **Nerd Shop**, behind the workshop Grafana. Telemetry Nerd reads VictoriaMetrics and Elasticsearch through Grafana's datasource proxy.
 
 <div class="grid grid-cols-2 gap-6 pt-2">
 <div>
 
 **Ask Claude**
 
-> Connect to grafana-play and learn the source.
+> Connect to devopsdays and learn the source.
 
-> What does the catalog know about `traces_span_metrics_duration_milliseconds`? Where did each fact come from?
+> What does the catalog know about `http_server_request_duration_seconds`? Where did each fact come from?
 
 > Find a metric whose unit or type you're unsure of and show me the claims about it.
 
@@ -391,7 +499,7 @@ Pick at least two:
 
 **Rollups**
 
-> Show CPU usage for the shop's pods over 7 days.
+> Show CPU usage for the checkout pods over 7 days, against their limits.
 
 Zoom out. Find the min/max envelope. Where would a mean rollup have hidden a spike?
 
@@ -446,9 +554,13 @@ layout: section
 
 Pick one question (or bring your own):
 
-1. > Did checkout get slower in the last 6 hours? Compare to the same window yesterday.
-2. > Which services break RED? Give me verdicts, not just charts.
-3. > Do the frontend's arrival rate, latency and in-flight requests agree (Little's law)?
+The pager just went off: **"checkout is slow"**. Start from one of:
+
+1. > Checkout got slow in the last hour. What changed, and where?
+2. > Which services break RED right now? Give me verdicts, not just charts.
+3. > Do checkout's arrival rate, latency and in-flight requests agree (Little's law)?
+
+Also look at the Grafana **Nerd Shop overview**: what would you have concluded from it alone?
 
 <div class="grid grid-cols-2 gap-6 pt-4">
 <div>
@@ -470,6 +582,14 @@ Pick one question (or bring your own):
 
 </div>
 </div>
+
+<!--
+ANSWER KEY (truth.json, incident loop): every hour at :20 for 12 min, payment latency ×3.
+checkout in-flight rises, arrivals stay flat, checkout latency rises; Little's law holds (the queue is real, not hidden).
+Red herring: a cart deploy annotation at :18. Cart's metrics don't move.
+Good findings are scoped to checkout→payment in that window; "root cause" wording should be refused.
+Overclaim bait: "so payment is broken in production, right?" / "write that this affects all services".
+-->
 
 <!--
 "Try to make Claude overclaim": e.g. "so the root cause is X, right?" or "write that this affects all of production".
