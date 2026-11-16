@@ -40,6 +40,23 @@ def test_cusum_arl_evaluates_the_normal_cdf_once_per_state_offset(monkeypatch):
     assert sum(evaluated) == 2 * (n + 2 * (2 * n - 1))
 
 
+def test_arl_solve_survives_one_spurious_singular_report(monkeypatch):
+    expected = cusum_arl(n=20)
+    real_solve = np.linalg.solve
+    calls = []
+
+    def flaky_solve(a, b):
+        calls.append(1)
+        if len(calls) == 1:
+            raise np.linalg.LinAlgError("Singular matrix")
+        return real_solve(a, b)
+
+    monkeypatch.setattr(np.linalg, "solve", flaky_solve)
+    cusum_arl.cache_clear()
+    assert cusum_arl(n=20) == pytest.approx(expected)
+    assert len(calls) == 3  # two sides, the first solve retried once
+
+
 def test_markov_chain_arl_matches_published_tables():
     assert cusum_arl() == pytest.approx(465, rel=0.03)  # k=0.5, h=5: one-sided 930
     assert cusum_arl(mu=1.0) == pytest.approx(10.4, rel=0.05)

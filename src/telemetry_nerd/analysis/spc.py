@@ -144,7 +144,16 @@ def cusum_signals(
 
 def _arl(transition: np.ndarray, start: int) -> float:
     m = transition.shape[0]
-    arl = np.linalg.solve(np.eye(m) - transition, np.ones(m))
+    system = (
+        np.eye(m) - transition
+    )  # I - Q of a sub-stochastic Q: never singular in exact arithmetic
+    try:
+        arl = np.linalg.solve(system, np.ones(m))
+    except np.linalg.LinAlgError:
+        # A threaded OpenBLAS getrf raced under CPU contention and reported a spurious singular
+        # pivot (telemetry-nerd-vqr5). pytest plugins import numpy before the package pins the
+        # pool to one thread, so the pin cannot be relied on; a second solve is deterministic.
+        arl = np.linalg.solve(system, np.ones(m))
     return float(arl[start])
 
 
