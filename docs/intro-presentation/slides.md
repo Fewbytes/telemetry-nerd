@@ -216,16 +216,10 @@ Ground truth: step from 0.20% to 0.21%, within day-to-day noise.
 -->
 
 ---
-layout: two-cols-header
----
 
 # Lie #4: the "p99" panel
 
-<div class="text-sm opacity-80">Grafana → <b>Nerd Shop / checkout latency</b></div>
-
-::left::
-
-**Conventional**
+<div class="text-sm opacity-80">Grafana → <b>Nerd Shop / checkout latency</b> · the panel on almost every service dashboard</div>
 
 ```sql
 avg by (service) (
@@ -233,7 +227,78 @@ avg by (service) (
     rate(http_server_request_duration_seconds_bucket[5m])))
 ```
 
-That's the **mean of per-pod p99s**. It's nobody's p99. Percentiles don't average; histograms merge.
+<v-clicks>
+
+- **Mean of per-pod p99s.** `checkout-11` serves 2% of traffic and counts as much as a pod serving 15%. The result is nobody's p99.
+- **Every time step weighs the same.** A quiet 3 a.m. step with 40 requests moves the line as much as the peak-hour step with 40 000.
+- **Interpolated inside a bucket.** `histogram_quantile` draws a straight line between `le` edges, so a p99 of `0.287` s from buckets `0.25` and `0.5` is false precision.
+- **No sample count.** A p99 over 50 requests is the second-slowest request, and the panel doesn't tell you.
+
+</v-clicks>
+
+<!--
+Ask the room: who has this panel? (Everyone.) Who has alerted on it? (Most.)
+Planted: checkout-11 ×4 slower, 2% of traffic. Real numbers come from truth.json (TODO hk0h).
+-->
+
+---
+
+# How wrong? Nearly 70%
+
+<div class="grid grid-cols-2 gap-8 pt-2">
+<div>
+
+**A production example** (Hartmann, *Latency SLOs Done Right*, SREcon19)
+
+| | p90 |
+|---|---|
+| Mean of 24 hourly p90s | 60.3 ms |
+| True p90 of the merged 811k requests | **35.8 ms** |
+| Error | **68.5%** |
+
+Quiet hours (25–600 requests, wide spread) count as much as peak hours (35–98k).
+
+</div>
+<div>
+
+<v-click>
+
+**The Nerd Shop, right now**
+
+| | p99 |
+|---|---|
+| Grafana panel (mean of pod p99s) | TODO ms |
+| Merged histogram | TODO ms [lo, hi] |
+| Error | TODO% |
+
+Open the Grafana panel and see for yourself. You'll compute these in Lab 2.
+
+</v-click>
+
+</div>
+</div>
+
+<!--
+TODO(hk0h/v8ae): fill the Nerd Shop column from truth.json, and tune the generator so the gap is big enough to show.
+The error can go either way: here the slow low-traffic pod inflates the mean.
+-->
+
+---
+layout: two-cols-header
+---
+
+# Better: don't ask for a percentile at all
+
+<div class="text-sm opacity-80">A histogram is a set of <b>threshold counters</b>. Use them as such.</div>
+
+::left::
+
+**Ask "what fraction of requests were ≤ 300 ms?"**
+
+- **Exact** at a bucket edge, a **[lo, hi] interval** between edges, never interpolated
+- **Adds up** across pods, routes and time: sum the good, sum the total
+- It **is** the SLO question; move the threshold freely
+- Shape: a **heatmap** over time; the tail: a **CCDF**
 
 ::right::
 
@@ -241,19 +306,20 @@ That's the **mean of per-pod p99s**. It's nobody's p99. Percentiles don't averag
 
 **Telemetry Nerd**
 
-<!-- TODO(ja1s): screenshot -->
+<!-- TODO(ja1s): screenshot — fraction ≤ threshold with interval + heatmap with traffic strip -->
 <div class="border-2 border-dashed rounded p-8 ml-4 opacity-50 text-center">
-p99 from merged histogram, with interval, next to the wrong one
+fraction ≤ 300 ms with interval · heatmap · traffic count strip
 </div>
 
-> What's checkout's p99? Compare it to the dashboard's number.
+> How many checkout requests were slower than 300 ms in the last hour? Show me the distribution.
+
+Still want a p99? Only from the merged histogram, with its bucket interval and its *n*.
 
 </v-click>
 
 <!--
-Ground truth: checkout-11 is ×4 slower and gets 2% of traffic. Fill in the real gap from truth.json
-(the abstract says "can be off by nearly 70%"; make sure the planted data shows something close).
-You'll measure this yourselves in Lab 2.
+Teaser only, don't go deep here: Lab 2 is where they work through it (threshold fractions, heatmaps,
+CCDF, why the merged p99 still has an interval). Principle 10: only mergeable statistics are aggregated; percentiles never are.
 -->
 
 ---
@@ -463,30 +529,40 @@ layout: section
 
 ---
 
-# Lab 2 — the p99 lie
+# Lab 2 — latency without the p99 lie
 
-> Show me checkout's p99 latency over the last 3 hours, computed from the merged histogram.
+1. > Show me checkout's latency for the last 3 hours the way the Grafana dashboard does, then the right way.
 
-> Now draw the conventional "average of per-pod p99s" next to it. How far apart are they?
+2. > What fraction of checkout requests were slower than 300 ms? Per pod, and for the whole service.
+
+3. > Show the latency distribution over time. Where is the slow population?
 
 <div class="grid grid-cols-2 gap-6 pt-4">
 <div>
 
 **Done when**
 
-- Two lines on one panel, correctly labelled
-- You have the **gap as a number**, with its uncertainty
-- The conventional one carries a **caveat**
+- You have the **fraction over 300 ms** with its interval, and you know why it's an interval
+- You found the slow pod from the heatmap or the per-pod fractions, not from a p99 line
+- You've seen the conventional panel drawn **with its caveat**
+
+**Stretch:** pick a threshold between two bucket edges. What happens to the interval? Then: "what's the p99?", and look at what comes back with the number.
 
 </div>
 <div>
 
 **Notice**
 
-Claude can't draw the wrong one silently: the chart validator refuses averaged percentiles unless you ask, and then it says why it's wrong on the panel.
+- Claude can't silently draw the wrong panel: the chart validator refuses averaged percentiles unless you ask, and then the panel says why it's wrong.
+- The per-pod fractions add up to the service fraction; per-pod p99s never do.
 
 </div>
 </div>
+
+<!--
+This is the deep dive the Lie #4 slides promised. Expected (truth.json): checkout-11's fraction over 300 ms is far above the
+others; the service-wide fraction is the request-weighted sum.
+-->
 
 ---
 
@@ -532,7 +608,7 @@ What's the y-range? Ask for an autoscaled version and compare.
 
 <v-clicks>
 
-- Percentiles **only from merged histograms**
+- From histograms: **threshold fractions and heatmaps**; a percentile only from the merged histogram, with its interval and *n*
 - **min/max envelopes** on every rollup
 - Missing data **shown and named**, never filled
 - Every number carries its **uncertainty** (or says "uncertainty unknown")
