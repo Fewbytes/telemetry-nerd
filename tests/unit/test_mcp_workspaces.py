@@ -108,3 +108,10 @@ async def test_update_with_empty_question_clears_it(tmp_path):
     await call(mcp, "workspace_update", {"id": "w1", "question": "why?"})
     out = json.loads(await call(mcp, "workspace_update", {"id": "w1", "question": ""}))
     assert out["workspace"]["question"] is None
+
+
+async def test_create_returns_the_whole_question_it_stored(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://x")
+    question = "q" * 121
+    out = json.loads(await call(mcp, "workspace_create", {"title": "t", "question": question}))
+    assert out["workspace"]["question"] == question

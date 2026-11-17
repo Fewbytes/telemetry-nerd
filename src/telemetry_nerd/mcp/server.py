@@ -210,20 +210,13 @@ Telemetry Nerd: an evidence-first telemetry workspace shared with the user's bro
 WORKSPACE_LIST_BYTES = 1900
 
 
-def _capped_workspace(w: dict) -> dict:
-    """`w` with its title and question cut to the workspace_list caps."""
-    w = {**w, "title": w["title"][:60]}
-    if w.get("question"):
-        w["question"] = w["question"][:80]
-    return w
-
-
 def _workspace_row(w: dict) -> dict:
-    """A workspace_list row: capped text, non-zero counts only."""
-    capped = _capped_workspace(w)
-    row: dict = {"id": capped["id"], "title": capped["title"]}
-    if capped.get("question"):
-        row["question"] = capped["question"]
+    """A workspace_list row: title and question cut to the list caps, non-zero counts only.
+
+    Only the list is capped; workspace_create/update/promote return the full text."""
+    row: dict = {"id": w["id"], "title": w["title"][:60]}
+    if w.get("question"):
+        row["question"] = w["question"][:80]
     if w.get("archived"):
         row["archived"] = True
     row["last_activity"] = w["last_activity_ms"]
@@ -2562,7 +2555,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             out = await service.workspaces.create(title, question, "claude")
         except (ValueError, NotFound) as e:
             raise _fail(e) from e
-        return _dump({**out, "workspace": _capped_workspace(out["workspace"]), "url": ui_url})
+        return _dump({**out, "url": ui_url})
 
     @mcp.tool()
     def workspace_list(include_archived: bool = False) -> str:
@@ -2612,7 +2605,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         except (ValueError, NotFound) as e:
             raise _fail(e) from e
         return _dump({
-            "workspace": _capped_workspace(out["workspace"]),
+            "workspace": out["workspace"],
             "panel": out["panel"],
             "url": f"{ui_url}/#/panel/{out['panel']}",
         })  # fmt: skip
@@ -2632,7 +2625,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             )
         except (ValueError, NotFound) as e:
             raise _fail(e) from e
-        return _dump({"workspace": _capped_workspace(info.to_dict()), "url": ui_url})
+        return _dump({"workspace": info.to_dict(), "url": ui_url})
 
     _forbid_unknown_arguments(mcp)
     return mcp
