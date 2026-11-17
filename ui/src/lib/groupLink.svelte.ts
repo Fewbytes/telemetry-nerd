@@ -2,6 +2,7 @@
 // group, shared through context: a panel publishes the time under the pointer or its brush, and
 // every other panel of the group draws them on its own x axis.
 export const GROUP_GUTTER_PX = 88; // every grouped plot's y-axis gutter, so the x axes line up
+export const PLOT_GUTTER_PX = 80; // ungrouped heatmap / Q-Q y-axis gutter: fits "> 2000 ms" without clipping
 export const GROUP_LABEL_PX = 22; // of which the rotated axis label
 
 export class GroupLink {

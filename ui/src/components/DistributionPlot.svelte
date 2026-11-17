@@ -10,6 +10,7 @@
   import { cellSpan, minSamples, valueAt, valueAxis } from "../chart/heatmap";
   import { fmtValue, valueTicks } from "../chart/axis";
   import { fmtRange } from "../lib/format";
+  import { PLOT_GUTTER_PX } from "../lib/groupLink.svelte";
   import type { HistogramPanelData, WindowHist } from "../lib/api";
   import CompactText from "./panel/CompactText.svelte";
 
@@ -27,7 +28,7 @@
   const palette = $derived(seriesPalette(theme.effective));
 
   const HEIGHT = 220;
-  const AXIS_LEFT = 40;
+  const AXIS_LEFT = PLOT_GUTTER_PX;
   const AXIS_BOTTOM = 28;
   let canvas = $state<HTMLCanvasElement | null>(null);
   type View = "histogram" | "ecdf" | "quantile_curve" | "ccdf" | "qq";
