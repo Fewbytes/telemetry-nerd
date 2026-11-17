@@ -11,6 +11,8 @@ from telemetry_nerd.core.plot_table import (
     PlotReason,
     PlotTable,
     PlotTableError,
+    check_kind,
+    check_line_series_count,
     parse_plot_array,
     parse_plot_columns,
     parse_plot_matrix,
@@ -113,3 +115,10 @@ def test_over_limit_reason_names_the_limit_and_received_value():
         f"column 'values': limit is {MAX_VALUES_PER_SAMPLE}".replace("column 'values': ", ""),
         lambda: parse_plot_array([0.0] * (MAX_VALUES_PER_SAMPLE + 1)),
     )
+
+
+def test_refusal_text_opens_with_its_code():
+    with pytest.raises(PlotTableError, match=r"^refused_form: Pie charts are never rendered"):
+        check_kind("pie")
+    with pytest.raises(PlotTableError, match=r"^over_limit: 6 lines in one plot, the limit is 5"):
+        check_line_series_count(6)

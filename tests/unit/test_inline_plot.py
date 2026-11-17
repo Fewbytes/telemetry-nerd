@@ -51,8 +51,14 @@ async def test_supplied_series_become_a_panel_without_touching_the_source(tmp_pa
     [
         ([], "at least one series"),
         ([{"label": "a", "ts": [NOW], "values": [1, 2]}], "same length"),
-        ([{"label": "a", "ts": [NOW, NOW - MINUTE], "values": [1, 2]}], "strictly increasing"),
-        ([{"label": "a", "ts": [NOW], "values": [None]}], "finite"),
+        (
+            [{"label": "a", "ts": [NOW, NOW - MINUTE], "values": [1, 2]}],
+            "ts_not_increasing: series 'a': ts must be strictly increasing, index 1",
+        ),
+        (
+            [{"label": "a", "ts": [NOW], "values": [None]}],
+            "not_finite: series 'a': values must be finite numbers, index 0",
+        ),
         ([{"label": "", "ts": [NOW], "values": [1]}], "needs a label"),
         ([{"label": "a", "ts": [NOW, NOW + 1], "values": [1, 2]}], "round them to whole seconds"),
     ],

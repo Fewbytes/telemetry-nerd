@@ -70,5 +70,6 @@ aggregate first, then call again.
 | Label length | 80 characters |
 
 Values must be finite numbers: `NaN` and `Inf` are `not_finite`. Time is epoch milliseconds or
-ISO-8601 with timezone, strictly increasing. Read the refusal text: it names the series, column
-and index that failed.
+ISO-8601 with timezone, strictly increasing. A refusal opens with its code (`refused_form`,
+`over_limit`, `not_finite`, `ts_not_increasing`) and names the series or column and the index
+that failed.

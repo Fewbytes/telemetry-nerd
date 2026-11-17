@@ -13,6 +13,7 @@ from itertools import pairwise
 
 import pyarrow as pa
 
+from telemetry_nerd.core.plot_table import PlotReason, PlotTableError
 from telemetry_nerd.model.series import (
     BUCKET_SCHEMA,
     SERIES_SCHEMA,
@@ -66,10 +67,19 @@ def parse_inline_series(raw: list[dict], now_ms: int) -> list[InlineSeries]:
                 f"(got {len(ts)} and {len(values)})"
             )
         stamps = tuple(parse_time(str(t), now_ms) for t in ts)
-        if any(b <= a for a, b in pairwise(stamps)):
-            raise ValueError(f"series {label!r}: ts must be strictly increasing")
-        if not all(isinstance(v, int | float) and math.isfinite(v) for v in values):
-            raise ValueError(f"series {label!r}: values must be finite numbers")
+        for at, (a, b) in enumerate(pairwise(stamps), start=1):
+            if b <= a:
+                raise PlotTableError(
+                    PlotReason.TS_NOT_INCREASING,
+                    f"series {label!r}: ts must be strictly increasing, index {at} does not "
+                    f"increase",
+                )
+        for at, v in enumerate(values):
+            if not (isinstance(v, int | float) and math.isfinite(v)):
+                raise PlotTableError(
+                    PlotReason.NOT_FINITE,
+                    f"series {label!r}: values must be finite numbers, index {at} is {v!r}",
+                )
         floats = tuple(float(v) for v in values)
         out.append(InlineSeries(label, stamps, floats))
     return out

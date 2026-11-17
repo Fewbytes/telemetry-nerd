@@ -66,10 +66,11 @@ class PlotReason(StrEnum):
 
 
 class PlotTableError(ValueError):
-    """Invalid caller data; `reason` is the stable code, `str(e)` the sentence for the caller."""
+    """Invalid caller data; `reason` is the stable code, `str(e)` the sentence for the caller,
+    which opens with the code so the caller can branch on it."""
 
     def __init__(self, reason: PlotReason, message: str) -> None:
-        super().__init__(message)
+        super().__init__(f"{reason.value}: {message}")
         self.reason = reason
 
 
@@ -226,7 +227,7 @@ def check_line_series_count(count: int) -> None:
     check_column_count(count)
     if count > LINE_SERIES_BUDGET:
         raise PlotTableError(
-            PlotReason.KIND_SHAPE_MISMATCH,
+            PlotReason.OVER_LIMIT,
             f"{count} lines in one plot, the limit is {LINE_SERIES_BUDGET}: call plot_data once "
             f"per group of at most {LINE_SERIES_BUDGET} series (small multiples) and keep the "
             f"same y-range on each so they compare",
