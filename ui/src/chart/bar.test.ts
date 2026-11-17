@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { BAR_LABEL_CHAR_PX, BAR_VALUE_ROOM_PX, barLabelGutterPx, layoutBars, type BarInput } from "./bar";
+import { BAR_LABEL_CHAR_PX, BAR_VALUE_ROOM_PX, barLabelGutterPx, layoutBarGroups, layoutBars, type BarInput } from "./bar";
 
 const five: BarInput[] = [
   { label: "b", value: 3 }, { label: "a", value: 9 }, { label: "e", value: 1 },
@@ -64,4 +64,16 @@ test("the label gutter fits the longest category label, so 'DomainNotConnected' 
   const l = layoutBars([{ label: "DomainNotConnected", value: 412 }, { label: "RateLimited", value: 90 }], "descending");
   expect(barLabelGutterPx(l.bars)).toBeGreaterThanOrEqual("DomainNotConnected".length * BAR_LABEL_CHAR_PX);
   expect(BAR_VALUE_ROOM_PX).toBeGreaterThan(String(412).length * BAR_LABEL_CHAR_PX); // the full-width bar's value label has room
+});
+
+test("grouped bars put each category's bars side by side on one shared domain and zero baseline", () => {
+  const l = layoutBarGroups([
+    { label: "incident", rows: [{ label: "a", value: 10 }, { label: "b", value: 2 }] },
+    { label: "healthy day", rows: [{ label: "a", value: 5 }, { label: "b", value: 4 }] },
+  ], "given");
+  expect(l.seriesLabels).toEqual(["incident", "healthy day"]);
+  expect(l.categories.map((c) => c.label)).toEqual(["a", "b"]);
+  expect(l.categories[0].bars.map((b) => b.span)).toEqual([[0, 1], [0, 0.5]]); // same scale: 5 is half of 10
+  expect(l.categories[1].bars.map((b) => b.span)).toEqual([[0, 0.2], [0, 0.4]]);
+  expect(l.table).toEqual([{ label: "a", values: ["10", "5"] }, { label: "b", values: ["2", "4"] }]);
 });

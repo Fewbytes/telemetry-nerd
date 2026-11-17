@@ -999,10 +999,7 @@
     {/if}
     {#if data && data.kind === "bar"}
       {@const bd = data}
-      {#each bd.series as s, i (s.label)}
-        {#if bd.series.length > 1}<div class="legend">{s.label}</div>{/if}
-        <BarPlot rows={s.rows} order={bd.order} hue={i} width={fetchWidth} unit={panel.spec.y.unit ?? null} />
-      {/each}
+      <BarPlot series={bd.series} order={bd.order} width={fetchWidth} unit={panel.spec.y.unit ?? null} />
     {/if}
     {#if data && data.kind === "littles"}
       {@const lt = data}
