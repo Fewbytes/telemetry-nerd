@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { layoutBars, type BarInput } from "./bar";
+import { BAR_LABEL_CHAR_PX, BAR_VALUE_ROOM_PX, barLabelGutterPx, layoutBars, type BarInput } from "./bar";
 
 const five: BarInput[] = [
   { label: "b", value: 3 }, { label: "a", value: 9 }, { label: "e", value: 1 },
@@ -58,4 +58,10 @@ test("value labels show with 12 bars and not with 13", () => {
   const many = Array.from({ length: 13 }, (_, i) => ({ label: `l${i}`, value: i }));
   expect(layoutBars(many.slice(0, 12), "given").valueLabels).toBe(true);
   expect(layoutBars(many, "given").valueLabels).toBe(false);
+});
+
+test("the label gutter fits the longest category label, so 'DomainNotConnected' is not clipped", () => {
+  const l = layoutBars([{ label: "DomainNotConnected", value: 412 }, { label: "RateLimited", value: 90 }], "descending");
+  expect(barLabelGutterPx(l.bars)).toBeGreaterThanOrEqual("DomainNotConnected".length * BAR_LABEL_CHAR_PX);
+  expect(BAR_VALUE_ROOM_PX).toBeGreaterThan(String(412).length * BAR_LABEL_CHAR_PX); // the full-width bar's value label has room
 });

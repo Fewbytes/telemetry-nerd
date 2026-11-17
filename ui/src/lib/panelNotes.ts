@@ -4,6 +4,9 @@ import { fmtValue } from "../chart/axis";
 import { fmtStep } from "./format";
 import { caveatSource, type VariationSource } from "./sources";
 
+/** The pseudo code node of values the caller supplied (core/inline_series.py INLINE_NODE). */
+const INLINE_NODE = "inline";
+
 export interface Note {
   kind: "caveat" | "info";
   key: string;
@@ -186,7 +189,7 @@ export function panelNotes(
     notes.push({ kind: "info", key: "y_view", text: `Y view "${yv.label}"${by}${yv.reason ? `: ${yv.reason}` : ""}` });
     return notes;
   }
-  if (opts.yScaledToData && opts.representation !== "distribution") {
+  if (opts.yScaledToData && opts.representation !== "distribution" && opts.representation !== "samples") {
     notes.push({ kind: "info", key: "y_scaled_to_data", text: "The y-axis is scaled to the data (no reference range yet)." });
   }
   return notes;
@@ -230,6 +233,7 @@ export function intervalLegend(d: Pick<DatasetMeta, "uncertainty">): string | nu
 /** Where the panel's data came from: the source, or the code node and its inputs (spec §5.2). */
 export function provenanceText(d: Pick<DatasetMeta, "source" | "producer" | "parents">): string {
   const p = d.producer;
+  if (p?.kind === "code" && p.node === INLINE_NODE) return "data supplied by Claude";
   const from = d.parents?.length ? ` from ${d.parents.join(", ")}` : "";
   if (p?.kind === "binding") return `${d.source}: ${p.description ?? "derived"}${from}`;
   if (!p || p.kind !== "code") return d.source;
@@ -239,7 +243,7 @@ export function provenanceText(d: Pick<DatasetMeta, "source" | "producer" | "par
 /** provenanceText split around the code node id so the UI can make it a button; null for a source. */
 export function provenanceParts(d: Pick<DatasetMeta, "source" | "producer" | "parents">): [string, string, string] | null {
   const p = d.producer;
-  if (!p || p.kind !== "code" || !p.node) return null;
+  if (!p || p.kind !== "code" || !p.node || p.node === INLINE_NODE) return null;
   const text = provenanceText(d);
   const at = text.indexOf(p.node);
   return [text.slice(0, at), p.node, text.slice(at + p.node.length)];
@@ -337,7 +341,24 @@ export function shownWhatCompact(data: PanelData, heatView: HeatView): boolean {
   return data.kind === "histogram" && data.mark !== "ccdf" && data.mark !== "quantile_curve" && data.mark !== "qq";
 }
 
+/** Caller-supplied values (plot_data columns, matrix, bars): no query, no time range, no step. */
+export const isSuppliedSample = (data: PanelData): boolean => data.dataset.representation === "samples";
+
+const SUPPLIED_WHAT: Record<string, string> = {
+  bar: "One bar per label, from a zero baseline.",
+  heatmap: "A matrix of values, one cell per row and column.",
+  histogram: "Count of the values in each bin.",
+  ecdf: "Share of the values at or below each value.",
+  ccdf: "Share of the values at or above each value (log-log).",
+  quantile_curve: "Value at each quantile.",
+  qq: "Q-Q plot: the first column's quantiles (x) against the second's (y); on the dashed y = x line they are equal.",
+};
+
 /** The panel's "what is shown" sentence (its aggregation/estimator), for the panel's current views. */
 export function shownWhat(data: PanelData, heatView: HeatView, fleetView: FleetView): string {
+  if (isSuppliedSample(data)) {
+    const mark = data.kind === "bar" ? "bar" : data.kind === "sample_heatmap" ? "heatmap" : "mark" in data ? data.mark : "histogram";
+    return `${SUPPLIED_WHAT[mark]} Values supplied by Claude.`;
+  }
   return describeShown(data.dataset, fmtStep(data.effective_step_ms), data.kind, "mark" in data ? (data.kind === "heatmap" ? heatView === "percentiles" ? "percentiles" : "" : data.mark) : "", fleetView, data.kind === "fleet" && (data.clusters?.length ?? 0) >= 2);
 }

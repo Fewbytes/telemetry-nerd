@@ -39,6 +39,11 @@ async def test_supplied_series_become_a_panel_without_touching_the_source(tmp_pa
         "cats",
         "dogs",
     ]
+    (note,) = [
+        c for c in svc.panel_data("p1", width_px=800)["located"] if c["code"] == "code_output"
+    ]
+    assert note["message"].startswith("Data supplied by Claude")
+    assert "code node" not in note["message"]
 
 
 @pytest.mark.parametrize(

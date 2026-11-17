@@ -217,3 +217,14 @@ def test_bars_refuse_what_cannot_be_drawn_honestly(tmp_path, kind, data, labels,
         svc.plot_bars("q?", data, kind, labels)
     assert refused.value.reason == reason
     assert svc.workspace.list_panels() == []
+
+
+def test_a_sample_panel_without_a_unit_gets_no_catalog_warning(tmp_path):
+    svc = make_service(tmp_path)
+    shown = svc.plot_heatmap("q?", [[1, 2], [3, 4]])
+    panel = svc.workspace.get_panel(shown.panel.id)
+    dataset_id = panel.dataset_ids[0]
+    issues = validate(
+        ChartSpec.model_validate(panel.spec), {dataset_id: 1}, {dataset_id: "samples"}
+    )
+    assert issues == []

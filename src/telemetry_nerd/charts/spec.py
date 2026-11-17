@@ -412,12 +412,14 @@ def validate(
                 ),
             )
         )
-    if spec.y.unit is None:
+    # caller-supplied samples have no metric, so there is no catalog to supply a unit
+    drawn_from_source = any(reps.get(layer.data) != "samples" for layer in spec.layers)
+    if spec.y.unit is None and drawn_from_source:
         issues.append(
             ValidationIssue(
                 rule="units",
                 severity="warning",
-                message="y-axis unit unknown; it will come from the metric catalog (M3)",
+                message="y-axis unit unknown; pass unit to label the axis",
             )
         )
     return issues

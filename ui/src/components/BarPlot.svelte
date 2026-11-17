@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { layoutBars } from "../chart/bar";
+  import { BAR_VALUE_ROOM_PX, barLabelGutterPx, layoutBars } from "../chart/bar";
   import { PALETTE_DARK, PALETTE_LIGHT } from "../chart/toUplot";
   import { theme } from "../lib/theme.svelte";
   import type { BarInput, BarOrder } from "../chart/bar";
@@ -11,10 +11,10 @@
   let asTable = $state(false);
 
   const THICKNESS = 22; // px per bar (horizontal) and the chart height when vertical
-  const LABEL_GUTTER = 120;
+  const labelGutter = $derived(barLabelGutterPx(layout.bars));
   const vertical = $derived(layout.orientation === "vertical");
   const plotHeight = $derived(vertical ? 180 : layout.bars.length * THICKNESS);
-  const plotWidth = $derived(vertical ? width : Math.max(80, width - LABEL_GUTTER));
+  const plotWidth = $derived(vertical ? width : Math.max(80, width - labelGutter - BAR_VALUE_ROOM_PX));
   const along = $derived(vertical ? plotHeight : plotWidth);
   const slot = $derived(vertical ? width / layout.bars.length : THICKNESS);
   // value axis position (px) of a domain fraction: vertical grows upward, horizontal rightward
@@ -33,8 +33,8 @@
       </tbody>
     </table>
   {:else}
-    <svg width={width} height={plotHeight + (vertical ? 20 : 0)} role="img" aria-label={`bar chart, ${layout.bars.length} bars`}>
-      <g transform={vertical ? "" : `translate(${LABEL_GUTTER} 0)`}>
+    <svg width={width} height={plotHeight + (vertical ? BAR_VALUE_ROOM_PX / 2 + 20 : 0)} role="img" aria-label={`bar chart, ${layout.bars.length} bars`}>
+      <g transform={vertical ? `translate(0 ${BAR_VALUE_ROOM_PX / 2})` : `translate(${labelGutter} 0)`}>
         {#each layout.bars as bar, i (bar.label)}
           {#if bar.span}
             {@const a = at(bar.span[0])}

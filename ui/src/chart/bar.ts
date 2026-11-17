@@ -6,6 +6,10 @@ export const BAR_HORIZONTAL_LABEL_CHARS = 12; // a longer label switches to hori
 export const BAR_HORIZONTAL_COUNT = 12; // more bars than this switch to horizontal bars
 export const BAR_VALUE_LABEL_COUNT = 12; // value labels on the bars up to this many
 
+export const BAR_LABEL_CHAR_PX = 7; // 12px sans-serif, generous so the longest category label is never clipped
+export const BAR_LABEL_PAD_PX = 10;
+export const BAR_VALUE_ROOM_PX = 48; // beyond the longest bar (right when horizontal, above when vertical), for its value label
+
 export type BarOrder = "descending" | "given";
 
 /** A missing value (`null`) is drawn as "no value", never as zero. */
@@ -51,3 +55,7 @@ export function layoutBars(rows: BarInput[], order: BarOrder): BarLayout {
     table: ordered.map((r) => ({ label: r.label, value: r.value === null ? "no value" : String(r.value) })),
   };
 }
+
+/** Width reserved left of horizontal bars for the longest category label. */
+export const barLabelGutterPx = (bars: Bar[]): number =>
+  Math.max(0, ...bars.map((b) => b.label.length)) * BAR_LABEL_CHAR_PX + BAR_LABEL_PAD_PX;

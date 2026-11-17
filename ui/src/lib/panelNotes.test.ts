@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { YContext } from "./api";
-import { caveatText, contextNotes, describeShown, intervalLegend, panelNotes, provenanceParts, provenanceText, shownWhat, shownWhatCompact } from "./panelNotes";
+import type { PanelData, YContext } from "./api";
+import { caveatText, contextNotes, describeShown, intervalLegend, isSuppliedSample, panelNotes, provenanceParts, provenanceText, shownWhat, shownWhatCompact } from "./panelNotes";
 
 describe("panelNotes", () => {
   it("turns caveat keys into sentences and keeps unknown keys visible", () => {
@@ -296,5 +296,28 @@ describe("shownWhatCompact (simple mode: only sentences ending in the bin-scheme
   it("every other kind is in full", () => {
     expect(shownWhatCompact(d("time"), "heatmap")).toBe(false);
     expect(shownWhatCompact(d("spc"), "heatmap")).toBe(false);
+  });
+});
+
+describe("caller-supplied samples (plot mode)", () => {
+  const sampleBar = {
+    kind: "bar", effective_step_ms: 0, order: "descending", series: [],
+    dataset: { representation: "samples", source: "inline", start_ms: 0, end_ms: 0 },
+  } as unknown as PanelData;
+  it("says what the bars are and that Claude supplied them, with no time-series wording", () => {
+    const text = shownWhat(sampleBar, "heatmap", "band");
+    expect(text).toContain("zero baseline");
+    expect(text).toContain("supplied by Claude");
+    expect(text).not.toMatch(/bucket|envelope|step/);
+    expect(isSuppliedSample(sampleBar)).toBe(true);
+  });
+  it("does not claim the y axis lacks a reference range", () => {
+    const notes = panelNotes([], { yScaledToData: true, nMin: null, representation: "samples" });
+    expect(notes.map((n) => n.key)).not.toContain("y_scaled_to_data");
+  });
+  it("names inline line data as supplied by Claude, not as a code node", () => {
+    const d = { source: "inline", producer: { kind: "code" as const, node: "inline", output: "plot" }, parents: [] };
+    expect(provenanceText(d)).toBe("data supplied by Claude");
+    expect(provenanceParts(d)).toBeNull();
   });
 });

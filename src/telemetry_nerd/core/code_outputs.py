@@ -8,6 +8,7 @@ not rows: they are cited, not drawn."""
 
 from __future__ import annotations
 
+from telemetry_nerd.core.inline_series import INLINE_NODE
 from telemetry_nerd.datasets.store import DatasetMeta, DatasetStore
 from telemetry_nerd.exchange.fmt import ESTIMATE
 from telemetry_nerd.model.caveats import Caveat
@@ -35,12 +36,18 @@ def refuse_requery(meta: DatasetMeta, what: str, hint: str = "") -> None:
 
 def code_caveat(meta: DatasetMeta) -> Caveat:
     parents = ", ".join(meta.parents) or "no input datasets"
+    if meta.code_node == INLINE_NODE:
+        origin_text = "Data supplied by Claude, not queried from a source."
+    else:
+        origin_text = (
+            f"Produced by code node {meta.code_node} "
+            f"(output {(meta.producer or {}).get('output')!r}) from {parents}."
+        )
     return Caveat(
         code=CODE_OUTPUT,
         severity="info",
         message=(
-            f"Produced by code node {meta.code_node} (output {(meta.producer or {}).get('output')!r}) "
-            f"from {parents}. Fixed data: never re-queried; no operating profile, reference "
+            f"{origin_text} Fixed data: never re-queried; no operating profile, reference "
             "windows or catalog context."
         ),
         source=f"code:{meta.code_node}",

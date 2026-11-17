@@ -3,7 +3,7 @@
   // the band legend, then time range and step. Full provenance, dataset and query are nerd-only.
   import type { PanelData } from "../../lib/api";
   import { fmtInstant, fmtStep } from "../../lib/format";
-  import { intervalLegend, shownWhat, shownWhatCompact, type FleetView, type HeatView } from "../../lib/panelNotes";
+  import { intervalLegend, isSuppliedSample, shownWhat, shownWhatCompact, type FleetView, type HeatView } from "../../lib/panelNotes";
   import CompactText from "./CompactText.svelte";
 
   let { data, heatView, fleetView }: {
@@ -20,6 +20,8 @@
   {@const bandLegend = intervalLegend(data.dataset)}
   {#if bandLegend}<div class="legend" data-interval-legend>band: {bandLegend}</div>{/if}
 {/if}
-<p class="simple-meta" data-simple-meta>
-  {fmtInstant(data.dataset.start_ms)} – {fmtInstant(data.dataset.end_ms)} · step {fmtStep(data.effective_step_ms)}
-</p>
+{#if !isSuppliedSample(data)}
+  <p class="simple-meta" data-simple-meta>
+    {fmtInstant(data.dataset.start_ms)} – {fmtInstant(data.dataset.end_ms)} · step {fmtStep(data.effective_step_ms)}
+  </p>
+{/if}
