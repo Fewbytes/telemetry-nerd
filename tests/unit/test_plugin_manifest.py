@@ -63,15 +63,31 @@ def test_mcp_and_hooks_use_launcher():
     plugin = json.loads((ROOT / ".claude-plugin/plugin.json").read_text())
     pmcp = plugin["mcpServers"]["telemetry-nerd"]
     assert pmcp["args"] == ["${CLAUDE_PLUGIN_ROOT}/scripts/tn-launch", "bridge"]
-    # Dev (this repo as the project, no plugin): the project-level .mcp.json has no
-    # CLAUDE_PLUGIN_ROOT, so it falls back to the cwd (the repo root).
     mcp = json.loads((ROOT / ".mcp.json").read_text())["mcpServers"]["telemetry-nerd"]
-    assert mcp["args"] == ["${CLAUDE_PLUGIN_ROOT:-.}/scripts/tn-launch", "bridge"]
-    assert pmcp["command"] == mcp["command"] and pmcp["env"] == mcp["env"]
+    assert pmcp["env"] == mcp["env"]
     hooks = json.loads((ROOT / "hooks/hooks.json").read_text())["hooks"]
     cmds = [h["command"] for ev in hooks.values() for g in ev for h in g["hooks"]]
     assert cmds and all("scripts/tn-launch" in c for c in cmds)
     assert LAUNCH.stat().st_mode & 0o111
+
+
+def test_project_mcp_json_launches_from_repo_subdirectory(tmp_path):
+    # Dev (this repo as the project, no plugin): the session may start in any subdirectory, so
+    # the launcher path is found from git, not from the cwd.
+    repo = tmp_path / "repo"
+    (repo / "scripts").mkdir(parents=True)
+    (repo / "docs").mkdir()
+    (repo / "scripts/tn-launch").write_text('echo "launched: $*"\n')
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    mcp = json.loads((ROOT / ".mcp.json").read_text())["mcpServers"]["telemetry-nerd"]
+    r = subprocess.run(
+        [mcp["command"], *mcp["args"]],
+        cwd=repo / "docs",
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (r.returncode, r.stdout) == (0, "launched: bridge\n"), r.stderr
 
 
 def _run(*args: str, path: str, root: Path = ROOT):

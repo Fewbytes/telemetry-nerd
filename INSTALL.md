@@ -172,7 +172,7 @@ repo's `.mcp.json`:
   "mcpServers": {
     "telemetry-nerd": {
       "command": "sh",
-      "args": ["${CLAUDE_PLUGIN_ROOT:-.}/scripts/tn-launch", "bridge"],
+      "args": ["-c", "exec sh \"$(git rev-parse --show-toplevel)/scripts/tn-launch\" bridge"],
       "env": { "TN_SOURCE_URL": "${TN_SOURCE_URL:-http://127.0.0.1:8428}" }
     }
   }
