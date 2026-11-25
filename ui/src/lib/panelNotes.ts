@@ -292,8 +292,8 @@ export function describeShown(
   }
   if (mark === "ccdf") {
     return isLinear(d)
-      ? "Share of observations at or above each value, P(X ≥ x) (log-log; the query's buckets are [lo, hi)), exact at bucket edges and bounded inside a bucket; hover reads a threshold, click pins it."
-      : "Share of observations above each value (log-log), exact at bucket edges and bounded inside a bucket; hover reads a threshold, click pins it.";
+      ? "Share of observations at or above each value, P(X ≥ x) (log-log; the query's buckets are [lo, hi)), exact at bucket edges and bounded inside a bucket; the dotted line marks 1/n, the smallest resolvable share, and a flat tail below it is not zero; hover reads a threshold, click pins it."
+      : "Share of observations above each value (log-log), exact at bucket edges and bounded inside a bucket; the dotted line marks 1/n, the smallest resolvable share, and a flat tail below it is not zero; hover reads a threshold, click pins it.";
   }
   if (kind === "histogram") {
     const bars = isLinear(d) ? "the query's buckets" : "the source buckets";

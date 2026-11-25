@@ -121,6 +121,12 @@
           count++;
         });
       });
+      // below 1/n a flat tail is unresolved, not zero
+      exact.forEach((w, k) => {
+        if (w.n === 0) return;
+        ctx.strokeStyle = palette[k % palette.length]; ctx.setLineDash([2, 3]);
+        ctx.beginPath(); ctx.moveTo(0, yS(1 / w.n)); ctx.lineTo(plotW, yS(1 / w.n)); ctx.stroke(); ctx.setLineDash([]);
+      });
       if (pinned !== null) {
         ctx.strokeStyle = v("--fg"); ctx.setLineDash([3, 3]);
         const x = ha.pos(pinned);

@@ -235,6 +235,11 @@ describe("query-chosen (linear) bucket schemes", () => {
   it("words the CCDF as at or above on lower-inclusive buckets", () => {
     expect(describeShown({ ...dist, scheme }, "1m", "histogram", "ccdf")).toMatch(/^Share of observations at or above each value, P\(X ≥ x\)/);
   });
+  it("tells the reader the CCDF marks 1/n so a flat tail below it is not read as zero", () => {
+    for (const sch of [scheme, classic]) {
+      expect(describeShown({ ...dist, scheme: sch }, "1m", "histogram", "ccdf")).toContain("marks 1/n, the smallest resolvable share");
+    }
+  });
   it("words the Q-Q plot as first range against second with a y = x reference", () => {
     expect(describeShown({ ...dist, scheme }, "1m", "histogram", "qq")).toMatch(/^Q-Q plot: .*y = x/);
   });
