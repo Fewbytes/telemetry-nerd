@@ -2007,6 +2007,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         columns: list[str] | None = None,
         labels: list[str] | None = None,
         compute: str | None = None,
+        bounds: list[float | None] | None = None,
+        cumulative: bool = False,
         target: ChartTarget = None,
     ) -> str:
         """Draw data YOU supply as a line panel in the shared workspace: no source query.
@@ -2025,13 +2027,20 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         epoch milliseconds; every other column is one line; null is a gap.
         At most 5 lines per plot: for 6..8 series call once per group of at most 5 (small
         multiples, same y-range); more than 8 is over_limit.
-        kind: "line", "heatmap", "histogram", "ecdf", "qq", "quantile_curve", "ccdf", "bar" or
+        kind: "line", "heatmap", "histogram_heatmap", "histogram", "ecdf", "qq", "quantile_curve", "ccdf", "bar" or
         "bar_grouped". Circular and 3-D forms are never
         rendered, with no override: such a kind fails with refused_form and nothing is drawn. For parts of a
         whole, call again with kind="bar".
         kind="heatmap": data is a matrix [[...], ...] or labelled columns, up to 100 rows by
         100 columns, no time axis; labels name the rows (default r0, r1, ...), columns the
         matrix columns (default c0, c1, ...). The legend states the colour mapping.
+        kind="histogram_heatmap": a series of histograms over time (Prometheus buckets or an
+        Elasticsearch histogram aggregation). data is a matrix [[ts, b0, b1, ...], ...], time in epoch
+        milliseconds then one count per bucket; bounds are the buckets' upper edges in column order
+        (REQUIRED, null = +Inf). Time is x, your own buckets are y (never rebinned), colour is the
+        count per interval. cumulative=true says the counts are Prometheus classic _bucket counters
+        (cumulative over le and over time): they are differenced and a counter reset is a blank
+        cell, not a negative count; the first snapshot only anchors the first interval.
         kind="histogram"|"ecdf"|"qq"|"quantile_curve"|"ccdf": data is an array [...], labelled columns or a matrix,
         no time axis, at most 4 columns (more is over_limit). qq takes exactly 2 columns (else
         kind_shape_mismatch), of any lengths, plots their quantiles against each other and states
@@ -2048,13 +2057,21 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         """
         if (series is None) == (data is None):
             raise ToolError("pass exactly one of series or data")
-        if (kind == "heatmap" or kind in SAMPLE_PLOT_KINDS or kind in BAR_KINDS) and data is None:
+        if (
+            kind in ("heatmap", "histogram_heatmap")
+            or kind in SAMPLE_PLOT_KINDS
+            or kind in BAR_KINDS
+        ) and data is None:
             raise ToolError(f"kind={kind} takes data (a matrix or columns), not series")
         with _target_scope(target):
             try:
                 check_compute_opt_in(compute)
                 if kind == "heatmap":
                     res = service.plot_heatmap(question, data, columns, labels, unit=unit)
+                elif kind == "histogram_heatmap":
+                    if bounds is None or not isinstance(data, list):
+                        raise ToolError("histogram_heatmap needs bounds and data as a matrix")
+                    res = service.plot_bucket_heatmap(question, data, bounds, cumulative, unit=unit)
                 elif kind in BAR_KINDS:
                     res = service.plot_bars(question, data, kind, labels, unit=unit)
                 elif kind in SAMPLE_PLOT_KINDS:

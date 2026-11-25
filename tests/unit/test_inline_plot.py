@@ -224,3 +224,42 @@ async def test_naming_a_compute_feature_is_refused_and_drawing_without_it_works(
     assert f"{tool}: compute_unavailable: compute='forecast' needs a compute server" in text_of(r)
     assert "drop the `compute` field to draw the plain chart" in text_of(r)
     assert not (await call(mcp, tool, {"question": "q?", **args})).is_error
+
+
+async def test_histogram_heatmap_differences_cumulative_buckets_and_blanks_resets(tmp_path):
+    service = make_service(tmp_path)
+    mcp = build_mcp(service, "http://ui")
+    # Prometheus classic counters, le = 0.1, 1, +Inf; the counter resets at the 4th scrape.
+    snapshots = [
+        [NOW, 1, 3, 4],
+        [NOW + MINUTE, 2, 6, 8],
+        [NOW + 2 * MINUTE, 2, 7, 12],
+        [NOW + 3 * MINUTE, 0, 1, 1],
+    ]
+    args = {
+        "question": "q?",
+        "kind": "histogram_heatmap",
+        "data": snapshots,
+        "bounds": [0.1, 1, None],
+        "cumulative": True,
+    }
+    r = await call(mcp, "plot_data", args)
+    assert not r.is_error, text_of(r)
+    data = service.panel_data(json.loads(text_of(r))["panel"], width_px=800)
+    assert data["row_labels"] == ["<= 0.1", "(0.1, 1]", "(1, inf]"]
+    # per-bucket counts [1,2,1] [2,4,2] [2,5,5] [0,1,0]; deltas per interval, the reset a blank
+    assert data["cells"] == [[1, 0, None], [2, 1, None], [1, 3, None]]
+    assert len(data["column_labels"]) == 3
+
+
+async def test_histogram_heatmap_refuses_missing_bounds_and_negative_counts(tmp_path):
+    mcp = build_mcp(make_service(tmp_path), "http://ui")
+    base = {
+        "question": "q?",
+        "kind": "histogram_heatmap",
+        "data": [[NOW, 1, 2], [NOW + MINUTE, -1, 2]],
+    }
+    r = await call(mcp, "plot_data", base)
+    assert r.is_error and "needs bounds" in text_of(r)
+    r = await call(mcp, "plot_data", {**base, "bounds": [1, None]})
+    assert r.is_error and "negative" in text_of(r) and "cumulative=true" in text_of(r)

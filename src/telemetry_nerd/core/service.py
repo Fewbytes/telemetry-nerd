@@ -95,6 +95,7 @@ from telemetry_nerd.charts.ycontext import (
 from telemetry_nerd.charts.yview import value_stats
 from telemetry_nerd.core import fleet_payloads
 from telemetry_nerd.core.binding_ops import BindingOps
+from telemetry_nerd.core.bucket_heatmap import bucket_heatmap_columns
 from telemetry_nerd.core.card_payload import (
     MAX_METRICS,
     gap_pct,
@@ -1270,6 +1271,28 @@ class TelemetryService:
         return self.plot_sample(
             question, table, unit=unit, actor=actor, mark="heatmap", row_labels=table.row_labels
         )
+
+    def plot_bucket_heatmap(
+        self,
+        question: str,
+        data: list[list],
+        bounds: list[float | None],
+        cumulative: bool = False,
+        unit: str | None = None,
+        actor: Actor = "claude",
+    ) -> ShowResult:
+        """Draw a series of histograms over time as a heatmap: time on x, the source's own bucket
+        (`bounds`, upper edges, null = +Inf) on y, colour = count per interval.
+
+        `data` is a matrix whose first column is epoch-millisecond time and whose other columns are
+        the buckets in `bounds` order. `cumulative` says the buckets are Prometheus-classic
+        counters (cumulative over le and over time): they are differenced, and a counter reset is a
+        blank cell. Raises PlotTableError (a ValueError) naming the reason the data was refused."""
+        table = with_time_axis(
+            parse_plot_matrix(data, time_column=True, max_columns=MAX_MATRIX_SIDE)
+        )
+        columns, rows = bucket_heatmap_columns(table, bounds, cumulative)
+        return self.plot_heatmap(question, columns, labels=rows, unit=unit, actor=actor)
 
     def plot_cumulative(
         self,
