@@ -20,7 +20,7 @@ from telemetry_nerd.core.code_ops import CodeDisabled
 from telemetry_nerd.core.evidence_discipline import citable_statistics
 from telemetry_nerd.core.littles_compact import compact as littles_compact
 from telemetry_nerd.core.littles_compact import statistics as littles_statistics
-from telemetry_nerd.core.plot_table import BAR_KINDS, SAMPLE_PLOT_KINDS
+from telemetry_nerd.core.plot_table import BAR_KINDS, SAMPLE_PLOT_KINDS, check_compute_opt_in
 from telemetry_nerd.core.service import ChartRejected, TelemetryService
 from telemetry_nerd.core.wire import with_cite
 from telemetry_nerd.mcp.shapes import EvidenceContext, ShapeError, finding_in, hypothesis_scope
@@ -2006,6 +2006,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         data: dict[str, list[Any]] | list[Any] | None = None,
         columns: list[str] | None = None,
         labels: list[str] | None = None,
+        compute: str | None = None,
         target: ChartTarget = None,
     ) -> str:
         """Draw data YOU supply as a line panel in the shared workspace: no source query.
@@ -2039,6 +2040,8 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         50 bars) name the bars. Sorted descending, zero baseline; null is drawn as "no value".
         kind="bar_grouped": data is 2 to 4 labelled columns sharing labels; one bar series each.
         unit: optional y-axis unit, recorded as "provided by claude".
+        compute: opt in to a compute-server feature by name. No compute server exists yet, so
+        any value fails with compute_unavailable; leave it out to draw the plain chart.
         target="charts": draw on the Charts page instead of the active workspace (see show);
         the right place for "show me a graph of X" that is not an investigation.
         Returns {panel, url, warnings}.
@@ -2049,6 +2052,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
             raise ToolError(f"kind={kind} takes data (a matrix or columns), not series")
         with _target_scope(target):
             try:
+                check_compute_opt_in(compute)
                 if kind == "heatmap":
                     res = service.plot_heatmap(question, data, columns, labels, unit=unit)
                 elif kind in BAR_KINDS:
@@ -2073,6 +2077,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         csv: str,
         unit: str | None = None,
         kind: str = "line",
+        compute: str | None = None,
         target: ChartTarget = None,
     ) -> str:
         """Draw CSV text YOU supply as a line panel in the shared workspace: no source query.
@@ -2089,11 +2094,14 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         no override: such a kind fails with refused_form and nothing is drawn. For parts of a
         whole, call again with kind="bar".
         unit: optional y-axis unit, recorded as "provided by claude".
+        compute: opt in to a compute-server feature by name. No compute server exists yet, so
+        any value fails with compute_unavailable; leave it out to draw the plain chart.
         target="charts": draw on the Charts page instead of the active workspace (see show).
         Returns {panel, url, warnings}.
         """
         with _target_scope(target):
             try:
+                check_compute_opt_in(compute)
                 res = service.plot_csv(question, csv, unit=unit, kind=kind)
             except (ChartRejected, ValueError) as e:
                 raise ToolError(str(e)) from e

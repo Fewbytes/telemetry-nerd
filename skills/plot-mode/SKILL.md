@@ -71,5 +71,9 @@ aggregate first, then call again.
 
 Values must be finite numbers: `NaN` and `Inf` are `not_finite`. Time is epoch milliseconds or
 ISO-8601 with timezone, strictly increasing. A refusal opens with its code (`refused_form`,
-`over_limit`, `not_finite`, `ts_not_increasing`) and names the series or column and the index
+`over_limit`, `not_finite`, `ts_not_increasing`, `compute_unavailable`) and names the series or column and the index
 that failed.
+
+Advanced model features are off unless you pass `compute` naming one. No compute server exists
+yet, so any `compute` value fails with `compute_unavailable` and nothing is drawn; drop the field
+to draw the plain chart. A server being attached would not opt you in.

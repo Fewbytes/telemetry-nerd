@@ -63,6 +63,7 @@ class PlotReason(StrEnum):
     KIND_SHAPE_MISMATCH = "kind_shape_mismatch"
     UNKNOWN_KIND = "unknown_kind"
     REFUSED_FORM = "refused_form"
+    COMPUTE_UNAVAILABLE = "compute_unavailable"
 
 
 class PlotTableError(ValueError):
@@ -288,6 +289,18 @@ def check_kind(kind: str) -> None:
     if kind not in DRAWABLE_KINDS:
         raise PlotTableError(
             PlotReason.UNKNOWN_KIND, f"kind {kind!r} is not drawable; supported: {DRAWABLE_KINDS}"
+        )
+
+
+def check_compute_opt_in(compute: str | None) -> None:
+    """Spec design-docs/ui-layer-and-compute-server.md 4.3: a call naming a compute feature opts
+    in, and no compute server exists yet, so it is refused rather than drawn plain. A call without
+    `compute` is never touched."""
+    if compute is not None:
+        raise PlotTableError(
+            PlotReason.COMPUTE_UNAVAILABLE,
+            f"compute={compute!r} needs a compute server and none is reachable; "
+            "drop the `compute` field to draw the plain chart.",
         )
 
 

@@ -206,3 +206,21 @@ async def test_step_is_the_data_interval_not_the_epoch_offset(tmp_path):
     assert not r.is_error, text_of(r)
     meta, _ = svc.datasets.get(svc.workspace.get_panel("p1").dataset_ids[0])
     assert meta.step_ms == 300_000
+
+
+@pytest.mark.parametrize(
+    ("tool", "args"),
+    [
+        ("plot_data", {"series": SERIES}),
+        ("plot_csv", {"csv": f"ts,a\n{NOW - MINUTE},1\n{NOW},2\n"}),
+    ],
+)
+async def test_naming_a_compute_feature_is_refused_and_drawing_without_it_works(
+    tmp_path, tool, args
+):
+    mcp = build_mcp(make_service(tmp_path), "http://ui")
+    r = await call(mcp, tool, {"question": "q?", "compute": "forecast", **args})
+    assert r.is_error
+    assert f"{tool}: compute_unavailable: compute='forecast' needs a compute server" in text_of(r)
+    assert "drop the `compute` field to draw the plain chart" in text_of(r)
+    assert not (await call(mcp, tool, {"question": "q?", **args})).is_error
