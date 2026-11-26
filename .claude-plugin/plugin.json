@@ -1,6 +1,6 @@
 {
   "name": "telemetry-nerd",
-  "version": "0.1.1",
+  "version": "0.1.2-dev",
   "description": "Evidence-first telemetry analysis workspace for Claude",
   "license": "Apache-2.0",
   "author": {

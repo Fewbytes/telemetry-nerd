@@ -5,9 +5,10 @@ tags by hand: a tag must imply that everything passed.
 
 ## Procedure
 
-1. Bump the version in `pyproject.toml`, `.claude-plugin/plugin.json` and
-   `.claude-plugin/marketplace.json` (`python3 scripts/check_version.py` must pass) and merge to
-   `master`.
+1. Between releases master carries the next version with a `-dev` suffix (`0.1.2-dev`), so an
+   installed plugin shows whether it is a master snapshot or a release. To release, drop the
+   suffix in `pyproject.toml`, `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`
+   (`python3 scripts/check_version.py` must pass), `uv lock`, and merge to `master`.
 2. GitHub, Actions, **Release**, Run workflow on `master`, `version` = `X.Y.Z` (no `v`).
    Or: `gh workflow run release.yml -f version=X.Y.Z`.
 3. The workflow runs, in order:
@@ -28,7 +29,8 @@ tags by hand: a tag must imply that everything passed.
 4. If a gate fails nothing is tagged or published; fix and run the workflow again.
 5. If `image` fails after the tag exists, use "Re-run failed jobs" on that Release run. Never
    delete and re-tag. Tagged commit = tested commit, even if master moved on meanwhile.
-6. If you add a tag ruleset for `v*`, it must allow `github-actions[bot]` to create tags.
+6. After the tag exists, bump master to the next `-dev` version (`0.1.3-dev`) the same way.
+7. If you add a tag ruleset for `v*`, it must allow `github-actions[bot]` to create tags.
 
 ## Stress runs and flakes
 
