@@ -263,3 +263,79 @@ async def test_histogram_heatmap_refuses_missing_bounds_and_negative_counts(tmp_
     assert r.is_error and "needs bounds" in text_of(r)
     r = await call(mcp, "plot_data", {**base, "bounds": [1, None]})
     assert r.is_error and "negative" in text_of(r) and "cumulative=true" in text_of(r)
+
+
+def member(name, values, *, unit=None, role=None, start=NOW - 2 * MINUTE, step=MINUTE):
+    ts = [start + i * step for i in range(len(values))]
+    out = {"name": name, "series": [{"label": name, "ts": ts, "values": values}]}
+    return out | ({"unit": unit} if unit else {}) | ({"role": role} if role else {})
+
+
+async def test_metric_set_is_one_group_of_panels_with_their_own_units_and_stated_n(tmp_path):
+    svc = make_service(tmp_path)
+    mcp = build_mcp(svc, "http://x")
+    members = [
+        member("rate", [1, 2, 3], unit="req/s", role="traffic"),
+        {
+            "name": "p99",
+            "unit": "ms",
+            "data": {"ts": [NOW - 2 * MINUTE, NOW - MINUTE, NOW], "ms": [5, None, 7]},
+        },
+    ]
+    r = await call(mcp, "plot_data", {"question": "Is checkout healthy?", "set": members})
+    assert not r.is_error, text_of(r)
+    out = json.loads(text_of(r))
+    assert out["url"].startswith("http://x/#/group/") and out["basis"] == "supplied by caller"
+    roles = out["roles"]
+    assert roles["rate"]["notes"] == [
+        "role: traffic",
+        "rate: n=3, missing=0",
+        roles["rate"]["notes"][2],
+    ]
+    assert "step 1m" in roles["rate"]["notes"][2]
+    assert "ms: n=2, missing=1" in roles["p99"]["notes"]
+    units = {k: svc.workspace.get_panel(v["panel"]).spec["y"]["unit"] for k, v in roles.items()}
+    assert units == {"rate": "req/s", "p99": "ms"}
+    group = svc.ws.group_get(out["group"])
+    assert (group.start_ms, group.end_ms, group.step_ms) == (NOW - 2 * MINUTE, NOW, MINUTE)
+    assert all(
+        svc.workspace.get_panel(v["panel"]).spec["group"]["id"] == group.id for v in roles.values()
+    )
+    assert "notes" in out and not any("resampled" in n for n in out["notes"])
+
+
+async def test_metric_set_with_different_steps_states_each_step_and_does_not_resample(tmp_path):
+    svc = make_service(tmp_path)
+    mcp = build_mcp(svc, "http://x")
+    members = [member("fast", [1, 2, 3, 4, 5]), member("slow", [9, 8, 7], step=2 * MINUTE)]
+    r = await call(mcp, "plot_data", {"question": "q?", "set": members})
+    assert not r.is_error, text_of(r)
+    out = json.loads(text_of(r))
+    assert "step 1m" in out["roles"]["fast"]["notes"][-1]
+    assert "step 2m" in out["roles"]["slow"]["notes"][-1]
+    assert any("nothing is resampled" in n for n in out["notes"])
+
+
+@pytest.mark.parametrize(
+    ("members", "complaint"),
+    [
+        ([member(f"m{i}", [1, 2]) for i in range(7)], "over_limit: members per set"),
+        ([member("a", [1, 2]), member("a", [3, 4])], "duplicate_label"),
+        (
+            [
+                member("a", [1, 2]),
+                {"name": "b", "series": [{"label": "b", "ts": [NOW, NOW - 1], "values": [1, 2]}]},
+            ],
+            "ts_not_increasing: set member 'b'",
+        ),
+        ([{"name": "a", "series": SERIES, "data": [[NOW, 1]]}], "exactly one of series or data"),
+        ([], "at least one member"),
+    ],
+)
+async def test_bad_metric_set_is_refused_before_anything_is_drawn(tmp_path, members, complaint):
+    svc = make_service(tmp_path)
+    mcp = build_mcp(svc, "http://x")
+    r = await call(mcp, "plot_data", {"question": "q?", "set": members})
+    assert r.is_error
+    assert complaint in text_of(r)
+    assert svc.workspace.list_panels() == []

@@ -122,6 +122,7 @@ from telemetry_nerd.core.inline_series import (
     parse_inline_series,
 )
 from telemetry_nerd.core.littles_ops import LittlesOps
+from telemetry_nerd.core.metric_set import METRIC_SET_KIND, parse_metric_set
 from telemetry_nerd.core.panel_payloads import (
     ghost_payload,
     heatmap_panel_data,
@@ -210,7 +211,7 @@ from telemetry_nerd.sources.oauth import (
 )
 from telemetry_nerd.sources.registry import SourceRegistry
 from telemetry_nerd.sources.spec import RESERVED_NAMES, OAuthRef, SourceSpec
-from telemetry_nerd.workspace.models import PanelGroup
+from telemetry_nerd.workspace.models import GroupRole, PanelGroup
 from telemetry_nerd.workspace.registry import WorkspaceRegistry
 from telemetry_nerd.workspace.scope import ActiveWorkspace
 from telemetry_nerd.workspace.store import Panel, WorkspaceStore
@@ -1208,8 +1209,53 @@ class TelemetryService:
         table = parse_plot_csv(csv_text, self.clock())
         return self._show_inline(question, csv_inline_series(table), unit, actor)
 
+    def plot_metric_set(
+        self,
+        question: str,
+        members: list[dict],
+        actor: Actor = "claude",
+    ) -> PanelGroup:
+        """Draw related caller-supplied series as one panel group: one line panel per member on
+        one shared time axis, window and crosshair (spec 6). Members keep their own y scale and
+        unit and are never resampled; each role states its n, missing, step and coverage.
+
+        Every member is validated before anything is drawn. Raises PlotTableError (a ValueError)
+        naming the reason and the member that was refused."""
+        parsed = parse_metric_set(members, self.clock())
+        group = self.ws.group_create(
+            actor, kind=METRIC_SET_KIND, key=question, source=INLINE_SOURCE, basis="supplied",
+            start_ms=min(m.start_ms for m in parsed), end_ms=max(m.end_ms for m in parsed),
+            step_ms=min(m.step_ms for m in parsed), roles=[],
+        )  # fmt: skip
+        roles = [
+            GroupRole(
+                role=m.name,
+                view="lines",
+                members=len(m.series),
+                notes=m.describe(),
+                panel=self._show_inline(
+                    question, m.series, m.unit, actor, GroupRef(id=group.id, role=m.name)
+                ).panel.id,
+            )
+            for m in parsed
+        ]
+        notes = ["supplied by caller: not evidence about a system"]
+        if len({(m.step_ms, m.start_ms, m.end_ms) for m in parsed}) > 1:
+            notes.append(
+                "members differ in step or coverage: each is drawn at its own step on the shared "
+                "time axis, nothing is resampled onto another member"
+            )
+        group = self.ws.objects.set_group(group.model_copy(update={"roles": roles, "notes": notes}))
+        self.log.append(actor, "panel_group.updated", group.id, {"roles": len(roles)})
+        return group
+
     def _show_inline(
-        self, question: str, series: list[InlineSeries], unit: str | None, actor: Actor
+        self,
+        question: str,
+        series: list[InlineSeries],
+        unit: str | None,
+        actor: Actor,
+        group: GroupRef | None = None,
     ) -> ShowResult:
         check_line_series_count(len(series))
         data = inline_data(series)
@@ -1223,7 +1269,7 @@ class TelemetryService:
             lineage=_inline_lineage(INLINE_OUTPUT, actor),
         )
         self.log.append(actor, "dataset.created", meta.id, {"expr": INLINE_EXPR})
-        return self.show(meta.id, question, actor, unit=unit)
+        return self.show(meta.id, question, actor, unit=unit, group=group)
 
     def plot_sample(
         self,

@@ -508,8 +508,9 @@ class PanelGroup(_Strict):
     start_ms: int
     end_ms: int
     step_ms: int
-    #: where the roles came from: "binding" (a confirmed catalog binding) or "suggestion"
-    basis: Literal["binding", "suggestion"]
+    #: where the roles came from: "binding" (a confirmed catalog binding), "suggestion", or
+    #: "supplied" (a metric set the caller handed over, kind "metric_set")
+    basis: Literal["binding", "suggestion", "supplied"]
     binding_origin: str | None = None
     suggestion: str | None = None
     join_on: list[str] = Field(default_factory=list)

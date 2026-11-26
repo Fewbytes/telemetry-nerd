@@ -317,6 +317,14 @@ def _gap_args(missing_signal: Any, needed_for: Any, suggestion: Any, description
     }
 
 
+def _group_basis(g) -> str:
+    if g.basis == "suggestion":
+        return g.suggestion
+    if g.basis == "supplied":
+        return "supplied by caller"
+    return f"binding ({g.binding_origin})"
+
+
 def group_summary(g, ui_url: str) -> dict:
     """What Claude needs back from show_binding: panel ids per role, how each is drawn, gaps."""
     roles: dict[str, dict] = {}
@@ -343,7 +351,7 @@ def group_summary(g, ui_url: str) -> dict:
         "url": f"{ui_url}/#/group/{g.id}",
         "kind": g.kind,
         "key": g.key,
-        "basis": g.suggestion if g.basis == "suggestion" else f"binding ({g.binding_origin})",
+        "basis": _group_basis(g),
         "range": {"start": iso(g.start_ms), "end": iso(g.end_ms)},
         "step": format_duration(g.step_ms),
         "roles": roles,
@@ -2007,6 +2015,7 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         columns: list[str] | None = None,
         labels: list[str] | None = None,
         compute: str | None = None,
+        set: list[dict[str, Any]] | None = None,
         bounds: list[float | None] | None = None,
         cumulative: bool = False,
         target: ChartTarget = None,
@@ -2049,12 +2058,30 @@ def build_mcp(service: TelemetryService, ui_url: str) -> MCPServer:
         50 bars) name the bars. Sorted descending, zero baseline; null is drawn as "no value".
         kind="bar_grouped": data is 2 to 4 labelled columns sharing labels; one bar series each.
         unit: optional y-axis unit, recorded as "provided by claude".
+        set: a metric set instead of series/data: [{name, role?, series | data, unit?}], 1 to 6
+        members that you read together (e.g. request rate, error rate, p99 of one service), with
+        the one question for the set. Each member's series or data takes the forms above and is
+        drawn as its own panel with its own y scale and unit, all on one shared time axis, window
+        and crosshair, in one workspace entry. Members are never resampled onto each other: each
+        states its n, missing, step and coverage. A set draws; it does not say the members are
+        related, that claim is yours. More than 6 members is over_limit: split into two sets.
+        Returns {group, url, roles, notes} instead of {panel, url, warnings}.
         compute: opt in to a compute-server feature by name. No compute server exists yet, so
         any value fails with compute_unavailable; leave it out to draw the plain chart.
         target="charts": draw on the Charts page instead of the active workspace (see show);
         the right place for "show me a graph of X" that is not an investigation.
         Returns {panel, url, warnings}.
         """
+        if set is not None:
+            if series is not None or data is not None:
+                raise ToolError("pass set alone: each member carries its own series or data")
+            with _target_scope(target):
+                try:
+                    check_compute_opt_in(compute)
+                    group = service.plot_metric_set(question, set)
+                except (ChartRejected, ValueError) as e:
+                    raise ToolError(str(e)) from e
+                return _dump(group_summary(group, ui_url))
         if (series is None) == (data is None):
             raise ToolError("pass exactly one of series or data")
         if (

@@ -11,7 +11,7 @@ const ROLE_ORDER: Record<string, string[]> = {
   littles_law: ["arrival_rate", "latency", "concurrency", "check"], // check: czt.2's L vs λ·W panel
 };
 
-export const KIND_LABELS: Record<string, string> = { RED: "RED", USE: "USE", littles_law: "Little's law" };
+export const KIND_LABELS: Record<string, string> = { RED: "RED", USE: "USE", littles_law: "Little's law", metric_set: "Metric set" };
 
 /** The symbol a role carries in its model, shown next to its name. */
 const ROLE_SYMBOLS: Record<string, string> = { arrival_rate: "λ", latency: "W", concurrency: "L" };
@@ -99,6 +99,7 @@ export function msAt(px: number, domain: [number, number], left: number, width: 
 
 /** One line under the header: where the roles came from. */
 export function basisText(g: Pick<PanelGroup, "basis" | "binding_origin" | "suggestion">): string {
+  if (g.basis === "supplied") return "supplied by caller";
   return g.basis === "binding"
     ? `confirmed binding${g.binding_origin ? ` (${g.binding_origin})` : ""}`
     : `suggestion ${g.suggestion ?? ""}, not confirmed`;

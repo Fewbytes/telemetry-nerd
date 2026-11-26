@@ -347,7 +347,7 @@ export interface GroupVerdict {
 /** A USE / RED / Little's law binding drawn as one linked group of panels. */
 export interface PanelGroup {
   id: string; kind: string; key: string; source: string; author: string; created_at_ms: number;
-  start_ms: number; end_ms: number; step_ms: number; basis: "binding" | "suggestion";
+  start_ms: number; end_ms: number; step_ms: number; basis: "binding" | "suggestion" | "supplied";
   binding_origin: string | null; suggestion: string | null; join_on: string[];
   matchers: Record<string, string>; error_matcher: string | null; roles: GroupRole[];
   notes: string[]; closed: boolean; reframed_from: string | null;

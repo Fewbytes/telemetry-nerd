@@ -7,6 +7,7 @@ it or looks its expression up in a catalog."""
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from functools import reduce
 from itertools import pairwise
@@ -85,12 +86,11 @@ def parse_inline_series(raw: list[dict], now_ms: int) -> list[InlineSeries]:
     return out
 
 
-def inline_data(series: list[InlineSeries]) -> InlineData:
-    """The series as buckets (one sample per bucket: avg = min = max) on the coarsest grid
-    holding every timestamp, anchored at the first timestamp rather than the epoch: an epoch
-    anchor shrinks the step below the data's own interval, and every bucket without a sample
-    breaks the drawn line. Refuses a grid that is too fine or too long to draw."""
-    all_ts = [t for s in series for t in s.ts_ms]
+def inline_grid(all_ts: Sequence[int]) -> tuple[int, int, int]:
+    """(start, end, step) in ms of the coarsest grid holding every timestamp, anchored at the first
+    timestamp rather than the epoch: an epoch anchor shrinks the step below the data's own
+    interval, and every bucket without a sample breaks the drawn line. Refuses a grid that is too
+    fine or too long to draw."""
     start, end = min(all_ts), max(all_ts)
     # One timestamp has no interval to measure.
     step = reduce(math.gcd, (t - start for t in all_ts)) or MIN_STEP_MS
@@ -104,6 +104,12 @@ def inline_data(series: list[InlineSeries]) -> InlineData:
             f"timestamps span {(end - start) // step + 1} steps of {step} ms, over the "
             f"{MAX_GRID_BUCKETS} limit: pass fewer or more regular points"
         )
+    return start, end, step
+
+
+def inline_data(series: list[InlineSeries]) -> InlineData:
+    """The series as buckets (one sample per bucket: avg = min = max) on their `inline_grid`."""
+    start, end, step = inline_grid([t for s in series for t in s.ts_ms])
     ids = {s.label: series_id(INLINE_SOURCE, {"series": s.label}) for s in series}
     rows = [(t, ids[s.label], v) for s in series for t, v in zip(s.ts_ms, s.values, strict=True)]
     buckets = pa.table(

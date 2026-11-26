@@ -66,6 +66,7 @@ describe("labels", () => {
     expect(roleTitle("errors")).toBe("errors");
     expect(roleTitle("check")).toBe("L vs λ·W");
     expect(basisText({ basis: "binding", binding_origin: "claude", suggestion: null })).toBe("confirmed binding (claude)");
+    expect(basisText({ basis: "supplied", binding_origin: null, suggestion: null })).toBe("supplied by caller");
     expect(basisText({ basis: "suggestion", binding_origin: null, suggestion: "USE:node_cpu" })).toContain("not confirmed");
   });
 });
